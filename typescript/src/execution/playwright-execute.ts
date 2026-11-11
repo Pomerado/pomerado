@@ -13,6 +13,7 @@ import {
   NativeWorkerReply,
   NativeWorkerRequest,
   PlaywrightLibrary,
+  runsAlone,
 } from "./playwright-protocol.js";
 
 type WithoutId<A> = A extends { readonly id: string } ? Omit<A, "id"> : never;
@@ -46,6 +47,14 @@ export interface PlaywrightOptions {
    * and names the limit. Console output keeps its own 1 MiB limit.
    */
   readonly resultLimitBytes?: number;
+  /**
+   * How many plain page calls (`execute`, `executeResponse`) may run on the page at once, for a
+   * caller whose calls don't depend on each other, such as several fetches each in a context of its
+   * own. An integer from 1 to 64; 1 when absent, so calls take turns. A typing watch or credential
+   * call always runs alone. A call that runs past its time still stops the executor, and every call
+   * running on it then fails as uncertain, never replayed.
+   */
+  readonly callsAtOnce?: number;
 }
 /**
  * An answered script and which watched values its typing calls delivered, by index, each with the
@@ -101,6 +110,12 @@ const duration = (value: number, name: string) => {
 const resultLimit = (value: number) => {
   if (!Number.isInteger(value) || value <= 0 || value > 67_108_864)
     throw new Error("resultLimitBytes must be a positive integer and at most 67108864 bytes");
+  return value;
+};
+
+const callsLimit = (value: number) => {
+  if (!Number.isInteger(value) || value < 1 || value > 64)
+    throw new Error("callsAtOnce must be an integer from 1 to 64");
   return value;
 };
 
@@ -341,6 +356,10 @@ export const makePlaywrightExecutor = (
         options.resultLimitBytes === undefined ? undefined : resultLimit(options.resultLimitBytes),
       catch: asError,
     });
+    const callsAtOnce = yield* Effect.try({
+      try: () => callsLimit(options.callsAtOnce ?? 1),
+      catch: asError,
+    });
     if (options.endpoint !== undefined && options.cdp !== undefined)
       return yield* Effect.fail(new Error("endpoint and cdp cannot both be set"));
     const library = yield* Schema.decodeUnknown(PlaywrightLibrary)(
@@ -392,6 +411,7 @@ export const makePlaywrightExecutor = (
               startupTimeoutMs,
               library,
               ...(resultLimitBytes === undefined ? {} : { resultLimitBytes }),
+              ...(callsAtOnce === 1 ? {} : { callsAtOnce }),
               ...(options.cdp === undefined
                 ? {}
                 : {
@@ -405,9 +425,12 @@ export const makePlaywrightExecutor = (
     });
     owner.worker = worker;
     const ready = yield* bindNativeWorker(owner, worker, startupTimeoutMs);
-    const semaphore = yield* Effect.makeSemaphore(1);
+    const semaphore = yield* Effect.makeSemaphore(callsAtOnce);
+    // A plain call takes one place; a typing watch or credential call takes them all and runs alone.
     const call = (payload: NativePayload, timeoutSec: number) =>
-      dispatchNative(owner, worker, payload, timeoutSec).pipe(semaphore.withPermits(1));
+      dispatchNative(owner, worker, payload, timeoutSec).pipe(
+        semaphore.withPermits(runsAlone(payload) ? callsAtOnce : 1),
+      );
     const executeResponse: BrowserExecute = (code, timeoutSec = 60) =>
       call({ kind: "execute", code }, timeoutSec).pipe(
         Effect.flatMap((response) => Schema.decodeUnknown(BrowserExecuteResponse)(response)),

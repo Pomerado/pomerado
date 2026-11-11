@@ -471,6 +471,33 @@ test("an invalid result limit is refused before a browser starts", async () => {
     ).rejects.toThrow("resultLimitBytes must be a positive integer and at most 67108864 bytes");
 });
 
+test("calls allowed at once run together on the page", async () => {
+  await native(
+    async (executor) => {
+      // The first call waits in the page until the second releases it, so it ends only if the
+      // second starts while the first still runs.
+      const waiting = Effect.runPromise(
+        executor.execute("return await page.evaluate(() => new Promise((go) => { window.go = go; }).then(() => 'released'));", 10),
+      );
+      await expect
+        .poll(() => Effect.runPromise(executor.execute("return await page.evaluate(() => typeof window.go);", 5)))
+        .toBe("function");
+      const releasing = Effect.runPromise(
+        executor.execute("await page.evaluate(() => window.go()); return 'released it';", 5),
+      );
+      expect(await Promise.all([waiting, releasing])).toEqual(["released", "released it"]);
+    },
+    { callsAtOnce: 2 },
+  );
+});
+
+test("an invalid calls-at-once count is refused before a browser starts", async () => {
+  for (const callsAtOnce of [0, -1, 1.5, 65, Number.NaN])
+    await expect(
+      native(() => Promise.resolve(), { callsAtOnce, endpoint: "ws://127.0.0.1:9/never" }),
+    ).rejects.toThrow("callsAtOnce must be an integer from 1 to 64");
+});
+
 test("popup and frame actions preserve the original selected page across calls", async () => {
   await native(async (executor) => {
     const kernel = client(executor);

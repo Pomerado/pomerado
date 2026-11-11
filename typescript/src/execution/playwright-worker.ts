@@ -31,7 +31,9 @@ if (import.meta.url.endsWith(".ts"))
         : nextLoad(url, context),
   });
 const { makeCredentialKeyboard } = await import("../destinations/credential-keyboard.js");
-const { NativeWorkerOptions, NativeWorkerRequest } = await import("./playwright-protocol.js");
+const { NativeWorkerOptions, NativeWorkerRequest, runsAlone } = await import(
+  "./playwright-protocol.js"
+);
 
 const asError = (cause: unknown): Error =>
   cause instanceof Error ? cause : new Error("Native browser worker failed", { cause });
@@ -453,37 +455,41 @@ await Effect.runPromise(
       targetId: target.targetId,
       ...(attached === undefined ? { contextId: target.browserContextId } : {}),
     });
-    const semaphore = yield* Effect.makeSemaphore(1);
+    const callsAtOnce = options.callsAtOnce ?? 1;
+    const semaphore = yield* Effect.makeSemaphore(callsAtOnce);
     port.on("message", (value: unknown) => {
       const handle = Effect.gen(function* () {
         const request = yield* Schema.decodeUnknown(NativeWorkerRequest)(value).pipe(
           Effect.mapError(asError),
         );
-        const response = yield* Effect.gen(function* () {
-          if (request.kind === "execute")
-            return yield* script(
-              request.code,
-              page,
-              context,
-              browser,
-              resultLimit,
-              request.watch,
-            );
-          return yield* credential(request, context, target.targetId);
-        }).pipe(Effect.either);
-        port.postMessage(
-          response._tag === "Right"
-            ? { kind: "response", id: request.id, value: response.right }
-            : {
-                kind: "failure",
-                id: request.id,
-                error:
-                  request.kind === "credential"
-                    ? "Credential insertion unavailable"
-                    : response.left.message,
-              },
-        );
-      }).pipe(semaphore.withPermits(1));
+        // A plain call takes one place; a typing watch or credential call takes them all.
+        yield* Effect.gen(function* () {
+          const response = yield* Effect.gen(function* () {
+            if (request.kind === "execute")
+              return yield* script(
+                request.code,
+                page,
+                context,
+                browser,
+                resultLimit,
+                request.watch,
+              );
+            return yield* credential(request, context, target.targetId);
+          }).pipe(Effect.either);
+          port.postMessage(
+            response._tag === "Right"
+              ? { kind: "response", id: request.id, value: response.right }
+              : {
+                  kind: "failure",
+                  id: request.id,
+                  error:
+                    request.kind === "credential"
+                      ? "Credential insertion unavailable"
+                      : response.left.message,
+                },
+          );
+        }).pipe(semaphore.withPermits(runsAlone(request) ? callsAtOnce : 1));
+      });
       Effect.runCallback(handle, {
         onExit: (exit) => {
           if (Exit.isSuccess(exit)) return;

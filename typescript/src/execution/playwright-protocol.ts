@@ -49,12 +49,23 @@ export const NativeWorkerReply = Schema.Union(
 );
 export const PlaywrightLibrary = Schema.Literal("playwright", "patchright");
 export type PlaywrightLibrary = typeof PlaywrightLibrary.Type;
+/**
+ * Whether a call runs alone on the page: a typing watch patches the page's typing methods and a
+ * credential call types into the focused field, so neither shares the page with another call.
+ */
+export const runsAlone = (request: {
+  readonly kind: "execute" | "credential";
+  readonly watch?: readonly string[] | undefined;
+}) => request.kind !== "execute" || request.watch !== undefined;
+
 export const NativeWorkerOptions = Schema.Struct({
   endpoint: Schema.String,
   startupTimeoutMs: Schema.Number,
   library: PlaywrightLibrary,
   /** The most bytes of JSON a script's result may take; 1 MiB when absent. Output keeps 1 MiB. */
   resultLimitBytes: Schema.optional(Schema.Number),
+  /** How many plain page calls run at once; 1 when absent. Any other call runs alone. */
+  callsAtOnce: Schema.optional(Schema.Number),
   /** Attach over CDP and drive the browser's own context, at this page (its first when absent). */
   cdp: Schema.optional(Schema.Struct({ targetId: Schema.optional(Schema.String) })),
 });
