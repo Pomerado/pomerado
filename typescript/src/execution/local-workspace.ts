@@ -9,6 +9,7 @@ import {
   rename,
   rm,
   unlink,
+  writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -17,7 +18,12 @@ import { applyDiff, type Editor } from "@openai/agents";
 import { Manifest, type Entry, type SandboxSession } from "@openai/agents/sandbox";
 import { Effect, Either, type Scope } from "effect";
 import { createLocalProcess, type LocalProcess } from "./local-process.js";
-import { hostPlatform, removalRetries } from "./local-platform.js";
+import {
+  findWindowsShell,
+  hostPlatform,
+  removalRetries,
+  type LocalPlatform,
+} from "./local-platform.js";
 import {
   localError,
   localFilePath,
@@ -34,7 +40,56 @@ export interface LocalWorkspaceOptions {
   readonly root?: string;
   readonly environment?: Readonly<Record<string, string>>;
   readonly commandTimeoutMs?: number;
+  /** The operating system commands run on, the host's own when absent. */
+  readonly platform?: LocalPlatform;
 }
+
+/** Why a workspace command cannot start on a Windows host with no POSIX shell. */
+export const windowsShellMissing =
+  "Offline commands on Windows run in the POSIX shell that Git for Windows installs, and none " +
+  "was found. Install Git for Windows from https://git-scm.com/download/win, then start " +
+  "Pomerado again.";
+
+/**
+ * The shell workspace commands run in: `/bin/sh` on macOS and Linux, and on Windows Git for
+ * Windows' `sh.exe`, looked up once, at the first command.
+ */
+const workspaceShell = (platform: LocalPlatform) => {
+  if (!platform.windows) return Effect.succeed("/bin/sh");
+  let found: { readonly shell: string | undefined } | undefined;
+  return Effect.suspend(() => {
+    found ??= { shell: findWindowsShell(platform) };
+    return found.shell === undefined
+      ? Effect.fail(new Error(windowsShellMissing))
+      : Effect.succeed(found.shell);
+  });
+};
+
+/**
+ * What Git for Windows' sh needs beside the workspace's environment: no globbing of its own
+ * arguments by the MSYS runtime, and a login shell that stays in the working folder.
+ */
+const windowsShellEnvironment = { MSYS: "noglob", CHERE_INVOKING: "1" } as const;
+
+/**
+ * The shell's arguments for one command. On Windows the MSYS runtime parses sh.exe's command line
+ * with its own quoting and glob rules before sh runs, so the command could differ from the one
+ * reviewed. There sh reads the command, byte for byte, from a temporary file instead.
+ */
+const commandArguments = (platform: LocalPlatform, cmd: string, login: boolean | undefined) =>
+  Effect.gen(function* () {
+    if (!platform.windows) return [login ? "-lc" : "-c", cmd];
+    const folder = yield* Effect.acquireRelease(
+      localPromise(() => mkdtemp(join(tmpdir(), "pomerado-command-"))),
+      (folder) =>
+        localPromise(() =>
+          rm(folder, { recursive: true, force: true, ...removalRetries(platform) }),
+        ).pipe(Effect.orDie),
+    );
+    const script = join(folder, "command.sh");
+    yield* localPromise(() => writeFile(script, cmd, { flag: "wx", mode: 0o600 }));
+    return login ? ["-l", script] : [script];
+  });
 export interface LocalWorkspace {
   readonly root: string;
   readonly environment: Readonly<Record<string, string>>;
@@ -244,6 +299,8 @@ const workspaceCommand =
     alive: Effect.Effect<void, Error>,
     timeoutMs: number,
     register: (process: LocalProcess) => Effect.Effect<void, Error, Scope.Scope>,
+    platform: LocalPlatform,
+    shell: Effect.Effect<string, Error>,
   ) =>
   (args: Parameters<NonNullable<SandboxSession["exec"]>>[0]) =>
     Effect.scoped(
@@ -254,11 +311,17 @@ const workspaceCommand =
           args.workdir === undefined || args.workdir === "/workspace"
             ? root
             : yield* localFilePath(root, args.workdir);
+        // On Windows a requested shell, such as bash, could name WSL's or another program, so
+        // commands always run in the shell the host found.
+        const command = platform.windows ? yield* shell : (args.shell ?? (yield* shell));
         const process = yield* createLocalProcess({
-          command: args.shell ?? "/bin/sh",
-          args: [args.login ? "-lc" : "-c", args.cmd],
+          command,
+          args: yield* commandArguments(platform, args.cmd, args.login),
           cwd,
-          environment,
+          environment: platform.windows
+            ? { ...environment, ...windowsShellEnvironment }
+            : environment,
+          platform,
         });
         yield* register(process);
         const started = performance.now();
@@ -348,6 +411,7 @@ export const createLocalWorkspace = (
   Effect.gen(function* () {
     const { root, temporary } = yield* prepareWorkspaceRoot(options.root);
     const environment = { ...(options.environment ?? {}) };
+    const platform = options.platform ?? hostPlatform;
     let closed = false;
     const active = new Set<LocalProcess>();
     const register = (process: LocalProcess) =>
@@ -413,7 +477,7 @@ export const createLocalWorkspace = (
       Effect.zipRight(
         temporary
           ? localPromise(() =>
-              rm(root, { recursive: true, force: true, ...removalRetries(hostPlatform) }),
+              rm(root, { recursive: true, force: true, ...removalRetries(platform) }),
             )
           : Effect.void,
       ),
@@ -425,6 +489,8 @@ export const createLocalWorkspace = (
       alive,
       options.commandTimeoutMs ?? localCommandTimeoutMs,
       register,
+      platform,
+      workspaceShell(platform),
     );
     const materialize = (path: string, entry: Entry) =>
       materializeLocalEntry(root, path, entry, write).pipe(lock.withPermits(1));
