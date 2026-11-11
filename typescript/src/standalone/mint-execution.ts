@@ -49,7 +49,11 @@ import { stepInput } from "../mint/step-checks.js";
 import { admitListCursor, sealListOutput } from "../runtime/list-cursor.js";
 import { mintListScope, refusedCursor } from "./list-cursors.js";
 import { readBackFirst, sessionEnteredMarks, writePathRemaining } from "../mint/write-session.js";
-import { commitEvidenceOf, type CommitEvidence } from "../runtime/run-outcome.js";
+import {
+  commitEvidenceOf,
+  returnedRefusal,
+  type CommitEvidence,
+} from "../runtime/run-outcome.js";
 import { InputRequestFailure, type InputAsker } from "../runtime/input-request.js";
 import { siteDomain } from "../runtime/same-site.js";
 import { probeCallCode } from "../runtime/host-execute.js";
@@ -260,7 +264,8 @@ const scriptQuestions = (
  * only once a later step confirms. Only a failed step Guardian labelled a write asks the minter
  * to read back before writing again (`readBackFirst`). Marks showing no commit step entered
  * skip the ask only while the step made no browser call: this host records no requests that
- * would show a write the page sent before any mark was entered.
+ * would show a write the page sent before any mark was entered. A completed step that returned a
+ * refusal its output schema declares before any mark (`returnedRefusal`) records it as `refused`.
  */
 const actOutcome = (
   executed: Either.Either<LocalOperationOutput, Error>,
@@ -278,6 +283,14 @@ const actOutcome = (
     .filter((mark) => mark.state !== "not_sent")
     .map(({ name }) => name);
   const commit: CommitEvidence = reported ? commitEvidenceOf(journal.commits) : "unreported";
+  const refused = Either.isRight(executed)
+    ? returnedRefusal({
+        outputSchema: executed.right.schemas.output,
+        output: executed.right.output,
+        commits: commit,
+        runnerEffect: journal.effect,
+      })
+    : undefined;
   return {
     marks: {
       ...(journal.confirmation === undefined ? {} : { confirmation: journal.confirmation }),
@@ -285,6 +298,7 @@ const actOutcome = (
       possiblySent: journal.effect !== "not_sent",
       enteredMarks: reported ? entered : [],
       ...(failure instanceof LocalOperationFailure && !reported ? { streamedMarks: entered } : {}),
+      ...(refused === undefined ? {} : { refused }),
     },
     writeSession:
       failure !== undefined && action === "write"

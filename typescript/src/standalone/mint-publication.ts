@@ -329,7 +329,14 @@ export const mintPublication =
       // A write first proves its session may have sent the write, then that its composed contract
       // matches the session and names each step a confirm popup was accepted at. A confirmation
       // proves the write was sent; otherwise an act step Guardian labelled a write that may have
-      // reached the site, unless the outcome review found it did not happen.
+      // reached the site, unless the outcome review found it did not happen. The site's own no,
+      // returned by the session's last act step, may stand as the outcome only while no earlier
+      // act step made a browser call: this host records no requests that would show a save such a
+      // step sent without entering a mark.
+      const last = writeSession.steps.at(-1);
+      const endsOnRefusal =
+        last?.executionId === evidence.executionId &&
+        writeSession.steps.slice(0, -1).every((earlier) => earlier.possiblySent === false);
       const session = write
         ? yield* checkWriteSession({
             session: {
@@ -338,10 +345,11 @@ export const mintPublication =
                 return outcome === undefined ? step : { ...step, assessment: outcome };
               }),
             },
-            step: sample.journal,
+            step: endsOnRefusal ? last : sample.journal,
             extract,
             confirms: { steps: writeSession.confirmSteps, entrypoint: publication.entrypoint },
             ...(writeSession.path === undefined ? {} : { writePath: writeSession.path }),
+            ...(endsOnRefusal ? { publishOnRefusal: true } : {}),
           })
         : undefined;
       const { files, sources, signIn, result } = session?.extracted ?? (yield* extract);
@@ -355,6 +363,7 @@ export const mintPublication =
                 kind: "write",
                 writeConfirmation: session.declared,
                 intentDerived: writeSession.input !== undefined,
+                ...(session.refusal === undefined ? {} : { refusal: session.refusal }),
               }),
               files: new Map([
                 [

@@ -1218,7 +1218,7 @@ it("has a write follow the site's substitute only when the caller's task asks fo
     "A report of the form's fields, its validation messages or the options to pick from is a refusal (`InvalidInput` with `available`) or a failure (`OperationFailure`), not the write's output.",
   );
   expect(writes).toContain(
-    "(`site_declined` when the site refused this example). A build whose session never reached the end publishes nothing. - When the caller's own task asks for whatever the site ends up with, such as the product a quote ended up on, follow the site's preselected substitute and return the value the site used instead of throwing `InvalidInput`. Only the caller's task text counts this way; an output field or description you wrote does not. - When a write's form adds required fields",
+    "or when the site's no rules out every input the tool could take (`site_declined`). - When the caller's own task asks for whatever the site ends up with, such as the product a quote ended up on, follow the site's preselected substitute and return the value the site used instead of throwing `InvalidInput`. Only the caller's task text counts this way; an output field or description you wrote does not. - When a write's form adds required fields",
   );
 });
 
@@ -1339,7 +1339,7 @@ it("renders the pinned standalone authoring", async () => {
     ["ba424a37559d905aad3b11bae66ccdf30f630fa939597e2a00e6cf1ad8d28686", "testing"],
     ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
     ["e37fb08f6f96071faa61b27ea9f0f11e2b7ddc297793911c083317c3a58059ca", "forms"],
-    ["9556196163ca35c2145a0c021b83aa6fb06209ab5281ba7d2d33e35cd519fee4", "writes"],
+    ["7bf1b9d6c37ece6a7d0c1b9057415a9d5c2ab68f96fe25876bebe983aa0fd3f8", "writes"],
     ["1e8d18459b80eb0d3040fad7814908f7396fcc6f6cbf0ea0cf448c0ce1c99d3f", "cart"],
     ["c64ec8d7e23e56e3aa19e80801f38265c018fa779b15297d6add6700462f54ae", "caller-input"],
     ["00ce0f951765419f66a91572b6ea92ef327bccf4974e3a33b4783ba7c1a2c206", "publication"],
