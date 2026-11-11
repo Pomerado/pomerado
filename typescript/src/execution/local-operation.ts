@@ -1,4 +1,5 @@
 import { stageSources } from "./local-operation-stage.js";
+import type { LocalPlatform } from "./local-platform.js";
 import { serialize } from "node:v8";
 import { fileURLToPath } from "node:url";
 import { Cause, Clock, Deferred, Effect, Exit, Fiber, Schema } from "effect";
@@ -63,6 +64,8 @@ export interface LocalOperationOptions {
    * stopped before one reads `not_sent`. Without it, a live run counts from its start.
    */
   readonly dispatchAtFirstCall?: boolean;
+  /** The operating system the run stages and starts for, the host's own when absent. */
+  readonly platform?: LocalPlatform;
   readonly ask?: InputAsker;
   /**
    * The questions the host read itself: a build step's literal declarations, or the ones
@@ -557,6 +560,7 @@ export const runLocalOperation = (
         cwd: staged.directory,
         environment: options.workspace.environment,
         ipc: true,
+        ...(options.platform === undefined ? {} : { platform: options.platform }),
       });
       const response = yield* receiveOperation(process, options, deadline);
       yield* sendToChild(process, {

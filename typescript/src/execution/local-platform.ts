@@ -44,3 +44,10 @@ export const windowsSystemProgram = (platform: LocalPlatform, name: string): str
     "System32",
     name,
   );
+
+/**
+ * Windows can refuse to remove a file for a moment after the process that held it ends, or while
+ * antivirus software reads it, so removing a folder there retries briefly.
+ */
+export const removalRetries = (platform: LocalPlatform) =>
+  platform.windows ? { maxRetries: 5, retryDelay: 100 } : {};
