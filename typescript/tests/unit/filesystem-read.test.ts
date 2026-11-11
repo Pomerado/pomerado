@@ -44,12 +44,24 @@ it("preserves complete bounded reads and rejects oversized files and traversal",
   await expect(readScopedFile(root, "../source.bin")).rejects.toThrow("scope");
 });
 
-// Windows creates a file symbolic link only with administrator rights or Developer Mode.
-it.skipIf(process.platform === "win32")("rejects a symlinked file", async () => {
+/** The code of a failed filesystem call, such as `EPERM`. */
+const codeOf = (error: unknown) =>
+  error instanceof Error && "code" in error ? error.code : undefined;
+
+it("rejects a symlinked file", async (context) => {
   const root = await directory();
   await writeFile(join(root, "source.bin"), new Uint8Array([1, 2, 3, 4]));
-  await symlink(join(root, "source.bin"), join(root, "linked.bin"));
-  await expect(readScopedFile(root, "linked.bin")).rejects.toThrow("ELOOP");
+  try {
+    await symlink(join(root, "source.bin"), join(root, "linked.bin"));
+  } catch (error) {
+    // Windows creates a file symbolic link only with administrator rights or Developer Mode.
+    if (codeOf(error) === "EPERM") return context.skip();
+    throw error;
+  }
+  // Windows opens through the link, and the read refuses the file it opened, which isn't it.
+  await expect(readScopedFile(root, "linked.bin")).rejects.toThrow(
+    process.platform === "win32" ? "scope" : "ELOOP",
+  );
 });
 
 // A junction is Windows' folder link that needs no privilege; elsewhere it is a symbolic link.

@@ -459,10 +459,13 @@ describe("scoped Guardian source reader", () => {
       `${source}\nconst password = "synthetic-private-password";`,
     );
     await writeFile(join(directory, "outside.ts"), "outside-scope-content");
-    // Windows creates a file symbolic link only with administrator rights or Developer Mode, so
-    // there escape.ts is missing, which the read refuses too.
-    if (process.platform !== "win32")
-      await symlink(join(directory, "outside.ts"), join(root, "escape.ts"));
+    // Windows creates a file symbolic link only with administrator rights or Developer Mode.
+    // Without them escape.ts is missing, which the read refuses too.
+    await symlink(join(directory, "outside.ts"), join(root, "escape.ts")).catch(
+      (error: unknown) => {
+        if (!(error instanceof Error && "code" in error && error.code === "EPERM")) throw error;
+      },
+    );
   });
   afterAll(async () => {
     if (directory) await rm(directory, { recursive: true, force: true });
