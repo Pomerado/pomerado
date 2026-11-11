@@ -18,12 +18,32 @@ describe("repository line endings", () => {
   it("checks text out with LF under core.autocrlf=true and keeps third-party texts as committed", () => {
     const origin = mkdtempSync(join(tmpdir(), "line-endings-origin-"));
     const clone = mkdtempSync(join(tmpdir(), "line-endings-clone-"));
-    directories.push(origin, clone);
+    const home = mkdtempSync(join(tmpdir(), "line-endings-home-"));
+    directories.push(origin, clone, home);
+    const emptyConfig = join(home, "gitconfig");
+    writeFileSync(emptyConfig, "");
+    // Only the fixture's own settings apply: no system or user config, hooks or GIT_* variables
+    // from the machine that runs the test.
+    const environment = {
+      ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_"))),
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: emptyConfig,
+    };
     const git = (cwd: string, ...args: string[]) =>
       execFileSync(
         "git",
-        ["-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", ...args],
-        { cwd, encoding: "utf8" },
+        [
+          "-c",
+          "user.name=Test",
+          "-c",
+          "user.email=test@example.com",
+          "-c",
+          "commit.gpgsign=false",
+          "-c",
+          "core.hooksPath=",
+          ...args,
+        ],
+        { cwd, encoding: "utf8", env: environment },
       );
     const files = {
       "typescript/authoring/core/SKILL.md":
