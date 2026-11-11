@@ -1218,7 +1218,7 @@ it("has a write follow the site's substitute only when the caller's task asks fo
     "A report of the form's fields, its validation messages or the options to pick from is a refusal (`InvalidInput` with `available`) or a failure (`OperationFailure`), not the write's output.",
   );
   expect(writes).toContain(
-    "(`site_declined` when the site refused this example). A build whose session never reached the end publishes nothing. - When the caller's own task asks for whatever the site ends up with, such as the product a quote ended up on, follow the site's preselected substitute and return the value the site used instead of throwing `InvalidInput`. Only the caller's task text counts this way; an output field or description you wrote does not. - When a write's form adds required fields",
+    "or when the site's no rules out every input the tool could take (`site_declined`). - When the caller's own task asks for whatever the site ends up with, such as the product a quote ended up on, follow the site's preselected substitute and return the value the site used instead of throwing `InvalidInput`. Only the caller's task text counts this way; an output field or description you wrote does not. - When a write's form adds required fields",
   );
 });
 
@@ -1335,13 +1335,13 @@ it("renders the pinned standalone authoring", async () => {
   ]).toStrictEqual([
     ["67421ce3120e12e1e616f45c0e5dcc2d6e27186bb0483511e9a15eef045fd825", "core"],
     ["e854aa6b9fe22ea741598abcf0643c529211b643d6b9b400281948a117156224", "search"],
-    ["578c764655155caef0abbecd8757698a222f71132cbf051ea7431a04d872e170", "auth"],
+    ["cc2b214a88e1378b0b5c58b54ab5e1ab40e782816a931f4bda74a7f47a02777a", "auth"],
     ["ba424a37559d905aad3b11bae66ccdf30f630fa939597e2a00e6cf1ad8d28686", "testing"],
     ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
-    ["e37fb08f6f96071faa61b27ea9f0f11e2b7ddc297793911c083317c3a58059ca", "forms"],
-    ["9556196163ca35c2145a0c021b83aa6fb06209ab5281ba7d2d33e35cd519fee4", "writes"],
-    ["1e8d18459b80eb0d3040fad7814908f7396fcc6f6cbf0ea0cf448c0ce1c99d3f", "cart"],
-    ["c64ec8d7e23e56e3aa19e80801f38265c018fa779b15297d6add6700462f54ae", "caller-input"],
+    ["f6df7357d40ef13863b642d19b162e268e7258bdecfcc4fb42b72499a1475c36", "forms"],
+    ["34f752f3942a08b46c8d47f68fda140c63436003287ead71a475509dde6749e7", "writes"],
+    ["f1529925af15ab689e57fc2b5fb182c1a62c84914234579a43f2c59fe114b4c9", "cart"],
+    ["917f39da5110927741347007527ace7d3124d4bb187a95433cd4dc653cee9040", "caller-input"],
     ["00ce0f951765419f66a91572b6ea92ef327bccf4974e3a33b4783ba7c1a2c206", "publication"],
     ["76b20107d2698cf0db185eaf3321a3c0e72b6efe2336c5e3951df3f5701e1085", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],

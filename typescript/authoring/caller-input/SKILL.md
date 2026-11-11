@@ -212,26 +212,16 @@ already asked for, or to solve a CAPTCHA.
      site (core skill); the published script never holds a handle and asks for the value
      with `ask` instead. Prefer a `secret` question of kind `private_text` for an access
      code, such as a gate, door, alarm or lockbox code.
-   - For a payment card the checkout requires, ask for every part its card form shows
-     at once, in one request with one `secret` question for each part: `card_number`,
-     `card_expiry`, `card_cvc` and `billing_postal_code`. Those handles go only into a
-     card-fill step, never into source.
-   - A published script asks for a card the same way: declare a `secret` question with
-     a card `secretKind` for each part and ask them all in one `ask`, which returns a
-     card handle for each, such as `{{card.c1}}`, never the card. Pass the handles to
-     the context's `fillCard`, as in
-     `await fillCard({ fields: [{ selector: "#cardNumber", handle: answer.card }] })`,
-     with each field's own selector, even inside the payment processor's frame. The
-     host types the card and clicks nothing, so submit the payment in a later call
-     under the write's commit rules. Once you have the caller's card, and wherever source
-     calls `fillCard`, no source reads a field's value or the page's markup, runs or
-     plants code in the page, opens a DevTools session, takes an accessibility snapshot,
-     screenshot or PDF of the page, records the page, or reads a request body, so delete
-     such probes before you ask for the card.
    - When the host says it fills the card from a payment method, never ask for card
      parts: call `fillCard({ fields: [{ selector, slot }], total })` with each card
-     field's slot (`card_number`, `card_expiry`, `card_cvc`) and the order total the
-     checkout shows as `{ amount, currency }`.
+     field's own selector, even inside the payment processor's frame, its slot
+     (`card_number`, `card_expiry`, `card_cvc`) and the order total the checkout shows as
+     `{ amount, currency }`. The host fills the card and clicks nothing, so submit the
+     payment in a later call under the write's commit rules. Wherever source calls
+     `fillCard`, no source reads a field's value or the page's markup, runs or plants code
+     in the page, opens a DevTools session, takes an accessibility snapshot, screenshot or
+     PDF of the page, records the page, or reads a request body, so delete such probes
+     before you fill the card.
 2. For a choice, read the options in the execute call that reaches it and return them as
    plain JSON. Each option has a `value` the script acts on and a `label` the caller
    reads. Values are unique within a question. Offer only options the page will accept:

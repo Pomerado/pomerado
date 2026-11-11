@@ -384,6 +384,11 @@ passkey, adding a phone number or turning on two-factor. Record its decline cont
 check, so runs pass it too; a run where it does not show skips it once the check verifies the
 session.
 
+When the page right after a sign-in step is optional setup and shows no decline control after one
+bounded wait, prefer loading the site's own start page and checking the signed-in indicator there
+before anything else. Record no step for that page: a run skips it once the check verifies the
+session. A setup page that never loads is not the site being unavailable.
+
 When a sign-in screen asks to sign out another device or session, or to trust this browser,
 before the site goes on, send it as a `signInStep` with no fields, its control as `submit`, and
 `choice` naming that kind (`sign_out_other_device` or `trust_this_device`). Ask the owner first,

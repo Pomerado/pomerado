@@ -26,7 +26,7 @@ the cart's lines and totals.
 A tool that fills the cart and places the order in the same run may use the site's guest
 checkout when the site offers one and the build holds no login. Prefer either to creating an
 account. Decide before you sign in, since a build that sent a login keeps it. Take the guest's
-contact details as inputs and the card as the caller-input skill says.
+contact details as inputs, and fill the card as the caller-input skill says.
 
 ## Take the product as the site's tools do
 
@@ -96,7 +96,7 @@ delivery method to meet a limit. While building, ask the caller to revise or sto
 completed the write, so it never publishes.
 
 An example item that is out of stock doesn't end the build. The tool returns that as the site's
-refusal for the item, and you ask the caller with `request_input` which item to use instead.
+refusal for the item, and the build publishes on it as the writes skill says.
 
 ## Description
 

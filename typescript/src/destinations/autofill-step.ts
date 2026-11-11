@@ -711,6 +711,7 @@ export type AutofillSignedInCheck =
       readonly signedIn: false;
       readonly failed:
         | "indicator_not_visible"
+        | "sign_in_popup_open"
         | "path_mismatch"
         | "password_field_visible"
         | "challenge_form_visible"
@@ -1215,7 +1216,10 @@ export type AutofillScreens = readonly {
  * detaches during the check, do not count. It does not classify unrecorded controls or infer a
  * challenge from the page route. Callers must inspect and record each authentication screen
  * before checking completion. Another form's password field does not count unless a recorded
- * selector matches in it. Screens with no field leave any visible password field failing it.
+ * selector matches in it. Screens with no field leave any visible password field failing it. A
+ * sign-in pop-up the page opened that is still open fails it as `sign_in_popup_open` while it
+ * shows one of its screens' fields, or any password field when they recorded none; otherwise the
+ * indicator counts in its frames on the site too.
  */
 export const checkAutofillSignedIn = (input: {
   readonly indicator: AutofillSignedIn;
@@ -1234,10 +1238,11 @@ export const checkAutofillSignedIn = (input: {
     const opened = yield* openAccountPage(indicator.openPath, page, input.siteOrigin);
     if (opened !== undefined) return opened;
     // A screen with a frame-crossing selector never ran, so it holds none of the sign-in's fields.
-    const signInFields = input.screens
-      .filter((screen) => screen.popup === undefined)
-      .flatMap((screen) => screen.fields.map((field) => field.selector))
-      .filter((selector) => !frameCrossing(selector));
+    const fieldsOf = (popup: boolean) =>
+      input.screens
+        .filter((screen) => (screen.popup !== undefined) === popup)
+        .flatMap((screen) => screen.fields.map((field) => field.selector))
+        .filter((selector) => !frameCrossing(selector));
     const challengeFields = (input.challengeScreens ?? input.screens)
       .filter((screen) => screen.popup === undefined)
       .flatMap((screen) => screen.fields)
@@ -1255,10 +1260,11 @@ export const checkAutofillSignedIn = (input: {
           page.targetId,
           indicator.selector,
           siteHost(input.siteOrigin),
-          signInFields,
+          fieldsOf(false),
           input.screens.flatMap((screen) => (screen.popup === undefined ? [] : [screen.popup])),
           challengeFields,
           input.authenticationOrigins ?? [],
+          fieldsOf(true),
         ),
         15,
       )
@@ -1276,6 +1282,8 @@ export const checkAutofillSignedIn = (input: {
     const parsed = URL.parse(url);
     if (parsed === null || !sameSite(input.siteOrigin, parsed))
       return { signedIn: false as const, failed: "off_site" as const, url };
+    if (read.right.signInPopupOpen === true)
+      return { signedIn: false as const, failed: "sign_in_popup_open" as const, url };
     const form = passwordVisible ? { passwordFieldVisible: true as const } : {};
     if (visible === false)
       return { signedIn: false as const, failed: "indicator_not_visible" as const, url, ...form };
