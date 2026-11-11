@@ -176,10 +176,10 @@ import { defineOperation } from "../runtime/index.js";
 export default defineOperation({name:"send_receipt",input:Schema.Struct({}),output:Schema.Unknown},
 async ({files}) => ({
   page: await files.screenshot({ fullPage: true }),
-  link: await files.screenshot({ selector: "a" }),
+  link: await files.screenshot({ selector: "a[href='/statement.csv']" }),
   viewport: await files.screenshot({ selector: undefined, fullPage: undefined }),
   missing: await files.screenshot({ selector: "#missing", timeoutMs: 500 }).then(() => null, (error) => error.message),
-  positional: await files.screenshot("a").then(() => null, (error) => error.message),
+  positional: await files.screenshot("a[href='/statement.csv']").then(() => null, (error) => error.message),
 }));`,
     },
     contractJsonSchema(Schema.Struct({})),
