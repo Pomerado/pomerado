@@ -145,3 +145,69 @@ it.skipIf(process.platform === "win32")(
     expect(await Effect.runPromise(local.result)).toMatchObject({ exitCode: 0 });
   },
 );
+
+it.skipIf(process.platform === "win32")(
+  "on Windows still ends the command when taskkill hangs, within the close's confirmation",
+  async () => {
+    const timeouts: number[] = [];
+    const platform: LocalPlatform = {
+      windows: true,
+      environment: { SystemRoot: "C:\\Windows" },
+      // execFile ends a program that runs past its timeout and reports no exit code.
+      run: (_file, _args, timeoutMs) => {
+        timeouts.push(timeoutMs);
+        return new Promise((resolve) =>
+          setTimeout(() => resolve({ exitCode: null, stdout: "" }), timeoutMs),
+        );
+      },
+    };
+    const { local, pid } = await start(idle, platform);
+
+    await Effect.runPromise(local.close);
+
+    expect(timeouts).toHaveLength(1);
+    expect(timeouts[0]).toBeLessThan(5_000);
+    expect(await ended(pid)).toBe(true);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "on Windows names taskkill under windir when SystemRoot is unset",
+  async () => {
+    const runs: string[] = [];
+    const platform: LocalPlatform = {
+      windows: true,
+      environment: { windir: "D:\\Windows" },
+      run: async (file, args) => {
+        runs.push(file);
+        process.kill(Number(args[1]), "SIGKILL");
+        return { exitCode: 0, stdout: "" };
+      },
+    };
+    const { local } = await start(idle, platform);
+
+    await Effect.runPromise(local.close);
+
+    expect(runs).toEqual(["D:\\Windows\\System32\\taskkill.exe"]);
+  },
+);
+
+// A command that ended may still have output the host has not read when the close starts, such
+// as a close the command's own exit starts. Node delivers that output just after the exit.
+it.skipIf(process.platform === "win32")(
+  "on Windows keeps the output a command wrote before it ended",
+  async () => {
+    const { platform } = windowsPlatform(() => 0);
+    const size = 32_000;
+    const { local } = await start(`process.stdout.write("x".repeat(${size}))`, platform);
+    // The host's reader starts flowing on the next tick; hold the output unread after that.
+    await new Promise((resolve) => setImmediate(resolve));
+    local.child.stdout?.pause();
+
+    await new Promise((resolve) =>
+      local.child.once("exit", () => resolve(Effect.runPromise(local.close))),
+    );
+
+    expect((await Effect.runPromise(local.result)).stdout).toHaveLength(size);
+  },
+);

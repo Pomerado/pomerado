@@ -39,4 +39,8 @@ export const hostPlatform: LocalPlatform = {
 
 /** A program in Windows' own System32 folder, named by path so no search can substitute another. */
 export const windowsSystemProgram = (platform: LocalPlatform, name: string): string =>
-  win32.join(platform.environment["SystemRoot"] ?? "C:\\Windows", "System32", name);
+  win32.join(
+    platform.environment["SystemRoot"] || platform.environment["windir"] || "C:\\Windows",
+    "System32",
+    name,
+  );

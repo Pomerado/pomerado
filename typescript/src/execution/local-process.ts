@@ -1,6 +1,6 @@
 import { StringDecoder } from "node:string_decoder";
 import { spawn, type ChildProcess } from "node:child_process";
-import { Cause, Deferred, Effect, Exit, Fiber, type Scope } from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, Option, type Scope } from "effect";
 import { localError, localOutputLimit } from "./local-path.js";
 import { hostPlatform, windowsSystemProgram, type LocalPlatform } from "./local-platform.js";
 
@@ -33,23 +33,36 @@ const signalGroup = (child: ChildProcess) =>
 const taskkillNotFound = 128;
 
 /**
+ * How long taskkill may take. It stays well inside the close's 5 s confirmation, so the fallback
+ * kill still runs when taskkill hangs.
+ */
+const taskkillTimeoutMs = 2_000;
+/** How long the close waits for a command's own output to end before it stops reading it. */
+const outputGraceMs = 500;
+
+/**
  * Windows has no process groups. While the command runs, `taskkill /T /F` ends it and every
  * process it started, as Playwright stops a browser; when taskkill cannot, the command itself
  * still ends. Once it has ended, its ID may belong to another program, so nothing is killed by ID.
- * A process it left running is no longer linked to it and can hold its output open, so the host
- * stops reading that output, and the close completes as it does on macOS and Linux.
+ * A process it left running is no longer linked to it and can hold its output open, so when the
+ * output has not ended shortly after, the host stops reading it, and the close completes as it
+ * does on macOS and Linux.
  */
-const killTree = (platform: LocalPlatform, child: ChildProcess) =>
+const killTree = (platform: LocalPlatform, child: ChildProcess, closed: Effect.Effect<void>) =>
   Effect.gen(function* () {
     if (child.pid === undefined) return;
     if (child.exitCode === null && child.signalCode === null) {
       const taskkill = windowsSystemProgram(platform, "taskkill.exe");
       const args = ["/pid", String(child.pid), "/T", "/F"];
-      const { exitCode } = yield* Effect.promise(() => platform.run(taskkill, args, 5_000));
+      const { exitCode } = yield* Effect.promise(() =>
+        platform.run(taskkill, args, taskkillTimeoutMs),
+      );
       if (exitCode !== 0 && exitCode !== taskkillNotFound) child.kill("SIGKILL");
     }
-    child.stdout?.destroy();
-    child.stderr?.destroy();
+    if (Option.isNone(yield* closed.pipe(Effect.timeoutOption(outputGraceMs)))) {
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+    }
   });
 
 /**
@@ -88,7 +101,10 @@ export const createLocalProcess = (options: {
     let closeFiber: Fiber.RuntimeFiber<void, Error> | undefined;
     const close = Effect.suspend(() => {
       closeFiber ??= Effect.runFork(
-        (platform.windows ? killTree(platform, child) : signalGroup(child)).pipe(
+        (platform.windows
+          ? killTree(platform, child, Deferred.await(ended).pipe(Effect.either, Effect.asVoid))
+          : signalGroup(child)
+        ).pipe(
           Effect.zipRight(Deferred.await(ended).pipe(Effect.either, Effect.asVoid)),
           Effect.timeoutFail({
             duration: 5_000,
