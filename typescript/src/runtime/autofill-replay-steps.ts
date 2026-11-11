@@ -399,8 +399,12 @@ export const valuesFor = <E extends YieldableError, V extends string, L extends 
               : { securityAnswers: input.hosted.securityAnswers }),
             ...fresh,
             ...(codeAgain === undefined ? {} : { codeAgain }),
-            // The app method in force asks for its code by where it comes from.
-            ...(chosen === "totp" ? { codeSource: "authenticator_app" as const } : {}),
+            // The method in force says where its code comes from, whatever the field's words say.
+            ...(chosen === "totp"
+              ? { codeSource: "authenticator_app" as const }
+              : chosen === "sms" || chosen === "email" || chosen === "call"
+                ? { codeSource: "sent" as const }
+                : {}),
           },
           { chosen, seedAllowed },
         ),

@@ -148,10 +148,13 @@ const valuesInOrder =
     // read once. A screen that asked for two different codes would get the first in both.
     const boxes = step.fields.filter((field) => field.slot === "code").length;
     const instruction = codeInstruction(step, screen);
-    const fromApp = step.fields.some((field, index) => {
-      const shown = screen?.[index];
-      return field.slot === "code" && shown !== undefined && authenticatorCodeField(shown);
-    });
+    // The method in force decides where the code comes from; the field's words only without one.
+    const fromApp =
+      login.codeSource === undefined &&
+      step.fields.some((field, index) => {
+        const shown = screen?.[index];
+        return field.slot === "code" && shown !== undefined && authenticatorCodeField(shown);
+      });
     const codeLogin =
       boxes > 1 || instruction !== undefined || fromApp
         ? {
@@ -271,8 +274,9 @@ export interface AutofillLogin {
   readonly codeInstruction?: string;
   /**
    * Where the code comes from, when the host knows: an authenticator app (`authenticator_app`),
-   * from the method in force or the code field's own words (`authenticatorCodeField`), which the
-   * owner is asked for by name. Absent, the code is one the site sent.
+   * which the owner is asked for by name, or a message the site sends (`sent`), from the method in
+   * force; without one, the code field's own words (`authenticatorCodeField`) may say it is an
+   * app's. Absent, the code is one the site sent.
    */
   readonly codeSource?: CodeSource;
   /** Whether an asked field may be kept with the login, with the owner's yes (`SaveOffer`). */

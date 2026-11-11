@@ -451,7 +451,10 @@ it("asks for an authenticator app's code as such, from the field's own words or 
   ];
   const asked = async (
     screen: ReturnType<typeof shown> | undefined,
-    extra: { readonly codeSource?: "authenticator_app"; readonly codeAgain?: "rejected" } = {},
+    extra: {
+      readonly codeSource?: "authenticator_app" | "sent";
+      readonly codeAgain?: "rejected";
+    } = {},
   ) => {
     const { autofill } = values();
     const owner = scripted(["482913"]);
@@ -484,10 +487,20 @@ it("asks for an authenticator app's code as such, from the field's own words or 
       "The site refused the last code. Enter the current code from your authenticator app for example.test.",
   });
   // A code field that names no app keeps the code the site sent.
-  expect(await asked(shown("Verification code"))).toMatchObject({
+  const sent = {
     secretKind: "one_time_code",
     prompt: "Enter the sign-in code example.test sent you.",
-  });
+  };
+  expect(await asked(shown("Verification code"))).toMatchObject(sent);
+  // Words that also name a code the site sent decide nothing: the code may be either.
+  expect(
+    await asked(shown("Enter the code we sent, or use your authenticator app")),
+  ).toMatchObject(sent);
+  expect(await asked(shown("Code (SMS or authenticator app)"))).toMatchObject(sent);
+  // A texted or emailed method in force wins over the field's words.
+  expect(
+    await asked(shown("Code from your authenticator app"), { codeSource: "sent" }),
+  ).toMatchObject(sent);
 });
 
 it("asks again for the newest code after a refusal, spending the sign-in's code re-asks", async () => {

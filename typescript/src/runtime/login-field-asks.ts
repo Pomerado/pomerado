@@ -44,14 +44,16 @@ const cutTo = (text: string, room: number) =>
   text.length <= room ? text : `${text.slice(0, room - 1).replace(/[\uD800-\uDBFF]$/u, "")}…`;
 
 /**
- * Where a sign-in code comes from, when the host knows: an authenticator app, from the method in
- * force (`totp`) or the code field's own words (`authenticatorCodeField`). Otherwise it is a code
- * the site sends.
+ * Where a sign-in code comes from, when the host knows: an authenticator app (`authenticator_app`),
+ * or a message the site sends (`sent`: a texted, emailed or spoken code), from the method in force,
+ * else the code field's own words (`authenticatorCodeField`). Absent, it is a code the site sends.
  */
-export type CodeSource = "authenticator_app";
+export type CodeSource = "authenticator_app" | "sent";
 
 /** Words that name an authenticator app's code: in a field's label, placeholder or instruction. */
 const authenticatorWords = /\bauthenticator\b|\bauthentication app\b|\btotp\b/iu;
+/** Words that name a code the site sends, which make a field's words no proof of an app's code. */
+const sentWords = /\b(?:sent|send|sends|texted|text(?:ed)? message|sms|e-?mail(?:ed)?)\b/iu;
 /** The words of a field's name or id, split at anything but letters and digits, and at case. */
 const nameWords = (text: string | null | undefined) =>
   (text ?? "")
@@ -62,16 +64,23 @@ const nameWords = (text: string | null | undefined) =>
 /**
  * Whether a code field, as the inspection read it, asks for an authenticator app's code: its own
  * label, aria-label, placeholder or the screen's instruction for it names an authenticator app or
- * TOTP, or its name or id holds `totp` or `authenticator`. A two-factor or verification code alone
- * may be one the site texts or emails, so it names none.
+ * TOTP, or its name or id holds `totp` or `authenticator`, and none of those words also names a
+ * code the site sends, as a field for either ("Code (SMS or authenticator app)") does. A two-factor
+ * or verification code alone may be one the site texts or emails, so it names none. Read only
+ * when no method is in force: the method decides.
  */
-export const authenticatorCodeField = (shown: ShownAnswerField) =>
-  [shown.label, shown.ariaLabel, shown.placeholder, shown.questionText].some(
-    (text) => text !== null && text !== undefined && authenticatorWords.test(text),
-  ) ||
-  [...nameWords(shown.name), ...nameWords(shown.id)].some(
-    (word) => word === "totp" || word === "authenticator",
+export const authenticatorCodeField = (shown: ShownAnswerField) => {
+  const texts = [shown.label, shown.ariaLabel, shown.placeholder, shown.questionText].filter(
+    (text) => text !== null && text !== undefined,
   );
+  if (texts.some((text) => sentWords.test(text))) return false;
+  return (
+    texts.some((text) => authenticatorWords.test(text)) ||
+    [...nameWords(shown.name), ...nameWords(shown.id)].some(
+      (word) => word === "totp" || word === "authenticator",
+    )
+  );
+};
 
 /**
  * The code question's prompt. With the screen's own instruction for the code (`instruction`), such
