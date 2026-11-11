@@ -135,7 +135,7 @@ const shown = (answer: ReturnType<typeof result>): SignInStepResult => ({
 /** What says a control takes another value than its slot, in the minter's words. */
 const slotControlEvidence = {
   autocomplete: "its autocomplete attribute",
-  code_boxes: "it is one of the screen's one-character code boxes",
+  code_boxes: "its place among the screen's one-character code boxes",
   name: "its name or id",
   label: "its own label, aria-label or placeholder",
 } as const;
@@ -149,7 +149,7 @@ const slotControlNotice = (
   mismatch: NonNullable<AutofillRefusal["slotControl"]>,
 ) => {
   const field = typeof target === "number" ? `field ${target} (counted from 0)` : "a field";
-  const lead = `The host typed and clicked nothing, so nothing reached the site and nobody was asked: the step's ${field} has slot "${mismatch.slot}", but its control is a ${mismatch.control === "code" ? "one-time code" : "password"} field by ${slotControlEvidence[mismatch.evidence]}.`;
+  const lead = `The host typed and clicked nothing, so nothing reached the site and nobody was asked: the step's ${field} has slot "${mismatch.slot}", but its control is a ${mismatch.control === "code" ? "one-time code" : "password"} field, as ${slotControlEvidence[mismatch.evidence]} shows.`;
   return mismatch.control === "code"
     ? `${lead} A second-factor or verification screen asks for a code the site sent or an authenticator app shows, never the account's password. Send the step again with slot "code" on that field; the host asks the owner for the code then, saying where it comes from.`
     : `${lead} Send the step again with slot "password" on that field when the screen asks for the account's password; a code field is one whose control asks for a one-time code.`;
