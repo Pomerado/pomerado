@@ -1268,6 +1268,7 @@ export const SignedInPage = Schema.Struct({
   indicator: Schema.NullOr(Schema.Boolean),
   passwordVisible: Schema.Boolean,
   challengeFormVisible: Schema.Boolean,
+  signInPopupOpen: Schema.optional(Schema.Literal(true)),
 });
 
 /**
@@ -1364,7 +1365,9 @@ const recordedChallengeVisible = async (fields) => {
  * (`challengeFields`, each with the identity the host inspected) still asks as
  * `signedInChallengeFormCode` reads it, on the site or one of `authenticationOrigins`. Both come
  * after `popups` and default to none, so a caller that passes no challenge fields gets no
- * challenge check.
+ * challenge check. A page the primary page opened that is still open on one of `popups`' origins
+ * answers `signInPopupOpen` while it shows a password field or one of `popupFields` (by
+ * selector); otherwise its frames on the site count for the indicator too.
  */
 export const autofillSignedInCode = (
   targetId: string,
@@ -1377,14 +1380,16 @@ export const autofillSignedInCode = (
     readonly identity: ControlIdentity;
   }[] = [],
   authenticationOrigins: readonly string[] = [],
+  popupFields: readonly string[] = [],
 ) =>
   `${primaryPageCode(targetId)}
 const popupOrigins = ${JSON.stringify(popups.map((popup) => popup.origin))};
+const openPopups = [];
 for (const candidate of context.pages()) {
   if (candidate === primary || candidate.isClosed() || await candidate.opener() !== primary) continue;
   let origin;
   try { origin = new URL(candidate.url()).origin; } catch { continue; }
-  if (popupOrigins.includes(origin)) return { url: primary.url(), indicator: false, passwordVisible: false, challengeFormVisible: false };
+  if (popupOrigins.includes(origin)) openPopups.push(candidate);
 }
 const onSiteHost = ${hostOnSiteSource(siteHost)};
 const onSite = (frame) => {
@@ -1442,10 +1447,24 @@ const signInPasswordVisible = async (selectors) => {
 const selector = ${JSON.stringify(selector ?? null)};
 const signInFields = ${JSON.stringify(signInFields)};
 const challengeFields = ${JSON.stringify(challengeFields)};
+// A sign-in pop-up still open that still asks is a sign-in under way; otherwise its frames on the
+// site show the indicator as the primary page's do. One that closes as the host reads it shows
+// nothing.
+let popupIndicator = false;
+for (const popup of openPopups) {
+  try {
+    for (const fieldSelector of [password, ...${JSON.stringify(popupFields)}])
+      if (await visibleIn(fieldSelector, popup.frames()))
+        return { url: primary.url(), indicator: false, passwordVisible: false, challengeFormVisible: false, signInPopupOpen: true };
+    if (selector !== null && await visibleIn(selector, popup.frames().filter(onSite))) popupIndicator = true;
+  } catch {
+    continue;
+  }
+}
 const siteFrames = primary.frames().filter(onSite);
 return {
   url: primary.url(),
-  indicator: selector === null ? null : await visibleIn(selector, siteFrames),
+  indicator: selector === null ? null : popupIndicator || await visibleIn(selector, siteFrames),
   challengeFormVisible: await recordedChallengeVisible(challengeFields),
   // With no field of the sign-in's own to go by, any password field on the page still counts.
   passwordVisible:
