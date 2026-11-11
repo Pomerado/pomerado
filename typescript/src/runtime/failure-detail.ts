@@ -620,12 +620,13 @@ const absolutePath =
   /(?:file:\/\/)?(?:[A-Za-z]:)?(?:\/[^\s():/]+)*?\/((?:typescript\/src|typescript\/tests|dist|node_modules)\/[^\s():]+)/g;
 
 /**
- * A frame's Windows location, which may hold spaces and parentheses: from the frame's start or its
- * opening parenthesis to its `:line:column`. It is a drive path (`C:\...`, `\\?\C:\...` or
- * `file:///C:/...`) or a share (`\\server\share\...`, such as `\\wsl.localhost\Ubuntu\...`).
+ * A frame's Windows location, which may hold spaces and parentheses: from the frame's start, after
+ * V8's `async` for an anonymous async frame, or from its opening parenthesis, to its
+ * `:line:column`. It is a drive path (`C:\...`, `C:/...`, `\\?\C:\...` or `file:///C:/...`) or a
+ * share (`\\server\share\...`, such as `\\wsl.localhost\Ubuntu\...`).
  */
 const windowsLocation =
-  /(^|\()((?:file:\/\/\/[A-Za-z]:\/|[A-Za-z]:\\|\\\\)[\s\S]*?)(:\d+:\d+)?(\)?)$/;
+  /(^(?:async\s+)?|\()((?:file:\/\/\/[A-Za-z]:\/|[A-Za-z]:[\\/]|\\\\)[\s\S]*?)(:\d+:\d+)?(\)?)$/;
 const repositoryFolder = /\/(?:typescript\/src|typescript\/tests|dist|node_modules)\//;
 
 /** A Windows location from its repository folder on, or else its file name alone. */

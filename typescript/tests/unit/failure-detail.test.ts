@@ -457,6 +457,9 @@ describe("failure detail", () => {
       "    at long (\\\\?\\C:\\Users\\John Smith\\pomerado\\dist\\typescript\\src\\y.js:2:2)",
       "    at share (\\\\server\\share\\John Smith\\tool.js:2:3)",
       "    at wsl (\\\\wsl.localhost\\Ubuntu\\home\\alice\\pomerado\\typescript\\src\\z.ts:4:5)",
+      "    at async file:///C:/Users/alice/h.mjs:1:2",
+      "    at async C:\\Users\\John Smith\\h.js:1:2",
+      "    at slashed (C:/Users/alice/h.js:1:2)",
     ].join("\n");
     const stack = describeError(error).stack;
     expect(stack).toEqual([
@@ -469,6 +472,9 @@ describe("failure detail", () => {
       "long (dist/typescript/src/y.js:2:2)",
       "share (…/tool.js:2:3)",
       "wsl (typescript/src/z.ts:4:5)",
+      "async …/h.mjs:1:2",
+      "async …/h.js:1:2",
+      "slashed (…/h.js:1:2)",
     ]);
     expect(JSON.stringify(stack)).not.toMatch(/alice|John|Smith|server/);
   });
