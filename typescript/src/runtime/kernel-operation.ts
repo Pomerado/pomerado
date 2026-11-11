@@ -273,9 +273,9 @@ export interface KernelOperationContext<
   readonly ensureSignedIn: () => Promise<{ readonly signedInAgain: boolean }>;
   /**
    * The run's files: `place` puts a caller's file into a file input on the site, `collect`
-   * captures a download the page starts, `screenshot` a picture of the page. The bytes stay with
-   * the host. A run without the host's file service, such as an offline run, throws
-   * `OperationFailure` on each.
+   * captures a download the page starts, `collectAll` every download a trigger starts and
+   * `screenshot` a picture of the page. The bytes stay with the host. A run without the host's
+   * file service, such as an offline run, throws `OperationFailure` on each.
    */
   readonly files: ScriptFiles;
   readonly errors: typeof operationErrors;
@@ -497,6 +497,18 @@ const fileFailure = (error: unknown, afterCalls = false) => {
 };
 
 /**
+ * A failed take of a trigger's downloads, by `files.collect` or `files.collectAll`: a download
+ * over the host's caps fails with the cap's own wording, which a build's host reads as its file
+ * cap; any other refusal as `fileFailure` after the trigger's calls.
+ */
+const collectFailure = (error: unknown) => {
+  const overCap = error instanceof FileRefused ? downloadCapFailures[error.reason] : undefined;
+  return overCap === undefined
+    ? fileFailure(error, true)
+    : new OperationFailure(overCap, { cause: error, dispatch: "unknown" });
+};
+
+/**
  * The context's `files` over the host's channel. A live run marks a possible dispatch once a
  * placement set the file input, or may have, as an execute call does; a refusal before that
  * reached no page. Collecting only reads what the trigger's own calls made the page download.
@@ -572,11 +584,45 @@ const scriptFiles = (
       try {
         return await settle(files.collect({ slot, timeoutMs }));
       } catch (error) {
-        const overCap =
-          error instanceof FileRefused ? downloadCapFailures[error.reason] : undefined;
-        if (overCap !== undefined)
-          throw new OperationFailure(overCap, { cause: error, dispatch: "unknown" });
-        throw fileFailure(error, true);
+        throw collectFailure(error);
+      }
+    },
+    collectAll: async (trigger, collectOptions) => {
+      const files = channel();
+      const collectAll = files.collectAll;
+      if (collectAll === undefined)
+        throw new OperationFailure(
+          "This host cannot collect every download a trigger starts (files.collectAll); use files.collect for one download",
+          { dispatch: "not_sent" },
+        );
+      const max = collectOptions?.max;
+      if (max !== undefined && !(Number.isSafeInteger(max) && max >= 1))
+        throw new OperationFailure("files.collectAll takes max as a positive whole number", {
+          dispatch: "not_sent",
+        });
+      let slot: string;
+      try {
+        slot = await settle(files.arm());
+      } catch (error) {
+        throw fileFailure(error);
+      }
+      try {
+        await trigger();
+      } catch (error) {
+        // The capture ends with the trigger, so nothing it armed outlives the failure.
+        await Effect.runPromise(Effect.ignore(collectAll({ slot, timeoutMs: 0, max: 1 })));
+        throw error;
+      }
+      const timeoutMs = Math.min(
+        collectOptions?.timeoutMs ?? downloadWaitMs,
+        Math.max(0, options.deadline.remainingMs()),
+      );
+      try {
+        return await settle(
+          collectAll({ slot, timeoutMs, ...(max === undefined ? {} : { max }) }),
+        );
+      } catch (error) {
+        throw collectFailure(error);
       }
     },
     screenshot: async (shot = {}) => {
