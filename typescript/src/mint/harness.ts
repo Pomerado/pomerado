@@ -134,6 +134,7 @@ import {
   resultDigestThresholdBytes,
 } from "./result-digest.js";
 import { codeContentDigest } from "./code-digest.js";
+import { sourceDigest as exactTextDigest } from "./step-checks.js";
 import { writePathNotice } from "./write-session.js";
 import {
   caseDigest,
@@ -3931,7 +3932,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        * result stays current through an edit that only rewords what a schema tells readers, on
        * either version; undefined when it cannot be read, and a failed read is reported to the host.
        */
-      const stepDigest = (entrypoint: string) =>
+      const stepDigest = (
+        entrypoint: string,
+        digest: (files: ReadonlyMap<string, string>) => string = codeContentDigest,
+      ) =>
         Effect.tryPromise({
           try: async () => {
             const files = await readImportClosure(async (path) => {
@@ -3939,7 +3943,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               const text: unknown = await session.readFile?.({ path });
               return typeof text === "string" ? text : undefined;
             }, entrypoint);
-            return files.size === 0 ? undefined : codeContentDigest(files);
+            return files.size === 0 ? undefined : digest(files);
           },
           catch: (error) => error,
         }).pipe(
@@ -5988,8 +5992,13 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           };
         },
       );
+      /**
+       * A submission's identity for `unchanged_since_denial`, on its files' exact text
+       * (`exactTextDigest`), not the live tests' digest: a review's finding can sit in a comment or a
+       * schema's description, and an edit there alone is a new submission to review.
+       */
       const submissionKey = (proposed: PublicationRequest, paths: readonly string[]) =>
-        Effect.forEach(paths, stepDigest).pipe(
+        Effect.forEach(paths, (path) => stepDigest(path, exactTextDigest)).pipe(
           Effect.map((digests) =>
             JSON.stringify({
               proposed,
