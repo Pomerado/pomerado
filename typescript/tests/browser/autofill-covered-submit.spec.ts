@@ -177,9 +177,8 @@ test("an email field's own suggestion list, opened by typing, covers Continue: t
 <button id="continue">Continue</button></form>
 <script>const field = document.getElementById("email");
 const list = document.getElementById("list");
-const show = (shown) => { list.hidden = !shown; field.setAttribute("aria-expanded", String(shown)); };
-field.addEventListener("input", () => show(true));
-field.addEventListener("keydown", (event) => { if (event.key === "Escape") show(false); });
+field.addEventListener("input", () => { list.hidden = false; });
+field.addEventListener("keydown", (event) => { if (event.key === "Escape") list.hidden = true; });
 ${script}</script>`,
         });
     });
@@ -206,11 +205,14 @@ ${script}</script>`,
   });
   await expect(page.locator("#password-screen")).toBeVisible();
   expect(received).toEqual([new URLSearchParams({ email }).toString()]);
-  // A banner over Continue, which Escape leaves open, is no closed list: the fill stays blocked.
+  // A banner over Continue, which Escape leaves open while the field stops saying it is expanded,
+  // is no closed list: the fill stays blocked.
   const bannered = await page.context().newPage();
   const unsent = await open(
     bannered,
-    `document.body.insertAdjacentHTML("beforeend", '<div style="position:fixed;top:32px;left:0;right:0;height:60px;z-index:1;background:#eee"><button type="button">Accept</button></div>');`,
+    `document.body.insertAdjacentHTML("beforeend", '<div style="position:fixed;top:32px;left:0;right:0;height:60px;z-index:1;background:#eee"><button type="button">Accept</button></div>');
+field.addEventListener("input", () => field.setAttribute("aria-expanded", "true"));
+field.addEventListener("keydown", (event) => { if (event.key === "Escape") field.setAttribute("aria-expanded", "false"); });`,
   );
   expect(await run(bannered, step)).toMatchObject({ outcome: "filled", submit: "blocked", blockedBy: { tag: "div" } });
   expect(unsent).toEqual([]);
