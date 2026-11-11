@@ -43,7 +43,7 @@ For more details, see [How it works](docs/how-it-works.md).
 
 Prerequisites
 
-- macOS or Linux
+- macOS, Linux or Windows 11, natively or in WSL2. See [Windows](docs/windows.md)
 - Node 24.21 or a later Node 24 release, which you can check with `node --version`
 - An OpenAI API key, since Pomerado uses OpenAI models to build and review integrations. Your agent can run on any model
 - An MCP client that runs local servers, such as Claude Code, Codex, Cursor, VS Code, Claude Desktop or Gemini CLI
@@ -136,6 +136,7 @@ pomerado-integrations/example_reader/
 ├── deployment.json      Tool name, description, URL, task, authority and sign-in origins
 ├── mcp.mjs              Launcher for the shared Pomerado runtime
 ├── mcp.json             Standard MCP server entry, with no key
+├── mcp.windows.json     Built inside WSL only: the same entry through wsl.exe, for Windows clients
 └── README.md            Add commands for each MCP client
 ```
 
@@ -177,6 +178,7 @@ This repository is the complete Pomerado core, released under the MIT license. E
 - [docs.pomerado.ai](https://docs.pomerado.ai) has the full Pomerado docs, including Pomerado Cloud's API and hosted MCP.
 - [Getting started](docs/getting-started.md) covers install, client settings, a first integration and troubleshooting.
 - [Agent setup](docs/agent-setup.md) gives an AI agent the steps to install Pomerado for you.
+- [Windows](docs/windows.md) covers running Pomerado in WSL2 or natively on Windows.
 - [How it works](docs/how-it-works.md) covers the minter, Guardian, the runtime, jobs and the library.
 - [AGENTS.md](AGENTS.md) tells coding agents how to change this repository.
 - [CONTRIBUTING.md](CONTRIBUTING.md) covers building from source and how changes land.

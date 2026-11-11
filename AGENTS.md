@@ -4,7 +4,7 @@ Guidance for coding agents that change this repository. These rules add to [CONT
 
 ## Setup and checks
 
-Use macOS or Linux, Node 24.21 or a later Node 24 release, git 2.36 or later, and jq.
+Use macOS, Linux or Windows, Node 24.21 or a later Node 24 release, git 2.36 or later, and jq. On Windows, work in WSL2, or natively with Git for Windows and its Git Bash for the CI scans ([docs/windows.md](docs/windows.md)).
 
 ```sh
 corepack enable

@@ -653,6 +653,39 @@ it("quotes the README's add commands for sh, and for PowerShell on Windows", asy
   }
 });
 
+// A client on the Windows side, such as Claude Desktop, cannot start a Linux path itself, so an
+// integration built inside WSL also writes an entry that starts the server through wsl.exe.
+it("adds a wsl.exe server entry for Windows clients when built inside WSL", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pomerado-integration-"));
+  try {
+    const wsl = { ...hostPlatform, windows: false, environment: { WSL_DISTRO_NAME: "Ubuntu-24.04" } };
+    const readme = await publishedReadme(root, wsl);
+    const directory = join(await realpath(root), "example_reader");
+    const linux = JSON.parse(await readFile(join(directory, "mcp.json"), "utf8"));
+    const { command, args } = linux.mcpServers.example_reader;
+    expect(JSON.parse(await readFile(join(directory, "mcp.windows.json"), "utf8"))).toEqual({
+      mcpServers: {
+        example_reader: {
+          command: "wsl.exe",
+          args: ["--distribution", "Ubuntu-24.04", "--exec", command, ...args],
+        },
+      },
+    });
+    expect(readme.replaceAll(/\s+/gu, " ")).toContain(
+      "takes the entry from mcp.windows.json instead. It starts the same server inside the Ubuntu-24.04 distribution through wsl.exe.",
+    );
+
+    for (const environment of [{}, { WSL_DISTRO_NAME: "Ubuntu\" --exec sh" }]) {
+      await rm(directory, { recursive: true, force: true });
+      const outside = await publishedReadme(root, { ...wsl, environment });
+      expect(await readdir(directory)).not.toContain("mcp.windows.json");
+      expect(outside).not.toContain("wsl.exe");
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 it("packages a client-neutral MCP server entry that holds no key", async () => {
   const root = await mkdtemp(join(tmpdir(), "pomerado-integration-"));
   try {
@@ -663,6 +696,8 @@ it("packages a client-neutral MCP server entry that holds no key", async () => {
             root,
             name: "example_reader",
             request: { url: "https://example.test", intent: "Read page", effect: "read" },
+            // Outside WSL, so no Windows-side entry joins the files.
+            platform: { ...hostPlatform, environment: {} },
           });
           return yield* publish({
             entrypoint: "src/main.mjs",

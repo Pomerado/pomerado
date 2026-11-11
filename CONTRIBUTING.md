@@ -10,7 +10,7 @@ Please follow our [code of conduct](CODE_OF_CONDUCT.md). Report vulnerabilities 
 
 To use Pomerado with your agent, start with [Get started](README.md#get-started). To develop this repository, install these.
 
-- macOS or Linux.
+- macOS, Linux or Windows. On Windows, use WSL2, or Windows itself with Git for Windows, as [Windows](docs/windows.md#build-from-source-on-windows) describes.
 - Node 24.21 or a later Node 24 release.
 - pnpm 10.34.9, which corepack installs for you and checks against the SHA-512 that `packageManager` in package.json names.
 - git 2.36 or later, and jq.

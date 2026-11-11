@@ -4,7 +4,7 @@ This guide installs Pomerado, connects it to your MCP client and builds a first 
 
 ## Prerequisites
 
-- macOS or Linux.
+- macOS, Linux or Windows 11. On Windows, run Pomerado in WSL2 or natively, as [Windows](windows.md) describes.
 - Node 24.21 or a later Node 24 release. `node --version` should print `v24.21.0` or higher, below `v25`.
 - An OpenAI API key for an account that can use `gpt-6.1-sol` and `gpt-6-luna`. Pomerado calls OpenAI models to build and review integrations. Your agent can run on any model.
 - An MCP client that runs local stdio servers.
@@ -136,7 +136,7 @@ From VS Code's docs on [MCP servers](https://code.visualstudio.com/docs/agent-cu
 
 From the MCP docs on [connecting local servers](https://modelcontextprotocol.io/docs/develop/connect-local-servers) and [debugging](https://modelcontextprotocol.io/docs/tools/debugging).
 
-- Add the entry to `claude_desktop_config.json`. On macOS it is in `~/Library/Application Support/Claude/`.
+- Add the entry to `claude_desktop_config.json`. On macOS it is in `~/Library/Application Support/Claude/`, and on Windows in `%APPDATA%\Claude\`.
 - Claude Desktop passes servers a limited set of variables and documents no way to reference one. A key in the entry's `env` block is stored as plain text in that file.
 - Claude Desktop documents no timeout setting.
 
