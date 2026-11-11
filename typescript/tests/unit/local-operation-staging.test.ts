@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { runLocalOperation } from "../../src/execution/local-operation.js";
 import { hostPlatform, type LocalPlatform } from "../../src/execution/local-platform.js";
 import { createLocalWorkspace } from "../../src/execution/local-workspace.js";
+import { getRuntimeSources } from "../../src/execution/runtime-sources.js";
 
 // Windows creates symbolic links only with administrator rights or Developer Mode, so a run there
 // stages the trusted SDK without them. Authored source must still load the very modules the
@@ -72,4 +73,15 @@ describe("the staged trusted SDK", { timeout: 30_000 }, () => {
       linkedRuntimeFile: false,
     });
   });
+});
+
+// On Windows each staged SDK file is `export * from` the installed one, and `export *` leaves out a
+// default export, so none of them may have one.
+it("stages no SDK module with a default export", () => {
+  const sources = getRuntimeSources();
+  expect(sources.length).toBeGreaterThan(0);
+  const withDefault = sources
+    .filter(([, text]) => /\bexport\s+default\b|\bas\s+default\b/.test(text))
+    .map(([path]) => path);
+  expect(withDefault).toEqual([]);
 });

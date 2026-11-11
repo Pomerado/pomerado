@@ -78,6 +78,9 @@ const stageDependencies = (directory: string, platform: LocalPlatform) =>
     );
   });
 
+/** The staged package.json, which makes the staged `.js` files ES modules. */
+const modulePackage = '{"type":"module"}';
+
 /** Top-level names the host stages beside authored source, as a file or a folder. */
 const reserved = new Set([
   "runtime",
@@ -144,7 +147,7 @@ export const stageSources = (options: LocalOperationOptions) =>
       }
     }
     yield* localPromise(() =>
-      writeFile(join(directory, "package.json"), '{"type":"module"}', {
+      writeFile(join(directory, "package.json"), modulePackage, {
         flag: "wx",
         mode: 0o400,
       }),
@@ -163,7 +166,7 @@ export const stageSources = (options: LocalOperationOptions) =>
     if (!seen.has("package.json"))
       yield* localPromise(() =>
         platform.windows
-          ? writeFile(join(operation, "package.json"), '{"type":"module"}', {
+          ? writeFile(join(operation, "package.json"), modulePackage, {
               flag: "wx",
               mode: 0o400,
             })

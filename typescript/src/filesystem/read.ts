@@ -55,8 +55,13 @@ const openBelow = async (directory: string, parts: readonly string[], handles: F
     paths.push(path);
   }
   if (descriptorRelative) return;
+  // As bigints: NTFS file IDs pass 2^53, where numbers round, so a junction and the folder it
+  // opened could compare equal.
   for (const [index, held] of handles.entries()) {
-    const [opened, current] = await Promise.all([held.stat(), lstat(paths[index] ?? "")]);
+    const [opened, current] = await Promise.all([
+      held.stat({ bigint: true }),
+      lstat(paths[index] ?? "", { bigint: true }),
+    ]);
     if (opened.dev !== current.dev || opened.ino !== current.ino) throw new Error("scope");
   }
 };
