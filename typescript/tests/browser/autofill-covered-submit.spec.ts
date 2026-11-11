@@ -146,3 +146,66 @@ test("an empty overlay beside a modal dialog in one portal catches the host's cl
   });
   expect(received).toEqual([]);
 });
+
+test("an email field's own suggestion list, opened by typing, covers Continue: the fill closes it with Escape in the field and clicks Continue once; a banner over Continue that Escape leaves open stays blocked", async ({
+  page,
+}) => {
+  // The first fill and the banner's each wait out Playwright's 5 s click timeout once.
+  test.setTimeout(30_000);
+  const email = "synthetic.member@example.test";
+  const step: AutofillStep = { fields: [{ selector: "#email", slot: "email" }], submit: "#continue" };
+  // An unlabelled list, drawn right under the field on input and closed by Escape, over Continue.
+  const open = async (target: Page, script = "") => {
+    const received: string[] = [];
+    await target.route(`${site}/**`, async (route) => {
+      if (route.request().method() === "POST") {
+        received.push(route.request().postData() ?? "");
+        await route.fulfill({ contentType: "text/html", body: '<p id="password-screen">Password</p>' });
+      } else
+        await route.fulfill({
+          contentType: "text/html",
+          body: `<form action="/identify" method="post"><div style="position:relative">
+<label>Email<input id="email" name="email" autocomplete="off"></label>
+<div id="list" hidden style="position:absolute;top:100%;left:0;width:320px;height:120px;background:#fff"><div>${email}</div></div></div>
+<button id="continue">Continue</button></form>
+<script>const field = document.getElementById("email");
+const list = document.getElementById("list");
+field.addEventListener("input", () => { list.hidden = false; });
+field.addEventListener("keydown", (event) => { if (event.key === "Escape") list.hidden = true; });
+${script}</script>`,
+        });
+    });
+    await target.goto(`${site}/login`);
+    return received;
+  };
+  const run = async (target: Page) => {
+    const hosted = await hostPage(target);
+    const inspection = await Effect.runPromise(
+      inspectAutofillStep({ step, page: hosted, siteOrigin: site, authenticationOrigins: [] }),
+    );
+    if ("outcome" in inspection) throw new Error(`Inspection refused: ${inspection.reason}`);
+    const { keyboard } = await hostKeyboard(target);
+    return Effect.runPromise(
+      fillAutofillStep({ step, values: [email], inspection, page: hosted, keyboard, settleMs: 1_000 }),
+    );
+  };
+  const received = await open(page);
+  expect(await run(page)).toMatchObject({
+    outcome: "filled",
+    fields: [{ slot: "email", status: "filled" }],
+    submit: "clicked",
+  });
+  await expect(page.locator("#password-screen")).toBeVisible();
+  expect(received).toEqual([new URLSearchParams({ email }).toString()]);
+  // A banner over Continue, which Escape leaves open while the field stops saying it is expanded,
+  // is no closed list: the fill stays blocked.
+  const bannered = await page.context().newPage();
+  const unsent = await open(
+    bannered,
+    `document.body.insertAdjacentHTML("beforeend", '<div style="position:fixed;top:32px;left:0;right:0;height:60px;z-index:1;background:#eee"><button type="button">Accept</button></div>');
+field.addEventListener("input", () => field.setAttribute("aria-expanded", "true"));
+field.addEventListener("keydown", (event) => { if (event.key === "Escape") field.setAttribute("aria-expanded", "false"); });`,
+  );
+  expect(await run(bannered)).toMatchObject({ outcome: "filled", submit: "blocked", blockedBy: { tag: "div" } });
+  expect(unsent).toEqual([]);
+});
