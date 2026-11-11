@@ -208,8 +208,6 @@ interface AutofillRecordedStep {
    * once it clicked through the site's own control over it.
    */
   readonly submitVia?: AutofillRecipeStep["submitVia"];
-  /** Once the host closed a list the screen's last field opened over its submit. */
-  readonly closeFieldList?: true;
   /** A two-factor method choice's recorded methods. */
   readonly methods?: AutofillRecipeStep["methods"];
   /** The picked method's `option`, with `submit`, when it was chosen from a native select. */
@@ -228,20 +226,16 @@ interface AutofillRecordedStep {
 }
 
 /**
- * A screen's popup, how it submits, from the keyboard or once its field's list is closed included,
- * and the covering notice's control it dismisses, which a step rebuilt for that screen keeps.
+ * A screen's popup, how it submits, from the keyboard included, and the covering notice's control
+ * it dismisses, which a step rebuilt for that screen keeps.
  */
 export const screenSubmit = (
-  screen: Pick<
-    AutofillStep,
-    "popup" | "submit" | "submitKey" | "submitVia" | "closeFieldList" | "dismiss"
-  >,
+  screen: Pick<AutofillStep, "popup" | "submit" | "submitKey" | "submitVia" | "dismiss">,
 ) => ({
   ...(screen.popup === undefined ? {} : { popup: screen.popup }),
   ...(screen.submit === undefined ? {} : { submit: screen.submit }),
   ...(screen.submitKey === undefined ? {} : { submitKey: screen.submitKey }),
   ...(screen.submitVia === undefined ? {} : { submitVia: screen.submitVia }),
-  ...(screen.closeFieldList === undefined ? {} : { closeFieldList: screen.closeFieldList }),
   ...(screen.dismiss === undefined ? {} : { dismiss: screen.dismiss }),
 });
 
@@ -627,8 +621,7 @@ export const noteRefill = (state: AutofillSignInState, slot: RefillSlot = "passw
  * Records what a fill did once it returns: a field it did not fill is not held as filled, nor a
  * saved security answer typed, a step that reached nothing leaves the recipe, a step the host
  * clicked records it, with `submitVia` when it pressed the submit from the keyboard or clicked
- * through the site's own control over it, or `closeFieldList` when it closed a list the screen's
- * field opened over it first, and one whose
+ * through the site's own control over it, and one whose
  * click another element caught is the open sign-in's `blocked` screen. Returns whether anything
  * reached the page.
  */
@@ -655,11 +648,9 @@ export const recordStep = (
     state.steps[state.steps.length - 1] = {
       ...last,
       submittedBy: "host",
-      ...(stepReport.outcome !== "filled" || stepReport.via === undefined
-        ? {}
-        : stepReport.via === "closed_field_list"
-          ? { closeFieldList: true as const }
-          : { submitVia: stepReport.via }),
+      ...(stepReport.outcome === "filled" && stepReport.via !== undefined
+        ? { submitVia: stepReport.via }
+        : {}),
     };
   return reached || submit === "clicked" || submit === "uncertain";
 };

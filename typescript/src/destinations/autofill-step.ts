@@ -202,13 +202,6 @@ export interface AutofillStep<Slot extends FillSlot = AutofillSlot> {
    */
   readonly submitVia?: "keyboard" | "click_layer" | undefined;
   /**
-   * The host closes a list the field it typed last opened over the submit, such as an email box's
-   * own suggestions, before its first click, as a recorded screen was sent (a recipe's
-   * `closeFieldList`). Never the minter's: any fill closes such a list by itself once it caught
-   * the submit's click.
-   */
-  readonly closeFieldList?: true | undefined;
-  /**
    * The action with a lasting effect on the account the submit takes, on a step with no fields and
    * one submit. The recipe records it, and a run presses that submit only when its caller allowed
    * the choice.
@@ -612,10 +605,7 @@ export type AutofillStepReport =
        * on it. With `via: "click_layer"`, the element over the submit was the site's own control
        * for it, with the submit's own accessible name, in the submit's closest form or dialog and
        * holding no field, and the host clicked the submit's centre with the mouse, so that control
-       * took the click as a person's would. With `via: "closed_field_list"`, a list the field the
-       * host typed last opened, such as an email box's suggestions, sat over the submit, and the
-       * host pressed Escape in that field, which kept its value and closed the list, then sent the
-       * submit, typing nothing again.
+       * took the click as a person's would.
        * `failed`: the click or press threw before any such request went out.
        * `blocked`: another element sat over the submit and caught the host's click (`blockedBy`),
        * and it was no control of the site's own for the submit, so nothing was sent; the fields
@@ -645,11 +635,10 @@ export type AutofillStepReport =
        */
       readonly clicked?: true;
       /**
-       * A `clicked` submit the host pressed from the keyboard (Enter on the submit itself),
-       * clicked through the site's own control laid over it (`click_layer`), or clicked once it
-       * closed a list its field opened over it (`closed_field_list`).
+       * A `clicked` submit the host pressed from the keyboard (Enter on the submit itself), or
+       * clicked through the site's own control laid over it (`click_layer`).
        */
-      readonly via?: "keyboard" | "click_layer" | "closed_field_list";
+      readonly via?: "keyboard" | "click_layer";
       /**
        * Host-only, on a `refused` submit of a step with a submit or a submit key whose every field
        * takes a code: once the host typed every field, and before it clicked anything, the step's

@@ -1248,12 +1248,11 @@ const afterFieldCall = (
  * typed last opened, such as an email box's own suggestions, closes that list first: the host
  * presses Escape in that field once and, when the list closed and the field kept its value, clicks
  * the submit again, pressing it from the keyboard when that click is caught too
- * (`closeFieldList`). It types nothing again and reports the submit `clicked` with
- * `via: "closed_field_list"`; a list that stays open leaves the click `blocked`. A step that says
- * `closeFieldList` closes such a list before its first click. A click that ran out of time while
- * the next page loaded, as one through a slow chain of redirects does, is `clicked` once a request
- * for the page's main frame went out, whatever the site answered, and the page gets the settle
- * wait from there; with no such request it is `failed`.
+ * (`closeFieldList`). It types nothing again; a list that stays open leaves the click `blocked`.
+ * A click that ran out of time while the next page loaded, as one through a slow chain of
+ * redirects does, is `clicked` once a request for the page's main frame went out, whatever the
+ * site answered, and the page gets the settle wait from there; with no such request it is
+ * `failed`.
  */
 export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepReport> =>
   Effect.gen(function* () {
@@ -1301,9 +1300,7 @@ export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepRe
         }
         return yield* submitStep(fill, progress, boxes, typed);
       });
-    // A recorded screen whose field opened its own list over the submit closes it first.
-    const closed = step.closeFieldList === true && (yield* closeFieldList(input, progress));
-    const report = afterList(closed, yield* submitStep(input, progress, boxes, typed, false, sent));
+    const report = yield* submitStep(input, progress, boxes, typed, false, sent);
     // The page may enable its submit only on key presses: the host types every field again by keys.
     if (
       report.outcome === "filled" &&
@@ -1313,7 +1310,7 @@ export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepRe
       return yield* typeAgain({ ...input, keyboard: byKeys(input.keyboard) });
     if (isBlocked(report) && (yield* closeFieldList(input, progress))) {
       progress.check = typedFields(step, progress);
-      return afterList(true, yield* submitStep(input, progress, boxes, typed, true));
+      return yield* submitStep(input, progress, boxes, typed, true);
     }
     if (!isBlocked(report) || step.dismiss === undefined) return report;
     const again = yield* dismissNotice(input, progress);
@@ -1555,15 +1552,6 @@ const closeFieldList = (input: CallInput, progress: FillProgress): Effect.Effect
         Effect.orElseSucceed(() => false),
       );
 };
-
-/**
- * A report of a submit the host clicked once it closed a list its field opened (`closed`):
- * `via: "closed_field_list"`, unless it was pressed from the keyboard or clicked through a layer.
- */
-const afterList = (closed: boolean, report: AutofillStepReport): AutofillStepReport =>
-  closed && report.outcome === "filled" && report.submit === "clicked" && report.via === undefined
-    ? { ...report, via: "closed_field_list" }
-    : report;
 
 /**
  * The step's submit, judged again, guarded and clicked once every field was typed

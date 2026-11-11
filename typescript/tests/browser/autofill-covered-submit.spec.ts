@@ -3,12 +3,6 @@ import type { Page } from "playwright";
 import { Effect } from "effect";
 import { inspectAutofillStep, type AutofillStep } from "../../src/destinations/autofill-step.js";
 import { fillAutofillStep, resubmitAutofillStep } from "../../src/destinations/autofill-fill.js";
-import {
-  decodeSignInRecipe,
-  signInRecipe,
-  signInRecipeText,
-} from "../../src/destinations/sign-in-recipe.js";
-import { screenSubmit } from "../../src/runtime/autofill-state.js";
 import { hostKeyboard, hostPage } from "./autofill-host-page.js";
 
 // A fixed footer that sits over a sign-in form's Log In button catches the host's click, and has
@@ -153,9 +147,8 @@ test("an empty overlay beside a modal dialog in one portal catches the host's cl
   expect(received).toEqual([]);
 });
 
-test("an email field's own suggestion list, opened by typing, covers Continue: the fill closes it with Escape in the field and clicks Continue once, the recipe records closeFieldList as version 15, and a fresh browser replays it; a banner over Continue that Escape leaves open stays blocked", async ({
+test("an email field's own suggestion list, opened by typing, covers Continue: the fill closes it with Escape in the field and clicks Continue once; a banner over Continue that Escape leaves open stays blocked", async ({
   page,
-  browser,
 }) => {
   // The first fill and the banner's each wait out Playwright's 5 s click timeout once.
   test.setTimeout(30_000);
@@ -185,23 +178,22 @@ ${script}</script>`,
     await target.goto(`${site}/login`);
     return received;
   };
-  const run = async (target: Page, at: AutofillStep) => {
+  const run = async (target: Page) => {
     const hosted = await hostPage(target);
     const inspection = await Effect.runPromise(
-      inspectAutofillStep({ step: at, page: hosted, siteOrigin: site, authenticationOrigins: [] }),
+      inspectAutofillStep({ step, page: hosted, siteOrigin: site, authenticationOrigins: [] }),
     );
     if ("outcome" in inspection) throw new Error(`Inspection refused: ${inspection.reason}`);
     const { keyboard } = await hostKeyboard(target);
     return Effect.runPromise(
-      fillAutofillStep({ step: at, values: [email], inspection, page: hosted, keyboard, settleMs: 1_000 }),
+      fillAutofillStep({ step, values: [email], inspection, page: hosted, keyboard, settleMs: 1_000 }),
     );
   };
   const received = await open(page);
-  expect(await run(page, step)).toMatchObject({
+  expect(await run(page)).toMatchObject({
     outcome: "filled",
     fields: [{ slot: "email", status: "filled" }],
     submit: "clicked",
-    via: "closed_field_list",
   });
   await expect(page.locator("#password-screen")).toBeVisible();
   expect(received).toEqual([new URLSearchParams({ email }).toString()]);
@@ -214,37 +206,6 @@ ${script}</script>`,
 field.addEventListener("input", () => field.setAttribute("aria-expanded", "true"));
 field.addEventListener("keydown", (event) => { if (event.key === "Escape") field.setAttribute("aria-expanded", "false"); });`,
   );
-  expect(await run(bannered, step)).toMatchObject({ outcome: "filled", submit: "blocked", blockedBy: { tag: "div" } });
+  expect(await run(bannered)).toMatchObject({ outcome: "filled", submit: "blocked", blockedBy: { tag: "div" } });
   expect(unsent).toEqual([]);
-
-  const text = signInRecipeText(
-    signInRecipe(
-      [
-        {
-          page: `${site}/login`,
-          fields: step.fields,
-          submit: "#continue",
-          submittedBy: "host",
-          closeFieldList: true,
-        },
-      ],
-      { selector: "#password-screen" },
-    ),
-  );
-  const decoded = decodeSignInRecipe(text);
-  expect(decoded).toMatchObject({ version: 15, steps: [{ closeFieldList: true }] });
-  // No earlier version carries the flag.
-  expect(decodeSignInRecipe(text.replace('"version": 15', '"version": 14'))).toBe("invalid");
-  if (typeof decoded === "string") throw new Error(decoded);
-  const context = await browser.newContext();
-  try {
-    const fresh = await context.newPage();
-    const sent = await open(fresh);
-    expect(
-      await run(fresh, { fields: step.fields, ...screenSubmit(decoded.steps[0]!) }),
-    ).toMatchObject({ outcome: "filled", submit: "clicked", via: "closed_field_list" });
-    expect(sent).toHaveLength(1);
-  } finally {
-    await context.close();
-  }
 });
