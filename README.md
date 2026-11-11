@@ -190,6 +190,7 @@ This repository is the complete Pomerado core, released under the MIT license. E
 | `typescript/authoring/` | Shared prompts and examples, with sections a host can replace |
 | `typescript/tests/` | Unit tests and browser tests with local fixture sites |
 | `tools/` | Build helpers, the CI scans and the browser shard planner |
+| `changes/` | Changelog fragments, one file per user-facing change, until a release |
 | `docs/` | Guides for users, agents and maintainers |
 | `third-party/` | Licenses for adapted third-party code |
 

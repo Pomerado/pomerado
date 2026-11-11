@@ -17,7 +17,7 @@ There are two channels:
 2. The merge starts the Release workflow. It picks the canary version `X.Y.Z-canary.N`:
    - `X.Y.Z` is the `version` in `package.json` while npm doesn't have it, and the next patch version once it does.
    - `N` is the workflow's run number, so a later canary always sorts higher.
-3. The workflow writes that version into `package.json` and runs the full Check workflow on it. Check typechecks, builds, runs the unit and browser tests, and installs the packed tarball in a clean project.
+3. The workflow writes that version into `package.json`, lists the [changelog fragments](#changes-and-versions) under `Unreleased` in its copy of `CHANGELOG.md`, and runs the full Check workflow on it. Check typechecks, builds, runs the unit and browser tests, and installs the packed tarball in a clean project.
 4. The publish job verifies that the tested tarball carries the canary's name and version, and that the version sorts above every version npm has. Then it publishes exactly that tarball under `canary`, with a provenance attestation naming this repository, the workflow and the commit. A re-run that finds the canary already on npm stops without publishing.
 
 A newer merge replaces a canary that is still waiting to start, and the newer canary includes its commits. The replaced merge gets no Check run of its own on `main`, but its pull request passed CI on the same tree.
@@ -116,11 +116,19 @@ This routing is not a security boundary. A fork's pull request runs its own copy
 
 ## Changes and versions
 
-Record user-facing changes in [CHANGELOG.md](../CHANGELOG.md) in the pull request that makes them. Bump `version` in `package.json` to start a new release line: a breaking change gets migration steps and, while the major version is 0, a new minor version.
+Record user-facing changes in the pull request that makes them, as a changelog fragment: a new file under `changes/` whose header names its section of [CHANGELOG.md](../CHANGELOG.md), as [changes/README.md](../changes/README.md) describes. Pull requests don't edit CHANGELOG.md, so they don't conflict over the top of `Unreleased`. `corepack pnpm test` runs `node tools/changelog.ts check`, which fails on a malformed fragment. Bump `version` in `package.json` to start a new release line: a breaking change gets migration steps and, while the major version is 0, a new minor version.
 
 A pull request that removes a `./core/*` export hosts use, or changes one incompatibly, also raises `pomerado.hostProtocol` in `package.json` by one. `tools/check-host-protocol.ts` runs first in `pnpm test` and fails when a `./core/*` export that the `canary` or `latest` version on npm has is gone and the protocol didn't rise above theirs, or when the protocol is lower than theirs. It can't see an incompatible change inside a module, so raise the number by hand for that. A release run fails when it can't read npm; a pull request or a local run warns and goes on.
 
-Changes go under `Unreleased`. The pull request that bumps `version` renames `Unreleased` to the `X.Y.Z` of the canaries that shipped those changes, as in `X.Y.Z-canary.N`, and lists its own changes under a new `Unreleased`.
+`node tools/changelog.ts assemble` moves every fragment into CHANGELOG.md under `Unreleased` and deletes it. Each goes at the top of its section, above the entries already there, and a missing section is added. Fragments go newest merge first, or by file name where git has no history, as in Check's shallow checkout. Check runs it for each canary, so a canary's packed CHANGELOG.md lists every change merged since the last release. Only that checkout changes: on `main` the fragments stay in `changes/`.
+
+A maintainer cuts the changelog for a release line in a pull request of its own, from current `main`:
+
+```sh
+node tools/changelog.ts release X.Y.Z
+```
+
+`X.Y.Z` is the version of the canaries that shipped those changes, as in `X.Y.Z-canary.N`. The command moves every fragment under `Unreleased`, renames `Unreleased` to `X.Y.Z` and starts a new, empty `Unreleased` above it. Add the release's summary under its heading by hand. Merge it just before the pull request that bumps `version`, which records its own changes in a fragment like any other: a change merged between the two ships in an `X.Y.Z` canary but is listed under the next release.
 
 ## Failures
 

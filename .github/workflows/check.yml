@@ -150,6 +150,12 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
         run: npm pkg set version="$VERSION"
+      # A canary's packed CHANGELOG.md lists the fragments in changes/ under Unreleased, as
+      # tools/changelog.ts describes. Only this checkout changes, and main keeps its fragments. The
+      # checkout is shallow, so the fragments go in file name order.
+      - name: Assemble the changelog
+        if: inputs.version != ''
+        run: node tools/changelog.ts assemble
       - run: corepack enable
       - run: corepack pnpm install --frozen-lockfile
       - run: corepack pnpm typecheck

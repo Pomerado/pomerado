@@ -31,7 +31,8 @@ GITLEAKS=/path/to/gitleaks bash tools/ci-scan.sh secrets
 - `typescript/src/` holds the minter, Guardian, the runtime, browser helpers and the local MCP host.
 - `typescript/authoring/` holds the minter's shared prompts and examples.
 - `typescript/tests/unit/` holds Vitest tests, and `typescript/tests/browser/` holds Playwright tests with local fixture sites.
-- `tools/` holds build helpers, the CI scans and the browser shard planner.
+- `tools/` holds build helpers, the CI scans, the browser shard planner and the changelog tool.
+- `changes/` holds changelog fragments, one file per user-facing change, which a release moves into CHANGELOG.md.
 - `docs/` holds guides. [docs/how-it-works.md](docs/how-it-works.md) lists each module.
 - In code, OpenAI model IDs are set only in `typescript/src/models/models.ts`. A unit test enforces it.
 
@@ -45,6 +46,7 @@ GITLEAKS=/path/to/gitleaks bash tools/ci-scan.sh secrets
 - Maintainers merge by hand with a merge commit until a merge queue takes over.
 - A push after a review needs a new independent review.
 - Write the failing test first for a change in behavior.
+- Record a user-facing change in a new changelog fragment under `changes/`, as [changes/README.md](changes/README.md) describes, never by editing CHANGELOG.md. A fragment starts with a header naming its section (`Breaking changes`, `Other changes` or `Fixes`), and `corepack pnpm test` fails on one that is malformed. Only the pull request that cuts a release edits CHANGELOG.md.
 - Add to this package only code the local host runs, or a hook interface another host implements.
 - Keep `#N` style references out of commit messages, where N is a number. The content scan rejects them. Link a public issue by its full URL.
 - Public text stays generic. Keep customer data, credentials, incidents, internal hostnames and internal references out of code, tests, commit messages and pull request text.

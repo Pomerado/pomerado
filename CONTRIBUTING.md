@@ -49,7 +49,19 @@ The [repository guide](README.md#repository-guide) maps the top-level folders. [
 
 Keep changes focused and follow the conventions in [AGENTS.md](AGENTS.md). For a change in behavior, add a failing test first, make the change, then refactor. Unit tests go in `typescript/tests/unit/` and browser tests in `typescript/tests/browser/`. Tests use synthetic sites and scripted model responses, and no test may call a real model.
 
-This package holds only code the local host runs, plus hook interfaces that other hosts implement. Update the docs when you change a public API, a tool or the CLI. Record a user-facing change under **Unreleased** in [CHANGELOG.md](CHANGELOG.md), with migration steps for a breaking change.
+This package holds only code the local host runs, plus hook interfaces that other hosts implement. Update the docs when you change a public API, a tool or the CLI.
+
+Record a user-facing change in a changelog fragment, a new file under `changes/`, rather than in CHANGELOG.md, so pull requests don't conflict over the top of the changelog. Name the file for the change, such as `changes/sign-in-popup-check.md`, and start it with its section: `Breaking changes`, `Other changes` or `Fixes`.
+
+```markdown
+---
+section: Fixes
+---
+
+- What changed, as someone who uses the package sees it.
+```
+
+List migration steps under a breaking change. [changes/README.md](changes/README.md) has the format, and `corepack pnpm test` checks it. A release moves the fragments into [CHANGELOG.md](CHANGELOG.md).
 
 ## Run checks
 
