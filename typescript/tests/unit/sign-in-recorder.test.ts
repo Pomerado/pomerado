@@ -1103,7 +1103,7 @@ it("asks for the login naming what the screen that needs it asks for", async () 
     submit: "#next",
   });
   expect(login).toBe(
-    "The website's sign-in screen asks for your email address or phone number and a sign-in code. Sign in to the website so this request can continue.",
+    "The website's sign-in screen asks for your email address or phone number, then a sign-in code, which you'll be asked for next. Sign in to the website so this request can continue.",
   );
 });
 

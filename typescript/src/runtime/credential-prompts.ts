@@ -43,7 +43,8 @@ const identifierNames = {
 
 /**
  * The sentence that says what the screen asks for, such as "The website's sign-in screen asks for
- * your email address and your password."; empty when the screen names nothing a login holds.
+ * your email address and your password."; empty when the screen names nothing. A code comes last,
+ * as one the owner is asked for next, so it is never typed into the login's own fields.
  */
 const screenSentence = (screen: AskingScreen | undefined) => {
   if (screen === undefined) return "";
@@ -52,12 +53,14 @@ const screenSentence = (screen: AskingScreen | undefined) => {
       ? []
       : [`your ${screen.identifierKinds.map((kind) => identifierNames[kind]).join(" or ")}`]),
     ...(screen.password ? ["your password"] : []),
-    ...(screen.code === true ? ["a sign-in code"] : []),
   ];
-  if (parts.length === 0) return "";
+  const code = screen.code === true ? "a sign-in code, which you'll be asked for next" : undefined;
+  if (parts.length === 0)
+    return code === undefined ? "" : `The website's sign-in screen asks for ${code}. `;
   const last = parts.pop();
   const listed = parts.length === 0 ? last : `${parts.join(", ")} and ${last}`;
-  return `The website's sign-in screen asks for ${listed}. `;
+  const then = code === undefined ? "" : `, then ${code}`;
+  return `The website's sign-in screen asks for ${listed}${then}. `;
 };
 
 /**
