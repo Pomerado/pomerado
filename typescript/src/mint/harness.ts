@@ -136,6 +136,8 @@ import {
 import { codeContentDigest } from "./code-digest.js";
 import { sourceDigest as exactTextDigest } from "./step-checks.js";
 import { writePathNotice } from "./write-session.js";
+import { rejectionNotices } from "./autofill-rejected.js";
+import type { CredentialRejectedField } from "../runtime/authentication.js";
 import {
   caseDigest,
   caseView,
@@ -6418,20 +6420,37 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     return loginDeclinedAnswer(decline);
                   }),
               ),
+              // The site rejected the sign-in, but the host could not tell which value: it is
+              // booked against no value, the build goes on and the minter reads the screen again.
+              Effect.catchIf(
+                (error) =>
+                  error.code === "CredentialsRejected" && error.rejectedCredential === undefined,
+                () =>
+                  diagnose({ phase: "sign_in", reason: "rejection_unattributed" }).pipe(
+                    Effect.as(
+                      JSON.stringify({
+                        status: "rejection_unattributed",
+                        userInputRequired: false,
+                        instruction: rejectionNotices.unattributed,
+                      }),
+                    ),
+                  ),
+              ),
               // The host already asked for a correction in place, and the site refused it too.
               Effect.catchIf(
-                (error) => error.code === "CredentialsRejected",
+                (error): error is MintFailure & { rejectedCredential: CredentialRejectedField } =>
+                  error.code === "CredentialsRejected" && error.rejectedCredential !== undefined,
                 (error) => {
                   terminal ??= {
                     build: "incomplete",
-                    rejectedCredential: error.rejectedCredential ?? "password",
+                    rejectedCredential: error.rejectedCredential,
                     summary:
                       "The website rejected a sign-in value and the bounded correction flow ended. No build was published. Recorded effects and receipts are preserved.",
                   };
                   return Effect.succeed(
                     JSON.stringify({
                       status: "credentials_rejected",
-                      field: error.rejectedCredential ?? "password",
+                      field: error.rejectedCredential,
                       userInputRequired: false,
                       instruction:
                         "The website rejected the login again after the host asked for a correction. The host is ending this build; never ask for credentials yourself.",

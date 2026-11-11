@@ -282,6 +282,11 @@ export const maximumOutputIssues = 20;
 export const maximumOutputIssueText = 200;
 
 export class MintFailure extends Data.TaggedError("MintFailure")<{
+  /**
+   * A `CredentialsRejected` failure's field: the one the site's own message rejected. Absent, the
+   * rejection named no field, and is booked against no value: the harness hands it back to the
+   * minter to read the screen again, never as a rejected password.
+   */
   readonly rejectedCredential?: typeof CredentialRejectedField.Type;
   /** Sub-cause, operation, underlying error, stack and context; see ERROR-LOGGING-STANDARD.md. */
   readonly failureDetail?: FailureDetail;
@@ -1872,6 +1877,7 @@ export const MintStopReason = Schema.Literal(...mintStopReasons);
 export type MintStopReason = typeof MintStopReason.Type;
 
 export type MintOutcome = {
+  /** The field the site rejected when its correction flow ended the build; never a guess. */
   readonly rejectedCredential?: typeof CredentialRejectedField.Type;
   readonly capability_review?: CapabilityReview;
   readonly build: "published" | "incomplete";

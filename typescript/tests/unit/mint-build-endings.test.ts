@@ -1942,6 +1942,28 @@ it("words a failed sign-in's summary without operator codes", async () => {
   expect(outcome.summary).not.toMatch(/AuthenticationFailed|credential_submit|receipts/u);
 });
 
+// A host that saw the site reject the sign-in but could not tell which value it rejected, such as
+// a page that asked for a second-factor code and showed an error naming no field, books it against
+// no value: the build neither records a rejected password nor ends, and the minter is told to read
+// the screen again rather than told the login was wrong.
+it("books a rejection that names no field against no value, and hands it back to re-check the screen", async () => {
+  const f = await fixture(
+    (_request, index) =>
+      index === 0 ? call("execute", authenticate, "sign_in") : prose("Stopping."),
+    {
+      reviewAndExecute: () => Effect.fail(new MintFailure({ code: "CredentialsRejected" })),
+    },
+  );
+  const outcome = await f.run();
+  expect(outcome).not.toHaveProperty("rejectedCredential");
+  // The minter got the answer back and was asked to go on: the rejection ended nothing.
+  expect(f.requests.length).toBeGreaterThan(2);
+  expect(outcome).toMatchObject({ stopReason: "final_text_without_tool" });
+  const answered = JSON.stringify(f.requests[1]?.input);
+  expect(answered).toContain("rejection_unattributed");
+  expect(answered).not.toContain('\\"field\\":\\"password\\"');
+});
+
 /** A sign-in screen the host filled and submitted: it may have sent the login, and proves nothing. */
 const submittedScreen = {
   executionId: "sign_in_screen",

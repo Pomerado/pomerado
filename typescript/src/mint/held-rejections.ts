@@ -55,7 +55,7 @@ export const rejection = (
     | "rejected_password_held"
     | "rejected_primary_held"
     | "rejected_login_held",
-  field: CredentialRejectedField = "password",
+  field: CredentialRejectedField,
 ) =>
   new MintFailure({
     code: "CredentialsRejected",

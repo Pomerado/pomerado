@@ -5,7 +5,6 @@ import type { AutofillStep, AutofillStepReport } from "../destinations/autofill-
 import type { ControlIdentity } from "../destinations/autofill-page-code.js";
 import type { CredentialRejectedField } from "../runtime/authentication.js";
 import { type AutofillHost, autofillRecovery, emit, result } from "./autofill-results.js";
-import type { MintFailure } from "./contracts.js";
 
 // A build sign-in's rejection rules: which reported fields count as rejected, which values may go
 // out again, how many corrections each field gets, and when a code is asked for again.
@@ -40,6 +39,8 @@ export const rejectionNotices = {
     "The host will ask the owner for a new code at the next code step. Send the code screen's signInStep again.",
   correctedLogin:
     "The owner gave a corrected login. Start the sign-in screens again from the login page: send each screen's signInStep, then signedIn.",
+  unattributed:
+    "The site rejected the sign-in without naming which value it rejected, so the host booked the rejection against no value and asked the owner for nothing. Explore read-only to read the screen again. If it asks for a code, from a message the site sent or from an authenticator app, send its signInStep with that field's slot code. If its error names the field it rejects, send rejected with that field's slot. Never ask for a password or a login yourself.",
 } as const;
 
 /** A screen that asks for a value before the host saw the login's identifier step. */
@@ -228,11 +229,13 @@ export const settleAutofillValues = (
 
 /**
  * Each visibly rejected primary field consumes only its own paired-question budget. Returns the
- * tries left with this one, or undefined when a field's budget is spent.
+ * tries left with this one, or undefined when a field's budget is spent. Only a rejection
+ * attributed to a field (`field`, the slot the site's own message names) reserves a correction: a
+ * rejection that names no field is booked against no value, and its host reads the screen again
+ * instead of asking for a corrected login.
  */
-export const reserveCorrection = (h: CorrectionHost, error: MintFailure) => {
+export const reserveCorrection = (h: CorrectionHost, field: CredentialRejectedField) => {
   const { autofillCorrectionRequests } = h;
-  const field = error.rejectedCredential ?? "password";
   const primaryKind = h.autofillPrimaryIdentifierKind.current ?? "username";
   const visible =
     h.autofillPendingRejectedFields.current.length > 0

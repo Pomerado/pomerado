@@ -9,7 +9,6 @@ import {
   wasSent,
 } from "../../src/mint/autofill-rejected.js";
 import type { AutofillHost } from "../../src/mint/autofill-results.js";
-import { MintFailure } from "../../src/mint/contracts.js";
 import { heldPasswordRejected, passwordDigest } from "../../src/mint/held-rejections.js";
 import type {
   CredentialRejectedField,
@@ -138,7 +137,7 @@ describe("the values the site rejected", () => {
 describe("the corrections a rejection gets", () => {
   it("asks each logical login field twice at most, saying the tries left", () => {
     const h = host();
-    const rejected = new MintFailure({ code: "CredentialsRejected", rejectedCredential: "password" });
+    const rejected = "password";
     expect(reserveCorrection(h, rejected)).toBe(2);
     expect(reserveCorrection(h, rejected)).toBe(1);
     expect(reserveCorrection(h, rejected)).toBeUndefined();

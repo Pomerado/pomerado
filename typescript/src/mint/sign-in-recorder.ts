@@ -558,7 +558,7 @@ export const makeSignInRecorder = (input: {
       let held = login.held();
       step = values.resolve(request, held);
       if (step.fields.some((field) => field.slot === "password") && heldPasswordRejected(h))
-        return yield* rejection("rejected_password_held");
+        return yield* rejection("rejected_password_held", "password");
       // A password or code this sign-in already filled is filled once more at most: a page error
       // may have kept the first from the site, but the site may have rejected it, and sending it
       // a third time risks a lockout.
@@ -796,7 +796,7 @@ export const makeSignInRecorder = (input: {
         rememberRejectedPassword(h, h.autofillSentValues.current.password);
       const failed = rejection("site_rejected", slot);
       const held = login.held();
-      const triesLeft = held === undefined ? undefined : reserveCorrection(h, failed);
+      const triesLeft = held === undefined ? undefined : reserveCorrection(h, slot);
       if (held === undefined || triesLeft === undefined) return yield* failed;
       h.autofillPendingRejectedFields.current = [];
       const corrected = yield* login.correct(slot, held, triesLeft);
