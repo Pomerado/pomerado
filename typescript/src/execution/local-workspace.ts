@@ -17,7 +17,12 @@ import { applyDiff, type Editor } from "@openai/agents";
 import { Manifest, type Entry, type SandboxSession } from "@openai/agents/sandbox";
 import { Effect, Either, type Scope } from "effect";
 import { createLocalProcess, type LocalProcess } from "./local-process.js";
-import { hostPlatform, removalRetries } from "./local-platform.js";
+import {
+  findWindowsShell,
+  hostPlatform,
+  removalRetries,
+  type LocalPlatform,
+} from "./local-platform.js";
 import {
   localError,
   localFilePath,
@@ -34,7 +39,29 @@ export interface LocalWorkspaceOptions {
   readonly root?: string;
   readonly environment?: Readonly<Record<string, string>>;
   readonly commandTimeoutMs?: number;
+  /** The operating system commands run on, the host's own when absent. */
+  readonly platform?: LocalPlatform;
 }
+
+/** Why a workspace command cannot start on a Windows host with no POSIX shell. */
+export const windowsShellMissing =
+  "Offline commands on Windows run in the POSIX shell that Git for Windows installs, and none " +
+  "was found. Install Git for Windows from https://git-scm.com/download/win, then start " +
+  "Pomerado again.";
+
+/**
+ * The shell workspace commands run in: `/bin/sh` on macOS and Linux, and on Windows Git for
+ * Windows' `sh.exe`, looked up once, at the first command.
+ */
+const workspaceShell = (platform: LocalPlatform) => {
+  if (!platform.windows) return Effect.succeed("/bin/sh");
+  let found: Promise<string | undefined> | undefined;
+  return Effect.promise(() => (found ??= findWindowsShell(platform))).pipe(
+    Effect.flatMap((shell) =>
+      shell === undefined ? Effect.fail(new Error(windowsShellMissing)) : Effect.succeed(shell),
+    ),
+  );
+};
 export interface LocalWorkspace {
   readonly root: string;
   readonly environment: Readonly<Record<string, string>>;
@@ -244,6 +271,8 @@ const workspaceCommand =
     alive: Effect.Effect<void, Error>,
     timeoutMs: number,
     register: (process: LocalProcess) => Effect.Effect<void, Error, Scope.Scope>,
+    platform: LocalPlatform,
+    shell: Effect.Effect<string, Error>,
   ) =>
   (args: Parameters<NonNullable<SandboxSession["exec"]>>[0]) =>
     Effect.scoped(
@@ -255,10 +284,11 @@ const workspaceCommand =
             ? root
             : yield* localFilePath(root, args.workdir);
         const process = yield* createLocalProcess({
-          command: args.shell ?? "/bin/sh",
+          command: args.shell ?? (yield* shell),
           args: [args.login ? "-lc" : "-c", args.cmd],
           cwd,
           environment,
+          platform,
         });
         yield* register(process);
         const started = performance.now();
@@ -348,6 +378,7 @@ export const createLocalWorkspace = (
   Effect.gen(function* () {
     const { root, temporary } = yield* prepareWorkspaceRoot(options.root);
     const environment = { ...(options.environment ?? {}) };
+    const platform = options.platform ?? hostPlatform;
     let closed = false;
     const active = new Set<LocalProcess>();
     const register = (process: LocalProcess) =>
@@ -413,7 +444,7 @@ export const createLocalWorkspace = (
       Effect.zipRight(
         temporary
           ? localPromise(() =>
-              rm(root, { recursive: true, force: true, ...removalRetries(hostPlatform) }),
+              rm(root, { recursive: true, force: true, ...removalRetries(platform) }),
             )
           : Effect.void,
       ),
@@ -425,6 +456,8 @@ export const createLocalWorkspace = (
       alive,
       options.commandTimeoutMs ?? localCommandTimeoutMs,
       register,
+      platform,
+      workspaceShell(platform),
     );
     const materialize = (path: string, entry: Entry) =>
       materializeLocalEntry(root, path, entry, write).pipe(lock.withPermits(1));

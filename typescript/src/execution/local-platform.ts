@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
-import { win32 } from "node:path";
+import { existsSync } from "node:fs";
+import { join, resolve, win32 } from "node:path";
 
 /**
  * The operating system facts local execution depends on. The host passes `hostPlatform`; a test
@@ -7,7 +8,7 @@ import { win32 } from "node:path";
  */
 export interface LocalPlatform {
   readonly windows: boolean;
-  /** The host's environment, read for Windows' system folder. */
+  /** The host's environment, read for Windows' system and program folders. */
   readonly environment: Readonly<Record<string, string | undefined>>;
   /**
    * Runs a system program, with no shell and no window, to its end. `exitCode` is null when it
@@ -51,3 +52,24 @@ export const windowsSystemProgram = (platform: LocalPlatform, name: string): str
  */
 export const removalRetries = (platform: LocalPlatform) =>
   platform.windows ? { maxRetries: 5, retryDelay: 100 } : {};
+
+/**
+ * The POSIX shell workspace commands run in on Windows: the `sh.exe` Git for Windows installs in
+ * its `bin` folder, which puts Git's Unix tools on the PATH. It is found from the `git` on the
+ * PATH, then in Git's default install folders, for every user or for one.
+ */
+export const findWindowsShell = async (platform: LocalPlatform): Promise<string | undefined> => {
+  const { exitCode, stdout } = await platform.run("git", ["--exec-path"], 5_000);
+  // `git --exec-path` names `<install>/<toolchain>/libexec/git-core`, such as mingw64.
+  const execPath = exitCode === 0 ? stdout.trim() : "";
+  const fromGit = execPath === "" ? [] : [resolve(execPath, "../../..")];
+  const { ProgramFiles, ProgramW6432, LOCALAPPDATA } = platform.environment;
+  const installs = [
+    ...fromGit,
+    ...[ProgramW6432, ProgramFiles].flatMap((folder) => (folder ? [join(folder, "Git")] : [])),
+    ...(LOCALAPPDATA ? [join(LOCALAPPDATA, "Programs", "Git")] : []),
+  ];
+  return installs
+    .map((install) => join(install, "bin", "sh.exe"))
+    .find((shell) => existsSync(shell));
+};
