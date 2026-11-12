@@ -5680,6 +5680,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     .json(judged.output)
                     .pipe(Effect.orElseSucceed(() => "[output withheld: screening failed]"));
             const outputAt = outputKey(request.entrypoint, run.id);
+            const before = liveTestOutputs.get(outputAt);
             if (screened === undefined) liveTestOutputs.delete(outputAt);
             else liveTestOutputs.set(outputAt, screened);
             const message =
@@ -5720,10 +5721,24 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               previous?.caseDigest === digestOfCase &&
               previous.sourceDigest === sourceDigest &&
               judged.verdict === "pass";
+            // A failure judged by another resultsList whose own output passes by this one was the
+            // host's judgment, not a race: the new result replaces it.
+            const misjudged =
+              flaky &&
+              previous.resultsList !== file.resultsList &&
+              testCase.next_page !== true &&
+              typeof before === "object" &&
+              before !== null &&
+              judgeCase(
+                testCase,
+                { id: run.id, outcome: { status: "completed", output: before }, durationMs: 0 },
+                "list" in shape ? shape.list : undefined,
+              ).verdict === "pass";
             if (
               previous !== undefined &&
               previous.verdict === "fail" &&
               (previous.caseDigest !== digestOfCase || flaky) &&
+              !misjudged &&
               !liveTestReplaced.some(
                 (entry) =>
                   liveTestVersion(entry.entrypoint) === version &&
