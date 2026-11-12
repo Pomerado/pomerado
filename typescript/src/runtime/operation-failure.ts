@@ -55,7 +55,10 @@ export interface InputRefusalDetail {
 const refusalKindPattern = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/u;
 const maximumRefusalKindLength = 40;
 
-/** The detail as a host may carry it: a bounded field name and up to the most choices, each bounded. */
+/**
+ * The detail as a host may carry it: a bounded field name and up to the most choices, each bounded,
+ * a true/false or finite number choice as its text.
+ */
 export const boundedRefusalDetail = (detail: unknown): InputRefusalDetail => {
   if (typeof detail !== "object" || detail === null) return {};
   const field: unknown = Reflect.get(detail, "field");
@@ -63,6 +66,11 @@ export const boundedRefusalDetail = (detail: unknown): InputRefusalDetail => {
   const kind: unknown = Reflect.get(detail, "kind");
   const choices = Array.isArray(available)
     ? available
+        .map((choice: unknown) =>
+          typeof choice === "boolean" || (typeof choice === "number" && Number.isFinite(choice))
+            ? String(choice)
+            : choice,
+        )
         .filter((choice): choice is string => typeof choice === "string" && choice.trim() !== "")
         .slice(0, maximumRefusalChoices)
         .map((choice) => choice.slice(0, maximumRefusalChoiceLength))
