@@ -13,6 +13,7 @@ import {
   type AutofillSignedIn,
   type AutofillStep,
   type AutofillStepReport,
+  type KeptSlot,
 } from "../destinations/autofill-step.js";
 import { type MarkerSettle, settledMarkerCheck } from "../destinations/marker-settle.js";
 import {
@@ -140,18 +141,19 @@ const slotControlEvidence = {
 } as const;
 
 /**
- * After a step the host refused because a field's slot contradicts its control
- * (`slot_control_mismatch`): which field, what its control takes and how to send it again.
+ * After a step the host sent back because a field's markup contradicts the slot the minter gave it
+ * (`slot_control_mismatch`): which field, what the markup says and the evidence. The minter still
+ * decides what the field takes, from the screen's own words: it corrects the slot, or sends the
+ * same step again to keep it, which the host then fills as named.
  */
 const slotControlNotice = (
   target: AutofillRefusal["target"],
   mismatch: NonNullable<AutofillRefusal["slotControl"]>,
 ) => {
   const field = typeof target === "number" ? `field ${target} (counted from 0)` : "a field";
-  const lead = `The host typed and clicked nothing, so nothing reached the site and nobody was asked: the step's ${field} has slot "${mismatch.slot}", but its control is a ${mismatch.control === "code" ? "one-time code" : "password"} field, as ${slotControlEvidence[mismatch.evidence]} shows.`;
-  return mismatch.control === "code"
-    ? `${lead} A second-factor or verification screen asks for a code the site sent or an authenticator app shows, never the account's password. Send the step again with slot "code" on that field; the host asks the owner for the code then, saying where it comes from.`
-    : `${lead} Send the step again with slot "password" on that field when the screen asks for the account's password; a code field is one whose control asks for a one-time code.`;
+  const markup = mismatch.control === "code" ? "a one-time code field" : "the account's password";
+  const other = mismatch.control === "code" ? "code" : "password";
+  return `The host typed and clicked nothing, so nothing reached the site and nobody was asked: the step's ${field} has slot "${mismatch.slot}", but ${slotControlEvidence[mismatch.evidence]} marks its control as ${markup}. You decide what the field takes. Read the screen's own words in a read-only explore: its prompt, the field's label and any error, never a field's value. If they ask for ${mismatch.control === "code" ? "a code the site sent or an authenticator app shows" : "the account's password"}, send the step again with slot "${other}" on that field. If they ask for the ${mismatch.slot === "password" ? "account's password" : "code"}, send the same step again unchanged: the host then fills the field with slot "${mismatch.slot}" and does not send it back again.`;
 };
 
 /**
@@ -342,6 +344,11 @@ export const makeSignInRecorder = (input: {
    * it unspent clears this.
    */
   let passwordRefillRefused = false;
+  /**
+   * The fields whose step the host sent back for a control that contradicts their slot: sent again
+   * with the same slot, the minter has decided, and the host fills them as named.
+   */
+  const keptSlots: KeptSlot[] = [];
   /**
    * The host refused a screen at its destination check, typing nothing because a field, its form
    * or its submit would send the login somewhere credentials may not go, and no later screen that
@@ -575,12 +582,17 @@ export const makeSignInRecorder = (input: {
       noteInspection(step, inspected);
       if ("outcome" in inspected)
         return { report: inspected, result: { nextStep: notice(inspected) } };
-      // A field whose slot its control contradicts, such as a password slot on a one-time code
-      // box, would type or ask for the wrong value, so it is sent back before Guardian or the
-      // owner sees it.
-      const mismatch = slotControlRefusal(step, inspected);
-      if (mismatch !== undefined)
+      // The minter names each field's slot from the screen's own words. When a control's markup
+      // clearly contradicts it, such as a password slot on a one-time code box, the step goes
+      // back once with the evidence, before Guardian or the owner sees it; the minter decides
+      // again, and a field it sends again with the same slot is filled as it names it.
+      const mismatch = slotControlRefusal(step, inspected, keptSlots);
+      if (mismatch !== undefined) {
+        const field =
+          typeof mismatch.target === "number" ? step.fields[mismatch.target] : undefined;
+        if (field !== undefined) keptSlots.push({ selector: field.selector, slot: field.slot });
         return { report: mismatch, result: { nextStep: notice(mismatch) } };
+      }
       // A code split across one-character boxes goes out whole only when the step names every
       // box, so a step that names part of them is sent back before Guardian or the owner sees it.
       const partial = codeBoxesRefusal(step, inspected);

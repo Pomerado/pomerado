@@ -1175,6 +1175,36 @@ it("refuses a code slot on a control the page marks as the account's password", 
   expect(host.filled).toEqual([]);
 });
 
+// The minter decides what a field takes; the markup check only sends its evidence back once. A
+// login PIN box some site marks one-time-code is still the password when the screen says so, so a
+// step the minter sends again unchanged is reviewed and filled as it names the field.
+it("fills a field with the slot the minter kept after the host sent its markup evidence back", async () => {
+  const host = harness({
+    held: account,
+    controls: { "#pin": { type: "password", autocomplete: "one-time-code", label: "Security key" } },
+  });
+  const pinStep: SignInStep = {
+    fields: [{ selector: "#pin", slot: "password" }],
+    submit: "#sign-in",
+  };
+  const result = await host.run((recorder) =>
+    Effect.gen(function* () {
+      yield* recorder.step(identifierOnly, undefined, Effect.void);
+      const refused = yield* recorder.step(pinStep, undefined, Effect.void);
+      const kept = yield* recorder.step(pinStep, undefined, Effect.void);
+      return { refused, kept };
+    }),
+  );
+  expect(result.refused.report).toMatchObject({ reason: "slot_control_mismatch", target: 0 });
+  expect(result.kept.report).toMatchObject({ outcome: "filled", submit: "clicked" });
+  expect(host.reviewed.map((step) => step.fields.map((field) => field.slot))).toEqual([
+    ["username"],
+    ["password"],
+  ]);
+  expect(host.filled.map(({ values }) => values)).toEqual([["ada-owner"], [account.password]]);
+  expect(host.asked).toEqual([]);
+});
+
 it("asks a code screen of one-character boxes for its code once, types a character in each, and verifies once its page sent it", async () => {
   const host = harness({
     held: account,

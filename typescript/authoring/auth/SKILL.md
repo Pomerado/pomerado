@@ -189,6 +189,14 @@ writes its options as attributes:
 refused: name such a field by its role and name, its `id`, its `name` or another stable
 attribute.
 
+You decide what each field takes, from the screen's own words: its heading or prompt, each
+field's label and placeholder, and any error text, never a field's value. The host only backs you
+up. When a control's markup clearly says otherwise, such as `autocomplete="one-time-code"` on a
+field you named `password`, it sends the step back once with that evidence
+(`slot_control_mismatch`), typing nothing and asking nobody. Read the screen's words again and
+decide: correct the slot, or send the same step again unchanged to keep it, and the host fills the
+field as you named it.
+
 - `fields`: each field the screen asks for, as a Playwright selector with exactly one visible match.
   A selector never reaches into another frame (no `>>` chains or `internal:` engines): the host finds
   each field in its own frame.

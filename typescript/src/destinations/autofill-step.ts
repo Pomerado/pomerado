@@ -1271,26 +1271,43 @@ const passwordControl = (control: ControlWords) => {
 };
 
 /**
- * A step that gives a field a credential slot its control contradicts: a refusal before anything
- * is typed, reviewed or asked, naming the field (`target`), its slot, what its control takes and
- * the evidence (`slotControl`), so the step can be sent again with the slot the control takes. A
- * `password` field whose control is a one-time code field (`oneTimeCodeEvidence`) and names no
+ * A field the minter sent again with the slot it had when `slotControlRefusal` sent its step back:
+ * the minter read the screen and kept its slot, so the host no longer refuses it.
+ */
+export interface KeptSlot {
+  readonly selector: string;
+  readonly slot: AutofillSlot;
+}
+
+/**
+ * The host's backstop to the minter's own reading of a sign-in screen. The minter decides what each
+ * field takes from the screen's own words (its prompt, labels and any error text, never a field's
+ * value) and names it as the field's slot. This check only reads the control's markup, and when the
+ * markup clearly contradicts that slot it sends the step back once, before anything is typed,
+ * reviewed or asked, with the field (`target`), its slot, what the markup says the control takes
+ * and the evidence (`slotControl`). The minter then decides again: it corrects the slot, or sends
+ * the same field with the same slot, which the host then fills as named (`kept`, the fields the
+ * minter sent again after a refusal). So the host never decides a field's slot itself.
+ *
+ * A `password` field whose control is a one-time code field (`oneTimeCodeEvidence`) and names no
  * password would type the login's password into a code box, or ask the owner for a password the
  * screen never wants; a `code` field whose `autocomplete` marks the account's password
  * (`current-password` or `new-password`) and that nothing else names a code would ask the owner
- * for a code the screen never sends. Only evidence that points one way refuses, so a control that
+ * for a code the screen never sends. Only evidence that points one way counts, so a control that
  * names both, such as a code box a site marks `new-password` to keep password managers out or a
- * field labelled for a password followed by a code, is left to the review, and no slot is refused
- * both ways. Undefined when every field's slot agrees with its control, or its control says
- * nothing either way.
+ * field labelled for a password followed by a code, is left to the minter and the review.
+ * Undefined when every field's slot agrees with its control, its control says nothing either way,
+ * or the minter kept the slot after a refusal.
  */
 export const slotControlRefusal = (
   step: Pick<AutofillStep, "fields">,
   inspection: Pick<AutofillInspection, "screen">,
+  kept: readonly KeptSlot[] = [],
 ): AutofillRefusal | undefined => {
   for (const [index, field] of step.fields.entries()) {
     const control = inspection.screen.fields[index];
     if (control === undefined) continue;
+    if (kept.some((one) => one.selector === field.selector && one.slot === field.slot)) continue;
     const code = oneTimeCodeEvidence(control);
     const password = passwordControl(control);
     const slotControl =
