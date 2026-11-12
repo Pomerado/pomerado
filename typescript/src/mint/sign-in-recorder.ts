@@ -607,7 +607,8 @@ export const makeSignInRecorder = (input: {
         return shown(result(identifierUnobserved));
       yield* dispatch;
       if (held === undefined && step.fields.length > 0) {
-        held = yield* (login.valuesFor?.(askingScreen(step)) ?? login.values);
+        // The question names only what this screen shows; the code, if any, is its own question.
+        held = yield* (login.valuesFor?.({ screen: askingScreen(step) }) ?? login.values);
         step = values.resolve(request, held);
       }
       const valued =

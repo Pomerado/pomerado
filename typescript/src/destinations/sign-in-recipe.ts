@@ -39,7 +39,7 @@ import type {
   AutofillStepReport,
 } from "./autofill-step.js";
 import type { CredentialRejectedField, WebsiteCredentials } from "../runtime/authentication.js";
-import type { AskingScreen } from "../runtime/credential-prompts.js";
+import type { LoginAsk } from "../runtime/credential-prompts.js";
 import type { TypedBox } from "./autofill-fill.js";
 import { recordedScreenPage } from "../runtime/workspace-origin.js";
 
@@ -290,10 +290,11 @@ export interface SignInLogin<E> {
   /** The login, asked for once when none is held. */
   readonly values: Effect.Effect<WebsiteCredentials, E>;
   /**
-   * The login as `values` gives it, asked for naming what the screen that needs it asks for
-   * (`AskingScreen`). A host without it asks with `values`.
+   * The login as `values` gives it, asked for naming what the sign-in asks for (`LoginAsk`): the
+   * screen that needs it in a build, or the recorded screens in a sign-in again. A host without it
+   * asks with `values`.
    */
-  readonly valuesFor?: (screen: AskingScreen) => Effect.Effect<WebsiteCredentials, E>;
+  readonly valuesFor?: (ask: LoginAsk) => Effect.Effect<WebsiteCredentials, E>;
   /**
    * A corrected login after the site rejected `field` of `held`; `triesLeft`, this one included,
    * when the sign-in bounds its corrections.

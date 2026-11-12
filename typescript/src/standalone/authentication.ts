@@ -20,9 +20,9 @@ import type { SignInBrowser, SignInLogin } from "../destinations/sign-in-recipe.
 import { MintFailure } from "../mint/contracts.js";
 import type { CredentialRejectedField, WebsiteCredentials } from "../runtime/authentication.js";
 import {
-  type AskingScreen,
   credentialMessage,
   credentialPrompt,
+  type LoginAsk,
 } from "../runtime/credential-prompts.js";
 import { failureDetail } from "../runtime/failure-detail.js";
 import { primaryPageCode } from "../runtime/host-execute.js";
@@ -235,7 +235,7 @@ export const localSignInLogin = (options: {
     reason: "missing_credentials" | "invalid_credentials",
     username?: string,
     triesLeft?: number,
-    screen?: AskingScreen,
+    ask?: LoginAsk,
   ) =>
     Effect.gen(function* () {
       const answers = yield* options
@@ -247,7 +247,7 @@ export const localSignInLogin = (options: {
             {
               id: "login",
               type: "credential",
-              prompt: credentialPrompt(reason, triesLeft, screen),
+              prompt: credentialPrompt(reason, triesLeft, ask),
               fields: "username_password",
               reason,
               allowSave: false,
@@ -277,10 +277,10 @@ export const localSignInLogin = (options: {
     values: Effect.suspend(() =>
       held === undefined ? askLogin("missing_credentials") : Effect.succeed(held),
     ),
-    valuesFor: (screen) =>
+    valuesFor: (ask) =>
       Effect.suspend(() =>
         held === undefined
-          ? askLogin("missing_credentials", undefined, undefined, screen)
+          ? askLogin("missing_credentials", undefined, undefined, ask)
           : Effect.succeed(held),
       ),
     correct: (_field, rejected, triesLeft) =>

@@ -639,6 +639,26 @@ it("asks a run's code question by the channel its recorded code field names", as
   expect(texted?.prompt).not.toBe(sent?.prompt);
 });
 
+// A sign-in again knows its recorded screens, so its login question may name what they ask for,
+// a texted code included, rather than only asking to sign in.
+it("asks a run's login naming its recorded sign-in's screens", async () => {
+  const prompt = async (recipe: SignInRecipe) => {
+    const { ask, asked } = owner();
+    await signIn(recipe, fakeSite({ code: true }), ask);
+    return asked[0]?.questions[0]?.prompt;
+  };
+  const screen = codeScreenAt();
+  const withCode = await prompt(recipeOf(screen));
+  const texted = await prompt({
+    version: 15,
+    steps: [loginStep, { ...screen, fields: [{ selector: "#code", slot: "code", channel: "sms" }] }],
+    signedIn: { selector: "#account" },
+  });
+  const loginOnly = await prompt(recipeOf());
+  expect(new Set([withCode, texted, loginOnly]).size).toBe(3);
+  expect(texted).toMatch(/text/iu);
+});
+
 it("signs in when the code lands on a chooser the site shows before any page with the marker", async () => {
   const fake = fakeSite({ code: true, landing: "chooser" });
   const { ask, asked } = owner();

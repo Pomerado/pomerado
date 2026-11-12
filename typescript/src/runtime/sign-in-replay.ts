@@ -24,6 +24,7 @@ import type {
 import type { ReplayWorkspace } from "./autofill-replay-workspace.js";
 import type { AutofillHooks, SecretBroker } from "./autofill-state.js";
 import { typedValues } from "./autofill-values.js";
+import { recordedAsks } from "./credential-prompts.js";
 import { logicalRejectedField } from "./autofill-rejection.js";
 import type { InputAsker } from "./input-request.js";
 import { makeRunLogin } from "./run-login.js";
@@ -369,7 +370,10 @@ export const signInForRun = <E>(input: {
     const runLogin = yield* makeRunLogin({
       held: input.login.held(),
       passwordless: false,
-      read: input.login.values.pipe(Effect.mapError(loginUnanswered)),
+      // A sign-in again knows its recorded screens, so its login question may list them.
+      read: (
+        input.login.valuesFor?.({ recorded: recordedAsks(recipe.steps) }) ?? input.login.values
+      ).pipe(Effect.mapError(loginUnanswered)),
       register: () => Effect.void,
     });
     const correct = (field: CredentialRejectedField, held: WebsiteCredentials, triesLeft: number) =>

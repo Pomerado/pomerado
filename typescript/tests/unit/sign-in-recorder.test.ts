@@ -1109,26 +1109,33 @@ it("refuses a code step that names only some of the screen's one-character boxes
   expect(host.filled).toHaveLength(1);
 });
 
-// The local host asks for the login when a screen first needs it, and the question says what that
-// screen asks for, so the owner knows a password is wanted, not a code.
-it("asks for the login naming what the screen that needs it asks for", async () => {
+// The local host asks for the login when a screen first needs it. The question names only what
+// that screen shows, never a later screen it cannot know or a code, which is its own question, and
+// asks for the password with the identifier so the owner is asked only once.
+it("asks for the login naming only what the screen that needs it shows", async () => {
   const prompts = async (step: SignInStep) => {
-    const host = harness({ localLogin: true });
+    const host = harness({ localLogin: true, answers: { code: ["482913"] } });
     await host.run((recorder) => recorder.step(step, undefined, Effect.void));
-    return host.asked.map((request) => request.questions[0]?.prompt);
+    return host.asked.flatMap((request) => request.questions);
   };
-  expect(await prompts(identifierAndPassword)).toEqual([
-    "The website's sign-in screen asks for your username and your password. Sign in to the website so this request can continue.",
-  ]);
-  const [login] = await prompts({
+  const [both] = await prompts(identifierAndPassword);
+  expect(both).toMatchObject({ type: "credential", fields: "username_password" });
+  const [identifier] = await prompts(identifierOnly);
+  expect(identifier).toMatchObject({ type: "credential", fields: "username_password" });
+  expect(identifier?.prompt).not.toBe(both?.prompt);
+  // A screen that asks for an identifier and a code: the login names no code, and the code is
+  // asked on its own, after the login.
+  const asked = await prompts({
     fields: [
       { selector: "#email", accepts: ["email", "phone"] },
       { selector: "#code", slot: "code" },
     ],
     submit: "#next",
   });
-  expect(login).toBe(
-    "The website's sign-in screen asks for your email address or phone number, then a sign-in code, which you'll be asked for next. Sign in to the website so this request can continue.",
+  const login = asked.find((question) => question.type === "credential");
+  expect(login?.prompt).not.toMatch(/\bcode\b|\bnext\b/iu);
+  expect(asked.findIndex((question) => question.id === "code")).toBeGreaterThan(
+    asked.indexOf(login ?? asked[0]!),
   );
 });
 
