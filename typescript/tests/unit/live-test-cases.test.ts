@@ -152,6 +152,28 @@ describe("judgeCase", () => {
     );
   });
 
+  // A one-record read whose only list is a side list, empty for this record, is judged by that list
+  // unless the cases file says it returns one record.
+  it("judges a one-record read by its values when the cases file sets resultsList null", () => {
+    const input = object({ address: { type: "string" } }, ["address"]);
+    const output = object({
+      found: { type: "boolean" },
+      price: { type: "string" },
+      facts_features: object({ beds: { type: "integer" } }),
+      unit_suggestions: { type: "array", items: object({ address: { type: "string" } }) },
+    });
+    const record = { found: true, price: "1", facts_features: { beds: 3 }, unit_suggestions: [] };
+    const judge = (text: string) => {
+      const file = Either.getOrThrow(decodeCasesFile(text));
+      return judgeCase({ expect: "result" }, completed(record), primaryListOf(input, output, file.resultsList));
+    };
+    expect(judge('{"cases":[]}')).toMatchObject({ verdict: "fail", got: "empty" });
+    expect(judge('{"cases":[],"resultsList":null}')).toMatchObject({ verdict: "pass", got: "a result" });
+    expect(
+      liveTestsEvidence({ file: { cases: [], resultsList: null }, versions: [] }).record,
+    ).toMatchObject({ resultsList: null });
+  });
+
   it("passes a refusal only where one was expected, and a loud failure but not a timeout", () => {
     const refused = {
       id: "case",

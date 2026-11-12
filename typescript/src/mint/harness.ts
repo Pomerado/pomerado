@@ -5229,7 +5229,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        * What judging and paging a batch read from `entrypoint`'s current schemas: the cursor pair
        * and where a list read's results sit, or why the host could not read them.
        */
-      const liveTestShape = (entrypoint: string) =>
+      const liveTestShape = (entrypoint: string, resultsList?: string | null) =>
         Effect.gen(function* () {
           const host = dependencies.liveTests;
           if (host === undefined) return { problem: "This host runs no live test batches." };
@@ -5245,7 +5245,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           const { input, output } = schemas.right;
           return {
             cursor: cursorPairOf(input, output),
-            list: primaryListOf(input, output),
+            list: primaryListOf(input, output, resultsList),
             inputSchema: input,
             outputSchema: output,
           };
@@ -5532,7 +5532,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               inputsRun: signedInTestInputs.length,
               instruction: overLimit,
             });
-          const shape = yield* liveTestShape(request.entrypoint);
+          const shape = yield* liveTestShape(request.entrypoint, file.resultsList);
           const cursor = "cursor" in shape ? shape.cursor : undefined;
           if (selected.some((testCase) => testCase.next_page === true) && cursor === undefined)
             return JSON.stringify({

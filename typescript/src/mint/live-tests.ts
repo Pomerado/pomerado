@@ -113,6 +113,8 @@ export const LiveTestCasesFile = Schema.Struct({
   notTested: Schema.optionalWith(Schema.Array(LiveTestNotTested).pipe(Schema.maxItems(100)), {
     exact: true,
   }),
+  /** The output's list of records each case is judged by, or null for a read of one record. */
+  resultsList: Schema.optionalWith(Schema.NullOr(Text), { exact: true }),
 });
 export type LiveTestCasesFile = typeof LiveTestCasesFile.Type;
 
@@ -288,8 +290,15 @@ export interface PrimaryList {
  * is an array is the list. Otherwise the list is an array of records beside the cursor, or, for a
  * tool no input of which names a record, the array named like results, or its only array of
  * records. A details record keeps its images, variants or reviews as values, never as its list.
+ * The cases file's `resultsList`, when set, names the list in place of that guess, or is null for
+ * a details read.
  */
-export const primaryListOf = (inputSchema: unknown, outputSchema: unknown): PrimaryList | undefined => {
+export const primaryListOf = (
+  inputSchema: unknown,
+  outputSchema: unknown,
+  resultsList?: string | null,
+): PrimaryList | undefined => {
+  if (resultsList === null) return undefined;
   if (isRecord(outputSchema)) {
     const root = resolved(outputSchema, outputSchema);
     if (branchesOf(root, outputSchema).some((branch) => typeOf(branch) === "array")) return {};
@@ -303,6 +312,10 @@ export const primaryListOf = (inputSchema: unknown, outputSchema: unknown): Prim
           others: fields.filter((field) => field.name !== list.name).map((field) => field.name),
         }
       : { field: list.name };
+  if (resultsList !== undefined) {
+    const chosen = fields.find((field) => field.name === resultsList);
+    return chosen === undefined ? { field: resultsList } : at(chosen);
+  }
   const arrays = fields.filter((field) => field.listOfRecords);
   const named = fields.find((field) => field.types.includes("array") && listName.test(field.name));
   const cursor = cursorPairOf(inputSchema, outputSchema);
@@ -1343,6 +1356,7 @@ export const liveTestsEvidence = (options: {
           }
         : {}),
       ...(options.fileProblem === undefined ? {} : { casesFileProblem: options.fileProblem }),
+      ...(file.resultsList === undefined ? {} : { resultsList: file.resultsList }),
       versions: versionViews,
       cases,
       notTested,
