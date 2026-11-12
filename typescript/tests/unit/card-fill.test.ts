@@ -221,6 +221,7 @@ describe("payment frame origins", () => {
   it.each([
     [stripeFrame, true],
     ["https://web.squarecdn.com/1.0/card.html", true],
+    ["https://checkout.pci.shopifyinc.com/build/0000000/number-ltr.html", true],
     ["https://m.stripe.network/inner.html", false],
     ["https://pay.google.com/gp/p/ui/pay", false],
     ["https://evil.js.stripe.com/v3/elements.html", false],
