@@ -1001,8 +1001,10 @@ shows. Use its own control, in this order: its close or dismiss control, then on
 declines what is not essential in one click, then accept. A control such as
 "I understand" or "OK" accepts too, so prefer its close or decline control whenever it has one.
 Never click anything else in it, such as its settings or partner lists. A request that says
-otherwise about cookies wins. This is only for such a banner or pop-up, never a marketing prompt or
-terms the site asks you to accept, other than the notices below.
+otherwise about cookies wins. Such a banner stays one even when its text says accepting it or using
+the site also agrees to the site's own terms. This is only for such a banner or pop-up, not a
+marketing prompt or a separate prompt whose own purpose is accepting terms, other than the notices
+below.
 
 A notice the site shows every visitor before it lets them use the page, such as a demo or
 test-environment warning, an age gate or a region notice, is page setup on a read. Prefer accepting
