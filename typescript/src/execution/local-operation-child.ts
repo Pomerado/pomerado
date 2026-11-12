@@ -40,7 +40,7 @@ const { decodeKernelOperationInput } = await import("../runtime/kernel-operation
 const { contractJsonSchema, executeOperation } = await import("../runtime/operation.js");
 const { HttpFailure, HttpFailureCode, SiteHttp } = await import("../runtime/site-http.js");
 const { makeSiteHttp } = await import("../runtime/site-http-host.js");
-const { ExecutionContext, makeEffectJournal } = await import("../runtime/context.js");
+const { ExecutionContext, makeEffectJournalWith } = await import("../runtime/context.js");
 const { Deadline } = await import("../runtime/deadline.js");
 const { makeKernelCompatibility } = await import("../runtime/kernel-compatibility.js");
 const { InvalidInput, InvalidOutput } = await import("../runtime/errors.js");
@@ -157,7 +157,9 @@ const start = await Effect.runPromise(
     });
   }),
 );
-const baseJournal = await Effect.runPromise(makeEffectJournal);
+const baseJournal = await Effect.runPromise(
+  makeEffectJournalWith({ settledCommits: start.settledCommits ?? [] }),
+);
 const journalState = Effect.gen(function* () {
   const confirmation = yield* baseJournal.confirmation;
   return {

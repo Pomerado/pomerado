@@ -81,6 +81,8 @@ export const LocalOperationStart = Schema.Struct({
   offline: Schema.optionalWith(Schema.Literal(true), { exact: true }),
   /** A mint step: it counts as possibly sent from its first browser call, not from its start. */
   dispatchAtFirstCall: Schema.optionalWith(Schema.Literal(true), { exact: true }),
+  /** Commit steps the run may not enter (`makeEffectJournalWith`). */
+  settledCommits: Schema.optionalWith(Schema.Array(Schema.String), { exact: true }),
   /** The host signs the page in again when the script's `ensureSignedIn` finds it signed out. */
   signIn: Schema.optionalWith(Schema.Literal(true), { exact: true }),
   /** The host types the run's card answers for the script's `fillCard`. */

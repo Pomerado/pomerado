@@ -67,6 +67,15 @@ async ({kernel,sessionId,verified}) => {
   verified();
   return {saved:true};
 });`;
+/** A write step that enters its commit mark, saves, then fails with `failure`. */
+const enterSaveThenFail = (failure: string) => `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"save",input:Schema.Unknown,output:Schema.Unknown,write:{confirmation:"readback",commits:["save"]}},
+async ({kernel,sessionId,enteringCommit}) => {
+  enteringCommit("save");
+  await kernel.browsers.playwright.execute(sessionId,{code:"await page.locator('#save').click(); await page.waitForFunction(() => document.title === 'Saved'); return true;",timeout_sec:5});
+  throw new Error(${JSON.stringify(failure)});
+});`;
 /** A receipt's observations, which reach the minter as JSON text. */
 const observationsOf = (receipt: Readonly<Record<string, unknown>> | undefined) => {
   const observations = receipt?.["observations"];
@@ -151,6 +160,37 @@ test("a failed act step Guardian labelled a write is refused as a repeat while i
     expect(toolResult(last, "again")).toMatchObject({ status: "unsupported" });
     expect(executions(guardian.reviews)).toHaveLength(1);
     expect(fixture.writes()).toBe(0);
+  } finally {
+    await site.close();
+  }
+});
+
+test("a later act step in another file never enters a commit step an earlier step may have sent", async () => {
+  test.setTimeout(90_000);
+  const fixture = saveSite();
+  const site = await fixture.start();
+  const guardian = recordingGuardian();
+  try {
+    const { last } = await mint({
+      effect: "write",
+      url: site.url,
+      guardian,
+      turns: [
+        () =>
+          patch({
+            "src/save.mjs": enterSaveThenFail("Failed after the save"),
+            "explore/copy.mjs": enterSaveThenFail("Failed after the copy's save"),
+          }),
+        () => [call("execute", act("src/save.mjs", undefined, savePath), "first")],
+        () => [call("execute", act("explore/copy.mjs"), "copy")],
+      ],
+    });
+    expect(toolResult(last, "first")).toMatchObject({ status: "failed", effect: "possible" });
+    // The copy is another file with other code, so no repeat by file or source. Its run keeps the
+    // mark the first step entered settled, so it stops there before its click.
+    expect(fixture.writes()).toBe(1);
+    expect(toolResult(last, "copy")).toMatchObject({ status: "failed", effect: "not_sent" });
+    expect(observationsOf(toolResult(last, "copy"))).toHaveProperty("fencedCommit");
   } finally {
     await site.close();
   }

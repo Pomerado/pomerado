@@ -48,7 +48,13 @@ import { downloadCapFailures } from "../runtime/kernel-operation.js";
 import { stepInput } from "../mint/step-checks.js";
 import { admitListCursor, sealListOutput } from "../runtime/list-cursor.js";
 import { mintListScope, refusedCursor } from "./list-cursors.js";
-import { readBackFirst, sessionEnteredMarks, writePathRemaining } from "../mint/write-session.js";
+import {
+  fencedCommitNotice,
+  fencedCommits,
+  readBackFirst,
+  sessionEnteredMarks,
+  writePathRemaining,
+} from "../mint/write-session.js";
 import {
   commitEvidenceOf,
   returnedRefusal,
@@ -371,6 +377,8 @@ interface ReceiptInput {
   readonly afterUnverifiedSignIn?: true;
   /** The latest download the step's files refused over the host's caps (`RunFiles.overCap`). */
   readonly fileCap?: DownloadCap;
+  /** The commit steps this act step ran settled, with the steps that may have sent each. */
+  readonly fenced?: ReadonlyMap<string, readonly string[]>;
 }
 /** The allow a receipt carries: Guardian's review, outcome, rationale and action label. */
 const reviewFeedback = ({ reviewId, decision }: ReceiptInput["reviewed"]): MintReviewFeedback => ({
@@ -395,6 +403,11 @@ const failedReceipt = (
     const { scriptQuestion, unanswered } = questions;
     const { writeSession, afterUnverifiedSignIn } = receipt;
 
+    // A step refused a settled commit step fails with that step's name as its message.
+    const fencedBy =
+      failure instanceof LocalOperationFailure && failure.tag === "CommitAlreadySent"
+        ? receipt.fenced?.get(failure.message)
+        : undefined;
     const failureJournal: LocalOperationJournal =
       failure instanceof LocalOperationFailure
         ? failure.journal
@@ -447,6 +460,9 @@ const failedReceipt = (
             }
           : {}),
         ...(writeSession === undefined ? {} : { writeSession }),
+        ...(fencedBy === undefined
+          ? {}
+          : { fencedCommit: fencedCommitNotice(failure.message, fencedBy) }),
       },
       review: reviewFeedback(reviewed),
       ...(receipt.fileCap === undefined ? {} : { fileCap: receipt.fileCap }),
@@ -614,6 +630,17 @@ const authoredExecution = (
       // Guardian allowed the path the step declared or revised, so the session runs it.
       if (execution.writePath !== undefined) writeSession.path = execution.writePath;
     }
+    // A commit step an earlier act step may have sent stays settled for this one, whatever file it
+    // runs, until the outcome review finds that write did not happen.
+    const fenced =
+      execution.purpose === "act" && live
+        ? fencedCommits(
+            writeSession.steps.map((step) => ({
+              ...step,
+              assessment: state.assessments.get(step.executionId)?.outcome,
+            })),
+          )
+        : new Map<string, readonly string[]>();
     const questions = scriptQuestions(state, execution.entrypoint, input, sourceMap);
     const { scriptAsk } = questions;
     // The confirm popups the owner accepts during this execution, host-only.
@@ -668,6 +695,7 @@ const authoredExecution = (
                 mode: "run",
                 target: live ? "browser" : "pureFiles",
                 dispatchAtFirstCall: true,
+                ...(fenced.size === 0 ? {} : { settledCommits: [...fenced.keys()] }),
                 ask: localHandOffAsker(scriptAsk, {
                   visible: live && visibleBrowser(state.session.options.browser),
                 }),
@@ -741,6 +769,7 @@ const authoredExecution = (
           ...(pathLeft.length === 0 ? {} : { writePathRemaining: pathLeft }),
           ...(afterUnverifiedSignIn ? { afterUnverifiedSignIn: true as const } : {}),
           ...(fileCap === undefined ? {} : { fileCap }),
+          ...(fenced.size === 0 ? {} : { fenced }),
         };
         const evidence = yield* executed._tag === "Left"
           ? failedReceipt(receipt, executed.left, questions)

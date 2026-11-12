@@ -63,6 +63,8 @@ export interface LocalOperationOptions {
    * stopped before one reads `not_sent`. Without it, a live run counts from its start.
    */
   readonly dispatchAtFirstCall?: boolean;
+  /** Commit steps the run may not enter: entering one fails with `CommitAlreadySent`. */
+  readonly settledCommits?: readonly string[];
   readonly ask?: InputAsker;
   /**
    * The questions the host read itself: a build step's literal declarations, or the ones
@@ -573,6 +575,9 @@ export const runLocalOperation = (
           ? { offline: true }
           : {}),
         ...(options.dispatchAtFirstCall === true ? { dispatchAtFirstCall: true } : {}),
+        ...(options.settledCommits === undefined || options.settledCommits.length === 0
+          ? {}
+          : { settledCommits: options.settledCommits }),
         ...(options.siteOrigin === undefined ? {} : { siteOrigin: options.siteOrigin }),
         ...(options.siteDomain === undefined ? {} : { siteDomain: options.siteDomain }),
         ...(options.files !== undefined ? { files: true } : {}),
