@@ -338,6 +338,17 @@ If it reports `submit: blocked`, another element, such as a cookie banner (`bloc
 click and nothing was sent: never click the submit yourself. Send the same `signInStep` again with
 the banner's own control, chosen as the core skill says, as `dismiss`; the host clicks it, then the
 submit, and types nothing again unless the dismiss emptied a field.
+When the site refuses a step, work out what happened before you send anything: read the
+after-submit capture's `alerts`, the site's own error wording, and the screen's prompt in a
+read-only `explore`, never a field's value. The wording says which: an old or expired code, a
+wrong code, a wrong value in a field it names, or a different method the account needs. Then pick
+the next step. For an old, expired or wrong code, report the code rejected (below): the host asks
+the owner for the newest code at the next code step. When the site sends a new code only on
+request, send its own control for that ("Send a new code") as a fieldless `signInStep` before the
+code screen's step. When the error names a field, report that field. When the site says another
+method is needed, send the screen's method choice or "Try another way" control as its step. Never
+report a password rejected because a code screen showed an error, and never ask for a password
+the screen does not ask for.
 If the site says a field was wrong, send `signInStep: { rejected: { slot: "password" } }`
 with the actual rejected slot at once. The host asks for corrections; never ask for substitute
 credentials yourself or send a rejected value again. A primary identifier or password rejection

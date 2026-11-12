@@ -40,7 +40,7 @@ export const rejectionNotices = {
   correctedLogin:
     "The owner gave a corrected login. Start the sign-in screens again from the login page: send each screen's signInStep, then signedIn.",
   unattributed:
-    "The site rejected the sign-in without naming which value it rejected, so the host booked the rejection against no value and asked the owner for nothing. Explore read-only to read the screen again. If it asks for a code, from a message the site sent or from an authenticator app, send its signInStep with that field's slot code. If its error names the field it rejects, send rejected with that field's slot. Never ask for a password or a login yourself.",
+    "The site refused the sign-in without the host knowing which value it refused, so the host booked the refusal against no value and asked the owner for nothing. Work out what happened from the page, never a field's value: read the latest after-submit capture's alerts, the site's own error wording, and the screen's prompt in a read-only explore. Then pick the next step. For an old, expired or wrong code, send rejected with slot code, and the host asks the owner for the newest code at the next code step; when the site sends a new code only on request, send its own control for that as a fieldless signInStep first. When the error names another field, send rejected with that field's slot. When the screen says another method is needed, send its method choice as a signInStep. Never ask for a password or a login yourself.",
 } as const;
 
 /** A screen that asks for a value before the host saw the login's identifier step. */
