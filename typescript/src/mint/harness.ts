@@ -5229,7 +5229,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        * What judging and paging a batch read from `entrypoint`'s current schemas: the cursor pair
        * and where a list read's results sit, or why the host could not read them.
        */
-      const liveTestShape = (entrypoint: string) =>
+      const liveTestShape = (entrypoint: string, resultsList?: string | null) =>
         Effect.gen(function* () {
           const host = dependencies.liveTests;
           if (host === undefined) return { problem: "This host runs no live test batches." };
@@ -5245,7 +5245,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           const { input, output } = schemas.right;
           return {
             cursor: cursorPairOf(input, output),
-            list: primaryListOf(input, output),
+            list: primaryListOf(input, output, resultsList),
             inputSchema: input,
             outputSchema: output,
           };
@@ -5352,7 +5352,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               .filter((id) => options.show?.includes(id) === true),
           );
           const cases = file.cases.map((testCase) => ({
-            ...caseView(testCase, countedRecord(entrypoint, testCase.id), digest),
+            ...caseView(testCase, countedRecord(entrypoint, testCase.id), digest, file.resultsList),
             ...outputs.get(testCase.id),
           }));
           const shown =
@@ -5532,7 +5532,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               inputsRun: signedInTestInputs.length,
               instruction: overLimit,
             });
-          const shape = yield* liveTestShape(request.entrypoint);
+          const shape = yield* liveTestShape(request.entrypoint, file.resultsList);
           const cursor = "cursor" in shape ? shape.cursor : undefined;
           if (selected.some((testCase) => testCase.next_page === true) && cursor === undefined)
             return JSON.stringify({
@@ -5680,6 +5680,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     .json(judged.output)
                     .pipe(Effect.orElseSucceed(() => "[output withheld: screening failed]"));
             const outputAt = outputKey(request.entrypoint, run.id);
+            const before = liveTestOutputs.get(outputAt);
             if (screened === undefined) liveTestOutputs.delete(outputAt);
             else liveTestOutputs.set(outputAt, screened);
             const message =
@@ -5720,10 +5721,24 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               previous?.caseDigest === digestOfCase &&
               previous.sourceDigest === sourceDigest &&
               judged.verdict === "pass";
+            // A failure judged by another resultsList whose own output passes by this one was the
+            // host's judgment, not a race: the new result replaces it.
+            const misjudged =
+              flaky &&
+              previous.resultsList !== file.resultsList &&
+              testCase.next_page !== true &&
+              typeof before === "object" &&
+              before !== null &&
+              judgeCase(
+                testCase,
+                { id: run.id, outcome: { status: "completed", output: before }, durationMs: 0 },
+                "list" in shape ? shape.list : undefined,
+              ).verdict === "pass";
             if (
               previous !== undefined &&
               previous.verdict === "fail" &&
               (previous.caseDigest !== digestOfCase || flaky) &&
+              !misjudged &&
               !liveTestReplaced.some(
                 (entry) =>
                   liveTestVersion(entry.entrypoint) === version &&
@@ -5761,6 +5776,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               expect: testCase.expect,
               ...(testCase.next_page === true ? { nextPage: true } : {}),
               ...(testCase.noMatch === true ? { noMatch: true } : {}),
+              ...(file.resultsList === undefined ? {} : { resultsList: file.resultsList }),
               ...(signedInBatch ? { signedIn: true as const } : {}),
             });
           }
