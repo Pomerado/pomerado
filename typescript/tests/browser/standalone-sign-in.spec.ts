@@ -193,7 +193,8 @@ const loginQuestion = (origin: string) =>
     reason: "missing_credentials",
     allowSave: false,
     siteOrigin: origin,
-    prompt: "Sign in to the website so this request can continue.",
+    // A build names the screen that needs the login, and a run its recorded screens, first.
+    prompt: expect.stringMatching(/Sign in to the website so this request can continue\.$/u),
   });
 
 /** Another host the shop's server answers for, as a sign-in site on its own origin. */
