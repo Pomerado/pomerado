@@ -1020,6 +1020,22 @@ it("keeps a failure that passed when run again on the same code as flaky", async
   expect(record.retired[0]).not.toHaveProperty("excusedBy");
 });
 
+// A failure judged by the list the host guessed, run again once the cases file names its list,
+// was the host's misjudgment, not a race: the new result replaces it.
+it("replaces a failure judged by another resultsList instead of keeping it as flaky", async () => {
+  const one = { status: "completed" as const, output: { name: "Desk lamp", price: "12", results: [] } };
+  const named = JSON.stringify({ ...JSON.parse(otherStore("result")), resultsList: null });
+  const record = await batchesThenPublish({ "other-store": one }, [
+    { "src/tool.ts": toolSource, "test/cases.json": otherStore("result") },
+    { "test/cases.json": named },
+  ]);
+  expect(record.retired).toEqual([]);
+  expect(record).toMatchObject({
+    resultsList: null,
+    cases: [{ id: "other-store", results: { playwright: { status: "pass" } } }],
+  });
+});
+
 // A challenge or a site block on the rerun tests nothing about the tool, so it neither shows the
 // failure was a race nor clears it: the failure keeps counting as the case's result.
 it("keeps a failure counting when its rerun on the same code is inconclusive", async () => {

@@ -194,6 +194,9 @@ the caller's inputs and the example's. List under `notTested` anything the tool 
 with why. A choice the request, the caller or the owner declined is not part of the tool (core
 skill), so it is never tested.
 
+A read that returns one record with a side list prefers `resultsList: null` in `test/cases.json`,
+so the host judges each case by the record's values, not by that list.
+
 ## Run and fix the cases
 
 Run them with `live_tests` action `run` (`cases` null runs them all). One

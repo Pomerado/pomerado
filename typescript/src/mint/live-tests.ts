@@ -113,6 +113,8 @@ export const LiveTestCasesFile = Schema.Struct({
   notTested: Schema.optionalWith(Schema.Array(LiveTestNotTested).pipe(Schema.maxItems(100)), {
     exact: true,
   }),
+  /** The output's list of records each case is judged by, or null for a read of one record. */
+  resultsList: Schema.optionalWith(Schema.NullOr(Text), { exact: true }),
 });
 export type LiveTestCasesFile = typeof LiveTestCasesFile.Type;
 
@@ -288,8 +290,15 @@ export interface PrimaryList {
  * is an array is the list. Otherwise the list is an array of records beside the cursor, or, for a
  * tool no input of which names a record, the array named like results, or its only array of
  * records. A details record keeps its images, variants or reviews as values, never as its list.
+ * The cases file's `resultsList`, when set, names the list in place of that guess, or is null for
+ * a details read.
  */
-export const primaryListOf = (inputSchema: unknown, outputSchema: unknown): PrimaryList | undefined => {
+export const primaryListOf = (
+  inputSchema: unknown,
+  outputSchema: unknown,
+  resultsList?: string | null,
+): PrimaryList | undefined => {
+  if (resultsList === null) return undefined;
   if (isRecord(outputSchema)) {
     const root = resolved(outputSchema, outputSchema);
     if (branchesOf(root, outputSchema).some((branch) => typeOf(branch) === "array")) return {};
@@ -303,6 +312,10 @@ export const primaryListOf = (inputSchema: unknown, outputSchema: unknown): Prim
           others: fields.filter((field) => field.name !== list.name).map((field) => field.name),
         }
       : { field: list.name };
+  if (resultsList !== undefined) {
+    const chosen = fields.find((field) => field.name === resultsList);
+    return chosen === undefined ? { field: resultsList } : at(chosen);
+  }
   const arrays = fields.filter((field) => field.listOfRecords);
   const named = fields.find((field) => field.types.includes("array") && listName.test(field.name));
   const cursor = cursorPairOf(inputSchema, outputSchema);
@@ -710,6 +723,8 @@ export interface LiveTestRecord {
   readonly expect?: LiveTestExpectation;
   readonly nextPage?: true;
   readonly noMatch?: true;
+  /** The cases file's `resultsList` the verdict was judged by, when it set one. */
+  readonly resultsList?: string | null;
   /** A failing result the minter replaced by changing the case; kept for the publication review. */
   readonly retired?: true;
   /** A retired failure whose case, unchanged, passed when run again on the same source. */
@@ -751,6 +766,7 @@ export const LiveTestRecord: Schema.Schema<LiveTestRecord> = Schema.Struct({
   expect: Schema.optionalWith(LiveTestExpectation, { exact: true }),
   nextPage: Schema.optionalWith(Schema.Literal(true), { exact: true }),
   noMatch: Schema.optionalWith(Schema.Literal(true), { exact: true }),
+  resultsList: Schema.optionalWith(Schema.NullOr(Schema.String), { exact: true }),
   retired: Schema.optionalWith(Schema.Literal(true), { exact: true }),
   flaky: Schema.optionalWith(Schema.Literal(true), { exact: true }),
   signedIn: Schema.optionalWith(Schema.Literal(true), { exact: true }),
@@ -782,9 +798,14 @@ export const caseStatus = (
   testCase: LiveTestCase,
   record: LiveTestRecord | undefined,
   sourceDigest: string | undefined,
+  resultsList?: string | null,
 ): CaseStatus => {
   if (record === undefined) return "not_run";
-  if (record.caseDigest !== caseDigest(testCase) || record.sourceDigest !== sourceDigest)
+  if (
+    record.caseDigest !== caseDigest(testCase) ||
+    record.resultsList !== resultsList ||
+    record.sourceDigest !== sourceDigest
+  )
     return "stale";
   return record.verdict;
 };
@@ -814,7 +835,7 @@ export const pendingFailureCases = (
     .filter(
       (testCase) =>
         failed.has(caseDigest(testCase)) &&
-        caseStatus(testCase, records.get(testCase.id), sourceDigest) !== "pass",
+        caseStatus(testCase, records.get(testCase.id), sourceDigest, file.resultsList) !== "pass",
     )
     .map((testCase) => testCase.id);
 };
@@ -824,8 +845,9 @@ export const caseView = (
   testCase: LiveTestCase,
   record: LiveTestRecord | undefined,
   sourceDigest: string | undefined,
+  resultsList?: string | null,
 ) => {
-  const status = caseStatus(testCase, record, sourceDigest);
+  const status = caseStatus(testCase, record, sourceDigest, resultsList);
   return {
     id: testCase.id,
     purpose: testCase.purpose,
@@ -840,7 +862,7 @@ export const caseView = (
             ? {
                 lastVerdict: record.verdict,
                 staleBecause:
-                  record.caseDigest !== caseDigest(testCase)
+                  record.caseDigest !== caseDigest(testCase) || record.resultsList !== resultsList
                     ? "the case changed after it ran"
                     : "the source changed after it ran",
                 ...(record.input === undefined ? {} : { lastInput: record.input }),
@@ -1080,7 +1102,8 @@ const retiredViews = (
     canonical([input, expect, nextPage]);
   const passing = file.cases.flatMap((testCase) => {
     const record = records.get(testCase.id);
-    return record !== undefined && caseStatus(testCase, record, sourceDigest) === "pass"
+    return record !== undefined &&
+      caseStatus(testCase, record, sourceDigest, file.resultsList) === "pass"
       ? [
           {
             id: testCase.id,
@@ -1245,7 +1268,7 @@ export const liveTestsEvidence = (options: {
           noMatch: _noMatch,
           outputChecks: findings,
           ...view
-        } = caseView(testCase, entry.records.get(testCase.id), entry.sourceDigest);
+        } = caseView(testCase, entry.records.get(testCase.id), entry.sourceDigest, file.resultsList);
         return [
           entry.version,
           {
@@ -1290,14 +1313,15 @@ export const liveTestsEvidence = (options: {
     ...(entry.sourceDigest === undefined ? {} : { sourceDigest: entry.sourceDigest }),
     counts: countsOf(
       file.cases.map((testCase) =>
-        caseStatus(testCase, entry.records.get(testCase.id), entry.sourceDigest),
+        caseStatus(testCase, entry.records.get(testCase.id), entry.sourceDigest, file.resultsList),
       ),
     ),
     // The cases that passed on a new browser with an empty profile, on the published source.
     coldPasses: file.cases.filter(
       (testCase) =>
         entry.records.get(testCase.id)?.start === "cold" &&
-        caseStatus(testCase, entry.records.get(testCase.id), entry.sourceDigest) === "pass",
+        caseStatus(testCase, entry.records.get(testCase.id), entry.sourceDigest, file.resultsList) ===
+          "pass",
     ).length,
   }));
   const retiredFailures = retired.filter((entry) => entry.lastVerdict === "fail").length;
@@ -1343,6 +1367,7 @@ export const liveTestsEvidence = (options: {
           }
         : {}),
       ...(options.fileProblem === undefined ? {} : { casesFileProblem: options.fileProblem }),
+      ...(file.resultsList === undefined ? {} : { resultsList: file.resultsList }),
       versions: versionViews,
       cases,
       notTested,
