@@ -5359,6 +5359,21 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             options.ran === undefined
               ? cases
               : cases.filter((testCase) => options.ran?.includes(testCase.id));
+          // Cases that failed on this source and passed when run again unchanged, which
+          // publication review holds as a missing wait until a pass after a code change.
+          const flaky = [
+            ...new Set(
+              replacedOn(entrypoint)
+                .filter(
+                  (record) =>
+                    record.flaky === true &&
+                    digest !== undefined &&
+                    record.sourceDigest === digest &&
+                    (!signedIn() || record.signedIn === true),
+                )
+                .map((record) => record.id),
+            ),
+          ];
           return {
             kind: "host_live_tests",
             entrypoint,
@@ -5378,7 +5393,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   ? signedInPlanInstruction
                   : `Design a wide, varied first batch of about 10 to 20 cases in ${liveTestCasesPath} from what you saw on the site and your own code, as the testing skill says: one case that sets together every input the example left unset, the example's input once more, no results, the next page, then each kind of query the tool names, a single result, a closed or sold-out record when the site readily offers one, boundary values, a second store or region, other layouts and records of other kinds, and a case for each branch of your code no other case runs. Then call live_tests with action run.`
                 : cases.every((testCase) => testCase.status === "pass")
-                  ? "Every case passes on the current source. Check what the outputs mean (filters applied to every item, rows each filter excludes gone, page two holding new rows, the order, the applied location), add a case for anything the tool claims that no case tests yet, then make your last edit, run every case again, run the example last and call finish_build."
+                  ? flaky.length > 0
+                    ? `Every case's latest run passes, but ${flaky.join(", ")} failed on this same source and passed only when run again unchanged. The host keeps each such failure as flaky, and publication review reads a flaky case as a missing wait or a race at its frame, so it holds publication. Prefer fixing that wait in the code now, then run those cases again a few times in one batch before finish_build. Another pass on unchanged code clears nothing.`
+                    : "Every case passes on the current source. Check what the outputs mean (filters applied to every item, rows each filter excludes gone, page two holding new rows, the order, the applied location), add a case for anything the tool claims that no case tests yet, then make your last edit, run every case again, run the example last and call finish_build."
                   : `Fix the code for each failing case at its frame. Fix everything this batch revealed before you run again, then rerun the failing cases and every case the fixes can touch, together in one batch named in cases, on each version you ship whose source the fixes changed. Add a case for anything the tool claims that no case tests yet, then, after your last edit, run every case once with cases null. Publication review reads ${liveTestsEvidencePath}, the host's record of these results on the source you publish, against what the tool claims.`,
           };
         });

@@ -936,6 +936,9 @@ const batchesThenPublish = async (
   return {
     ...(published.seen[0]?.liveTests as { retired: Record<string, unknown>[] }),
     coverage: published.seen[0]?.coverage ?? "",
+    instructions: runs.map((_run, index) =>
+      String(resultOf(f.requests[index + 1], `run_${index}`)["instruction"]),
+    ),
   };
 };
 const otherStore = (expectation: string) =>
@@ -1018,6 +1021,22 @@ it("keeps a failure that passed when run again on the same code as flaky", async
     }),
   ]);
   expect(record.retired[0]).not.toHaveProperty("excusedBy");
+});
+
+// Publication review holds a flaky case as a missing wait, so the batch reply says so instead of
+// "Every case passes" until a pass after a code change.
+it("names a case that passed only when run again unchanged as flaky in the batch reply", async () => {
+  const { instructions } = await batchesThenPublish(
+    (batch) => (batch === 0 ? { "other-store": emptyList } : {}),
+    [
+      { "src/tool.ts": toolSource, "test/cases.json": otherStore("result") },
+      {},
+      { "src/tool.ts": "export default { name: 'search_catalog', waits: true };\n" },
+    ],
+  );
+  expect(instructions[1]).toContain("other-store failed on this same source");
+  expect(instructions[1]).not.toMatch(/^Every case passes/);
+  expect(instructions[2]).toMatch(/^Every case passes on the current source/);
 });
 
 // A failure judged by the list the host guessed, run again once the cases file names its list,
