@@ -172,6 +172,11 @@ describe("judgeCase", () => {
     expect(
       liveTestsEvidence({ file: { cases: [], resultsList: null }, versions: [] }).record,
     ).toMatchObject({ resultsList: null });
+    // A result judged by another resultsList is stale.
+    const testCase = { id: "a", purpose: "One record.", input: { address: "a" }, expect: "result" as const };
+    const ran = { id: "a", caseDigest: caseDigest(testCase), sourceDigest: "s", verdict: "pass" as const, got: "a result", durationMs: 1, resultsList: null };
+    const versions = [{ version: "playwright" as const, sourceDigest: "s", records: new Map([["a", ran]]) }];
+    expect(liveTestsEvidence({ file: { cases: [testCase], resultsList: "related" }, versions }).record.versions[0]?.counts).toMatchObject({ stale: 1 });
   });
 
   it("passes a refusal only where one was expected, and a loud failure but not a timeout", () => {
