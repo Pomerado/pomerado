@@ -159,10 +159,10 @@ describe("judgeCase", () => {
     const output = object({
       found: { type: "boolean" },
       price: { type: "string" },
-      facts_features: object({ beds: { type: "integer" } }),
-      unit_suggestions: { type: "array", items: object({ address: { type: "string" } }) },
+      details: object({ beds: { type: "integer" } }),
+      related: { type: "array", items: object({ address: { type: "string" } }) },
     });
-    const record = { found: true, price: "1", facts_features: { beds: 3 }, unit_suggestions: [] };
+    const record = { found: true, price: "1", details: { beds: 3 }, related: [] };
     const judge = (text: string) => {
       const file = Either.getOrThrow(decodeCasesFile(text));
       return judgeCase({ expect: "result" }, completed(record), primaryListOf(input, output, file.resultsList));

@@ -5352,7 +5352,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               .filter((id) => options.show?.includes(id) === true),
           );
           const cases = file.cases.map((testCase) => ({
-            ...caseView(testCase, countedRecord(entrypoint, testCase.id), digest),
+            ...caseView(testCase, countedRecord(entrypoint, testCase.id), digest, file.resultsList),
             ...outputs.get(testCase.id),
           }));
           const shown =
@@ -5761,6 +5761,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               expect: testCase.expect,
               ...(testCase.next_page === true ? { nextPage: true } : {}),
               ...(testCase.noMatch === true ? { noMatch: true } : {}),
+              ...(file.resultsList === undefined ? {} : { resultsList: file.resultsList }),
               ...(signedInBatch ? { signedIn: true as const } : {}),
             });
           }
