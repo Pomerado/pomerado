@@ -67,6 +67,16 @@ it.each([
   expect(refusal.available).toEqual(kept);
 });
 
+// A script may list a true/false or number choice as the value itself, so the refusal keeps it as
+// its text rather than listing no choices.
+it("keeps a true/false or number choice as its text", () => {
+  const refusal = new operationErrors.InvalidInput("Out of stock items are not offered", {
+    field: "include_out_of_stock",
+    available: [false, 2, null] as never,
+  });
+  expect(refusal.available).toEqual(["false", "2"]);
+});
+
 // The local host repairs nothing, so its outcome for such a refusal is unchanged: the reason and
 // the field, with no list of choices.
 it("tells a local caller the reason and field, with no choices, when a script refuses with an empty list", async () => {
