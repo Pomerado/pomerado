@@ -443,24 +443,28 @@ it("asks the owner for a code as given, masked with and without its separators, 
 });
 
 // A code an authenticator app shows is not one the site sent, so the owner is asked for it by
-// where it comes from, as a TOTP code a host never answers with a texted one: when the code
-// field's own words say so, or the host's method in force is the app.
-it("asks for an authenticator app's code as such, from the field's own words or the method in force", async () => {
+// where it comes from, as a TOTP code a host never answers with a texted one. The method in force
+// decides first, then the channel the minter read from the screen's own words, and only then the
+// host's own hint from the field's markup.
+it("asks for a code by where it comes from: the method in force, the minter's channel, then the field's markup", async () => {
   const shown = (label: string) => [
     { label, ariaLabel: null, placeholder: null, name: null, id: null, autocomplete: null },
   ];
   const asked = async (
     screen: ReturnType<typeof shown> | undefined,
     extra: {
-      readonly codeSource?: "authenticator_app" | "sent";
+      readonly codeChannel?: "sms" | "email" | "call" | "totp";
       readonly codeAgain?: "rejected";
     } = {},
+    channel?: "sms" | "email" | "call" | "totp",
   ) => {
     const { autofill } = values();
     const owner = scripted(["482913"]);
     await Effect.runPromise(
       autofill.valuesFor(
-        codeStep,
+        channel === undefined
+          ? codeStep
+          : { fields: [{ selector: "#code", slot: "code" as const, channel }] },
         {
           ...login({ username: "synthetic-user" }, owner.ask),
           ...extra,
@@ -469,7 +473,8 @@ it("asks for an authenticator app's code as such, from the field's own words or 
         screen,
       ),
     );
-    return owner.requests[0]?.questions[0];
+    const question = owner.requests[0]?.questions[0];
+    return question?.type === "secret" ? question : undefined;
   };
   const fromApp = {
     id: "code",
@@ -478,9 +483,10 @@ it("asks for an authenticator app's code as such, from the field's own words or 
     prompt: "Enter the code from your authenticator app for example.test.",
   };
   expect(await asked(shown("Code from your authenticator app"))).toEqual(fromApp);
-  expect(await asked(undefined, { codeSource: "authenticator_app" })).toEqual(fromApp);
+  expect(await asked(undefined, { codeChannel: "totp" })).toEqual(fromApp);
+  expect(await asked(undefined, {}, "totp")).toEqual(fromApp);
   expect(
-    await asked(undefined, { codeSource: "authenticator_app", codeAgain: "rejected" }),
+    await asked(undefined, { codeChannel: "totp", codeAgain: "rejected" }),
   ).toMatchObject({
     secretKind: "totp",
     prompt:
@@ -497,10 +503,16 @@ it("asks for an authenticator app's code as such, from the field's own words or 
     await asked(shown("Enter the code we sent, or use your authenticator app")),
   ).toMatchObject(sent);
   expect(await asked(shown("Code (SMS or authenticator app)"))).toMatchObject(sent);
-  // A texted or emailed method in force wins over the field's words.
+  // The channel the minter read names where a sent code went, and wins over the markup's hint.
+  const texted = await asked(shown("Verification code"), {}, "sms");
+  const emailed = await asked(shown("Code from your authenticator app"), {}, "email");
+  expect(texted?.secretKind).toBe("one_time_code");
+  expect(emailed?.secretKind).toBe("one_time_code");
+  expect(new Set([texted?.prompt, emailed?.prompt, sent.prompt]).size).toBe(3);
+  // A texted method in force wins over the field's channel and its words.
   expect(
-    await asked(shown("Code from your authenticator app"), { codeSource: "sent" }),
-  ).toMatchObject(sent);
+    await asked(shown("Code from your authenticator app"), { codeChannel: "sms" }, "totp"),
+  ).toMatchObject({ secretKind: "one_time_code", prompt: texted?.prompt });
 });
 
 it("asks again for the newest code after a refusal, spending the sign-in's code re-asks", async () => {

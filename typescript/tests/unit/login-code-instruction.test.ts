@@ -141,6 +141,16 @@ it("lets a code field name its screen's instruction, and no other field but a pr
     ).toBe(true);
 });
 
+it("lets a code field name where its code comes from, and no other field", () => {
+  const code = { selector: "#code", slot: "code", channel: "email" };
+  expect(Schema.decodeUnknownSync(SignInStep)({ fields: [code] })).toEqual({ fields: [code] });
+  expect(
+    Either.isLeft(
+      Schema.decodeUnknownEither(SignInStep)({ fields: [{ ...code, slot: "password" }] }),
+    ),
+  ).toBe(true);
+});
+
 it("tells Guardian what a code field's question selector names", () => {
   expect(guardianExecutionPolicy(nativeExecutionEnvironment)).toContain(
     "A code field's questionSelector, when present, must be the screen's own instruction for that code, such as to call a number or approve in an app.",

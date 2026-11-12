@@ -74,7 +74,7 @@ export const makeFreshAutofillValues = <E extends YieldableError>({
           0,
           codeBoxes,
           login.codeInstruction,
-          login.codeSource,
+          login.codeChannel,
         );
         if (answered instanceof Unanswered || !refusedBefore(login, answered.value))
           return answered;

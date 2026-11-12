@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Effect } from "effect";
 import type { YieldableError } from "effect/Cause";
-import type { SignInMethodChoice } from "../destinations/autofill-contracts.js";
+import type { CodeChannel, SignInMethodChoice } from "../destinations/autofill-contracts.js";
 import type { FailureContextValue } from "./failure-detail.js";
 import type { InputAsker, InputRequest, Question, ValidAnswers } from "./input-request.js";
 import {
@@ -43,13 +43,6 @@ const promptLimit = 2_000;
 const cutTo = (text: string, room: number) =>
   text.length <= room ? text : `${text.slice(0, room - 1).replace(/[\uD800-\uDBFF]$/u, "")}…`;
 
-/**
- * Where a sign-in code comes from, when the host knows: an authenticator app (`authenticator_app`),
- * or a message the site sends (`sent`: a texted, emailed or spoken code), from the method in force,
- * else the code field's own words (`authenticatorCodeField`). Absent, it is a code the site sends.
- */
-export type CodeSource = "authenticator_app" | "sent";
-
 /** Words that name an authenticator app's code: in a field's label, placeholder or instruction. */
 const authenticatorWords = /\bauthenticator\b|\bauthentication app\b|\btotp\b/iu;
 /** Words that name a code the site sends, which make a field's words no proof of an app's code. */
@@ -62,12 +55,13 @@ const nameWords = (text: string | null | undefined) =>
     .split(/[^a-z0-9]+/u);
 
 /**
- * Whether a code field, as the inspection read it, asks for an authenticator app's code: its own
- * label, aria-label, placeholder or the screen's instruction for it names an authenticator app or
- * TOTP, or its name or id holds `totp` or `authenticator`, and none of those words also names a
- * code the site sends, as a field for either ("Code (SMS or authenticator app)") does. A two-factor
- * or verification code alone may be one the site texts or emails, so it names none. Read only
- * when no method is in force: the method decides.
+ * The host's own hint that a code field asks for an authenticator app's code, read from its
+ * markup: its own label, aria-label, placeholder or the screen's instruction for it names an
+ * authenticator app or TOTP, or its name or id holds `totp` or `authenticator`, and none of those
+ * words also names a code the site sends, as a field for either ("Code (SMS or authenticator
+ * app)") does. A two-factor or verification code alone may be one the site texts or emails, so it
+ * names none. Only a secondary signal: the minter's own reading of the screen (a code field's
+ * `channel`) and the method in force come first.
  */
 export const authenticatorCodeField = (shown: ShownAnswerField) => {
   const texts = [shown.label, shown.ariaLabel, shown.placeholder, shown.questionText].filter(
@@ -82,25 +76,35 @@ export const authenticatorCodeField = (shown: ShownAnswerField) => {
   );
 };
 
+/** Where a code the site sent came from, as a code question names it. */
+const sentBy: Record<Exclude<CodeChannel, "totp">, string> = {
+  sms: "texted to your phone",
+  email: "emailed you",
+  call: "read out to you in a phone call",
+};
+
 /**
  * The code question's prompt. With the screen's own instruction for the code (`instruction`), such
  * as to call a number or approve in an app, it quotes that, cut to fit, so the owner does what the
- * site asks; without one it names where the code comes from: an authenticator app (`source`), else
- * the site, which sent it.
+ * site asks; without one it names where the code comes from (`channel`): an authenticator app, a
+ * text, an email or a phone call, else just the site, which sent it.
  */
 const codePrompt = (
   site: string,
   notice: string | undefined,
   instruction: string | undefined,
-  source: CodeSource | undefined,
+  channel: CodeChannel | undefined,
 ) => {
   const lead = notice === undefined ? "" : `${notice} `;
-  if (instruction === undefined && source === "authenticator_app")
-    return `${lead}Enter the ${notice === undefined ? "" : "current "}code from your authenticator app for ${site}.`;
-  if (instruction === undefined)
+  if (instruction === undefined) {
+    if (channel === "totp")
+      return `${lead}Enter the ${notice === undefined ? "" : "current "}code from your authenticator app for ${site}.`;
+    if (channel !== undefined)
+      return `${lead}Enter the ${notice === undefined ? "" : "newest "}code ${site} ${sentBy[channel]}.`;
     return notice === undefined
       ? `Enter the sign-in code ${site} sent you.`
       : `${lead}Enter the newest sign-in code ${site} sent you.`;
+  }
   const opening = `${lead}${site} shows this on its sign-in screen: “`;
   const closing = `” Follow it, then enter the ${notice === undefined ? "" : "newest "}code here.`;
   return `${opening}${cutTo(instruction, promptLimit - opening.length - closing.length)}${closing}`;
@@ -108,7 +112,7 @@ const codePrompt = (
 
 /**
  * The question for a value the login does not hold; a code's with its screen's instruction and
- * where it comes from (`source`): an authenticator app's code is asked as a TOTP code, which a host
+ * where it comes from (`channel`): an authenticator app's code is asked as a TOTP code, which a host
  * never answers with a code the site texted or emailed.
  */
 const question = (
@@ -116,7 +120,7 @@ const question = (
   site: string,
   notice?: string,
   instruction?: string,
-  source?: CodeSource,
+  channel?: CodeChannel,
 ): Question => {
   const withNotice = (prompt: string) => (notice === undefined ? prompt : `${notice} ${prompt}`);
   // A code asked with a notice is asked again, so it asks for the newest code the site sent.
@@ -126,8 +130,8 @@ const question = (
     return {
       id: "code",
       type: "secret",
-      secretKind: source === "authenticator_app" ? "totp" : "one_time_code",
-      prompt: codePrompt(site, notice, instruction, source),
+      secretKind: channel === "totp" ? "totp" : "one_time_code",
+      prompt: codePrompt(site, notice, instruction, channel),
     };
   if (asked === "recovery_code")
     return {
@@ -226,9 +230,9 @@ const askedQuestions = (
   notice: string | undefined,
   offered: Question | undefined,
   instruction: string | undefined,
-  source: CodeSource | undefined,
+  channel: CodeChannel | undefined,
 ): Question[] => [
-  question(asked, site, notice, instruction, source),
+  question(asked, site, notice, instruction, channel),
   ...(offered !== undefined && asked !== "code" && asked !== "recovery_code" ? [offered] : []),
 ];
 
@@ -346,8 +350,8 @@ export const makeLoginFieldAsk = <E extends YieldableError>(dependencies: {
     codeBoxes?: number,
     /** A code screen's own instruction for the code, as the host read it (`codeInstruction`). */
     instruction?: string,
-    /** Where a code comes from, when the host knows (`CodeSource`). */
-    source?: CodeSource,
+    /** Where a code comes from, when the host knows (`CodeChannel`). */
+    channel?: CodeChannel,
   ): Effect.Effect<Unanswered | { slot: AskedSlot; value: string }, E> =>
     Effect.gen(function* () {
       const questions = askedQuestions(
@@ -356,7 +360,7 @@ export const makeLoginFieldAsk = <E extends YieldableError>(dependencies: {
         notice,
         offerSave ? saveOffer?.field : undefined,
         asked === "code" ? instruction : undefined,
-        asked === "code" ? source : undefined,
+        asked === "code" ? channel : undefined,
       );
       const response = yield* Effect.either(
         asker({
@@ -382,7 +386,7 @@ export const makeLoginFieldAsk = <E extends YieldableError>(dependencies: {
             attempt + 1,
             codeBoxes,
             instruction,
-            source,
+            channel,
           );
         return misfit
           ? new Unanswered(codeDoesNotFit)

@@ -35,6 +35,7 @@ import type { PageControls } from "./page-controls.js";
 import { redirectCandidate, type SiteNavigation } from "./sign-in-redirect.js";
 import type {
   AutofillPopup,
+  CodeChannel,
   DateControl,
   DateOfBirthFormat,
   PhoneFormat,
@@ -93,6 +94,11 @@ export interface AutofillField<Slot extends FillSlot = AutofillSlot> {
   readonly slot: Slot;
   /** Observed question in the answer field's frame; supported only for private_answer. */
   readonly questionSelector?: string | undefined;
+  /**
+   * A `code` field's channel, as the minter read it from the screen's own words: where the code
+   * comes from, which the host words the code question by (`CodeChannel`).
+   */
+  readonly channel?: CodeChannel | undefined;
   readonly accepts?: readonly IdentifierKind[] | undefined;
   /** A `private_identifier` field's own label as the site shows it; never its value. */
   readonly label?: string | undefined;
@@ -129,6 +135,8 @@ export interface AutofillStepRequest {
         readonly selector: string;
         readonly slot: SecretSlot;
         readonly questionSelector?: string | undefined;
+        /** A code's channel, as the screen's own words say (`CodeChannel`). */
+        readonly channel?: CodeChannel | undefined;
         readonly format?: DateOfBirthFormat | undefined;
         readonly control?: DateControl | undefined;
       }

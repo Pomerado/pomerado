@@ -608,6 +608,37 @@ it("replays a version 14 recipe's recorded way in, and picks only among the code
   expect(kinds(lone.asked)).toEqual(["credential:missing_credentials", "code"]);
 });
 
+// The minter read where the code comes from on the code screen and the recipe keeps it, so a run
+// asks for the code by that channel without reading the screen's words again.
+it("asks a run's code question by the channel its recorded code field names", async () => {
+  const askedFor = async (channel?: "sms" | "totp") => {
+    const { ask, asked } = owner();
+    const screen = codeScreenAt();
+    const recipe: SignInRecipe =
+      channel === undefined
+        ? recipeOf(screen)
+        : {
+            version: 15,
+            steps: [loginStep, { ...screen, fields: [{ selector: "#code", slot: "code", channel }] }],
+            signedIn: { selector: "#account" },
+          };
+    expect(await signIn(recipe, fakeSite({ code: true }), ask)).toEqual(
+      Either.right({ alreadySignedIn: false }),
+    );
+    const question = asked[1]?.questions[0];
+    return question?.type === "secret" ? question : undefined;
+  };
+  const sent = await askedFor();
+  const texted = await askedFor("sms");
+  const fromApp = await askedFor("totp");
+  expect([sent?.secretKind, texted?.secretKind, fromApp?.secretKind]).toEqual([
+    "one_time_code",
+    "one_time_code",
+    "totp",
+  ]);
+  expect(texted?.prompt).not.toBe(sent?.prompt);
+});
+
 it("signs in when the code lands on a chooser the site shows before any page with the marker", async () => {
   const fake = fakeSite({ code: true, landing: "chooser" });
   const { ask, asked } = owner();
@@ -723,7 +754,7 @@ it("fails RecipeFailed when a recorded screen shows on another origin than the r
 });
 
 it.each([
-  ["an unknown version", { ...recipeOf(), version: 15 }, "unknown_version"],
+  ["an unknown version", { ...recipeOf(), version: 16 }, "unknown_version"],
   ["a recipe without steps", { ...recipeOf(), steps: [] }, "invalid"],
 ])("refuses %s with MissingRecipe before opening anything", async (_case, recipe, reason) => {
   const fake = fakeSite();

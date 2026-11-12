@@ -5,6 +5,15 @@ import { trustedUrl } from "../runtime/sign-in-origins.js";
 /** A supported two-factor method; a run call may pick one. */
 export const SignInMethod = Schema.Literal("sms", "call", "email", "totp", "push");
 export type SignInMethod = typeof SignInMethod.Type;
+/**
+ * Where a sign-in code comes from, as the minter reads it from the code screen's own words: a code
+ * texted to a phone (`sms`, "We sent a code to your phone"), emailed (`email`, "Check your email"),
+ * read out in a phone call (`call`), or shown in an authenticator app (`totp`, "Open your
+ * authenticator app"). The host words the code question by it, and a recipe from version 15 keeps
+ * it with the code field, so a run asks the same way.
+ */
+export const CodeChannel = Schema.Literal("sms", "email", "call", "totp");
+export type CodeChannel = typeof CodeChannel.Type;
 /** `SignInMethod` or a recovery code; see `signInMethodChoices`. The shared contract's choice. */
 export const SignInMethodChoice = Schema.Literal(...signInMethodChoices);
 export type SignInMethodChoice = typeof SignInMethodChoice.Type;

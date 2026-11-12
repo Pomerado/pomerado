@@ -770,10 +770,10 @@ it("reads the login before it picks a method on a recipe whose first screen is t
 });
 
 // The owner picked the authenticator app: the code question names the app, not a code the site
-// sent, and the texted method keeps the sent-code wording.
+// sent, and the texted method names the text.
 it.each([
   ["option_1", "Enter the code from your authenticator app for example.test."],
-  ["option_0", "Enter the sign-in code example.test sent you."],
+  ["option_0", "Enter the code example.test texted to your phone."],
 ] as const)("asks for the code of the method picked as %s by where it comes from", async (method, prompt) => {
   const fake = scriptedSite({
     entry: "method",
@@ -788,9 +788,9 @@ it.each([
 });
 
 // A code field whose own words name an authenticator app decides where its code comes from only
-// while no method is in force: a texted method the owner picked keeps the sent-code wording.
+// while no method is in force: a texted method the owner picked keeps the texted-code wording.
 it.each([
-  ["option_0", "Enter the sign-in code example.test sent you."],
+  ["option_0", "Enter the code example.test texted to your phone."],
   ["option_1", "Enter the code from your authenticator app for example.test."],
   [undefined, "Enter the code from your authenticator app for example.test."],
 ] as const)("asks for a code by the method picked as %s before the field's own words", async (method, prompt) => {

@@ -217,7 +217,11 @@ field as you named it.
     that field: the host then types the number without its calling code.
   - `slot: "password"` for the password.
   - `slot: "code"` for a one-time or authenticator code. A saved authenticator seed answers it;
-    otherwise the host asks the caller for the code. Never ask for a code yourself. A code split
+    otherwise the host asks the caller for the code. Never ask for a code yourself. Name where
+    the code comes from as `channel`, from the screen's own words: `sms` for "We sent a code to
+    your phone", `email` for "Check your email", `call` for a code read out in a phone call, and
+    `totp` for "Open your authenticator app". The host asks the caller for the code by it, and the
+    tool's runs keep it. Leave it out when the screen does not say. A code split
     into one-character boxes is one code, one `code` field per box, every box from the first to
     the last, in order, as a split date is one field per part (below), even when the page moves the
     focus to the next box, switches each box on only after the one before it holds a digit, or

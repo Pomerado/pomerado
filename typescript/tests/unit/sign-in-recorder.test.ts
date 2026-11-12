@@ -714,6 +714,31 @@ it("records a screen that asks for the password again with a code as a version 5
   expect(again?.recipe.steps[1]).not.toHaveProperty("refills");
 });
 
+// The minter reads where the code comes from on the code screen and names it as the field's
+// channel: the owner is asked for the code by that channel, and the recipe keeps it for runs.
+it("asks for a code by the channel the minter read, and records the channel with the code field", async () => {
+  const host = harness({ held: account, answers: { code: ["482913"] } });
+  const published = await host.run((recorder) =>
+    Effect.gen(function* () {
+      yield* recorder.step(identifierAndPassword, undefined, Effect.void);
+      yield* recorder.step(
+        { fields: [{ selector: "#otp", slot: "code", channel: "totp" }], submit: "#verify" },
+        undefined,
+        Effect.void,
+      );
+      yield* recorder.step(signedIn, undefined, Effect.void);
+      return recorder.published();
+    }),
+  );
+  expect(host.asked.map((request) => request.questions[0])).toEqual([
+    expect.objectContaining({ id: "code", type: "secret", secretKind: "totp" }),
+  ]);
+  expect(published?.recipe.version).toBe(15);
+  expect(published?.recipe.steps[1]?.fields).toEqual([
+    { selector: "#otp", slot: "code", channel: "totp" },
+  ]);
+});
+
 it("records no refill on a screen that asks for the password again after a code already went out", async () => {
   const host = harness({ held: account, answers: { code: ["482913", "135790"] } });
   const published = await host.run((recorder) =>

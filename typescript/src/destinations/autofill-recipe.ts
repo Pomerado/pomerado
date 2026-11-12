@@ -3,6 +3,7 @@ import {
   AutofillApproval,
   AutofillApprovalDelivery,
   AutofillPopup,
+  CodeChannel,
   DateControl,
   DateOfBirthFormat,
   IdentifierKinds,
@@ -733,6 +734,61 @@ export const SignInWayAutofillRecipe = workspacePages(
       recipe.steps[0]?.anySegments === undefined || "the first step lists no anySegments",
   ),
 );
+/**
+ * A version 15 field: a version 14 field whose code field may name `channel`, where its code comes
+ * from as the minter read it from the screen's own words (`CodeChannel`). A run words its code
+ * question by it, unless the method the run picked says otherwise.
+ */
+const ChannelRecipeField = Schema.Union(
+  NationalRecipeField.members[0],
+  Schema.Struct({ ...SecretRecipeField.fields, channel: Schema.optional(CodeChannel) }).pipe(
+    Schema.filter(
+      (field) =>
+        field.channel === undefined || field.slot === "code" || "only a code field names a channel",
+    ),
+  ),
+);
+/** A version 15 step: a version 14 step whose fields are version 15 fields. */
+const ChannelRecipeStep = choiceRule(
+  keyboardRule(
+    wildcardRule(
+      dismissRule(
+        keyStepRules(
+          Schema.Struct({
+            ...optionStepFields,
+            fields: Schema.Array(ChannelRecipeField).pipe(
+              Schema.maxItems(maximumStepFields + maximumCodeBoxes),
+              Schema.filter(stepFieldsFit, { message: () => stepFieldsMessage }),
+              Schema.filter(onePrivateIdentifier, { message: () => onePrivateIdentifierMessage }),
+            ),
+            methods: optionMethods(RecipeMethodChoice),
+            choice: Schema.optional(SignInChoice),
+          }),
+        ),
+      ),
+    ),
+    true,
+  ),
+);
+/**
+ * Version 15: version 14 whose code fields may name `channel`. A host that does not know version
+ * 15 refuses it, so it never drops the channel and asks for a code from the wrong place; a recipe
+ * whose code fields name no channel is written as before, in the lowest version it needs.
+ */
+export const CodeChannelAutofillRecipe = workspacePages(
+  Schema.Struct({
+    ...LegacyAutofillRecipe.fields,
+    version: Schema.Literal(15),
+    workspace: Schema.optional(Schema.Struct({ parent: HostName })),
+    steps: Schema.Array(ChannelRecipeStep).pipe(Schema.minItems(1), Schema.maxItems(12)),
+    signedIn: WildcardSignedIn,
+  }).annotations({ parseOptions: { onExcessProperty: "error" } }),
+).pipe(
+  Schema.filter(
+    (recipe) =>
+      recipe.steps[0]?.anySegments === undefined || "the first step lists no anySegments",
+  ),
+);
 export const AutofillRecipe = Schema.Union(
   LegacyAutofillRecipe,
   PopupAutofillRecipe,
@@ -747,9 +803,10 @@ export const AutofillRecipe = Schema.Union(
   MethodOptionAutofillRecipe,
   SignInChoiceAutofillRecipe,
   SignInWayAutofillRecipe,
+  CodeChannelAutofillRecipe,
 );
 export type AutofillRecipe = typeof AutofillRecipe.Type;
-export type AutofillRecipeStep = typeof WayRecipeStep.Type;
+export type AutofillRecipeStep = typeof ChannelRecipeStep.Type;
 
 /**
  * Whether a live path is a recorded screen's: as many segments, each the same, except that each
@@ -870,6 +927,9 @@ export const recipeStep = (step: RecordedRecipeStep): AutofillRecipeStep => ({
           ...(field.questionSelector === undefined
             ? {}
             : { questionSelector: field.questionSelector }),
+          ...(field.slot === "code" && field.channel !== undefined
+            ? { channel: field.channel }
+            : {}),
         }
       : {
           selector: field.selector,
@@ -902,8 +962,8 @@ const namesNational = (step: RecordedRecipeStep) =>
   step.fields.some((field) => isIdentifierKind(field.slot) && field.format === "national");
 
 /**
- * A verified sign-in's recipe: version 14 only when a method choice names a way in (`password` or
- * an `identifier_` kind), else version 13 only when a step names a `choice`, else version 12 only
+ * A verified sign-in's recipe: version 15 only when a code field names its `channel`, else version
+ * 14 only when a method choice names a way in (`password` or an `identifier_` kind), else version 13 only when a step names a `choice`, else version 12 only
  * when a step's method names an `option`, else version 11 only when a step says `submitVia:
  * "click_layer"`, else version 10 only when an identifier field says `format: "national"`, else
  * version 9 only when a step names a private identifier, else version 8 only when a step says
@@ -912,7 +972,7 @@ const namesNational = (step: RecordedRecipeStep) =>
  * version 5 only when a step submits with a key or refills a secret (`refills`), else version 4
  * only when its sign-in may move to a workspace host (`origins.workspace`, or a workspace step),
  * else version 2 only with a popup or an approval, else version 1. A security answer's question
- * selector rides in any of them. Versions 4 to 14 write `workspace` before `steps`.
+ * selector rides in any of them. Versions 4 to 15 write `workspace` before `steps`.
  */
 export const autofillRecipe = <SignedIn>(
   steps: readonly RecordedRecipeStep[],
@@ -930,19 +990,32 @@ export const autofillRecipe = <SignedIn>(
   const ways = steps.some((step) =>
     (step.methods ?? []).some((method) => isWayMethod(method.method)),
   );
-  if (ways || chosen || options || layered || national || steps.some(namesPrivateIdentifier))
+  const channels = steps.some((step) =>
+    step.fields.some((field) => field.slot === "code" && field.channel !== undefined),
+  );
+  if (
+    channels ||
+    ways ||
+    chosen ||
+    options ||
+    layered ||
+    national ||
+    steps.some(namesPrivateIdentifier)
+  )
     return {
-      version: ways
-        ? (14 as const)
-        : chosen
-          ? (13 as const)
-          : options
-            ? (12 as const)
-            : layered
-              ? (11 as const)
-              : national
-                ? (10 as const)
-                : (9 as const),
+      version: channels
+        ? (15 as const)
+        : ways
+          ? (14 as const)
+          : chosen
+            ? (13 as const)
+            : options
+              ? (12 as const)
+              : layered
+                ? (11 as const)
+                : national
+                  ? (10 as const)
+                  : (9 as const),
       ...(origins.workspace === undefined
         ? {}
         : { workspace: { parent: origins.workspace.parent } }),

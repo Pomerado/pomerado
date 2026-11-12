@@ -34,6 +34,7 @@ import type { SignInVersionFinding } from "./sign-in-version.js";
 import {
   AutofillPopup,
   AutofillApproval,
+  CodeChannel,
   DateOfBirthFormat,
   IdentifierKinds,
   maximumCodeBoxes,
@@ -744,12 +745,19 @@ export const SignInStep = Schema.Union(
           }),
         ),
         // A date of birth names how the field takes it, or the one part a dropdown takes. A
-        // private answer names its question, and a code the screen's own instruction for it.
+        // private answer names its question, and a code the screen's own instruction for it and
+        // where the code comes from, as the screen's own words say.
         Schema.Struct({
           selector: SignInSelector,
           slot: SecretSlots,
           format: Schema.optional(DateOfBirthFormat),
           questionSelector: Schema.optional(SignInSelector),
+          channel: Schema.optional(
+            CodeChannel.annotations({
+              description:
+                "Only with slot code: where the code comes from, as the screen's own words say: sms for a code texted to a phone, email for an emailed one, call for one read out in a phone call, totp for an authenticator app's",
+            }),
+          ),
         }).pipe(
           Schema.filter(
             (field) =>
@@ -758,6 +766,9 @@ export const SignInStep = Schema.Union(
               field.slot === "code",
             { message: () => "only a private answer or a code names a question selector" },
           ),
+          Schema.filter((field) => field.channel === undefined || field.slot === "code", {
+            message: () => "only a code names a channel",
+          }),
         ),
       ),
     ).pipe(

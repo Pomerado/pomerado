@@ -399,12 +399,11 @@ export const valuesFor = <E extends YieldableError, V extends string, L extends 
               : { securityAnswers: input.hosted.securityAnswers }),
             ...fresh,
             ...(codeAgain === undefined ? {} : { codeAgain }),
-            // The method in force says where its code comes from, whatever the field's words say.
-            ...(chosen === "totp"
-              ? { codeSource: "authenticator_app" as const }
-              : chosen === "sms" || chosen === "email" || chosen === "call"
-                ? { codeSource: "sent" as const }
-                : {}),
+            // The method this run picked says where its code comes from, before the channel the
+            // recorded code field names and the field's own words.
+            ...(chosen === "totp" || chosen === "sms" || chosen === "email" || chosen === "call"
+              ? { codeChannel: chosen }
+              : {}),
           },
           { chosen, seedAllowed },
         ),

@@ -171,7 +171,7 @@ describe("decodeSignInRecipe", () => {
   });
 
   it("refuses a version it does not know, so a run never drops what that version adds", () => {
-    expect(decodeSignInRecipe(JSON.stringify({ version: 15, steps, signedIn }))).toBe(
+    expect(decodeSignInRecipe(JSON.stringify({ version: 16, steps, signedIn }))).toBe(
       "unknown_version",
     );
   });
@@ -500,6 +500,24 @@ describe("signInRecipe", () => {
     expect(recipe.version).toBe(14);
     expect(decodeSignInRecipe(signInRecipeText(recipe))).toEqual(recipe);
     expect(decodeSignInRecipe(JSON.stringify({ ...recipe, version: 13 }))).toBe("invalid");
+  });
+
+  it("writes version 15 only for a code field that names its channel, which version 14 refuses", () => {
+    const code = {
+      page: "https://example.test/code",
+      fields: [{ selector: "#code", slot: "code" as const }],
+      submit: "#verify",
+    };
+    expect(signInRecipe([code], signedIn).version).toBe(1);
+    const recipe = signInRecipe(
+      [{ ...code, fields: [{ selector: "#code", slot: "code" as const, channel: "sms" as const }] }],
+      signedIn,
+    );
+    expect(recipe.version).toBe(15);
+    expect(recipe.steps[0]?.fields[0]).toEqual({ selector: "#code", slot: "code", channel: "sms" });
+    expect(decodeSignInRecipe(signInRecipeText(recipe))).toEqual(recipe);
+    expect(decodeSignInRecipe(JSON.stringify({ ...recipe, version: 14 }))).toBe("invalid");
+    expect(decodeSignInRecipe(JSON.stringify({ ...recipe, version: 16 }))).toBe("unknown_version");
   });
 
   it("holds no value, question text, label or after-submit control", () => {

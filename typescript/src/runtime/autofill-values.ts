@@ -7,6 +7,7 @@ import type {
   FillSlot,
   IdentifierKind,
 } from "../destinations/autofill-step.js";
+import type { CodeChannel } from "../destinations/autofill-contracts.js";
 import { nationalDigits, wholeDateLayouts } from "../destinations/login-field-formats.js";
 import type { WebsiteCredentials } from "./authentication.js";
 import { correctionTriesLeft } from "./credential-prompts.js";
@@ -27,7 +28,6 @@ import {
   authenticatorCodeField,
   type AutofillValueFailure,
   bareCode,
-  type CodeSource,
   codeDoesNotFit,
   fitsCodeBoxes,
   makeLoginFieldAsk,
@@ -148,20 +148,24 @@ const valuesInOrder =
     // read once. A screen that asked for two different codes would get the first in both.
     const boxes = step.fields.filter((field) => field.slot === "code").length;
     const instruction = codeInstruction(step, screen);
-    // The method in force decides where the code comes from; the field's words only without one.
-    const fromApp =
-      login.codeSource === undefined &&
-      step.fields.some((field, index) => {
+    // Where the code comes from: the method in force, else the channel the minter read from the
+    // screen's own words and the recipe keeps, else the host's own hint from the field's markup.
+    const channel =
+      login.codeChannel ??
+      step.fields.find((field) => field.slot === "code" && field.channel !== undefined)?.channel ??
+      (step.fields.some((field, index) => {
         const shown = screen?.[index];
         return field.slot === "code" && shown !== undefined && authenticatorCodeField(shown);
-      });
+      })
+        ? ("totp" as const)
+        : undefined);
     const codeLogin =
-      boxes > 1 || instruction !== undefined || fromApp
+      boxes > 1 || instruction !== undefined || channel !== login.codeChannel
         ? {
             ...login,
             ...(boxes > 1 ? { codeBoxes: boxes } : {}),
             ...(instruction === undefined ? {} : { codeInstruction: instruction }),
-            ...(fromApp ? { codeSource: "authenticator_app" as const } : {}),
+            ...(channel === undefined ? {} : { codeChannel: channel }),
           }
         : login;
     return Effect.gen(function* () {
@@ -273,12 +277,13 @@ export interface AutofillLogin {
    */
   readonly codeInstruction?: string;
   /**
-   * Where the code comes from, when the host knows: an authenticator app (`authenticator_app`),
-   * which the owner is asked for by name, or a message the site sends (`sent`), from the method in
-   * force; without one, the code field's own words (`authenticatorCodeField`) may say it is an
-   * app's. Absent, the code is one the site sent.
+   * Where the code comes from, when the host knows it from the method in force (`CodeChannel`): a
+   * text, an email, a phone call or an authenticator app, which the owner is asked for by name.
+   * Without one, a code field's `channel`, as the minter read it from the screen and the recipe
+   * keeps, decides, else the field's own markup may say it is an authenticator app's
+   * (`authenticatorCodeField`). Absent all three, the code is one the site sent.
    */
-  readonly codeSource?: CodeSource;
+  readonly codeChannel?: CodeChannel;
   /** Whether an asked field may be kept with the login, with the owner's yes (`SaveOffer`). */
   readonly offerSave?: boolean;
   /** Whether a corrected answer to a rejected field may be kept, with the owner's yes. */
