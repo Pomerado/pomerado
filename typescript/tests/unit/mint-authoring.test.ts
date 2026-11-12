@@ -1189,6 +1189,22 @@ it("has a write retry an expired quote once, which Guardian's reviews accept", a
   );
 });
 
+// A consent banner whose text also agrees to the site's own terms is still a consent banner, and a
+// prompt whose own purpose is accepting terms is not. The core skill and Guardian say the same.
+it("has the minter and Guardian treat a consent banner that bundles the site's terms as a banner", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  for (const text of [
+    (texts.get("core") ?? "").replace(/\s+/g, " "),
+    guardianExecutionPolicy(nativeExecutionEnvironment),
+  ]) {
+    expect(text).toContain(
+      "Such a banner stays one even when its text says accepting it or using the site also agrees to the site's own terms",
+    );
+    expect(text).toContain("marketing prompt or a separate prompt whose own purpose is accepting terms");
+    expect(text).not.toContain("terms the site asks");
+  }
+});
+
 // A commit the page itself refused, or one the site answered with an error other than a server error
 // whose record then reads back as the script read it before the mark, goes back unsent with the
 // site's proof, so the run reports the write not applied. A read-back counts only for fields the
@@ -1333,7 +1349,7 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["67421ce3120e12e1e616f45c0e5dcc2d6e27186bb0483511e9a15eef045fd825", "core"],
+    ["15d904066300c685108f5334869be003762b154e967caddd3b5ddf2e80a55de7", "core"],
     ["e854aa6b9fe22ea741598abcf0643c529211b643d6b9b400281948a117156224", "search"],
     ["cc2b214a88e1378b0b5c58b54ab5e1ab40e782816a931f4bda74a7f47a02777a", "auth"],
     ["a08f1ef89cc10bf11e17b8d6086b6e37649b1d5d11b78c0542cc7db32460b7e3", "testing"],
