@@ -1031,9 +1031,9 @@ const siteRefusalStatuses = [400, 413, 414, 422] as const;
 /** What a capture of each site answer must show, for the record's `clearedBy` note. */
 const siteAnswerCapture: Readonly<Record<SiteAnswer, string>> = {
   results:
-    "the site's own results for this exact input: a page reached through the site's own controls or a URL they produce, that reads back the input as the site applied it and lists the site's results for it",
+    "the site's own results for this exact input: a page reached through the site's own controls or a URL they produce, that reads back the input as the site applied it and lists the site's results for it, or, where the site offers no control for the input at all, its own page listing them, reached through its own links",
   no_results:
-    "the site's own no-results state for this exact input: a page reached through the site's own controls or a URL they produce, that reads back the input as the site applied it",
+    "the site's own no-results state for this exact input: a page reached through the site's own controls or a URL they produce, that reads back the input as the site applied it, or, where the site offers no control for the input at all, its own page showing that state, reached through its own links",
   refusal:
     "the site's own controls refusing this exact input: its own validation message for it on its own form, or, where the captures hold the site's responses, a 400, 413, 414 or 422 response to the request its own form sent with it; never the request this tool made, and never a 401, 403, 404, 405 or 429, a 5xx or a timeout",
 };
