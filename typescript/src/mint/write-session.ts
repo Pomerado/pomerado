@@ -122,6 +122,33 @@ export const sessionEnteredMarks = (steps: readonly WriteSessionMarks[]) => {
 };
 
 /**
+ * The commit marks no later act step of the session may enter, with the steps that may have sent
+ * each: every mark a step entered, or streamed when its result was lost, unless the outcome review
+ * found that step's write `not_done`. A host runs each later act step with them settled
+ * (`makeEffectJournalWith`), so entering one fails with `CommitAlreadySent` before it sends,
+ * whatever file the step runs. A mark a step put back unsent (`notCommitted`) is not entered.
+ */
+export const fencedCommits = (
+  steps: readonly {
+    readonly executionId: string;
+    readonly enteredMarks: readonly string[];
+    readonly streamedMarks?: readonly string[] | undefined;
+    readonly assessment?: OutcomeAssessment["outcome"] | undefined;
+  }[],
+): ReadonlyMap<string, readonly string[]> => {
+  const fenced = new Map<string, string[]>();
+  for (const step of steps)
+    if (step.assessment !== "not_done")
+      for (const name of new Set([...step.enteredMarks, ...(step.streamedMarks ?? [])]))
+        fenced.set(name, [...(fenced.get(name) ?? []), step.executionId]);
+  return fenced;
+};
+
+/** What an act step hears when it stopped at commit step `mark`, which `writes` may have sent. */
+export const fencedCommitNotice = (mark: string, writes: readonly string[]) =>
+  `This step stopped at commit step \`${mark}\` before sending it: an earlier step may already have sent it (${writes.join(", ")}). A commit step that may have gone out is never entered again, from any file, unless an outcome review finds that write did not happen. Prefer reading back the account or page in a step that changes nothing.`;
+
+/**
  * How many steps lead the path as setup steps: those before its first other step, and never its
  * last, which reaches the outcome. Setup is state the site makes by itself as the session starts,
  * so `setup` on any later step claims nothing.
