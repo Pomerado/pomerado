@@ -105,22 +105,26 @@ the branch only when the request or input names or clearly implies it, otherwise
 
 Pick a sign-in method in this order: the one the request or caller names, the password, then a
 code or approval; when several channels remain and nothing names one, ask the caller which, and
-never prefer one yourself. Never list or pick a passkey, security key or biometric option, even
-when the caller asks: the host cannot use one.
+never prefer one yourself. Never sign in with a passkey, security key or biometric, or offer the
+caller one as a method, even when the caller asks: the host cannot use one.
 
-A screen that says two-factor or additional authentication is required is a step-up to complete,
-not a missing capability, and so is an account or workspace entry that offers a passkey as one way
-to sign in, such as an entry reading "Two-factor authentication required" above a "Sign in with
-passkey" button. Open the entry by its own control, never a passkey button, then read the screen
-it leads to. A passkey is the only way in only when the site offers no other route after you
-looked for each one the screens show: another method link ("Try another way", "Use a different
-method"), a password, a code sent by email or text or shown in an authenticator app, and a single
-sign-on or "Authenticate" link for the account or its organization. Read where a method or sign-on
-link leads in an `explore`, but never pick a channel that sends a code just to look: when several
-channels remain, ask the caller which, as above, and when the routes split and nothing says which
-this account uses, ask the owner with `request_input` which one they sign in with. Only when every
-route ends at a screen whose only way on starts a passkey or security-key prompt, or the owner says
-a passkey is how they sign in, end with `report_blocked` `site_lacks_capability`.
+Be tenacious when a passkey shows: any route other than a passkey wins. Look for all of them, since
+a screen may offer several, often with links at the bottom of the page: a password, a code sent by
+text or email or shown in an authenticator app, another method link ("Try another way", "Use a
+different method", "Other options", "Sign in with password"), and a single sign-on or
+"Authenticate" link for the account or its organization. A screen that says two-factor or
+additional authentication is required is a step-up to complete, not a missing capability, and so
+is an account or workspace entry that offers a passkey as one way in, such as an entry reading
+"Two-factor authentication required" above a "Sign in with passkey" button: open the entry and
+read the screen it leads to. When only a passkey shows, you may press its button to open the
+passkey prompt, then dismiss or cancel it (Escape, or the prompt's own Cancel; a prompt that
+fails by itself counts as cancelled), and look again for the routes above, which many sites show
+only after a cancelled prompt. Read where a method or sign-on link leads in an `explore`, but
+never pick a channel that sends a code just to look: when several channels remain, ask the caller
+which, as above, and when the routes split and nothing says which this account uses, ask the
+owner with `request_input` which one they sign in with. End with `report_blocked`
+`site_lacks_capability` only after you tried every route and each one leads to a passkey or
+security key, or the owner says passkeys are how they sign in.
 
 # One screen at a time
 
