@@ -159,6 +159,7 @@ const run = (
     readonly step?: (handle: (id: keyof typeof cardAnswers) => string) => CardFillFields;
     readonly fillVia?: Parameters<typeof runCardFill>[0]["fillVia"];
     readonly reviewDenies?: boolean;
+    readonly checkoutOrigins?: readonly string[];
   } = {},
 ) => {
   const { handles, handle } = issued();
@@ -183,6 +184,7 @@ const run = (
         },
       },
       ...(options.fillVia === undefined ? {} : { fillVia: options.fillVia }),
+      ...(options.checkoutOrigins === undefined ? {} : { checkoutOrigins: options.checkoutOrigins }),
       page,
       keyboard: {
         insertText: (_target, text) =>
@@ -416,6 +418,33 @@ describe("a card-fill step", () => {
     const result = await outcome;
     expect(result.status).toBe("refused");
     expect(result.observations).toContain("top document is not on this site");
+    expect(typed).toEqual([]);
+    expect(reviews).toEqual([]);
+  });
+
+  it.each([
+    ["in a payment frame", stripeFrame],
+    ["on its own page", "https://shop.storefront.example/checkout"],
+  ])("types the card on a checkout origin the owner approved, %s", async (_, frameUrl) => {
+    const { outcome, typed } = run({
+      topUrl: "https://shop.storefront.example/checkout",
+      frameUrl,
+      checkoutOrigins: ["https://shop.storefront.example"],
+    });
+    expect((await outcome).status).toBe("filled");
+    expect(typed).toEqual(["4242 4242 4242 4242", "12/34", "123", "94110"]);
+  });
+
+  it("refuses a top document on another origin of an approved checkout's registrable domain, naming the approved ones", async () => {
+    const { outcome, typed, reviews } = run({
+      topUrl: "https://other.storefront.example/checkout",
+      checkoutOrigins: ["https://shop.storefront.example"],
+    });
+    const result = await outcome;
+    expect(result.status).toBe("refused");
+    expect(JSON.parse(result.observations).message).toBe(
+      "The host typed nothing: the page's top document is not on this site or its approved checkout origins (https://shop.storefront.example). Card answers go only into this site's own page or a payment frame on it, never a provider's page, a popup or a new tab.",
+    );
     expect(typed).toEqual([]);
     expect(reviews).toEqual([]);
   });

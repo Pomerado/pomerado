@@ -1054,16 +1054,17 @@ describe("OpenAI reviewer policy and trusted authority", () => {
     }
   });
 
-  it("gives every execution review the exact payment frame origins, and the host's payment limit", async () => {
+  it("gives every execution review the exact payment frame origins, and the host's payment limit and checkout origins", async () => {
     const requests = readThenDecide({
       outcome: "allow",
       rationale: "Guarded on the site.",
       action: "read",
     });
     const paymentLimit = { amount: "40.00", currency: "USD" };
+    const checkoutOrigins = ["https://shop.storefront.example"];
     await Effect.runPromise(
       makeGuardian(reviewer("Synthetic upstream {{ tenant_policy_config }}")).review(
-        { ...pending, paymentLimit },
+        { ...pending, paymentLimit, checkoutOrigins },
         readEntrypoint,
       ),
     );
@@ -1072,5 +1073,6 @@ describe("OpenAI reviewer policy and trusted authority", () => {
       paymentFrameOrigins,
     );
     expect(modelInput(requests)).toHaveProperty("trusted_authority.paymentLimit", paymentLimit);
+    expect(modelInput(requests)).toHaveProperty("trusted_authority.checkoutOrigins", checkoutOrigins);
   });
 });

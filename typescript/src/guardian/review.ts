@@ -422,6 +422,11 @@ export interface PendingExecution {
    */
   readonly paymentLimit?: { readonly amount: string; readonly currency: string };
   /**
+   * Execution reviews only: the exact origins of the site's own checkout the owner approved, where
+   * a card-fill step may also type. Absent, none.
+   */
+  readonly checkoutOrigins?: readonly string[];
+  /**
    * The questions the owner answered in this job through the host's question flow, each with its
    * screened answer, in the order answered; a prompt asked again keeps only its latest answer.
    * Protected answers (secrets and logins) and a read-or-write choice are left out.

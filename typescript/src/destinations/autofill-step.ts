@@ -960,7 +960,8 @@ const carriedRedirect = (
  * land in a URL that stays byte-exact. Once the host typed into the page
  * (`judgedBeforeTyping` given), a refusal names only the origins `namedAfterTyping` allows.
  * A step with a part of a payment card (a card-fill step) is refused unless the primary tab's top
- * document is on the site, and its card fields may sit in a frame on `paymentFrameOrigins`.
+ * document is on the site or exactly on one of `checkoutOrigins`, and its card fields may sit in a
+ * frame on `paymentFrameOrigins`.
  * `trustSignInUrl` lets a sign-in step's controls and popup also sit on an address the host's own
  * predicate trusts, asked only about one core's own floor allows; the inspection keeps it, so each
  * fill call judges again by the same rule, and names the origin of each address it trusted
@@ -972,6 +973,12 @@ export const inspectAutofillStep = (input: {
   readonly siteOrigin: string;
   readonly authenticationOrigins: readonly string[];
   readonly paymentFrameOrigins?: readonly string[] | undefined;
+  /**
+   * For a card-fill step only: the exact https origins of the site's own checkout that the host's
+   * owner approved. The top document may be on one, and the step's controls may sit and submit
+   * there as on a configured sign-in origin, which each fill call trusts too. Unset, none.
+   */
+  readonly checkoutOrigins?: readonly string[] | undefined;
   readonly judgedBeforeTyping?: readonly string[] | undefined;
   /**
    * The host's own trust of more sign-in addresses for a sign-in step, as when its user allowed the
@@ -1016,7 +1023,9 @@ export const inspectAutofillStep = (input: {
 }): Effect.Effect<AutofillRefusal | AutofillInspection> =>
   Effect.gen(function* () {
     const { step, page, siteOrigin } = input;
-    let { authenticationOrigins } = input;
+    const card = step.fields.some((field) => isCardSlot(field.slot));
+    const checkout = card ? (input.checkoutOrigins ?? []) : [];
+    let authenticationOrigins = [...input.authenticationOrigins, ...checkout];
     const predicate = signInUrlTrust(input, step);
     const trustedByHost = new Set<string>();
     const asking = notingHostTrust(predicate, trustedByHost);
@@ -1049,10 +1058,7 @@ export const inspectAutofillStep = (input: {
     const named = namedAfterTyping(input);
     if ("error" in found) return locatedRefusal(found, named);
     const top = URL.parse(found.url);
-    if (
-      step.fields.some((field) => isCardSlot(field.slot)) &&
-      (top === null || !sameSite(siteOrigin, top))
-    )
+    if (card && (top === null || !(sameSite(siteOrigin, top) || checkout.includes(top.origin))))
       return withCheck(refused("credential_target_refused"), "top_document", {
         part: "top_document",
         ...foundEvidence(found.url, undefined, named),
@@ -1061,7 +1067,13 @@ export const inspectAutofillStep = (input: {
       fields: found.fields.map(({ target }) => target),
       submit: found.submit === null ? null : found.submit.target,
     };
-    const untrusted = untrustedTarget(targets, step, { ...input, trustSignInUrl: asking }, 0, named);
+    const untrusted = untrustedTarget(
+      targets,
+      step,
+      { ...input, authenticationOrigins, trustSignInUrl: asking },
+      0,
+      named,
+    );
     const carried =
       untrusted === undefined ? undefined : yield* carriedRedirect(input, found, targets, named);
     if (untrusted && carried === undefined)
