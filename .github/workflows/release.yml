@@ -284,7 +284,7 @@ jobs:
             exit 1
           fi
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
-      # npm dist-tag authenticates through trusted publishing (OIDC) from npm 11.21.0. Node 24.22.2
+      # npm dist-tag authenticates through trusted publishing (OIDC) from npm 11.21.0. Node 24.22.3
       # ships npm 11.19.1, whose dist-tag never asks for an OIDC token and so has no credentials.
       # This step alone runs npm 11.21.0. Keep that version pinned exactly, since this job can push
       # tags and mint OIDC tokens. Drop the pin once the pinned Node ships npm 11.21.0 or later.
