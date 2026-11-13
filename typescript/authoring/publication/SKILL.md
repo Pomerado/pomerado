@@ -41,6 +41,11 @@ to prove an edited script.
 (`publication/definition.json`)
 pomerado:section publication.metadata-readers:end -->:
 
+- **English.** Write the name, the description and every input and output field description in
+  English, whatever language the request or the site uses: people read them in catalogs and
+  agents in tool listings. When the site's content is in another language, say so in English
+  where a caller needs it, such as "Returns the site's articles in Spanish", and keep the site's
+  own labels and values as it shows them, in quotes.
 - **Name.** A 2–5 word verb phrase naming what the tool does: "Search flights", "Get claim
   status", "Cancel reservation". Leave out the site's name<!-- pomerado:section publication.integration-name --> and words
   like "tool".<!-- pomerado:section publication.unique-name -->
