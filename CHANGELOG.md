@@ -1245,6 +1245,7 @@
 
 ### Fixes
 
+- `waitForReady` no longer reads a control as busy for a loading sign inside it that opacity hides, its own or an ancestor's, such as a spinner a button keeps at opacity 0 until it loads. Before, such a sign counted while it had a box, so the wait ended `not_ready` on a control that was ready. A loading sign that shows, and a busy region around the control, still hold the wait.
 - Guardian and the core skill treat a cookie or tracking consent banner as one even when its text says accepting it or using the site also agrees to the site's own terms. Before, both said terms the site asks to accept are no such banner, so Guardian could deny the banner's accept click, and a build or repair stalled on it or asked the caller. A separate prompt whose own purpose is accepting terms is still no such banner, and the rules on accepting terms judge it.
   - No exported type or signature changes, and `pomerado.hostProtocol` stays 1. A recorded Guardian response keyed on the exact execution policy, or a recorded minter response keyed on the exact core skill text, needs recording again.
 - A script's refusal keeps a true/false or finite number choice as its text, such as `"false"`. Before, `errors.InvalidInput` and `boundedRefusalDetail` kept only text choices, so a refusal that listed `available: [false]` reached the host with no choices, and a host that repairs held its caller to check a refusal the script had already proven.

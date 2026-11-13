@@ -494,7 +494,10 @@ const readyWaitInPage = (elements, spec) => {
   if (spec.editable && (element.readOnly === true || element.getAttribute("aria-readonly") === "true")) blockers.push("read-only");
   if (element.closest('[aria-busy="true"]') !== null) blockers.push("busy");
   else {
-    const sign = [...element.querySelectorAll(spec.signs)].find(shows);
+    // A sign hidden by opacity, its own or an ancestor's, such as a spinner a button keeps at
+    // opacity 0 until it loads, is no loading sign.
+    const sign = [...element.querySelectorAll(spec.signs)].find((sign) => shows(sign) &&
+      (typeof sign.checkVisibility !== "function" || sign.checkVisibility({ opacityProperty: true })));
     if (sign !== undefined) blockers.push("busy");
   }
   const rect = element.getBoundingClientRect();
