@@ -79,6 +79,10 @@ export const guardianReviewInput = (
         : { ownerConfirmedStep: turn.sources.ownerConfirmedStep }),
       // The exact frame origins a host card-fill step may type a card answer into.
       ...(reviewKindOf(turn.pending) === "execution" ? { paymentFrameOrigins } : {}),
+      // The exact checkout origins off the site the owner approved for a card-fill step.
+      ...(reviewKindOf(turn.pending) === "execution"
+        ? { checkoutOrigins: absentWhenEmpty(turn.pending.checkoutOrigins ?? []) }
+        : {}),
       // The most a card-fill step that names slots may pay, when the host has one.
       ...(reviewKindOf(turn.pending) === "execution" && turn.pending.paymentLimit !== undefined
         ? { paymentLimit: turn.pending.paymentLimit }

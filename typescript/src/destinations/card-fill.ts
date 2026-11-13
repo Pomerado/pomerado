@@ -22,14 +22,15 @@ import type { CardFillTotal, ScriptCardFillAnswer } from "../runtime/script-card
  * A host card-fill step: the caller's card answers typed into a checkout's card fields the way a
  * sign-in step types a password. The minter names each field's selector and the card handle it
  * takes; the host checks every handle is a card answer's, finds each field in the frame that holds
- * it on the primary tab, refuses unless the page's top document is on the site and each field is
- * on the site or in a frame on an exact payment frame origin, has Guardian review the step and the
- * screen with handles only, then inserts each value natively into the field it bound. No value
- * ever enters page code, Guardian's input, the minter's context or the step's result, and the step
- * clicks nothing: the submit that books or buys is a later step under the write rules. A step that
- * names each field's card slot instead, with the checkout's total, is one a host fills from a
- * payment method the caller named (`fillVia`): core runs the same checks and review, then hands
- * the host the checked fields and reads no card value.
+ * it on the primary tab, refuses unless the page's top document is on the site or an exact checkout
+ * origin the owner approved and each field is on one of those or in a frame on an exact payment
+ * frame origin, has Guardian review the step and the screen with handles only, then inserts each
+ * value natively into the field it bound. No value ever enters page code, Guardian's input, the
+ * minter's context or the step's result, and the step clicks nothing: the submit that books or
+ * buys is a later step under the write rules. A step that names each field's card slot instead,
+ * with the checkout's total, is one a host fills from a payment method the caller named
+ * (`fillVia`): core runs the same checks and review, then hands the host the checked fields and
+ * reads no card value.
  */
 
 /**
@@ -106,11 +107,15 @@ const contextText = (refusal: AutofillRefusal, key: string) => {
  * submitted off the site and the payment frame origins, or the page's top document left the site;
  * otherwise the refusal's reason and field alone.
  */
-const inspectionRefused = (refusal: AutofillRefusal, origins: readonly string[]) => {
+const inspectionRefused = (
+  refusal: AutofillRefusal,
+  origins: readonly string[],
+  checkoutOrigins: readonly string[] = [],
+) => {
   const check = contextText(refusal, "check");
   if (check === "top_document")
     return refusedWith(
-      "The host typed nothing: the page's top document is not on this site. Card answers go only into this site's own page or a payment frame on it, never a provider's page, a popup or a new tab.",
+      `The host typed nothing: the page's top document is not on this site${checkoutOrigins.length === 0 ? "" : ` or its approved checkout origins (${checkoutOrigins.join(", ")})`}. Card answers go only into this site's own page or a payment frame on it, never a provider's page, a popup or a new tab.`,
       refusal,
     );
   const field = typeof refusal.target === "number" ? refusal.target + 1 : undefined;
@@ -201,6 +206,8 @@ export const runCardFill = <E>(input: {
   readonly typing?: CredentialTypingMode;
   readonly siteOrigin: string;
   readonly paymentFrameOrigins?: readonly string[];
+  /** The exact https origins of the site's own checkout the owner approved; none when unset. */
+  readonly checkoutOrigins?: readonly string[] | undefined;
   readonly judgedBeforeTyping?: readonly string[] | undefined;
   readonly review: (source: CardFillReview) => Effect.Effect<void, E>;
   /**
@@ -259,9 +266,11 @@ export const runCardFill = <E>(input: {
       siteOrigin: input.siteOrigin,
       authenticationOrigins: [],
       paymentFrameOrigins: origins,
+      checkoutOrigins: input.checkoutOrigins,
       judgedBeforeTyping: input.judgedBeforeTyping,
     });
-    if ("outcome" in inspected) return inspectionRefused(inspected, origins);
+    if ("outcome" in inspected)
+      return inspectionRefused(inspected, origins, input.checkoutOrigins);
     const total = input.step.total;
     yield* input.review({
       step: { fields, ...(total === undefined ? {} : { total }) },
