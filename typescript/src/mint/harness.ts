@@ -581,6 +581,7 @@ const namedStepReasons: ReadonlySet<string> = new Set([
 const rationaleStepReasons: ReadonlySet<string> = new Set([
   "no_match_case_untested",
   "list_limit_untested",
+  "metadata_not_english",
 ]);
 /** How many host-refused submissions an attempt remembers, the latest kept, to tell a repeat. */
 const rememberedRefusedSubmissions = 8;

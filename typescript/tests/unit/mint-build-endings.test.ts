@@ -1228,6 +1228,13 @@ const listLimitUntested = new MintFailure({
   reason: "list_limit_untested" as NonNullable<MintFailure["reason"]>,
   review: { outcome: "deny", rationale: listLimitRationale },
 });
+const metadataNotEnglishRationale =
+  "These don't read as English: name, description. Write each in English, then call finish_build again with the same executionId.";
+const metadataNotEnglish = new MintFailure({
+  code: "PublicationUnavailable",
+  reason: "metadata_not_english" as NonNullable<MintFailure["reason"]>,
+  review: { outcome: "deny", rationale: metadataNotEnglishRationale },
+});
 
 // A host refusal whose instruction or rationale names the step that fixes it is no reason the
 // build cannot go on: the first host_refused report after it is refused with that step, and a
@@ -1272,6 +1279,12 @@ it.each([
     refusal: listLimitUntested,
     reason: "list_limit_untested",
     step: { refusalRationale: listLimitRationale },
+    absent: "refusalInstruction",
+  },
+  {
+    refusal: metadataNotEnglish,
+    reason: "metadata_not_english",
+    step: { refusalRationale: metadataNotEnglishRationale },
     absent: "refusalInstruction",
   },
 ])(
