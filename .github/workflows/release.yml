@@ -51,7 +51,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.22.1
+          node-version: 24.22.2
           package-manager-cache: false
       # A canary precedes the next release in semver order. package.json names that release until
       # it is published, and after that the canary takes the next patch version. A re-run of this
@@ -111,7 +111,7 @@ jobs:
       # No registry URL input, so setup-node writes no .npmrc token placeholder.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.22.1
+          node-version: 24.22.2
           package-manager-cache: false
       # By the ID the check job recorded, not by name, so no other job of the run can swap the
       # artifact for its own.
@@ -216,7 +216,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24.22.1
+          node-version: 24.22.2
           package-manager-cache: false
       # The integrity is the one the deploy pinned and tested, so latest moves to exactly those
       # bytes. npm records no gitHead for a package published from a tarball, so the commit comes
@@ -284,7 +284,7 @@ jobs:
             exit 1
           fi
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
-      # npm dist-tag authenticates through trusted publishing (OIDC) from npm 11.21.0. Node 24.22.1
+      # npm dist-tag authenticates through trusted publishing (OIDC) from npm 11.21.0. Node 24.22.2
       # ships npm 11.19.1, whose dist-tag never asks for an OIDC token and so has no credentials.
       # This step alone runs npm 11.21.0. Keep that version pinned exactly, since this job can push
       # tags and mint OIDC tokens. Drop the pin once the pinned Node ships npm 11.21.0 or later.
