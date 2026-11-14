@@ -878,12 +878,10 @@ list.addEventListener("click", (event) => {
 });
 </script>`);
   const office = 'page.getByRole("button", { name: "Office" })';
-  // Copies with one label, text and value are one option, so without tie first the first is taken too.
   expect(await call(page, `return await pickValue(${office}, "Springfield", fast);`)).toEqual({
-    result: { picked: true, kind: "dropdown", label: "Springfield", value: "", rank: "exact", refills: 0 },
+    result: { picked: false, reason: "option_ambiguous", wanted: "Springfield", available: ["Shelbyville", "Springfield"], matches: ["Springfield", "Springfield"] },
   });
-  expect(await submitted(page)).toEqual({ office: "1" });
-  expect(await call(page, `return await pickValue(${office}, "Shelbyville", fast);`)).toMatchObject({ result: { picked: true } });
+  expect(await submitted(page)).toEqual({ office: "" });
   expect(await call(page, `return await pickValue(${office}, "Springfield", { ...fast, tie: "first" });`)).toEqual({
     result: { picked: true, kind: "dropdown", label: "Springfield", value: "", rank: "exact", refills: 0, tied: ["Springfield", "Springfield"] },
   });

@@ -539,7 +539,7 @@ const pickerPageCode = String.raw`(element, args) => {
  * (as whole words, only after the value's other words and ending the name or one of its parts),
  * and the like) are tried against names, so Fifth Avenue for 5th Avenue outranks an option with
  * the same words in another order. Two options at the best rank are ambiguous, unless they are
- * copies with one label, text and value, such as a country listed twice, which are one option, so
+ * copies with one label, text and a value, such as a country listed twice, which are one option, so
  * the first enabled copy is picked; an "Add ..." or "Create ..." row is never matched.
  *
  * The query is typed key by key, as a person types it, never filled at once, after clearing any
@@ -947,12 +947,13 @@ const pickerMatches = (options) => {
 // position (its key or index), never found again by a label another option may share; every
 // tied option greyed out is a value the site does not offer now. Options that tie as copies, with
 // one label, text and value, such as a country listed twice, are one option, taken the same way
-// without tie "first".
+// without tie "first". Options with no value are never copies: what holds them, such as a group,
+// can tell them apart.
 const pickerOutcome = (found, wanted, tie = false) => {
   const { ranking, list } = found;
   if (ranking.status === "picked") return { status: "picked", option: list[ranking.index], rank: ranking.rank };
   const tied = ranking.status === "ambiguous" ? ranking.indexes.map((index) => list[index]) : [];
-  const copies = new Set(tied.map((option) => JSON.stringify([option.label, option.names, option.value]))).size === 1;
+  const copies = new Set(tied.map((option) => JSON.stringify([option.label, option.names, option.value]))).size === 1 && tied[0].value !== "";
   const first = tie || copies ? tied.find((option) => !option.disabled) : undefined;
   if (first) return { status: "picked", option: first, rank: ranking.rank, ...(tie ? { tied: pickerMatches(tied) } : {}) };
   const reason = ranking.status === "ambiguous" ? (tie || copies ? "option_disabled" : "option_ambiguous") : ranking.status === "disabled" ? "option_disabled" : "option_missing";

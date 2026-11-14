@@ -117,10 +117,11 @@ export const blockingFieldsHook = "__pomeradoBlockingFields";
  *   spellings, such as `["CA", "California"]`), ignoring case, accents, spacing and punctuation.
  *   A label that equals one wins over a value that does,
  *   which wins over a label that holds it as whole words; two different options at the winning
- *   rank are ambiguous, while copies with one label and value, such as a country listed twice,
- *   are one option, so the first enabled copy is chosen. A custom dropdown is opened, its own
- *   listbox found through `aria-controls` or `aria-owns` (else the one visible listbox), typed
- *   into when it filters as you type, and scrolled when it renders its options as you scroll. Returns `{ shape, label, value }`.
+ *   rank are ambiguous, while copies with one label and a value, both as read, such as a country
+ *   listed twice, are one option, so the first enabled copy is chosen. A custom dropdown is
+ *   opened, its own listbox found through `aria-controls` or `aria-owns` (else the one visible
+ *   listbox), typed into when it filters as you type, and scrolled when it renders its options as
+ *   you scroll. Returns `{ shape, label, value }`.
  * - `unfilledRequiredFields(scope, { timeout, before }?)`: the empty required fields a form shows
  *   now, in page order, such as ones it adds once an earlier answer is in. A field counts when it
  *   is visible, enabled, empty and marked `required` or `aria-required="true"`, or flagged invalid
@@ -228,7 +229,8 @@ const formControlDateCandidates = (iso, format, locale) => {
   return [...new Set(candidates)];
 };
 /** The one option a choice names, by rank: label, then value, then whole words of the label. */
-const formControlPick = (options, wanted) => {
+const formControlPick = (read, wanted) => {
+  const options = read.map((option) => ({ ...option, label: formControlText(option.label), value: formControlText(option.value) }));
   const names = new Set(wanted.map(formControlText).filter((name) => name !== ""));
   const words = (label) => label.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
   const ranks = [
@@ -239,9 +241,11 @@ const formControlPick = (options, wanted) => {
   for (const rank of ranks) {
     const matched = options.filter(rank);
     if (matched.length === 0) continue;
-    // Copies with one label and value, such as a country listed twice, are one option.
-    if (matched.some((option) => option.label !== matched[0].label || option.value !== matched[0].value))
-      return { failure: "option_ambiguous" };
+    // Copies with one label and value as read, such as a country listed twice, are one option.
+    // Options with no value are never copies: what holds them, such as a group, can tell them apart.
+    const first = read[matched[0].index];
+    const differs = (option) => read[option.index].label !== first.label || read[option.index].value !== first.value;
+    if (matched.length > 1 && (first.value === "" || matched.some(differs))) return { failure: "option_ambiguous" };
     const option = matched.find((each) => !each.disabled);
     return option ? { option } : { failure: "option_disabled" };
   }
@@ -271,10 +275,7 @@ const formControlChooseNative = async (control, wanted, timeout) => {
     undefined,
     { timeout },
   );
-  const picked = formControlPick(
-    options.map((option) => ({ ...option, label: formControlText(option.label), value: formControlText(option.value) })),
-    wanted,
-  );
+  const picked = formControlPick(options, wanted);
   if (picked.failure) throw formControlFailure(picked.failure);
   await control.selectOption({ index: picked.option.index }, { timeout });
   if ((await control.evaluate((select) => select.selectedIndex, undefined, { timeout })) !== picked.option.index)
@@ -346,10 +347,7 @@ const formControlChooseCustom = async (control, wanted, timeout) => {
     const before = options.length;
     options = await formControlOptions(listbox);
     if (options.length !== before) stuck = 0;
-    picked = formControlPick(
-      options.map((option) => ({ ...option, label: formControlText(option.label), value: formControlText(option.value) })),
-      wanted,
-    );
+    picked = formControlPick(options, wanted);
     if (picked.failure !== "option_missing" || Date.now() >= until) break;
     // A dropdown that filters as you type shows its options for the typed text.
     if (editable && !typed) {
