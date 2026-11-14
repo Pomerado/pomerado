@@ -1,0 +1,87 @@
+import { describe, expect, test } from "vitest";
+import { resolveAddress } from "../../src/browser/picker-address.js";
+
+/** A site's suggestions by the text typed, recording each text in order. */
+const site = (answers: Readonly<Record<string, readonly string[]>>) => {
+  const typed: string[] = [];
+  const suggest = (text: string) => {
+    typed.push(text);
+    return answers[text] ?? [];
+  };
+  return { typed, suggest };
+};
+
+describe("resolveAddress", () => {
+  test("types the street without the unit after a comma or a #, and returns the unit", async () => {
+    const echo = (text: string) => [text];
+    expect(await resolveAddress("1 Example St, Suite 2, Exampleton, IL 60000", echo)).toMatchObject({
+      picked: true,
+      query: "1 Example St, Exampleton, IL 60000",
+      unit: "Suite 2",
+    });
+    expect(await resolveAddress("1 Example St #4B, Exampleton", echo)).toMatchObject({
+      query: "1 Example St, Exampleton",
+      unit: "#4B",
+    });
+    // A town, a ZIP, a town opening with a number or a postal code of two words is no unit.
+    for (const address of [
+      "1 Example St, Exampleton, IL 60000",
+      "1 Example St, Exampleton 60000",
+      "1 Example St, 12 Oaks, CA",
+      "1 Example St, Exampleton ON A1B 2C3",
+    ])
+      expect(await resolveAddress(address, echo)).toMatchObject({ query: address, unit: "" });
+  });
+
+  test("retries once with joined words split, the ZIP left out and stray punctuation dropped", async () => {
+    const { typed, suggest } = site({ "2 N Example Ton St, Exampleton, IL": ["2 N Example Ton St, Exampleton, IL, USA"] });
+    expect(await resolveAddress("2 N ExampleTon St., Exampleton, IL 60000", suggest)).toEqual({
+      picked: true,
+      choice: "2 N Example Ton St, Exampleton, IL, USA",
+      label: "2 N Example Ton St, Exampleton, IL, USA",
+      query: "2 N Example Ton St, Exampleton, IL",
+      unit: "",
+    });
+    expect(typed).toEqual(["2 N ExampleTon St., Exampleton, IL 60000", "2 N Example Ton St, Exampleton, IL"]);
+  });
+
+  test("prefers a suggestion that keeps the caller's ZIP and state, then the site's order", async () => {
+    const choices = ["1 Example St, Exampleton, NY, USA", "1 Example St, Exampleton, IL 60001, USA", "1 Example St, Exampleton, IL 60000, USA"];
+    expect(await resolveAddress("1 Example St, Exampleton, IL 60000", () => choices)).toMatchObject({ label: choices[2] });
+    // A suggestion that shows no ZIP still keeps the state, and a state's name matches its code.
+    expect(await resolveAddress("1 Example St, Exampleton, Illinois 60000", () => choices.slice(0, 2).concat("1 Example St, Exampleton, IL, USA"))).toMatchObject({
+      label: "1 Example St, Exampleton, IL, USA",
+    });
+    // A ZIP alone keeps its place as a ZIP, never as a house number elsewhere.
+    expect(await resolveAddress("60000", () => ["60000 Example Rd, Sampleville, NY, USA", "Exampleton, IL 60000, USA"])).toMatchObject({
+      label: "Exampleton, IL 60000, USA",
+    });
+    // With none that keeps them on any form, the site's first is accepted for the tool to report.
+    const { typed, suggest } = site({ "1 Example St, Exampleton, IL 60000": ["1 Example St, Exampleton, NY, USA"] });
+    expect(await resolveAddress("1 Example St, Exampleton, IL 60000", suggest)).toMatchObject({ label: "1 Example St, Exampleton, NY, USA" });
+    expect(typed).toEqual(["1 Example St, Exampleton, IL 60000", "1 Example St, Exampleton, IL"]);
+  });
+
+  test("takes the suggestion that matches the typed text among those that tie, and returns the site's own item", async () => {
+    const items = [
+      { description: "1 Example St, Exampleton Heights, IL, USA", id: "a" },
+      { description: "1 Example St, Exampleton, IL, USA", id: "b" },
+    ];
+    expect(await resolveAddress("1 Example St, Exampleton, IL", () => items, (item) => item.description)).toMatchObject({
+      choice: { id: "b" },
+      label: "1 Example St, Exampleton, IL, USA",
+    });
+  });
+
+  test("refuses only when no form brings a suggestion with the caller's house number, listing what the site gave", async () => {
+    expect(await resolveAddress("3 Example St, Exampleton", () => ["5 Example St, Exampleton, IL, USA", "Example St, Exampleton, IL, USA"])).toEqual({
+      picked: false,
+      reason: "option_missing",
+      wanted: "3 Example St, Exampleton",
+      available: ["5 Example St, Exampleton, IL, USA", "Example St, Exampleton, IL, USA"],
+      matches: [],
+      unit: "",
+    });
+    expect(await resolveAddress("3 Example St, Apt 1, Exampleton", () => [])).toMatchObject({ picked: false, available: [], unit: "Apt 1" });
+  });
+});

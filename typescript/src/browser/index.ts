@@ -64,6 +64,8 @@ export { CalendarDate, formControlsCode } from "./form-controls.js";
 export { outcomeWaitCode } from "./outcome-wait.js";
 export { PickManyOutcome, PickOutcome, pickRefusal, pickerCode } from "./picker.js";
 export { closestFirst, pickerRanks, rankChoices } from "./picker-rank.js";
+export { resolveAddress } from "./picker-address.js";
+export type { AddressOutcome } from "./picker-address.js";
 export type { PickerChoice, PickerRank, PickerRanking } from "./picker-rank.js";
 export { visibleTextCode } from "./visible-text.js";
 export { pageDataCode } from "./page-data.js";
