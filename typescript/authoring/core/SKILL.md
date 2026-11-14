@@ -217,8 +217,10 @@ exception: it is optional unless the task can't run without it (below).
   and finds the record another way, such as by name, only when the caller gives none. A closed
   list of options stays an enum of the site's options, as above. When the options come from a
   query, as in a search box, autocomplete, typeahead or searchable combobox, look the value
-  up the way a person would, with `pickValue` from `pickerCode` (forms skill). It types the
-  caller's value into the site's own search, reads every suggestion, matches names loosely
+  up the way a person would, with `pickValue` from `pickerCode` (forms skill), or with
+  `rankChoices` and `spellingsOf` on options read as data, as in an HTTP version, never with
+  matching of your own. `pickValue` types the caller's value into the site's own search,
+  reads every suggestion, matches names loosely
   (case, accents, spacing, punctuation, whole words, then the same words with their
   comma-separated parts in another order, so a name with a neighborhood or an airport code in
   brackets, or a station the site lists as "Station, City", still matches, but never a name with

@@ -10,7 +10,7 @@ export interface PickerChoice {
 }
 
 /** How closely the winning option matched, best first. */
-export const pickerRanks = ["exact", "normalized", "folded", "leading", "words", "allWords", "stem", "extraWords"] as const;
+export const pickerRanks = ["exact", "normalized", "folded", "leading", "words", "allWords", "anyOrder", "stem", "extraWords"] as const;
 export type PickerRank = (typeof pickerRanks)[number];
 
 export type PickerRanking =
@@ -35,7 +35,17 @@ export type PickerRanking =
  * in the spelling's order (`allWords`: Harbor Street Station, Example City for Example City Harbor
  * Street Station, but never Example Fort for Fort Example, Floor 12 Room 3 for Room 12 Floor 3, or
  * a name with a word the spelling lacks, such as Example Harbor 5th Avenue Mall for Example 5th
- * Avenue, which may be another place than the one asked for), then, only with `options.stem`, a name whose words pair one
+ * Avenue, which may be another place than the one asked for), then a name some of whose parts,
+ * each whole and each keeping its words' order though the spelling may interleave them, hold the
+ * spelling's words one for one, each equal or written short in the name, with the numbers in the
+ * spelling's order (`anyOrder`: Transit - Lakeside Station, 12 Main St for Lakeside Transit
+ * Station, or Example Hall, 1 Harbor Plz, Example City for Example Hall, 1 Harbor Plaza). A name's
+ * word is written short for a spelling's when both are Latin letters and it has two to four
+ * letters, at least two fewer than the spelling's, starts with its first letter and holds the rest
+ * of its letters in order, such as Plz for Plaza, Sta for Station, Blvd for Boulevard or NW for
+ * Northwest. Only the name's word is ever the short one, so a spelling's UK never matches Ukraine
+ * nor Oak Oakwood, and a part matched only through short words never counts. Then, only with
+ * `options.stem`, a name whose words pair one
  * for one, in order, with a spelling's (`stem`), as a read asks for and a write never does. Two
  * words pair when they are equal, or when both are Latin letters only and the shorter, of five or
  * more letters, is the whole start of the longer, such as Dentist and Dentistry or Dentists and
@@ -114,6 +124,42 @@ export const rankChoices = (
         used[index] = false;
         return done;
       });
+    return from(0);
+  };
+  // Whether a name's word is written short for a spelling's, such as Plz for Plaza.
+  const short = (brief: string, full: string) => {
+    if (!/^\p{Script=Latin}{2,4}$/u.test(brief) || !/^\p{Script=Latin}+$/u.test(full) || full.length < brief.length + 2 || brief[0] !== full[0])
+      return false;
+    let at = 0;
+    for (const letter of full) if (letter === brief[at]) at += 1;
+    return at === brief.length;
+  };
+  // Whether some of `parts`, each whole, hold `want`'s words one for one, each part's words in
+  // its order but the parts interleaved, no part only through short forms, and the parts'
+  // numbers are `numbers`.
+  const covers = (want: readonly string[], numbers: string, parts: readonly (readonly string[])[]) => {
+    const next = parts.map(() => 0);
+    const same = parts.map(() => false);
+    const from = (at: number): boolean => {
+      if (at === want.length)
+        return (
+          parts.every((part, index) => next[index] === 0 || (next[index] === part.length && same[index] === true)) &&
+          parts.filter((_, index) => next[index] !== 0).flat().filter((word) => /\p{N}/u.test(word)).join(" ") === numbers
+        );
+      const word = want[at] ?? "";
+      return parts.some((part, index) => {
+        const count = next[index] ?? 0;
+        const have = part[count];
+        if (have === undefined || (have !== word && !short(have, word))) return false;
+        const was = same[index] === true;
+        next[index] = count + 1;
+        same[index] = was || have === word;
+        const done = from(at + 1);
+        next[index] = count;
+        same[index] = was;
+        return done;
+      });
+    };
     return from(0);
   };
   const named = {
@@ -235,6 +281,17 @@ export const rankChoices = (
               want.numbers === have.numbers &&
               (composes(want.all, have.parts) || composes(have.all, want.parts)),
           );
+        });
+      },
+      true,
+    ],
+    [
+      "anyOrder",
+      (choice, list) => {
+        const wants = partLists(list);
+        return choice.names.some((name) => {
+          const { parts } = named.parted(name);
+          return wants.some((want) => covers(want.all, want.numbers, parts));
         });
       },
       true,

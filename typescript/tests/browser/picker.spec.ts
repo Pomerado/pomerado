@@ -137,24 +137,18 @@ return await pickValue(page.getByLabel("Time"), "6:30 PM", fast);`),
   expect(await submitted(page)).toEqual({ date: "2030-03-05", time: "18:30" });
 });
 
-// A town the list writes in one of the usual other forms, such as St for Saint, is picked; one it
-// writes short in any other way is refused, never picked without a word.
-test("pickValue picks a town the list writes with a usual short form and refuses any other short form", async ({ page }) => {
+// A town the list writes in one of the usual other forms, such as St for Saint, or short in any
+// other way, such as Pte for Pointe, is picked.
+test("pickValue picks a town the list writes with a short form", async ({ page }) => {
   await serve(page, `<form><label>Town <select name="town">
 <option value="">Choose a town</option><option value="1">St-Exemple-sur-Lac</option><option value="2">Pte-Exemple</option></select></label></form>`);
   expect(
     await call(page, `return await pickValue(page.getByLabel("Town"), "Saint-Exemple-sur-Lac", fast);`),
   ).toMatchObject({ result: { picked: true, label: "St-Exemple-sur-Lac", value: "1" } });
-  expect(await call(page, `return await pickValue(page.getByLabel("Town"), "Pointe-Exemple", fast);`)).toEqual({
-    result: {
-      picked: false,
-      reason: "option_missing",
-      wanted: "Pointe-Exemple",
-      available: ["Pte-Exemple", "St-Exemple-sur-Lac"],
-      matches: [],
-    },
+  expect(await call(page, `return await pickValue(page.getByLabel("Town"), "Pointe-Exemple", fast);`)).toMatchObject({
+    result: { picked: true, label: "Pte-Exemple", value: "2", rank: "anyOrder" },
   });
-  expect(await submitted(page)).toEqual({ town: "1" });
+  expect(await submitted(page)).toEqual({ town: "2" });
 });
 
 // A value the list lacks lists the options closest to it first, so the nearest ones survive the cap
