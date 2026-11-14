@@ -785,7 +785,8 @@ const isScriptAddress = (url: string) => URL.parse(url)?.protocol === "javascrip
  * A card-fill step's never is, nor any other script action or link. A step whose every field takes
  * a code, one code split across boxes, needs only the field at `from` to take typing: a page may
  * switch each box on only once the one before it holds a digit, and the fill waits for each later
- * box before it types there.
+ * box before it types there. With `postalCodeAfterCard`, a billing postal code field need not take
+ * typing either.
  */
 export const untrustedTarget = (
   targets: typeof Targets.Type,
@@ -796,6 +797,7 @@ export const untrustedTarget = (
     readonly paymentFrameOrigins?: readonly string[] | undefined;
     readonly trustSignInUrl?: ((url: URL) => boolean) | undefined;
     readonly judgedBeforeTyping?: readonly string[] | undefined;
+    readonly postalCodeAfterCard?: boolean | undefined;
   },
   from: number,
   named?: ReadonlySet<string>,
@@ -869,7 +871,9 @@ export const untrustedTarget = (
       step.fields[index]?.slot === "date_of_birth" &&
       (target.control === "select" || target.control === "combobox");
     const toType = splitCode ? index === from : index >= from;
-    if (toType && !target.editable && !choosable)
+    const later =
+      trust.postalCodeAfterCard === true && step.fields[index]?.slot === "billing_postal_code";
+    if (toType && !target.editable && !choosable && !later)
       return withCheck(refused("not_editable", index), "not_editable", {
         control: target.control,
         ...targetEvidence(target, named),
@@ -980,6 +984,13 @@ export const inspectAutofillStep = (input: {
    */
   readonly checkoutOrigins?: readonly string[] | undefined;
   readonly judgedBeforeTyping?: readonly string[] | undefined;
+  /**
+   * For a card-fill step whose host types the billing postal code only after it filled the card:
+   * a `billing_postal_code` field may take no typing yet, since some card forms switch it on only
+   * once they hold a card. Every other check still applies to it, and the host must inspect it
+   * again, without this, before it types there. Unset, every field must take typing.
+   */
+  readonly postalCodeAfterCard?: boolean | undefined;
   /**
    * The host's own trust of more sign-in addresses for a sign-in step, as when its user allowed the
    * sign-in to go wherever the site sends it: asked about each address of a control or popup off

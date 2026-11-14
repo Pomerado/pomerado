@@ -63,6 +63,8 @@ const scriptedPage = (
   options: {
     /** From this call on: the inspection of the last field alone, its focus, then the read. */
     readonly lastAloneAt?: number;
+    /** The call from which the last field takes typing; before it, the field is disabled. */
+    readonly lastEditableAt?: number;
     readonly frameUrl?: string;
     readonly topUrl?: string;
     readonly ancestors?: readonly string[];
@@ -81,9 +83,10 @@ const scriptedPage = (
   const frameUrl = options.frameUrl ?? stripeFrame;
   const topUrl = options.topUrl ?? checkout;
   const targets = (url: string) =>
-    stripeFields.slice(0, options.fields).map((field) => ({
+    stripeFields.slice(0, options.fields).map((field, index, shown) => ({
       target: {
         ...target(url),
+        ...(index === shown.length - 1 && calls.length < (options.lastEditableAt ?? 0) ? { editable: false } : {}),
         ...(options.ancestors === undefined ? {} : { ancestors: options.ancestors }),
         ...(options.methods === undefined ? {} : { methods: options.methods }),
         ...(options.explicitGet === undefined ? {} : { explicitGet: options.explicitGet }),
@@ -164,6 +167,7 @@ const stripeStep = (handle: (id: keyof typeof cardAnswers) => string) => ({
 const run = (
   options: {
     readonly lastAloneAt?: number;
+    readonly lastEditableAt?: number;
     readonly billingPostalCode?: string;
     readonly frameUrl?: string;
     readonly topUrl?: string;
@@ -534,6 +538,10 @@ describe("a card-fill step the host fills from a payment method", () => {
     ],
     total,
   });
+  const withPostal = () => ({
+    ...slotStep(),
+    fields: [...slotStep().fields, { selector: "#payment-postalCodeInput", slot: "billing_postal_code" as const }],
+  });
   const hostFill = () => {
     const filledBy: Parameters<NonNullable<Parameters<typeof runCardFill>[0]["fillVia"]>>[0][] = [];
     const fillVia: Parameters<typeof runCardFill>[0]["fillVia"] = (checked) =>
@@ -618,10 +626,6 @@ describe("a card-fill step the host fills from a payment method", () => {
   });
 
   it("types the payer's billing postal code itself once the host filled the card", async () => {
-    const withPostal = () => ({
-      ...slotStep(),
-      fields: [...slotStep().fields, { selector: "#payment-postalCodeInput", slot: "billing_postal_code" as const }],
-    });
     const { filledBy, fillVia } = hostFill();
     const { outcome, typed, reviews, calls } = run({ step: withPostal, fillVia, billingPostalCode: "94110", lastAloneAt: 2 });
     const result = await outcome;
@@ -659,6 +663,40 @@ describe("a card-fill step the host fills from a payment method", () => {
     const answered = run({ billingPostalCode: "00000" });
     expect((await answered.outcome).status).toBe("filled");
     expect(answered.typed).toEqual(["4242 4242 4242 4242", "12/34", "123", "94110"]);
+  });
+
+  it("lets a postal field take typing only once the host filled the card", async () => {
+    const slots = ["card_number", "card_expiry", "card_cvc", "billing_postal_code"];
+    const { filledBy, fillVia } = hostFill();
+    const enabled = run({ step: withPostal, fillVia, billingPostalCode: "94110", lastAloneAt: 2, lastEditableAt: 2 });
+    expect(JSON.parse((await enabled.outcome).observations)).toEqual({
+      cardFill: "filled",
+      fields: slots.map((slot) => ({ slot, status: "filled" })),
+    });
+    expect(enabled.typed).toEqual(["94110"]);
+    expect(filledBy[0]?.step).toEqual({ fields: slotStep().fields });
+    // Guardian still reviews the postal field with the label the screen shows for it.
+    expect(enabled.reviews[0]?.screen.fields.map(({ label }) => label)).toEqual([
+      "Card number",
+      "Expiration date",
+      "Security code",
+      "ZIP code",
+    ]);
+
+    // A postal field still disabled after the fill gets nothing, and the card stays filled.
+    const disabled = run({ step: withPostal, fillVia, billingPostalCode: "94110", lastAloneAt: 2, lastEditableAt: Infinity });
+    const result = await disabled.outcome;
+    expect(result.status).toBe("failed");
+    expect(JSON.parse(result.observations)).toEqual({
+      cardFill: "failed",
+      fields: slots.map((slot) => ({ slot, status: slot === "billing_postal_code" ? "failed" : "filled" })),
+    });
+    expect(disabled.typed).toEqual([]);
+
+    // A step of card answers still needs every field to take typing before it types any.
+    const answered = run({ lastEditableAt: Infinity });
+    expect(JSON.parse((await answered.outcome).observations)).toMatchObject({ reason: "not_editable", field: 4 });
+    expect(answered.typed).toEqual([]);
   });
 });
 
