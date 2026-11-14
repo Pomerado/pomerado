@@ -816,8 +816,8 @@ Prefer branching on that name over waiting again for the same answers or recheck
 page the answer appears in as `region`, and the context's `siteDomain`, so the sign counts for as
 long as it shows, changes in that part count as progress, and so do the site's own requests on
 every host of its domain. A generic sign, such as `aria-busy` or a spinner class, counts only
-while it is new, so a decoration holds a wait for at most the no-progress window; `waitForRows`
-also waits while one shows beside its rows, never inside one, and for the requests its `action`
+while it is new, so a decoration holds a wait for at most the no-progress window, though one a
+`waitForOutcome` action brought counts for as long as it shows; `waitForRows` also waits while one shows beside its rows, never inside one, and for the requests its `action`
 started. Without an `action`, a list beside a loader that never leaves costs about one
 no-progress window. A request already in flight when a wait starts is not seen: on a page still
 loading its list, name its loading sign as `loading`. Read results;

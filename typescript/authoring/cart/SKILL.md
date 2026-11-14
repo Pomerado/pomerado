@@ -43,7 +43,8 @@ the core skill says before adding the product: a value the product does not offe
 The request decides whether quantity adds that many to the cart or sets the line to that
 number; ask when it does not settle which. Build only that one, and state it in the tool's
 description and the quantity field's description, such as "Units to add; an existing line grows
-by this many".
+by this many". A quantity control that is not a text field holds its value in its accessible
+value or its text; read it there, and change it with the control's own buttons.
 
 ## Read the cart before and after
 
@@ -67,8 +68,9 @@ commit and returns them with the confirmation.
 A value the flow needs that the account lacks, such as a delivery address, is a question for
 the caller: ask with `request_input` while building, and in the tool take it as an input or a
 declared question (the caller-input skill). Never invent it, and never save it to the account
-unasked. A save option the page pre-selects is a question, as `AGENTS.md` says; in the
-tool, an unset save option means off, not the page's default.
+unasked. Fill only the billing fields the card form shows; a card form that asks for part of an
+address is no reason to ask the caller. A save option the page pre-selects is a question, as
+`AGENTS.md` says; in the tool, an unset save option means off, not the page's default.
 
 Choosing the delivery address and payment method is part of a checkout's job, even when the
 account has saved ones the page pre-selects: take each from the input, such as which saved
@@ -97,6 +99,10 @@ completed the write, so it never publishes.
 
 An example item that is out of stock doesn't end the build. The tool returns that as the site's
 refusal for the item, and the build publishes on it as the writes skill says.
+
+An "earliest" pickup or delivery time moves with the clock: pick it in the step that places the
+order. When the site says that time is gone and offers the next one, the next one is still the
+earliest.
 
 ## Description
 
