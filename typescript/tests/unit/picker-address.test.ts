@@ -32,6 +32,14 @@ describe("resolveAddress", () => {
     const { typed, suggest } = site({ "1 Example St": ["1 Example St, Exampleton, IL, USA"] });
     expect(await resolveAddress("1 Example St, Apt 2", suggest)).toMatchObject({ label: "1 Example St, Exampleton, IL, USA", unit: "Apt 2" });
     expect(typed).toEqual(["1 Example St, Apt 2", "1 Example St"]);
+    // A unit before the street is asked for as typed first; it, or one with the house's own number,
+    // is still the unit, while a town and postcode the suggestion keeps is not.
+    const before = site({ "12 Example St, Exampleton, IL": ["12 Example St, Exampleton, IL, USA"] });
+    expect(await resolveAddress("Suite 200, 12 Example St, Exampleton, IL", before.suggest)).toMatchObject({ query: "12 Example St, Exampleton, IL", unit: "Suite 200" });
+    expect(before.typed).toEqual(["Suite 200, 12 Example St, Exampleton, IL", "12 Example St, Exampleton, IL"]);
+    expect(await resolveAddress("100 Example St, Suite 100", () => ["100 Example St, Exampleton, IL, USA"])).toMatchObject({ unit: "Suite 100" });
+    const towns = ["1 Example St, Otherton 3000, Australia", "1 Example St, Exampleton 4000, Australia"];
+    expect(await resolveAddress("1 Example St, Exampleton 4000, Australia", () => towns)).toMatchObject({ label: towns[1], unit: "" });
     // A town, a ZIP, a town opening with a number, a postal code, a last part or a part after no
     // house number is no unit.
     for (const address of [
