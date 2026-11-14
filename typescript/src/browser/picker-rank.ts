@@ -37,13 +37,14 @@ export type PickerRanking =
  * a name with a word the spelling lacks, such as Example Harbor 5th Avenue Mall for Example 5th
  * Avenue, which may be another place than the one asked for), then a name some of whose parts,
  * each whole and each keeping its words' order though the spelling may interleave them, hold the
- * spelling's words one for one, equal or one written short for the other, with the numbers in the
+ * spelling's words one for one, each equal or written short in the name, with the numbers in the
  * spelling's order (`anyOrder`: Transit - Lakeside Station, 12 Main St for Lakeside Transit
- * Station, or Example Hall, 1 Harbor Plz, Example City for Example Hall, 1 Harbor Plaza). A word
- * is written short for another when it has two to four letters, at least two fewer than the
- * other, and starts with the other's first letter and holds the rest of its letters in order,
- * such as Plz for Plaza, Sta for Station, Blvd for Boulevard or NW for Northwest, and a part
- * matched only through such words never counts, so UK never matches Ukraine. Then, only with
+ * Station, or Example Hall, 1 Harbor Plz, Example City for Example Hall, 1 Harbor Plaza). A name's
+ * word is written short for a spelling's when both are Latin letters and it has two to four
+ * letters, at least two fewer than the spelling's, starts with its first letter and holds the rest
+ * of its letters in order, such as Plz for Plaza, Sta for Station, Blvd for Boulevard or NW for
+ * Northwest. Only the name's word is ever the short one, so a spelling's UK never matches Ukraine
+ * nor Oak Oakwood, and a part matched only through short words never counts. Then, only with
  * `options.stem`, a name whose words pair one
  * for one, in order, with a spelling's (`stem`), as a read asks for and a write never does. Two
  * words pair when they are equal, or when both are Latin letters only and the shorter, of five or
@@ -125,10 +126,10 @@ export const rankChoices = (
       });
     return from(0);
   };
-  // Whether one word is written short for the other, such as Plz for Plaza.
-  const short = (one: string, other: string) => {
-    const [brief, full] = one.length <= other.length ? [one, other] : [other, one];
-    if (!/^\p{L}{2,4}$/u.test(brief) || full.length < brief.length + 2 || brief[0] !== full[0]) return false;
+  // Whether a name's word is written short for a spelling's, such as Plz for Plaza.
+  const short = (brief: string, full: string) => {
+    if (!/^\p{Script=Latin}{2,4}$/u.test(brief) || !/^\p{Script=Latin}+$/u.test(full) || full.length < brief.length + 2 || brief[0] !== full[0])
+      return false;
     let at = 0;
     for (const letter of full) if (letter === brief[at]) at += 1;
     return at === brief.length;
@@ -149,7 +150,7 @@ export const rankChoices = (
       return parts.some((part, index) => {
         const count = next[index] ?? 0;
         const have = part[count];
-        if (have === undefined || (have !== word && !short(word, have))) return false;
+        if (have === undefined || (have !== word && !short(have, word))) return false;
         const was = same[index] === true;
         next[index] = count + 1;
         same[index] = was || have === word;

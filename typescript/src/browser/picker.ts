@@ -526,8 +526,8 @@ const pickerPageCode = String.raw`(element, args) => {
  * name made of the value's words, no more and no fewer, with the parts its or the value's commas or
  * spaced dashes separate in another order and the numbers in the value's order (rank `allWords`:
  * Harbor Street Station, Example City for Example City Harbor Street Station), then a name some of
- * whose whole parts, each keeping its words' order, hold the value's words one for one, equal or
- * one written short for the other, such as Plz for Plaza (rank `anyOrder`: Transit - Lakeside
+ * whose whole parts, each keeping its words' order, hold the value's words one for one, each
+ * equal or written short in the name, such as Plz for Plaza (rank `anyOrder`: Transit - Lakeside
  * Station, 12 Main St for Lakeside Transit Station), then, only with `options.stem` set to true (as a read sets it; `pickValues` takes it too), a name with
  * as many words as the value whose words each equal the value's in order or, for words of Latin
  * letters only, begin the value's or begin with them, the shorter of five or more letters, such as

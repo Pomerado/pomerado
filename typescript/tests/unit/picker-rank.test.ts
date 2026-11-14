@@ -174,7 +174,7 @@ describe("rankChoices other written forms", () => {
 
   test("a street, avenue or saint written short or in full matches the other", () => {
     const stations = [choice("Harbor Street Station, Example City"), choice("Pier Road Station, Example City")];
-    expect(rank(stations, "Example City Harbor St Station")).toEqual({ status: "picked", index: 0, rank: "anyOrder" });
+    expect(rank(stations, "Example City Harbor St Station")).toEqual({ status: "missing" });
     expect(rankForms(stations, "Example City Harbor St Station")).toEqual({ status: "picked", index: 0, rank: "allWords" });
     expect(rankForms([choice("North Example Avenue"), choice("Lakeside Drive")], "Example Ave")).toEqual({
       status: "picked",
@@ -194,8 +194,12 @@ describe("rankChoices other written forms", () => {
     const stations = [choice("Transit - Lakeside Station, 12 Main St, Example City, CA"), choice("Transit - Lakeside Station, 40 Pier Rd")];
     expect(rankForms(stations, "Lakeside Transit Station, Example City, CA")).toEqual({ status: "picked", index: 0, rank: "anyOrder" });
     expect(rankForms(stations, "Lakeside Transit Station")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "anyOrder" });
-    // A part matched only through a short form, or by a short word that is no short form, never counts.
-    expect(rankForms([choice("Exampleville, Ukraine")], "Exampleville, UK")).toEqual({ status: "missing" });
+    // Only the name's word is ever the short one, only in Latin letters, and a part matched only
+    // through short forms, or by a short word that is no short form, never counts.
+    expect(rankForms([choice("123 Oakwood St, Example City")], "123 Oak St")).toEqual({ status: "missing" });
+    expect(rankForms([choice("Exampleville Ukraine")], "Exampleville UK")).toEqual({ status: "missing" });
+    expect(rankForms([choice("上海 站")], "上海虹桥 站")).toEqual({ status: "missing" });
+    expect(rankForms([choice("Exampleville, UK")], "Exampleville, Ukraine")).toEqual({ status: "missing" });
     expect(rankForms([choice("Example County Road")], "Example Country Rd")).toEqual({ status: "missing" });
   });
 
