@@ -75,13 +75,20 @@ describe("resolveAddress", () => {
     const towns = ["1 Example St, Sampleton, IL, USA", "1 Example St, Exampleton, IL, USA"];
     expect(await resolveAddress("1 Example St, Exampleton, IL 60000", () => towns)).toMatchObject({ label: towns[1] });
     expect(await resolveAddress("1 Example St, Exampletn IL", () => ["1 Example St, Exampleton, NY, USA", towns[1] ?? ""])).toMatchObject({ label: towns[1] });
-    // The caller's street comes first, then the caller's ZIP, which outweighs place words, which
-    // outweigh another ZIP; a place word in a suggestion's street never counts, and then the
-    // caller's street words decide.
+    // The share of the caller's street words kept comes first, so a direction letter added or
+    // dropped, or a misspelled street, ties and the place decides; then the caller's ZIP, which
+    // outweighs place words, which outweigh another ZIP; a place word in a suggestion's street never
+    // counts.
     const street = ["12 Other Ave, Exampleton, IL 60000, USA", "12 Example St, Exampleton, IL, USA"];
     expect(await resolveAddress("12 Example St, Exampleton, IL 60000", () => street)).toMatchObject({ label: street[1] });
     const north = ["12 N Example St, Sampleton, TX, USA", "12 North Example St, Exampleton, IL, USA"];
     expect(await resolveAddress("12 N Example St, Exampleton, IL", () => north)).toMatchObject({ label: north[1] });
+    const added = ["12 Example St, Sampleton, NY, USA", "12 N Example St, Exampleton, IL, USA"];
+    expect(await resolveAddress("12 Example St, Exampleton, IL", () => added)).toMatchObject({ label: added[1] });
+    const dropped = ["12 N Example St, Sampleton, NY, USA", "12 Example St, Exampleton, IL, USA"];
+    expect(await resolveAddress("12 N Example St, Exampleton, IL", () => dropped)).toMatchObject({ label: dropped[1] });
+    const misspelled = ["12 E St, Sampleton, NY, USA", "12 Example St, Exampleton, IL, USA"];
+    expect(await resolveAddress("12 Exampel St, Exampleton, IL", () => misspelled)).toMatchObject({ label: misspelled[1] });
     const zips = ["1 Example St, North Sampleton, IL 60999, USA", "1 Example St, Exampleton, IL 60000, USA"];
     expect(await resolveAddress("1 Example St, North Sampleton, IL 60000", () => zips)).toMatchObject({ label: zips[1] });
     const others = ["1 Example St, Sampleton, IL, USA", "1 Example St, Exampleton, IL 60999, USA"];
