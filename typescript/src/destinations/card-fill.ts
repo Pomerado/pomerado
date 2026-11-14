@@ -235,8 +235,10 @@ export const runCardFill = <E>(input: {
    * A host's own fill of a step that names slots, from a payment method the caller named: called
    * once the step passed the checks, the review and `beforeTyping`, with the fields as the host
    * found them and the checkout's total. The page may change after the inspection, so the host
-   * checks the fields and their destination again just before it fills. It returns what it filled,
-   * with no value in it. Absent, such a step is refused.
+   * checks the fields and their destination again just before it fills. On a step that names a
+   * pop-up, the host binds the fill to the pop-up the inspection found (`inspection.popupTargetId`),
+   * never the primary tab. It returns what it filled, with no value in it. Absent, such a step is
+   * refused.
    */
   readonly fillVia?: (checked: {
     readonly step: AutofillStep<CardSlot>;
