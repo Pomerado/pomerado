@@ -234,6 +234,60 @@ test("after an action, a decorative loading sign from before it is not progress"
   expect(answer.reason).toBe("outcome_unknown");
 });
 
+test("a review step that counts down, then sends on its own behind a spinner, keeps the wait until the site answers", async ({
+  page,
+}) => {
+  // The click opens a review dialog whose button counts down. At zero the page sends the order
+  // itself, shows a spinner while it sends, then shows its error. Neither the countdown nor the
+  // spinner is named, and nothing else on the page changes.
+  await page.setContent(`
+    <button type="button" id="place">Place order</button>
+    <section id="answer"></section>
+    <script>
+      document.querySelector("#place").onclick = () => {
+        document.body.insertAdjacentHTML("beforeend", '<div role="dialog"><button type="button" id="confirm">Confirm (0:05)</button></div>');
+        let left = 5;
+        const timer = setInterval(() => {
+          left -= 1;
+          document.querySelector("#confirm").textContent = "Confirm (0:" + String(left).padStart(2, "0") + ")";
+          if (left > 0) return;
+          clearInterval(timer);
+          document.querySelector("#confirm").textContent = "Sending order";
+          document.body.insertAdjacentHTML("beforeend", '<span class="spinner">.</span>');
+          setTimeout(() => {
+            document.querySelector(".spinner").remove();
+            document.querySelector("#answer").innerHTML = '<div role="alert">The order could not be placed</div>';
+          }, 1200);
+        }, 150);
+      };
+    </script>`);
+  const answer = await outcome(
+    page,
+    `noProgressMs: 400, timeout: 4000, action: () => page.locator("#place").click()`,
+  );
+  expect(answer.shown).toBe("failed");
+  expect(answer.report?.[0]?.summary).toMatch(/progress seen: .*countdown/u);
+});
+
+test("after an action, a timer already counting down before it is not progress", async ({ page }) => {
+  await page.setContent(`
+    <p>Held for <span id="hold">9:59</span></p>
+    <button type="button">Search</button>
+    <section id="answer"></section>
+    <script>
+      let left = 599;
+      setInterval(() => {
+        left -= 1;
+        document.querySelector("#hold").textContent = Math.floor(left / 60) + ":" + String(left % 60).padStart(2, "0");
+      }, 100);
+    </script>`);
+  const answer = await outcome(
+    page,
+    `noProgressMs: 300, timeout: 2000, action: () => page.getByRole("button", { name: "Search" }).click()`,
+  );
+  expect(answer.reason).toBe("outcome_unknown");
+});
+
 // A results page: `identified` rows with an ID fill at `rowsMs`; their prices show a skeleton
 // until `priceMs` (never when null); `slots` unidentified slots fill at `slotsMs`.
 const resultsPage = (
@@ -924,11 +978,11 @@ test("a look counts the generic signs as visible matches, never in content the b
       });
     </script>`);
   expect(await call(page, `return await page.evaluate(waitSignsInPage, waitSignsSpec);`)).toEqual({
-    result: { signs: 1, classes: 4 },
+    result: { signs: 1, classes: 4, ticks: 0 },
   });
   // Within a region, only what its elements hold, their own shadow roots included.
   expect(await call(page, `return await page.locator("x-card").evaluateAll(waitSignsInPage, waitSignsSpec);`)).toEqual({
-    result: { signs: 0, classes: 1 },
+    result: { signs: 0, classes: 1, ticks: 0 },
   });
 });
 
