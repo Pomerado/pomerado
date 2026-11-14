@@ -154,7 +154,11 @@ describe("resolveAddress", () => {
     // included, is another street.
     const other = ["12 Other Ave, Exampleton, IL, USA", "12 Other St, Exampleton, IL, USA"];
     expect(await resolveAddress("12 Example St, Exampleton, IL", () => other)).toMatchObject({ picked: false, available: other });
-    const named = ["12 Other St, Exampleton, IL, USA", "12 Example Ave, Exampleton, IL, USA"];
-    expect(await resolveAddress("12 Example St, Exampleton, IL", () => named)).toMatchObject({ label: named[1] });
+    // A number in the street is a name word, with or without its ordinal ending.
+    for (const [address, shown] of [
+      ["12 Route 9, Exampleton, NJ", "12 US-9, Exampleton, NJ, USA"],
+      ["12 SW 107 Ave, Exampleton, FL", "12 SW 107th Ave, Exampleton, FL, USA"],
+    ])
+      expect(await resolveAddress(address ?? "", () => [shown ?? ""])).toMatchObject({ label: shown });
   });
 });
