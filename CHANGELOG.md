@@ -1,5 +1,7 @@
 # Changelog
 
+<!-- Don't add entries here by hand. Write a fragment under changes/, as changes/README.md describes. A release moves the fragments here. -->
+
 ## Unreleased
 
 ### Breaking changes
