@@ -212,7 +212,8 @@ URL the tool built, a URL parameter, a box checked before the site applied it or
 name elsewhere on the page does not show an input applied; read the site's committed state, such
 as the applied chip, the selected control or the results' own state, and compare its text with
 the input, or the option a proper noun matched, normalized for case, accents, whitespace and
-punctuation. A detail
+punctuation. Every `applied_*` field reports the value the site actually used, read from the
+site's committed state, never copied from the input or from a suggestion the site did not use. A detail
 read also checks the page's stable identity (.agents/core/SKILL.md). Building or repairing a search or listing tool: read
 .agents/search/SKILL.md before you settle its inputs.<!-- pomerado:section agents.user-defined-fields -->
 
