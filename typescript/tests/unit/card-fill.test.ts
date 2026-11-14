@@ -640,6 +640,25 @@ describe("a card-fill step the host fills from a payment method", () => {
       "The host typed nothing: it has no billing postal code to fill.",
     );
     expect([unsaved.calls, unsaved.reviews, filledBy.length]).toEqual([[], [], 1]);
+
+    // A postal field on another field's selector would type over what the host filled there.
+    const onCvc = run({
+      step: () => ({
+        ...slotStep(),
+        fields: [...slotStep().fields, { selector: "#payment-cvcInput", slot: "billing_postal_code" as const }],
+      }),
+      fillVia,
+      billingPostalCode: "94110",
+    });
+    expect(JSON.parse((await onCvc.outcome).observations).message).toBe(
+      "The host typed nothing: the billing postal code field's selector names another field too.",
+    );
+    expect([onCvc.calls, onCvc.reviews, filledBy.length]).toEqual([[], [], 1]);
+
+    // The caller's own postal code answer is typed once, never over by the payer's.
+    const answered = run({ billingPostalCode: "00000" });
+    expect((await answered.outcome).status).toBe("filled");
+    expect(answered.typed).toEqual(["4242 4242 4242 4242", "12/34", "123", "94110"]);
   });
 });
 

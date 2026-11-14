@@ -262,8 +262,16 @@ export const runCardFill = <E>(input: {
     const postalCode = input.billingPostalCode;
     const postal = (field: { readonly selector: string; readonly slot?: CardSlot }) =>
       field.slot === "billing_postal_code";
-    if (input.step.fields.some(postal) && postalCode === undefined)
+    const postalFields = input.step.fields.filter(postal);
+    if (postalFields.length > 0 && postalCode === undefined)
       return refusedWith("The host typed nothing: it has no billing postal code to fill.");
+    // Typed after the host's fill, it would replace what the host typed into that field.
+    const shared = (selector: string) =>
+      input.step.fields.filter((field) => field.selector === selector).length > 1;
+    if (postalFields.some(({ selector }) => shared(selector)))
+      return refusedWith(
+        "The host typed nothing: the billing postal code field's selector names another field too.",
+      );
     const fields: { selector: string; slot: CardSlot; handle?: string }[] = [];
     for (const field of input.step.fields) {
       if ("slot" in field) {
@@ -325,7 +333,9 @@ export const runCardFill = <E>(input: {
             total,
           });
     const postalStep = { ...step, fields: step.fields.filter(postal) };
+    // Only a host's fill leaves the postal field to core: a caller's answer was typed above.
     if (
+      fillVia === undefined ||
       postalCode === undefined ||
       postalStep.fields.length === 0 ||
       report.outcome !== "filled" ||
