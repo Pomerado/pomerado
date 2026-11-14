@@ -178,7 +178,15 @@ such as a confirmation dialog a button always opens, may be expected, and the sc
 when it only restates what this run entered or acts on. One that shows something new, such as a
 fee, a consequence beyond the request, another record or a warning about this input, goes to the
 caller as a declared question. A pop-up the session met once is conditional unless the page
-shows it always follows that action.
+shows it always follows that action. When a click times out, read the page for a pop-up or
+dialog covering its control before trying it again; a commit or pay click follows the writes
+skill.
+
+Before acting on a notice, find its container in the page's structure (its form or group), not
+its place in the accessibility snapshot, which can hide dividers. A notice applies only to the
+controls in its own container, or a control its text names. Before you end a build because the
+site requires something, name its exact text and the control it belongs to; when that control
+is not on the request's path, keep going.
 
 Type each date-only input and output as the runtime's `CalendarDate`, imported beside
 `formControlsCode`, never a bare `YYYY-MM-DD` pattern, which accepts `2026-02-30`. It checks
