@@ -1,7 +1,7 @@
 import { Schema } from "effect";
 import { timeoutDefaults } from "../runtime/deadline.js";
 import { operationErrors } from "../runtime/operation-failure.js";
-import { foldChoiceText, rankByWords, sameText, spellingsOf } from "../runtime/text.js";
+import { foldChoiceText, rankByWords, spellingsOf } from "../runtime/text.js";
 import { typeKeys, typingPauses } from "../runtime/typing-pace.js";
 import { resolveAddressWith } from "./picker-address.js";
 import { closestFirst, pickerRanks, rankChoices } from "./picker-rank.js";
@@ -1572,10 +1572,9 @@ const pickerOptions = async (control, options = {}) => {
   }
 };
 const pickerResolveAddress = ${String(resolveAddressWith)};
-const pickerSameText = ${String(sameText)};
 const pickAddress = async (control, address, options = {}) => {
   const suggest = async (query) => (await pickerOptions(control, { ...options, query })).options.filter((option) => !option.disabled);
-  const match = { fold: pickerFold, spellings: pickerSpellings, rank: pickerRankChoices, same: pickerSameText };
+  const match = { fold: pickerFold, spellings: pickerSpellings, rank: pickerRankChoices };
   const found = await pickerResolveAddress(String(address ?? ""), suggest, (option) => option.label, match);
   if (!found.picked) return found;
   const picked = await pickValue(control, found.label, { ...options, query: found.query, tie: "first" });

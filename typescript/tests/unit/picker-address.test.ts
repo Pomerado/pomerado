@@ -75,12 +75,21 @@ describe("resolveAddress", () => {
     const towns = ["1 Example St, Sampleton, IL, USA", "1 Example St, Exampleton, IL, USA"];
     expect(await resolveAddress("1 Example St, Exampleton, IL 60000", () => towns)).toMatchObject({ label: towns[1] });
     expect(await resolveAddress("1 Example St, Exampletn IL", () => ["1 Example St, Exampleton, NY, USA", towns[1] ?? ""])).toMatchObject({ label: towns[1] });
-    // The share of the caller's street words kept comes first, so a direction letter added or
-    // dropped, or a misspelled street, ties and the place decides; then the caller's ZIP, which
-    // outweighs place words, which outweigh another ZIP; a place word in a suggestion's street never
-    // counts.
+    // The caller's ZIP comes first only on a street that keeps more than half the caller's street
+    // words, then the place words, then the share of the street words kept, so another street with
+    // the caller's ZIP, a street type the caller got wrong, a direction letter added or dropped, or
+    // a misspelled street never sends the address to another town; then another ZIP; a place word
+    // in a suggestion's street never counts.
     const street = ["12 Other Ave, Exampleton, IL 60000, USA", "12 Example St, Exampleton, IL, USA"];
     expect(await resolveAddress("12 Example St, Exampleton, IL 60000", () => street)).toMatchObject({ label: street[1] });
+    const sunset = ["12 Sunset Ave, Exampleton, IL 60000, USA", "12 Example Rd, Exampleton, IL, USA"];
+    expect(await resolveAddress("12 Example St, Exampleton, IL 60000", () => sunset)).toMatchObject({ label: sunset[1] });
+    const type = ["12 Example St, Sampleton, MA, USA", "12 Example Ave, Exampleton, IL, USA"];
+    expect(await resolveAddress("12 Example St, Exampleton, IL", () => type)).toMatchObject({ label: type[1] });
+    const typeZip = ["12 Example St, Sampleton, MA 01000, USA", "12 Example Ave, Exampleton, IL 60000, USA"];
+    expect(await resolveAddress("12 Example St, Exampleton, IL 60000", () => typeZip)).toMatchObject({ label: typeZip[1] });
+    const road = ["12 Example Dr, Sampleton, OK, USA", "12 Example Rd, Exampleton, TX, USA"];
+    expect(await resolveAddress("12 Example Dr, Exampleton, TX", () => road)).toMatchObject({ label: road[1] });
     const north = ["12 N Example St, Sampleton, TX, USA", "12 North Example St, Exampleton, IL, USA"];
     expect(await resolveAddress("12 N Example St, Exampleton, IL", () => north)).toMatchObject({ label: north[1] });
     const added = ["12 Example St, Sampleton, NY, USA", "12 N Example St, Exampleton, IL, USA"];

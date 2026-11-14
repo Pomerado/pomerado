@@ -1,4 +1,4 @@
-import { foldChoiceText, sameText, spellingsOf } from "../runtime/text.js";
+import { foldChoiceText, spellingsOf } from "../runtime/text.js";
 import { rankChoices } from "./picker-rank.js";
 
 /**
@@ -36,7 +36,6 @@ export const resolveAddressWith = async <T>(
     readonly fold: (text: string) => string;
     readonly spellings: (text: string) => readonly string[];
     readonly rank: typeof rankChoices;
-    readonly same: typeof sameText;
   },
 ): Promise<AddressOutcome<T>> => {
   const squash = (text: unknown) => String(text ?? "").replace(/\s+/gu, " ").trim();
@@ -120,13 +119,13 @@ export const resolveAddressWith = async <T>(
       .filter((part) => part !== "")
       .join(", ");
   // The caller's street words of two letters or more, its house number left out, as typed and as
-  // tidied. A suggestion's street keeps one when it holds one of its usual forms (Street for St), or
-  // either is written short for the other (Blvd for Boulevard), word by word.
+  // tidied. A suggestion's street keeps one when it holds the word in one of its usual forms (Street
+  // for St).
   const streetForms = [...new Set([lines[lineStreet] ?? "", tidy(lines[lineStreet] ?? "")])].map((text) =>
-    words(text).filter((word) => word.length > 1 && !house.includes(word)),
+    words(text)
+      .filter((word) => word.length > 1 && !house.includes(word))
+      .map((word) => match.spellings(word).map((form) => match.fold(form))),
   );
-  const sameWord = (want: string, have: string) =>
-    match.spellings(want).some((form) => match.fold(form) === have) || match.same(have, want) || match.same(want, have);
   // A suggestion's street, its parts after the street, and its parts but the street.
   const sides = (text: string) => {
     const split = text.split(",");
@@ -141,49 +140,52 @@ export const resolveAddressWith = async <T>(
   const keeps = (list: readonly ReturnType<typeof toPlace>[], within: string) =>
     list.reduce((sum, part) => sum + (holds(part.forms, within) ? part.words.length : part.words.filter((each) => holds(each, within)).length), 0);
   // A suggestion with another house number, or one that reads the caller's ZIP as its house number,
-  // is another address: undefined. Any other ranks first by the share of the caller's street words
-  // its own street keeps, then by showing the caller's ZIP, then by the place words, a unit-shaped
-  // part's included, it keeps after its own street, then by showing no other ZIP. It is whole when
-  // its street keeps any of the caller's street words, it keeps every place word, not counting a
-  // unit-shaped part, and it shows no other ZIP.
+  // is another address: undefined. Any other ranks, in order, by showing the caller's ZIP while its
+  // own street keeps more than half the caller's street words; by the place words, a unit-shaped
+  // part's included, it keeps after its own street; by the share of the caller's street words its
+  // street keeps; and by showing no other ZIP. It is whole when its street keeps any of the
+  // caller's street words, it keeps every place word, not counting a unit-shaped part, and it shows
+  // no other ZIP.
   const score = (text: string) => {
     const theirs = houseOf(text);
     const shown = zipOf(text);
     if (house.length > 0 ? !theirs.some((each) => house.includes(each)) : zip !== "" && theirs.includes(zip) && shown !== zip)
       return undefined;
     const { after, street: own } = sides(text);
-    const ownWords = words(own).filter((word) => word.length > 1);
+    const ownWords = words(own);
     const share = Math.max(
       0,
-      ...streetForms.map((list) =>
-        list.length === 0 ? 0 : list.filter((want) => ownWords.some((have) => sameWord(want, have))).length / list.length,
-      ),
+      ...streetForms.map((list) => (list.length === 0 ? 0 : list.filter((forms) => forms.some((form) => ownWords.includes(form))).length / list.length)),
     );
     const kept = keeps(places, after);
-    const all = kept + keeps(unitPlace, after);
     const other = zip !== "" && shown !== "" && shown !== zip;
-    const same = zip !== "" && shown === zip;
     return {
-      value: Math.round(share * 1000) * 1_000_000 + (same ? 10_000 : 0) + 100 * all - (other ? 50 : 0),
+      value: [zip !== "" && shown === zip && share > 0.5 ? 1 : 0, kept + keeps(unitPlace, after), Math.round(share * 1000), other ? 0 : 1],
       whole: share > 0 && kept === total && !other,
     };
   };
+  // Which of two scores ranks higher: above zero for the first, below for the second.
+  const compare = (one: readonly number[], two: readonly number[]) =>
+    one.map((each, index) => each - (two[index] ?? 0)).find((difference) => difference !== 0) ?? 0;
   // The street as typed first, then once more tidied, with the ZIP and a unit asked for as typed
   // left out, when the first brings no usable suggestion or none that is whole.
   const base = lines.filter((_, index) => !asTyped || index !== unitAt).join(", ");
   const at = zip === "" ? -1 : base.lastIndexOf(zip);
   const tidied = tidy(at < 0 ? base : base.slice(0, at) + base.slice(at + zip.length).replace(/^-\d{4}/u, ""));
   const seen: string[] = [];
-  let best: { readonly choice: T; readonly label: string; readonly query: string; readonly value: number } | undefined;
+  let best: { readonly choice: T; readonly label: string; readonly query: string; readonly value: readonly number[] } | undefined;
   for (const text of [...new Set([query, tidied])].filter((form) => form !== "")) {
     const items = [...(await suggest(text))];
     const labels = items.map((item) => squash(label(item)));
     seen.push(...labels.filter((name) => name !== ""));
     const scores = labels.map((name) => (name === "" ? undefined : score(name)));
-    const top = Math.max(-Infinity, ...scores.flatMap((each) => (each === undefined ? [] : [each.value])));
-    if (top === -Infinity) continue;
+    const top = scores.reduce<readonly number[] | undefined>(
+      (most, each) => (each === undefined || (most !== undefined && compare(each.value, most) <= 0) ? most : each.value),
+      undefined,
+    );
+    if (top === undefined) continue;
     // Among the best, the one the typed text names most closely, else the site's first.
-    const tied = scores.flatMap((each, index) => (each?.value === top ? [index] : []));
+    const tied = scores.flatMap((each, index) => (each !== undefined && compare(each.value, top) === 0 ? [index] : []));
     const ranking = match.rank(
       tied.map((index) => ({ names: [labels[index] ?? ""], value: "", disabled: false, key: String(index) })),
       [text],
@@ -191,7 +193,7 @@ export const resolveAddressWith = async <T>(
       { spellings: match.spellings },
     );
     const pick = tied[ranking.status === "picked" ? ranking.index : ranking.status === "ambiguous" ? (ranking.indexes[0] ?? 0) : 0] ?? 0;
-    if (best === undefined || top > best.value)
+    if (best === undefined || compare(top, best.value) > 0)
       best = { choice: items[pick] as T, label: labels[pick] ?? "", query: text, value: top };
     if (scores[pick]?.whole === true) break;
   }
@@ -217,15 +219,15 @@ export const resolveAddressWith = async <T>(
  * a part before the street or ending the address is asked for as typed first. For an address whose
  * street opens with its house number, a suggestion with another one (12A and 12 A alike) is
  * another address and never usable, and so is one that reads a caller's ZIP as its house number.
- * Of the rest, it prefers the one whose own street keeps the largest share of the caller's street
- * words of two letters or more, as typed or tidied, each in its usual forms from `spellingsOf` or
- * written short for the other either way (`sameText`), so a direction letter the site adds or
- * drops makes no difference; then the one that shows the caller's ZIP; then the one whose parts
- * after its street keep the most words of the caller's place, the words after the street in any of
- * their usual forms; then one that shows no other ZIP; then the one the text names most closely
- * (`rankChoices`); then the site's first. When the text brings no usable suggestion, or none that
- * keeps any of the caller's street words and every place word and shows no other ZIP, it asks once
- * more with a tidied text: joined words split, the ZIP and a unit asked for as typed left out, and
+ * Of the rest, it prefers the one that shows the caller's ZIP while its own street keeps more than
+ * half the caller's street words of two letters or more, as typed or tidied, each in any of its
+ * usual forms from `spellingsOf`; then the one whose parts after its street keep the most words of
+ * the caller's place, the words after the street in any of their usual forms; then the one whose
+ * street keeps the largest share of the caller's street words, so a direction letter the site adds
+ * or drops weighs less than the town and state; then one that shows no other ZIP; then the one the
+ * text names most closely (`rankChoices`); then the site's first. When the text brings no usable
+ * suggestion, or none that keeps any of the caller's street words and every place word and shows
+ * no other ZIP, it asks once more with a tidied text: joined words split, the ZIP and a unit asked for as typed left out, and
  * stray punctuation dropped. It accepts the best suggestion either text brought, so the tool
  * reports the site's version as it does any rewrite, and refuses only when neither brought a
  * usable one, with `picked: false` and every suggestion the site gave as `available`, for
@@ -236,4 +238,4 @@ export const resolveAddress = <T = string>(
   suggest: (text: string) => Promise<readonly T[]> | readonly T[],
   label: (item: T) => string = String,
 ): Promise<AddressOutcome<T>> =>
-  resolveAddressWith(address, suggest, label, { fold: foldChoiceText, spellings: spellingsOf, rank: rankChoices, same: sameText });
+  resolveAddressWith(address, suggest, label, { fold: foldChoiceText, spellings: spellingsOf, rank: rankChoices });
