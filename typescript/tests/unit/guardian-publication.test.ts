@@ -1176,6 +1176,16 @@ describe("the publication policy", () => {
     expect(guardianPublicationPolicy).toContain(publicationOutputPolicy);
   });
 
+  // The host refuses any source of a tool that calls fillCard once it reads a field's value or the
+  // page's markup, so a review that asks such a tool to read a typed field back asks for code the
+  // host will refuse. What the fill returns and what the page shows stand in for that read-back.
+  it("asks a tool that fills a card for no read of a field's value", () => {
+    expect(publicationOutputPolicy).toContain(
+      "even one built from the site's own pattern. A tool whose source calls fillCard reads no field's value or the page's markup, since the host refuses such source, so no rule of this review asks it to: there the fill's own result and text the page shows, such as a review step or a confirmation showing the value, are the read-back of what it typed.",
+    );
+    expect(guardianPublicationPolicy).toContain(publicationOutputPolicy);
+  });
+
   // A read-back that compares the page with a part the script cut from a picked option, such as
   // its text before the first comma, refuses a correct pick whenever the page shows more of the
   // option. It joins the list of checks that would reject a correct write.
