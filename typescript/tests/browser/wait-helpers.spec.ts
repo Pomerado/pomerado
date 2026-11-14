@@ -269,23 +269,38 @@ test("a review step that counts down, then sends on its own behind a spinner, ke
   expect(answer.report?.[0]?.summary).toMatch(/progress seen: .*countdown/u);
 });
 
-test("after an action, a timer already counting down before it is not progress", async ({ page }) => {
-  await page.setContent(`
-    <p>Held for <span id="hold">9:59</span></p>
-    <button type="button">Search</button>
-    <section id="answer"></section>
-    <script>
-      let left = 599;
-      setInterval(() => {
-        left -= 1;
-        document.querySelector("#hold").textContent = Math.floor(left / 60) + ":" + String(left % 60).padStart(2, "0");
-      }, 100);
-    </script>`);
-  const answer = await outcome(
-    page,
-    `noProgressMs: 300, timeout: 2000, action: () => page.getByRole("button", { name: "Search" }).click()`,
-  );
-  expect(answer.reason).toBe("outcome_unknown");
+test("after an action, a timer already counting down before it is not progress, however long the look before it takes", async ({
+  page,
+}) => {
+  // Until the click, each price's box takes 2 ms to measure, as a large page's first layout does,
+  // so with 300 prices the look before the action outlasts a look's budget.
+  for (const prices of [300, 0]) {
+    await page.setContent(`
+      <script>
+        window.clicked = false;
+        const box = Element.prototype.getBoundingClientRect;
+        Element.prototype.getBoundingClientRect = function () {
+          if (!window.clicked && this.classList.contains("price")) for (const until = performance.now() + 2; performance.now() < until;);
+          return box.call(this);
+        };
+      </script>
+      ${'<p class="price">$12</p>'.repeat(prices)}
+      <p>Held for <span id="hold">9:59</span></p>
+      <button type="button" onclick="window.clicked = true">Search</button>
+      <section id="answer"></section>
+      <script>
+        let left = 599;
+        setInterval(() => {
+          left -= 1;
+          document.querySelector("#hold").textContent = Math.floor(left / 60) + ":" + String(left % 60).padStart(2, "0");
+        }, 100);
+      </script>`);
+    const answer = await outcome(
+      page,
+      `noProgressMs: 300, timeout: 2000, action: () => page.getByRole("button", { name: "Search" }).click()`,
+    );
+    expect(answer.reason, `${prices} prices`).toBe("outcome_unknown");
+  }
 });
 
 // A results page: `identified` rows with an ID fill at `rowsMs`; their prices show a skeleton
@@ -503,6 +518,36 @@ test("a total that stays the same counts only after the loading sign went", asyn
   const quiet = (await call(page, changeBody)).result as { changed: boolean; ms: number };
   expect(quiet.changed).toBe(false);
   expect(quiet.ms).toBeLessThan(2000);
+});
+
+test("a hold timer the choice starts is no progress for a value wait, so an unchanged total still returns", async ({
+  page,
+}) => {
+  await page.setContent(`
+    <label>Guests <select id="guests"><option>2</option><option>3</option></select></label>
+    <p id="total">$240</p>
+    <p id="hold" hidden>Reserved for <span id="left">9:59</span></p>
+    <script>
+      document.querySelector("#guests").onchange = () => {
+        document.querySelector("#hold").hidden = false;
+        let left = 599;
+        setInterval(() => {
+          left -= 1;
+          document.querySelector("#left").textContent = Math.floor(left / 60) + ":" + String(left % 60).padStart(2, "0");
+        }, 100);
+      };
+    </script>`);
+  const answer = (await call(
+    page,
+    `const started = Date.now();
+    const read = await waitForChange({ total: page.locator("#total") }, {
+      action: () => page.locator("#guests").selectOption("3", { timeout: 1000 }),
+      noProgressMs: 400, stableMs: 100, unchangedMs: 300, timeout: 3000,
+    });
+    return { ...read, ms: Date.now() - started };`,
+  )).result as { values: unknown; changed: boolean; ms: number };
+  expect(answer).toMatchObject({ values: { total: "$240" }, changed: false });
+  expect(answer.ms).toBeLessThan(2000);
 });
 
 test("a probe call acts with a short default timeout, and later calls get Playwright's back", async ({
@@ -978,11 +1023,11 @@ test("a look counts the generic signs as visible matches, never in content the b
       });
     </script>`);
   expect(await call(page, `return await page.evaluate(waitSignsInPage, waitSignsSpec);`)).toEqual({
-    result: { signs: 1, classes: 4, ticks: 0 },
+    result: { signs: 1, classes: 4 },
   });
   // Within a region, only what its elements hold, their own shadow roots included.
   expect(await call(page, `return await page.locator("x-card").evaluateAll(waitSignsInPage, waitSignsSpec);`)).toEqual({
-    result: { signs: 0, classes: 1, ticks: 0 },
+    result: { signs: 0, classes: 1 },
   });
 });
 
