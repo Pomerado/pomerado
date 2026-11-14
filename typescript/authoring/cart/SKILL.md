@@ -105,6 +105,33 @@ An "earliest" pickup or delivery time moves with the clock: pick it in the step 
 order. When the site says that time is gone and offers the next one, the next one is still the
 earliest.
 
+## A checkout's inputs and output
+
+Prefer building a checkout for any order a caller could place on the site, not only the
+request's. The inputs and outputs below are good practice, not a must for every checkout: sites
+differ, so take and return what this one offers.
+
+Prefer taking as inputs what the site lets a caller choose, such as the items with their options
+and quantities, pickup or delivery with its place and time, a tip, and a limit such as a maximum
+total, checked as "Minimums and refusals" says.
+
+Prefer returning what the site shows for the order placed, such as the order or confirmation
+number and its status, the lines bought, the subtotal, fees, tax, tip and total charged, the
+payment method as the page labels it, the pickup or delivery time and place, and any link to the
+order's status: only fields the build saw filled for its own order, named and typed as the core
+skill says.
+
+Prefer avoiding these, which fit the tool to the build's one order:
+
+- a rule the request sets for that order, such as which item to pick or a price range, written
+  into the code, the tool's name or its description: make it an input, with the request's value
+  only in `exampleInput`;
+- a value the page works out for that order, such as its total or a fee, written in as a
+  constant, whether passed to `fillCard`, checked before the commit or used to find a control,
+  such as a pay button labeled with it: read it in each run;
+- an input required that the site doesn't require, such as a second address line or a price
+  limit, or a choice the site offers, such as an item's options, with no input.
+
 ## Description
 
 The description states the decisions a caller needs to use the tool right (the publication
