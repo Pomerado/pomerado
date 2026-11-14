@@ -538,8 +538,9 @@ const pickerPageCode = String.raw`(element, args) => {
  * St and Street or Saint, Ave and Avenue, a state's code and name where a place ends the value
  * (as whole words, only after the value's other words and ending the name or one of its parts),
  * and the like) are tried against names, so Fifth Avenue for 5th Avenue outranks an option with
- * the same words in another order. Two options at the best rank are ambiguous; an "Add ..." or "Create
- * ..." row is never matched.
+ * the same words in another order. Two options at the best rank are ambiguous, unless they are
+ * copies with one label, text and a value, such as a country listed twice, which are one option, so
+ * the first enabled copy is picked; an "Add ..." or "Create ..." row is never matched.
  *
  * The query is typed key by key, as a person types it, never filled at once, after clearing any
  * text the field holds. Waits follow the page, never a fixed pause: after typing, the options count once no loading
@@ -944,14 +945,18 @@ const pickerMatches = (options) => {
 };
 // With tie "first", options that tie give the first enabled one in the list's order, kept by its
 // position (its key or index), never found again by a label another option may share; every
-// tied option greyed out is a value the site does not offer now.
+// tied option greyed out is a value the site does not offer now. Options that tie as copies, with
+// one label, text and value, such as a country listed twice, are one option, taken the same way
+// without tie "first". Options with no value are never copies: what holds them, such as a group,
+// can tell them apart.
 const pickerOutcome = (found, wanted, tie = false) => {
   const { ranking, list } = found;
   if (ranking.status === "picked") return { status: "picked", option: list[ranking.index], rank: ranking.rank };
   const tied = ranking.status === "ambiguous" ? ranking.indexes.map((index) => list[index]) : [];
-  const first = tie ? tied.find((option) => !option.disabled) : undefined;
-  if (first) return { status: "picked", option: first, rank: ranking.rank, tied: pickerMatches(tied) };
-  const reason = ranking.status === "ambiguous" ? (tie ? "option_disabled" : "option_ambiguous") : ranking.status === "disabled" ? "option_disabled" : "option_missing";
+  const copies = new Set(tied.map((option) => JSON.stringify([option.label, option.names, option.value]))).size === 1 && tied[0].value !== "";
+  const first = tie || copies ? tied.find((option) => !option.disabled) : undefined;
+  if (first) return { status: "picked", option: first, rank: ranking.rank, ...(tie ? { tied: pickerMatches(tied) } : {}) };
+  const reason = ranking.status === "ambiguous" ? (tie || copies ? "option_disabled" : "option_ambiguous") : ranking.status === "disabled" ? "option_disabled" : "option_missing";
   return {
     status: "refused",
     refusal: {
