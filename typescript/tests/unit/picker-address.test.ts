@@ -161,9 +161,11 @@ describe("resolveAddress", () => {
       ["12 Route 9, Exampleton, NJ", "12 US-9, Exampleton, NJ, USA"],
       ["12 SW 107 Ave, Exampleton, FL", "12 SW 107th Ave, Exampleton, FL, USA"],
       ["12 N La Salle St, Exampleton, IL", "12 N LaSalle St, Exampleton, IL, USA"],
-      ["12 MLK Blvd, Exampleton, GA", "12 Martin Luther King Jr Blvd, Exampleton, GA, USA"],
+      ["12 Mian St, Exampleton, IL", "12 Main St, Exampleton, IL, USA"],
+      ["12 MLK Jr Way, Exampleton, GA", "12 Dr Martin Luther King Jr Way, Exampleton, GA, USA"],
     ])
       expect(await resolveAddress(address ?? "", () => [shown ?? ""])).toMatchObject({ label: shown });
     expect(await resolveAddress("12 Exampel St, Exampleton, IL 60000", () => ["12 Example St, Exampleton, IL 60001, USA"])).toMatchObject({ picked: false });
+    expect(await resolveAddress("1234 NE 45th St, Exampleton, WA", () => ["1234 NE 46th St, Exampleton, WA, USA"])).toMatchObject({ picked: false });
   });
 });

@@ -136,27 +136,37 @@ export const resolveAddressWith = async <T>(
     .flatMap((list) => (list.length > 1 ? list.slice(0, -1) : list).filter((forms) => (forms[0] ?? "").length > 2))
     .concat(words(lines[lineStreet] ?? "").filter((word) => /\d/u.test(word) && !houseWords.includes(word)).map((word) => [word]))
     .map((forms) => forms.map(numeral));
-  // A street's name as a whole: its words of two letters or more but the house number's, numbers
-  // without their ordinal ending, and the last word left out when there is another.
-  const nameOf = (text: string) => {
-    const list = words(text).filter((word) => word.length > 1 && !houseWords.includes(word)).map(numeral);
-    return list.length > 1 ? list.slice(0, -1) : list;
-  };
-  const callerName = nameOf(lines[lineStreet] ?? "");
-  // Two names are close when, their words joined, fewer edits than a third of the shorter's letters
-  // turn one into the other (Exampel for Example, LaSalle for La Salle), or when one is the first
-  // letters of the other's words (MLK for Martin Luther King Jr).
+  // A street's words but its house number's, numbers without their ordinal ending.
+  const streetWords = (text: string) => words(text).filter((word) => !houseWords.includes(word)).map(numeral);
+  const callerWords = streetWords(lines[lineStreet] ?? "");
+  // Two streets' names are close when the numbers both show agree and, with their words of two
+  // letters or more joined, the last left out when there is another, fewer edits than a third of
+  // the shorter's letters, a swap of two letters one edit, turn one into the other (Exampel or Mian
+  // for Example or Main, LaSalle for La Salle); or when a word of three letters or more of one is
+  // among the first letters of the other's words (MLK for Dr Martin Luther King Jr).
   const close = (one: readonly string[], two: readonly string[]) => {
-    const [a, b] = [one.join(""), two.join("")];
-    let row = Array.from({ length: b.length + 1 }, (_, index) => index);
+    const numbers = (list: readonly string[]) => list.filter((word) => /\d/u.test(word)).join(" ");
+    if (numbers(one) !== "" && numbers(two) !== "" && numbers(one) !== numbers(two)) return false;
+    const name = (list: readonly string[]) => {
+      const kept = list.filter((word) => word.length > 1);
+      return kept.length > 1 ? kept.slice(0, -1) : kept;
+    };
+    const [a, b] = [name(one).join(""), name(two).join("")];
+    let [before, row] = [[] as number[], Array.from({ length: b.length + 1 }, (_, index) => index)];
     for (let i = 1; i <= a.length; i++) {
       const next = [i];
-      for (let j = 1; j <= b.length; j++)
-        next.push(Math.min((row[j] ?? 0) + 1, (next[j - 1] ?? 0) + 1, (row[j - 1] ?? 0) + (a[i - 1] === b[j - 1] ? 0 : 1)));
-      row = next;
+      for (let j = 1; j <= b.length; j++) {
+        const swap = i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1] ? (before[j - 2] ?? 0) + 1 : Infinity;
+        next.push(Math.min((row[j] ?? 0) + 1, (next[j - 1] ?? 0) + 1, (row[j - 1] ?? 0) + (a[i - 1] === b[j - 1] ? 0 : 1), swap));
+      }
+      [before, row] = [row, next];
     }
-    const initials = (list: readonly string[]) => (list.length > 1 ? list.map((word) => word[0]).join("") : "");
-    return (row[b.length] ?? 0) * 3 < Math.min(a.length, b.length) || (a.length > 1 && initials(two).startsWith(a)) || (b.length > 1 && initials(one).startsWith(b));
+    const initials = (list: readonly string[]) => list.map((word) => word[0]).join("");
+    return (
+      (row[b.length] ?? 0) * 3 < Math.min(a.length, b.length) ||
+      name(one).some((word) => word.length > 2 && initials(two).includes(word)) ||
+      name(two).some((word) => word.length > 2 && initials(one).includes(word))
+    );
   };
   // A suggestion's street, its parts after the street, and its parts but the street.
   const sides = (text: string) => {
@@ -191,7 +201,7 @@ export const resolveAddressWith = async <T>(
       house.length > 0 &&
       names.length > 0 &&
       !names.some((forms) => forms.some((form) => ownWords.some((word) => !houseWords.includes(word) && numeral(word) === form))) &&
-      (other || !close(callerName, nameOf(own)))
+      (other || !close(callerWords, streetWords(own)))
     )
       return undefined;
     const share = Math.max(
@@ -263,9 +273,10 @@ export const resolveAddressWith = async <T>(
  * three letters or more, and every word holding a digit but the house number's own, as the 9 of
  * Route 9, each in any of its usual forms from `spellingsOf` (Fifth for 5th) and a number without
  * its ordinal ending (107 for 107th), unless it shows no other ZIP and its street's name is close
- * to the caller's: with their words joined, fewer edits than a third of the shorter's letters turn
- * one into the other (Exampel for Example, LaSalle for La Salle), or one is the first letters of the
- * other's words (MLK for Martin Luther King Jr). So St or Ave ending a street with a longer name
+ * to the caller's: the numbers both show agree and, with their words joined, fewer edits than a
+ * third of the shorter's letters, a swap of two letters one edit, turn one into the other (Exampel
+ * or Mian for Example or Main, LaSalle for La Salle), or a word of one is among the first letters of
+ * the other's words (MLK for Dr Martin Luther King Jr). So St or Ave ending a street with a longer name
  * word, or a direction letter, alone keeps none. So is one that reads a caller's ZIP as its house
  * number. Of the rest, it prefers the one that shows the caller's ZIP while its own street keeps
  * more than half the caller's street words of two letters or more, as typed or tidied, each in any
