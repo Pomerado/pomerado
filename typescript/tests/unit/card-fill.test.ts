@@ -19,6 +19,7 @@ import { makeRunSecrets, registerSecretAnswer } from "../../src/inputs/secrets.j
 
 const site = "https://www.restaurant.example";
 const checkout = `${site}/reservations/checkout/?party_size=3`;
+const popup = { opener: "primary" as const, origin: site };
 const stripeFrame =
   "https://js.stripe.com/v3/elements-inner-accessory-target-0000.html#__shared_params__[version]=v3";
 
@@ -70,6 +71,8 @@ const scriptedPage = (
     readonly swappedActions?: readonly string[];
     /** How many of Stripe's fields the page shows, from the first. */
     readonly fields?: number;
+    /** The inspection's answer in place of the one the page gives. */
+    readonly inspected?: (answer: object) => object;
   } = {},
 ) => {
   const calls: string[] = [];
@@ -103,8 +106,10 @@ const scriptedPage = (
               },
               url: topUrl,
             };
-          if (calls.length === 1)
-            return { fields: targets(frameUrl), submit: null, buttons: [], url: topUrl };
+          if (calls.length === 1) {
+            const answer = { fields: targets(frameUrl), submit: null, buttons: [], url: topUrl };
+            return options.inspected?.(answer) ?? answer;
+          }
           return calls.length <= 1 + stripeFields.length
             ? { focused: true, url: topUrl }
             : { submit: "none", url: topUrl };
@@ -160,12 +165,15 @@ const run = (
     readonly fillVia?: Parameters<typeof runCardFill>[0]["fillVia"];
     readonly reviewDenies?: boolean;
     readonly checkoutOrigins?: readonly string[];
+    readonly inspected?: (answer: object) => object;
   } = {},
 ) => {
   const { handles, handle } = issued();
   const step = (options.step ?? stripeStep)(handle);
   const { page, calls } = scriptedPage({ ...options, fields: step.fields.length });
   const typed: string[] = [];
+  // The target each value was typed into: a pop-up's, or none for the primary tab.
+  const typedInto: (string | undefined)[] = [];
   const reviews: CardFillReview[] = [];
   const fenced: string[] = [];
   // Every card answer the step reads, by handle.
@@ -187,9 +195,10 @@ const run = (
       ...(options.checkoutOrigins === undefined ? {} : { checkoutOrigins: options.checkoutOrigins }),
       page,
       keyboard: {
-        insertText: (_target, text) =>
+        insertText: (into, text) =>
           Effect.sync(() => {
             typed.push(text);
+            typedInto.push(into.targetId);
             return "inserted" as const;
           }),
       },
@@ -206,7 +215,7 @@ const run = (
         }),
     }),
   );
-  return { outcome, typed, reviews, calls, fenced, read };
+  return { outcome, typed, typedInto, reviews, calls, fenced, read };
 };
 
 describe("payment frame origins", () => {
@@ -443,10 +452,62 @@ describe("a card-fill step", () => {
     const result = await outcome;
     expect(result.status).toBe("refused");
     expect(JSON.parse(result.observations).message).toBe(
-      "The host typed nothing: the page's top document is not on this site or its approved checkout origins (https://shop.storefront.example). Card answers go only into this site's own page or a payment frame on it, never a provider's page, a popup or a new tab.",
+      "The host typed nothing: the page's top document is not on this site or its approved checkout origins (https://shop.storefront.example). Card answers go only into this site's own page or a payment frame on it, never a provider's page or a pop-up or tab off this site.",
     );
     expect(typed).toEqual([]);
     expect(reviews).toEqual([]);
+  });
+});
+
+describe("a card-fill step on a checkout the site opened in a pop-up", () => {
+  const inPopup = (handle: (id: keyof typeof cardAnswers) => string) => ({
+    ...stripeStep(handle),
+    popup,
+  });
+
+  it("inspects, rechecks and types on the pop-up's own page", async () => {
+    const { outcome, typed, typedInto, calls } = run({
+      step: inPopup,
+      inspected: (answer) => ({ ...answer, popupTargetId: "popup-1" }),
+    });
+    expect((await outcome).status).toBe("filled");
+    expect(typed).toEqual(["4242 4242 4242 4242", "12/34", "123", "94110"]);
+    expect(typedInto).toEqual(["popup-1", "popup-1", "popup-1", "popup-1"]);
+    // Every call finds the one page the primary tab opened on the pop-up's origin, and each call
+    // after the inspection refuses a page other than the one it inspected.
+    expect(calls.every((code) => code.includes(`const popupOrigin = ${JSON.stringify(site)};`))).toBe(true);
+    expect(calls.slice(1).every((code) => code.includes('if (popupTargetId !== "popup-1")'))).toBe(true);
+    // A step that names no pop-up stays on the primary tab.
+    const primary = run();
+    await primary.outcome;
+    expect(primary.calls.some((code) => code.includes("popupOrigin"))).toBe(false);
+    expect(primary.typedInto).toEqual([undefined, undefined, undefined, undefined]);
+  });
+
+  it("refuses a pop-up off the site before any page call", async () => {
+    const { outcome, calls, reviews } = run({
+      step: (handle) => ({
+        ...stripeStep(handle),
+        popup: { opener: "primary", origin: "https://pay.provider.example" },
+      }),
+    });
+    const result = await outcome;
+    expect(result.status).toBe("refused");
+    expect(JSON.parse(result.observations).message).toContain("top document is not on this site");
+    expect([calls, reviews]).toEqual([[], []]);
+  });
+
+  it("names the page and how many frames it searched when it finds no field", async () => {
+    const { outcome } = run({
+      inspected: () => ({ error: "not_found", target: 0, url: checkout, searched: { frames: 3, matches: [] } }),
+    });
+    expect(JSON.parse((await outcome).observations)).toEqual({
+      cardFill: "refused",
+      reason: "not_found",
+      field: 1,
+      pageOrigin: site,
+      framesSearched: 3,
+    });
   });
 });
 
@@ -493,6 +554,18 @@ describe("a card-fill step the host fills from a payment method", () => {
     expect(filledBy[0]?.total).toEqual(total);
     expect(filledBy[0]?.step).toEqual({ fields: slotStep().fields });
     expect(filledBy[0]?.inspection.page).toBe(reviews[0]?.page);
+  });
+
+  it("hands the host a pop-up step with the pop-up page it inspected", async () => {
+    const { filledBy, fillVia } = hostFill();
+    const { outcome } = run({
+      step: () => ({ ...slotStep(), popup }),
+      fillVia,
+      inspected: (answer) => ({ ...answer, popupTargetId: "popup-1" }),
+    });
+    expect((await outcome).status).toBe("filled");
+    expect(filledBy[0]?.step.popup).toEqual(popup);
+    expect(filledBy[0]?.inspection).toMatchObject({ popupTargetId: "popup-1", url: checkout });
   });
 
   it("refuses card fields in a frame off the list before the host fills", async () => {
@@ -554,6 +627,23 @@ describe("the execute request", () => {
       },
     });
     expect(Either.isRight(decoded)).toBe(true);
+  });
+
+  it("takes a pop-up on either kind of card-fill step, on an exact https origin only", () => {
+    const decode = (popupOrigin: string, fields: object) =>
+      Either.isRight(
+        Schema.decodeUnknownEither(ExecutionRequest)({
+          ...request,
+          cardFillStep: { ...fields, popup: { opener: "primary", origin: popupOrigin } },
+        }),
+      );
+    const handled = { fields: [{ selector: "#payment-numberInput", handle: "{{secret.s1}}" }] };
+    const slotted = {
+      fields: [{ selector: "#payment-numberInput", slot: "card_number" }],
+      total: { amount: "12.50", currency: "USD" },
+    };
+    expect([decode(site, handled), decode(site, slotted)]).toEqual([true, true]);
+    expect(decode(`${site}/checkout`, handled)).toBe(false);
   });
 
   it("refuses a step that names one handle twice", () => {
