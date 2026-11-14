@@ -53,35 +53,67 @@ export const resolveAddressWith = async <T>(
     .split(",")
     .map(squash)
     .filter((part) => part !== "");
-  // A unit is the second part when it has one word holding a digit or a #, no ZIP, and no plain
-  // number opening it before other words, as a street or a town may have; or a # and what follows
-  // it ending the first part.
+  // A house number: the first word of the first part that opens with a digit and goes on, read
+  // also joined to a one-letter word after it, so 12A and 12 A are one house.
+  const tokens = (text: string) =>
+    match
+      .fold(text)
+      .split(" ")
+      .map((word) => word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ""))
+      .filter(Boolean);
+  const houseOf = (text: string) => {
+    const part = text.split(",").map(tokens).find((each) => each.length > 1 && /^\d/u.test(each[0] ?? ""));
+    if (part === undefined) return [];
+    const [number = "", next = ""] = part;
+    return next.length === 1 ? [number, number + next] : [number];
+  };
+  // A unit is the second part, after a first part with a house number and before another part,
+  // when it has at most two words, one of them holding a digit or a #, no ZIP, and no plain number
+  // opening it before another word, as a street or a town may have; or a # and what follows it
+  // ending the first part.
   const second = parts[1] ?? "";
+  const secondWords = second.split(" ");
   const unitPart =
-    second.split(" ").filter((word) => /[\d#]/u.test(word)).length === 1 && zipOf(second) === "" && !/^\d+ /u.test(second);
+    parts.length > 2 &&
+    houseOf(parts[0] ?? "").length > 0 &&
+    secondWords.length <= 2 &&
+    secondWords.filter((word) => /[\d#]/u.test(word)).length === 1 &&
+    zipOf(second) === "" &&
+    !/^\d+ /u.test(second);
   const marker = unitPart ? null : /^(.*\S)\s*(#\s*[^\s#]+)$/u.exec(parts[0] ?? "");
   const unit = unitPart ? second : (marker?.[2] ?? "");
   const lines = unitPart ? [parts[0] ?? "", ...parts.slice(2)] : marker ? [marker[1] ?? "", ...parts.slice(1)] : parts;
   const query = lines.join(", ");
   const zip = zipOf(query);
-  // The caller's place: the last part after the street, its ZIP left out, such as a state or town,
-  // in each of its usual forms, such as a state's code and name.
-  const place = lines.slice(1).map((part) => squash(part.replace(zipGroups, ""))).filter((part) => part !== "").at(-1);
-  const places = place === undefined ? [] : match.spellings(place).map(phrase).filter((form) => form.trim() !== "");
-  // The house number: the street's first word, when it holds a digit.
-  const first = words(lines[0] ?? "")[0];
-  const house = first !== undefined && /\d/u.test(first) ? first : undefined;
-  // A suggestion without the caller's house number is another address, never usable (-1). Of the
-  // rest, one that shows the caller's ZIP and holds the place scores 4; a ZIP it doesn't show
-  // costs 1 and another ZIP 2, and a place it lacks 2.
+  const house = houseOf(query);
+  // The caller's place: the parts after the street, ZIP left out, as words. A word counts as kept
+  // when a suggestion holds it in one of its usual forms (Illinois for IL), or holds a usual form of
+  // its whole part (NY for New York).
+  const street = Math.max(0, lines.findIndex((line) => houseOf(line).length > 0));
+  const places = lines
+    .slice(street + 1)
+    .map((part) => squash(part.replace(zipGroups, "")))
+    .filter((part) => part !== "")
+    .map((part) => ({ forms: match.spellings(part).map(phrase), words: words(part).map((word) => match.spellings(word).map(phrase)) }));
+  const total = places.reduce((sum, part) => sum + part.words.length, 0);
+  // A suggestion without the caller's house number, or one that reads the caller's ZIP as its
+  // house number, is another address: undefined. Any other scores two for each place word it
+  // keeps, one for showing the caller's ZIP and minus one for showing another, so one that keeps
+  // every place word and shows no other ZIP, which is whole, outscores any other.
   const score = (text: string) => {
-    if (house !== undefined && !words(text).includes(house)) return -1;
+    const theirs = houseOf(text);
     const shown = zipOf(text);
-    return (zip === "" || shown === zip ? 2 : shown === "" ? 1 : 0) + (places.length === 0 || places.some((form) => phrase(text).includes(form)) ? 2 : 0);
+    if (house.length > 0 ? !theirs.some((each) => house.includes(each)) : zip !== "" && theirs.includes(zip) && shown !== zip)
+      return undefined;
+    const have = phrase(text);
+    const holds = (forms: readonly string[]) => forms.some((form) => form.trim() !== "" && have.includes(form));
+    const kept = places.reduce((sum, part) => sum + (holds(part.forms) ? part.words.length : part.words.filter(holds).length), 0);
+    const zipScore = zip === "" || shown === "" ? 0 : shown === zip ? 1 : -1;
+    return { value: 2 * kept + zipScore, whole: kept === total && zipScore >= 0 };
   };
   // The street as typed first, then once more tidied, with joined words split (La Salle for
   // LaSalle), the ZIP left out and punctuation other than commas, apostrophes and hyphens dropped,
-  // when the first brings nothing usable or nothing that keeps the caller's ZIP and place.
+  // when the first brings no usable suggestion or none that is whole.
   const at = zip === "" ? -1 : query.lastIndexOf(zip);
   const tidied = (at < 0 ? query : query.slice(0, at) + query.slice(at + zip.length).replace(/^-\d{4}/u, ""))
     .replace(/(\p{Ll})(\p{Lu})/gu, "$1 $2")
@@ -91,16 +123,16 @@ export const resolveAddressWith = async <T>(
     .filter((part) => part !== "")
     .join(", ");
   const seen: string[] = [];
-  let best: { readonly choice: T; readonly label: string; readonly query: string; readonly score: number } | undefined;
+  let best: { readonly choice: T; readonly label: string; readonly query: string; readonly value: number } | undefined;
   for (const text of [...new Set([query, tidied])].filter((form) => form !== "")) {
     const items = [...(await suggest(text))];
     const labels = items.map((item) => squash(label(item)));
     seen.push(...labels.filter((name) => name !== ""));
-    const scores = labels.map((name) => (name === "" ? -1 : score(name)));
-    const top = Math.max(-1, ...scores);
-    if (top < 0) continue;
+    const scores = labels.map((name) => (name === "" ? undefined : score(name)));
+    const top = Math.max(-Infinity, ...scores.flatMap((each) => (each === undefined ? [] : [each.value])));
+    if (top === -Infinity) continue;
     // Among the best, the one the typed text names most closely, else the site's first.
-    const tied = scores.flatMap((each, index) => (each === top ? [index] : []));
+    const tied = scores.flatMap((each, index) => (each?.value === top ? [index] : []));
     const ranking = match.rank(
       tied.map((index) => ({ names: [labels[index] ?? ""], value: "", disabled: false, key: String(index) })),
       [text],
@@ -108,9 +140,9 @@ export const resolveAddressWith = async <T>(
       { spellings: match.spellings },
     );
     const pick = tied[ranking.status === "picked" ? ranking.index : ranking.status === "ambiguous" ? (ranking.indexes[0] ?? 0) : 0] ?? 0;
-    if (best === undefined || top > best.score)
-      best = { choice: items[pick] as T, label: labels[pick] ?? "", query: text, score: top };
-    if (top === 4) break;
+    if (best === undefined || top > best.value)
+      best = { choice: items[pick] as T, label: labels[pick] ?? "", query: text, value: top };
+    if (scores[pick]?.whole === true) break;
   }
   if (best === undefined)
     return { picked: false, reason: "option_missing", wanted: squash(address), available: [...new Set(seen)].slice(0, 100), matches: [], unit };
@@ -122,19 +154,21 @@ export const resolveAddressWith = async <T>(
  * `suggest(text)` returns what the site suggests for `text`, such as the predictions of its
  * address lookup request, and `label(item)` reads one as text (`String` by default).
  *
- * It splits off a unit first: the second comma-separated part when it has one word holding a
- * digit or a #, no ZIP, and no plain number opening it before other words, or a # and what follows
- * it ending the first part. It returns the unit for the site's own unit field and asks for the
- * rest. A suggestion lacking the caller's house number is another address and never usable. Of
- * the rest, it prefers one that keeps the caller's ZIP and place (the last part after the street,
- * such as a state, in any of its usual forms from `spellingsOf`), then one that shows no other
- * ZIP, then the one the text names most closely (`rankChoices`), then the site's first. When the
- * text brings nothing usable, or nothing that keeps the ZIP and place, it asks once more with a
- * tidied text: joined words split, the ZIP left out and stray punctuation dropped. It accepts the
- * best suggestion either text brought, so the tool reports the site's version as it does any
- * rewrite, and refuses only when neither brought a usable one, with `picked: false` and every
- * suggestion the site gave as `available`, for `pickRefusal`. It keeps no list of words or
- * addresses of its own.
+ * It splits off a unit first: the second comma-separated part, after a first part with a house
+ * number and before another part, when it has at most two words, one of them holding a digit or a
+ * #, no ZIP, and no plain number opening it before another word; or a # and what follows it ending
+ * the first part. It returns the unit for the site's own unit field and asks for the rest. A
+ * suggestion with another house number than the caller's (the first word of the first part that
+ * opens with a digit, 12A and 12 A alike), or that reads a caller's ZIP as its house number, is
+ * another address and never usable. Of the rest, it prefers the one that keeps the most of the
+ * caller's place, the words after the street in any of their usual forms from `spellingsOf`, then
+ * shows the caller's ZIP rather than none or another, then the one the text names most closely
+ * (`rankChoices`), then the site's first. When the text brings no usable suggestion, or none that
+ * keeps every place word and shows no other ZIP, it asks once more with a tidied text: joined words
+ * split, the ZIP left out and stray punctuation dropped. It accepts the best suggestion either text
+ * brought, so the tool reports the site's version as it does any rewrite, and refuses only when
+ * neither brought a usable one, with `picked: false` and every suggestion the site gave as
+ * `available`, for `pickRefusal`. It keeps no list of words or addresses of its own.
  */
 export const resolveAddress = <T = string>(
   address: string,

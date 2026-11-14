@@ -1578,7 +1578,7 @@ const pickAddress = async (control, address, options = {}) => {
   const found = await pickerResolveAddress(String(address ?? ""), suggest, (option) => option.label, match);
   if (!found.picked) return found;
   const picked = await pickValue(control, found.label, { ...options, query: found.query, tie: "first" });
-  return picked.picked ? { ...picked, query: found.query, unit: found.unit } : { ...picked, wanted: String(address ?? "").trim(), unit: found.unit };
+  return picked.picked ? { ...picked, query: found.query, unit: found.unit } : { ...picked, wanted: String(address ?? "").replace(/\s+/g, " ").trim(), unit: found.unit };
 };
 `;
 
