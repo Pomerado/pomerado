@@ -15,8 +15,7 @@ const reusable = Schema.is(ReusableType);
 
 /**
  * What a later ask must match to reuse an answer: the same id, type, screened prompt, and screened
- * options or a confirm's screened follow-up, and for a purchase confirm the same order, as its
- * request's screened notice shows it.
+ * options or a confirm's screened follow-up.
  */
 const KeptQuestion = Schema.Struct({
   id: Schema.String,
@@ -28,20 +27,16 @@ const KeptQuestion = Schema.Struct({
   followUp: Schema.optional(
     Schema.Struct({ prompt: Schema.String, defaultText: Schema.optional(Schema.String) }),
   ),
-  notice: Schema.optional(Schema.String),
 });
 type KeptQuestion = typeof KeptQuestion.Type;
 
 /**
  * One answer the owner gave a script's question in this build, which a later step may reuse:
- * the screened question and the answer as the asker returned it. A purchase confirm's order is
- * also kept beside its question, so an answer whose question a host matched to today's key still
- * answers only the order the owner saw.
+ * the screened question and the answer as the asker returned it.
  */
 export const KeptScriptAnswer = Schema.Struct({
   question: KeptQuestion,
   answer: Schema.Struct({ type: Schema.String, value: Schema.Unknown }),
-  notice: Schema.optional(Schema.String),
 });
 export type KeptScriptAnswer = typeof KeptScriptAnswer.Type;
 
@@ -74,30 +69,27 @@ export const scriptQuestionKeys = <E>(
   asked: InputRequest,
   screen: (text: string) => Effect.Effect<string, E>,
 ) =>
-  Effect.gen(function* () {
-    const notice = asked.notice === undefined ? {} : { notice: yield* screen(asked.notice) };
-    return yield* Effect.forEach(asked.questions, (question) =>
-      Effect.gen(function* () {
-        const { type } = question;
-        if (!reusable(type)) return undefined;
-        const key = { id: question.id, type, prompt: yield* screen(question.prompt) };
-        if (question.type === "choice" || question.type === "multi_choice") {
-          const options = yield* Effect.forEach(question.options, (option) =>
-            screen(option.label).pipe(Effect.map((label) => ({ id: option.id, label }))),
-          );
-          return { ...key, options, ...notice } satisfies KeptQuestion;
-        }
-        if (question.type !== "confirm" || question.followUp === undefined)
-          return { ...key, ...notice } satisfies KeptQuestion;
-        const { prompt, defaultText } = question.followUp;
-        const followUp = {
-          prompt: yield* screen(prompt),
-          ...(defaultText === undefined ? {} : { defaultText: yield* screen(defaultText) }),
-        };
-        return { ...key, followUp, ...notice } satisfies KeptQuestion;
-      }),
-    );
-  });
+  Effect.forEach(asked.questions, (question) =>
+    Effect.gen(function* () {
+      const { type } = question;
+      if (!reusable(type)) return undefined;
+      const key = { id: question.id, type, prompt: yield* screen(question.prompt) };
+      if (question.type === "choice" || question.type === "multi_choice") {
+        const options = yield* Effect.forEach(question.options, (option) =>
+          screen(option.label).pipe(Effect.map((label) => ({ id: option.id, label }))),
+        );
+        return { ...key, options } satisfies KeptQuestion;
+      }
+      if (question.type !== "confirm" || question.followUp === undefined)
+        return key satisfies KeptQuestion;
+      const { prompt, defaultText } = question.followUp;
+      const followUp = {
+        prompt: yield* screen(prompt),
+        ...(defaultText === undefined ? {} : { defaultText: yield* screen(defaultText) }),
+      };
+      return { ...key, followUp } satisfies KeptQuestion;
+    }),
+  );
 
 const sameQuestion = (left: KeptQuestion, right: KeptQuestion) =>
   JSON.stringify(left) === JSON.stringify(right);
@@ -106,22 +98,21 @@ const sameQuestion = (left: KeptQuestion, right: KeptQuestion) =>
  * The kept answers a script's ask may reuse, as a fresh answer's shape, or undefined to ask the
  * owner. Every question needs a kept answer to the same question, still valid for the question as
  * asked now. Any step may reuse it, the one that got it included, as often as the question comes
- * back and however long ago the owner gave it. A purchase confirm reuses only an answer to the
- * same order.
+ * back and however long ago the owner gave it. A purchase confirm, which carries its order, is
+ * always asked again.
  */
 export const reusedScriptAnswers = (
   asked: InputRequest,
   keys: readonly (KeptQuestion | undefined)[],
   kept: readonly KeptScriptAnswer[],
 ): ValidAnswers | undefined => {
+  if (asked.order !== undefined) return undefined;
   const found: Record<string, KeptScriptAnswer["answer"]> = {};
   for (const key of keys) {
     const entry =
       key === undefined
         ? undefined
-        : kept.find(
-            (candidate) => sameQuestion(candidate.question, key) && candidate.notice === key.notice,
-          );
+        : kept.find((candidate) => sameQuestion(candidate.question, key));
     if (key === undefined || entry === undefined) return undefined;
     found[key.id] = entry.answer;
   }
@@ -150,9 +141,7 @@ export const keptScriptAnswers = (
 ): readonly KeptScriptAnswer[] => {
   const latest = keys.flatMap((key): KeptScriptAnswer[] => {
     const answer = key === undefined ? undefined : answers[key.id];
-    return key === undefined || answer === undefined
-      ? []
-      : [{ question: key, answer, ...(key.notice === undefined ? {} : { notice: key.notice }) }];
+    return key === undefined || answer === undefined ? [] : [{ question: key, answer }];
   });
   return [
     ...forgetScriptAnswers(
