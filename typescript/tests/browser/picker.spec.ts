@@ -765,6 +765,27 @@ test("pickValue with tie first takes the first of the options that tie, in the s
   expect(await submitted(page)).toEqual({ city: "shb" });
 });
 
+test("pickValue takes the first of an option listed twice, and still refuses options with one label and other values", async ({ page }) => {
+  await serve(page, `<form><label>Country <select name="country"><option value="">Choose a country</option>
+<option value="US">United States</option><option value="CA">Canada</option><option value="US">United States</option></select></label>
+<label>Branch <select name="branch"><option value="">Choose a branch</option>
+<option value="b-40">Springfield</option><option value="b-12">Springfield</option></select></label></form>`);
+  expect(await call(page, `return await pickValue(page.getByLabel("Country"), "United States", fast);`)).toEqual({
+    result: { picked: true, kind: "select", label: "United States", value: "US", rank: "exact", refills: 0 },
+  });
+  expect(await call(page, `return await page.getByLabel("Country").evaluate((select) => select.selectedIndex);`)).toEqual({ result: 1 });
+  expect(await call(page, `return await pickValue(page.getByLabel("Branch"), "Springfield", fast);`)).toEqual({
+    result: {
+      picked: false,
+      reason: "option_ambiguous",
+      wanted: "Springfield",
+      available: ["Springfield"],
+      matches: ["Springfield [b-40]", "Springfield [b-12]"],
+    },
+  });
+  expect(await submitted(page)).toEqual({ country: "US", branch: "" });
+});
+
 test("pickValue with tie first takes a city whose name before its comma is the value over one holding it as a word", async ({ page }) => {
   await serve(page, `<form><label>City <select name="city">
 <option value="">Choose a city</option><option value="nyc">New York</option>
@@ -857,10 +878,12 @@ list.addEventListener("click", (event) => {
 });
 </script>`);
   const office = 'page.getByRole("button", { name: "Office" })';
+  // Copies with one label, text and value are one option, so without tie first the first is taken too.
   expect(await call(page, `return await pickValue(${office}, "Springfield", fast);`)).toEqual({
-    result: { picked: false, reason: "option_ambiguous", wanted: "Springfield", available: ["Shelbyville", "Springfield"], matches: ["Springfield", "Springfield"] },
+    result: { picked: true, kind: "dropdown", label: "Springfield", value: "", rank: "exact", refills: 0 },
   });
-  expect(await submitted(page)).toEqual({ office: "" });
+  expect(await submitted(page)).toEqual({ office: "1" });
+  expect(await call(page, `return await pickValue(${office}, "Shelbyville", fast);`)).toMatchObject({ result: { picked: true } });
   expect(await call(page, `return await pickValue(${office}, "Springfield", { ...fast, tie: "first" });`)).toEqual({
     result: { picked: true, kind: "dropdown", label: "Springfield", value: "", rank: "exact", refills: 0, tied: ["Springfield", "Springfield"] },
   });

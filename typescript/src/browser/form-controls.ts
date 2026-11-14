@@ -117,9 +117,10 @@ export const blockingFieldsHook = "__pomeradoBlockingFields";
  *   spellings, such as `["CA", "California"]`), ignoring case, accents, spacing and punctuation.
  *   A label that equals one wins over a value that does,
  *   which wins over a label that holds it as whole words; two different options at the winning
- *   rank are ambiguous. A custom dropdown is opened, its own listbox found through `aria-controls`
- *   or `aria-owns` (else the one visible listbox), typed into when it filters as you type, and
- *   scrolled when it renders its options as you scroll. Returns `{ shape, label, value }`.
+ *   rank are ambiguous, while copies with one label and value, such as a country listed twice,
+ *   are one option, so the first enabled copy is chosen. A custom dropdown is opened, its own
+ *   listbox found through `aria-controls` or `aria-owns` (else the one visible listbox), typed
+ *   into when it filters as you type, and scrolled when it renders its options as you scroll. Returns `{ shape, label, value }`.
  * - `unfilledRequiredFields(scope, { timeout, before }?)`: the empty required fields a form shows
  *   now, in page order, such as ones it adds once an earlier answer is in. A field counts when it
  *   is visible, enabled, empty and marked `required` or `aria-required="true"`, or flagged invalid
@@ -238,8 +239,11 @@ const formControlPick = (options, wanted) => {
   for (const rank of ranks) {
     const matched = options.filter(rank);
     if (matched.length === 0) continue;
-    if (matched.length > 1) return { failure: "option_ambiguous" };
-    return matched[0].disabled ? { failure: "option_disabled" } : { option: matched[0] };
+    // Copies with one label and value, such as a country listed twice, are one option.
+    if (matched.some((option) => option.label !== matched[0].label || option.value !== matched[0].value))
+      return { failure: "option_ambiguous" };
+    const option = matched.find((each) => !each.disabled);
+    return option ? { option } : { failure: "option_disabled" };
   }
   return { failure: "option_missing" };
 };
