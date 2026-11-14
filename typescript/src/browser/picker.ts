@@ -525,7 +525,10 @@ const pickerPageCode = String.raw`(element, args) => {
  * York, UK for York), then a name holding the value as whole words (New York for York), then a
  * name made of the value's words, no more and no fewer, with the parts its or the value's commas or
  * spaced dashes separate in another order and the numbers in the value's order (rank `allWords`:
- * Harbor Street Station, Example City for Example City Harbor Street Station), then, only with `options.stem` set to true (as a read sets it; `pickValues` takes it too), a name with
+ * Harbor Street Station, Example City for Example City Harbor Street Station), then a name some of
+ * whose whole parts, each keeping its words' order, hold the value's words one for one, each
+ * equal or written short in the name, such as Plz for Plaza (rank `anyOrder`: Transit - Lakeside
+ * Station, 12 Main St for Lakeside Transit Station), then, only with `options.stem` set to true (as a read sets it; `pickValues` takes it too), a name with
  * as many words as the value whose words each equal the value's in order or, for words of Latin
  * letters only, begin the value's or begin with them, the shorter of five or more letters, such as
  * Dentistry for Dentist (rank `stem`), then, only with `options.extraWords` set to true and a
@@ -1455,7 +1458,7 @@ const pickValues = async (control, values, options = {}) => {
         let found = await pickerFind(s, wanted);
         // A free-entry value is created rather than replaced by a suggestion that only holds it
         // or shares its stem.
-        if (options.create && found.status === "picked" && ["leading", "words", "allWords", "stem", "extraWords"].includes(found.rank))
+        if (options.create && found.status === "picked" && ["leading", "words", "allWords", "anyOrder", "stem", "extraWords"].includes(found.rank))
           found = { status: "refused", field: found.field, refusal: { picked: false, reason: "option_missing", wanted: wanted[0], available: [], matches: [] } };
         const since = pickerMark(s);
         const showsChip = (label) => async () => {
