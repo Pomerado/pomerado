@@ -59,7 +59,8 @@ export interface CommitConfirmation {
  * - the author's `loading` locator showing (for as long as it shows);
  * - a generic loading sign, within `region` when one is named, coming, going, or new: a busy
  *   region, an indeterminate progress bar, or a skeleton, shimmer, spinner or loader class (never
- *   on a form control) counts while it shows until it has held for `noProgressMs`. Determinate
+ *   on a form control) counts while it shows until it has held for `noProgressMs`, or in
+ *   `waitForOutcome` after an action, for as long as it shows. Determinate
  *   bars (ratings, steps, meters) never count, and signs showing before the action in the same
  *   number, or class hints already there at the first look, are the page's own decoration. One
  *   page call counts them at each look; a sign element in content the browser skips rendering
@@ -68,6 +69,10 @@ export interface CommitConfirmation {
  *   it, never inside a row, and only when it is visible): one there before the action, in the
  *   same number, is the page's own; any other counts while it shows, until it and the rows have
  *   held for `noProgressMs` with no request the action started in flight;
+ * - in `waitForOutcome` after an action, a countdown ticking, within `region` when one is named:
+ *   a visible element whose own short text keeps its words while its numbers fall, read as a
+ *   clock (0:10 to 0:09), such as a review step that submits on its own at zero. One showing
+ *   before the action is the page's own, such as a hold timer, and never counts;
  * - DOM changes inside the author's `region` (never the whole page: carousels and ads never stop);
  * - one of the site's own `document`, `xhr` or `fetch` requests in flight (the site is
  *   `siteDomain`, else a conservative guess from the page's host). A request the action started
@@ -176,7 +181,45 @@ const waitSignsInPage = (first, second) => {
       }
     return shown;
   };
-  return { signs: count(spec.signs, Infinity), classes: count(spec.classes, spec.budgetMs) };
+  // Countdown ticks, read when spec.countdown: an element whose own text is short and holds a
+  // number is kept between looks. The same text with its numbers lower, read as a clock (0:10 to
+  // 0:09), is a tick. The baseline look reads every element, however long that takes, and marks
+  // what shows as the wait's own, such as a hold timer from before the action, which never ticks
+  // for it and is not measured again while its text keeps its words. A later look reads no
+  // further once past the budget.
+  const ticks = () => {
+    const timers = (globalThis[Symbol.for("pomerado.waitCountdowns")] ??= new WeakMap());
+    const begun = performance.now();
+    const seen = new Set();
+    let ticked = 0;
+    for (const scope of scopes) {
+      const walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT);
+      for (let text = walker.nextNode(); text !== null; text = walker.nextNode()) {
+        if (!spec.baseline && performance.now() - begun > spec.budgetMs) return ticked;
+        const element = text.parentElement;
+        if (element === null || seen.has(element) || !/\d/.test(text.data)) continue;
+        seen.add(element);
+        let own = "";
+        for (const child of element.childNodes) if (child.nodeType === Node.TEXT_NODE) own += child.data;
+        own = own.trim();
+        if (own.length > 80) continue;
+        const shape = own.replace(/\d+/g, "#");
+        const last = timers.get(element);
+        const same = last?.shape === shape;
+        if ((!spec.baseline && same && last.wait === spec.key) || !shows(element)) continue;
+        const numbers = own.match(/\d+/g).map(Number);
+        if (!spec.baseline && same) {
+          const at = numbers.findIndex((value, index) => value !== last.numbers[index]);
+          if (at >= 0 && numbers[at] < last.numbers[at]) ticked += 1;
+        }
+        timers.set(element, { shape, numbers, wait: spec.baseline ? spec.key : undefined });
+      }
+    }
+    return ticked;
+  };
+  const counted = { signs: count(spec.signs, Infinity), classes: count(spec.classes, spec.budgetMs) };
+  if (spec.countdown) counted.ticks = ticks();
+  return counted;
 };
 const waitSignsSpec = { signs: waitLoadingSigns, classes: waitLoadingClasses, budgetMs: waitClassesBudgetMs };
 // A request the wait's action started, while it ran or in the second after, is the answer on its
@@ -316,9 +359,12 @@ const waitProgress = (options = {}) => {
       if (loadingShows) note("loading sign");
       // A generic sign counts when it comes or goes, and while it is new: see generic above. Both
       // kinds are counted in one page call; class hints left uncounted are no news at this look.
+      // After an action, waitForOutcome's call also reads countdowns.
+      const spec = options.whileSending && acted ? { ...waitSignsSpec, key, countdown: true, baseline } : waitSignsSpec;
       const counted = await (options.region === undefined
-        ? page.evaluate(waitSignsInPage, waitSignsSpec)
-        : options.region.evaluateAll(waitSignsInPage, waitSignsSpec));
+        ? page.evaluate(waitSignsInPage, spec)
+        : options.region.evaluateAll(waitSignsInPage, spec));
+      if (counted.ticks > 0) note("countdown");
       for (const [name, sign] of Object.entries(generic)) {
         // A count left undone is no news: the last count stands, so a sign showing keeps its
         // hold, and a baseline or first look notes nothing.
@@ -373,6 +419,9 @@ const waitProgress = (options = {}) => {
     baseline: () => {
       acted = true;
       causedUntil = Infinity;
+      // waitForOutcome counts a sign the action brought for as long as it shows: the page is
+      // still sending.
+      if (options.whileSending) for (const sign of Object.values(generic)) sign.holdMs = Infinity;
       return sample([], true);
     },
     // The budgets start once the action returns; requests it started stay in flight.
@@ -500,7 +549,7 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
   const candidates = names.map((name) => outcomeWaitCandidate(name, outcomes[name]));
   const timeout = options.timeout ?? waitLimits.answerCap;
   const noProgressMs = options.noProgressMs ?? waitLimits.answer;
-  const progress = waitProgress({ ...options, noProgressMs });
+  const progress = waitProgress({ ...options, noProgressMs, whileSending: true });
   const events = outcomeWaitEvents(candidates);
   const state = {
     goneSeen: new Set(),
@@ -1135,7 +1184,9 @@ const waitForChange = async (fields, options = {}) => {
  * progress: the site's own loading sign passed as `loading`, for as long as it shows; a generic
  * sign (a busy region, an indeterminate progress bar, a skeleton, shimmer, spinner or loader class,
  * within `region` when named) only while it is new, so a decoration holds a wait for at most one
- * no-progress window, and one there before the action not at all; DOM changes
+ * no-progress window, and one there before the action not at all (`waitForOutcome` counts one
+ * its action brought for as long as it shows, and a countdown ticking that was not there before
+ * the action, such as a review step that submits on its own at zero); DOM changes
  * inside the `region` you name; one of the site's own document or API requests in flight (beacons,
  * polls and long-open requests aside; pass the context's `siteDomain` to say which hosts are the
  * site's); the URL changing; and the wait's own reads filling or changing. It keeps waiting while progress

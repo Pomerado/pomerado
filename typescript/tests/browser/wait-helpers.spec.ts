@@ -234,6 +234,75 @@ test("after an action, a decorative loading sign from before it is not progress"
   expect(answer.reason).toBe("outcome_unknown");
 });
 
+test("a review step that counts down, then sends on its own behind a spinner, keeps the wait until the site answers", async ({
+  page,
+}) => {
+  // The click opens a review dialog whose button counts down. At zero the page sends the order
+  // itself, shows a spinner while it sends, then shows its error. Neither the countdown nor the
+  // spinner is named, and nothing else on the page changes.
+  await page.setContent(`
+    <button type="button" id="place">Place order</button>
+    <section id="answer"></section>
+    <script>
+      document.querySelector("#place").onclick = () => {
+        document.body.insertAdjacentHTML("beforeend", '<div role="dialog"><button type="button" id="confirm">Confirm (0:05)</button></div>');
+        let left = 5;
+        const timer = setInterval(() => {
+          left -= 1;
+          document.querySelector("#confirm").textContent = "Confirm (0:" + String(left).padStart(2, "0") + ")";
+          if (left > 0) return;
+          clearInterval(timer);
+          document.querySelector("#confirm").textContent = "Sending order";
+          document.body.insertAdjacentHTML("beforeend", '<span class="spinner">.</span>');
+          setTimeout(() => {
+            document.querySelector(".spinner").remove();
+            document.querySelector("#answer").innerHTML = '<div role="alert">The order could not be placed</div>';
+          }, 1200);
+        }, 150);
+      };
+    </script>`);
+  const answer = await outcome(
+    page,
+    `noProgressMs: 400, timeout: 4000, action: () => page.locator("#place").click()`,
+  );
+  expect(answer.shown).toBe("failed");
+  expect(answer.report?.[0]?.summary).toMatch(/progress seen: .*countdown/u);
+});
+
+test("after an action, a timer already counting down before it is not progress, however long the look before it takes", async ({
+  page,
+}) => {
+  // Until the click, each price's box takes 2 ms to measure, as a large page's first layout does,
+  // so with 300 prices the look before the action outlasts a look's budget.
+  for (const prices of [300, 0]) {
+    await page.setContent(`
+      <script>
+        window.clicked = false;
+        const box = Element.prototype.getBoundingClientRect;
+        Element.prototype.getBoundingClientRect = function () {
+          if (!window.clicked && this.classList.contains("price")) for (const until = performance.now() + 2; performance.now() < until;);
+          return box.call(this);
+        };
+      </script>
+      ${'<p class="price">$12</p>'.repeat(prices)}
+      <p>Held for <span id="hold">9:59</span></p>
+      <button type="button" onclick="window.clicked = true">Search</button>
+      <section id="answer"></section>
+      <script>
+        let left = 599;
+        setInterval(() => {
+          left -= 1;
+          document.querySelector("#hold").textContent = Math.floor(left / 60) + ":" + String(left % 60).padStart(2, "0");
+        }, 100);
+      </script>`);
+    const answer = await outcome(
+      page,
+      `noProgressMs: 300, timeout: 2000, action: () => page.getByRole("button", { name: "Search" }).click()`,
+    );
+    expect(answer.reason, `${prices} prices`).toBe("outcome_unknown");
+  }
+});
+
 // A results page: `identified` rows with an ID fill at `rowsMs`; their prices show a skeleton
 // until `priceMs` (never when null); `slots` unidentified slots fill at `slotsMs`.
 const resultsPage = (
@@ -449,6 +518,36 @@ test("a total that stays the same counts only after the loading sign went", asyn
   const quiet = (await call(page, changeBody)).result as { changed: boolean; ms: number };
   expect(quiet.changed).toBe(false);
   expect(quiet.ms).toBeLessThan(2000);
+});
+
+test("a hold timer the choice starts is no progress for a value wait, so an unchanged total still returns", async ({
+  page,
+}) => {
+  await page.setContent(`
+    <label>Guests <select id="guests"><option>2</option><option>3</option></select></label>
+    <p id="total">$240</p>
+    <p id="hold" hidden>Reserved for <span id="left">9:59</span></p>
+    <script>
+      document.querySelector("#guests").onchange = () => {
+        document.querySelector("#hold").hidden = false;
+        let left = 599;
+        setInterval(() => {
+          left -= 1;
+          document.querySelector("#left").textContent = Math.floor(left / 60) + ":" + String(left % 60).padStart(2, "0");
+        }, 100);
+      };
+    </script>`);
+  const answer = (await call(
+    page,
+    `const started = Date.now();
+    const read = await waitForChange({ total: page.locator("#total") }, {
+      action: () => page.locator("#guests").selectOption("3", { timeout: 1000 }),
+      noProgressMs: 400, stableMs: 100, unchangedMs: 300, timeout: 3000,
+    });
+    return { ...read, ms: Date.now() - started };`,
+  )).result as { values: unknown; changed: boolean; ms: number };
+  expect(answer).toMatchObject({ values: { total: "$240" }, changed: false });
+  expect(answer.ms).toBeLessThan(2000);
 });
 
 test("a probe call acts with a short default timeout, and later calls get Playwright's back", async ({
