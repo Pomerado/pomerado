@@ -77,9 +77,9 @@ describe("resolveAddress", () => {
     expect(await resolveAddress("1 Example St, Exampletn IL", () => ["1 Example St, Exampleton, NY, USA", towns[1] ?? ""])).toMatchObject({ label: towns[1] });
     // The caller's ZIP comes first only on a street that keeps more than half the caller's street
     // words, then the place words, then the share of the street words kept, so another street with
-    // the caller's ZIP, a street type the caller got wrong, or a direction letter added or dropped
-    // never sends the address to another town; then another ZIP; a place word in a suggestion's
-    // street never counts. A misspelled street keeps no word of the street name, so it is refused.
+    // the caller's ZIP, a street type the caller got wrong, a direction letter added or dropped, or
+    // a misspelled street never sends the address to another town; then another ZIP; a place word
+    // in a suggestion's street never counts.
     const street = ["12 Other Ave, Exampleton, IL 60000, USA", "12 Example St, Exampleton, IL, USA"];
     expect(await resolveAddress("12 Example St, Exampleton, IL 60000", () => street)).toMatchObject({ label: street[1] });
     const sunset = ["12 Sunset Ave, Exampleton, IL 60000, USA", "12 Example Rd, Exampleton, IL, USA"];
@@ -97,7 +97,7 @@ describe("resolveAddress", () => {
     const dropped = ["12 N Example St, Sampleton, NY, USA", "12 Example St, Exampleton, IL, USA"];
     expect(await resolveAddress("12 N Example St, Exampleton, IL", () => dropped)).toMatchObject({ label: dropped[1] });
     const misspelled = ["12 E St, Sampleton, NY, USA", "12 Example St, Exampleton, IL, USA"];
-    expect(await resolveAddress("12 Exampel St, Exampleton, IL", () => misspelled)).toMatchObject({ picked: false, available: misspelled });
+    expect(await resolveAddress("12 Exampel St, Exampleton, IL", () => misspelled)).toMatchObject({ label: misspelled[1] });
     const zips = ["1 Example St, North Sampleton, IL 60999, USA", "1 Example St, Exampleton, IL 60000, USA"];
     expect(await resolveAddress("1 Example St, North Sampleton, IL 60000", () => zips)).toMatchObject({ label: zips[1] });
     const others = ["1 Example St, Sampleton, IL, USA", "1 Example St, Exampleton, IL 60999, USA"];
@@ -155,11 +155,15 @@ describe("resolveAddress", () => {
     const other = ["12 Other Ave, Exampleton, IL, USA", "12 Other St, Exampleton, IL, USA"];
     expect(await resolveAddress("12 Example St, Exampleton, IL", () => other)).toMatchObject({ picked: false, available: other });
     expect(await resolveAddress("12-34 Example St, Exampleton, NY", () => ["12-34 Other St, Exampleton, NY, USA"])).toMatchObject({ picked: false });
-    // A number in the street is a name word, with or without its ordinal ending.
+    // A number in the street, with or without its ordinal ending, or a close name, its words joined
+    // or split or written as initials, keeps the street; a close name with another ZIP does not.
     for (const [address, shown] of [
       ["12 Route 9, Exampleton, NJ", "12 US-9, Exampleton, NJ, USA"],
       ["12 SW 107 Ave, Exampleton, FL", "12 SW 107th Ave, Exampleton, FL, USA"],
+      ["12 N La Salle St, Exampleton, IL", "12 N LaSalle St, Exampleton, IL, USA"],
+      ["12 MLK Blvd, Exampleton, GA", "12 Martin Luther King Jr Blvd, Exampleton, GA, USA"],
     ])
       expect(await resolveAddress(address ?? "", () => [shown ?? ""])).toMatchObject({ label: shown });
+    expect(await resolveAddress("12 Exampel St, Exampleton, IL 60000", () => ["12 Example St, Exampleton, IL 60001, USA"])).toMatchObject({ picked: false });
   });
 });
