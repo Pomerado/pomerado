@@ -128,12 +128,13 @@ export const resolveAddressWith = async <T>(
   );
   // The caller's street name: those words but the last, a street type such as Ave, when there is
   // another, of three letters or more, so St or Ave ending the street or a direction letter alone
-  // never keeps it; and every word of the street holding a digit, as the 9 of Route 9. A number
-  // reads without its ordinal ending, so 107 keeps 107th.
+  // never keeps it; and every word of the street holding a digit, as the 9 of Route 9, but the
+  // house number's own. A number reads without its ordinal ending, so 107 keeps 107th.
   const numeral = (word: string) => word.replace(/^(\d+)(?:st|nd|rd|th)$/u, "$1");
+  const houseWords = house.flatMap(words);
   const names = streetForms
     .flatMap((list) => (list.length > 1 ? list.slice(0, -1) : list).filter((forms) => (forms[0] ?? "").length > 2))
-    .concat(words(lines[lineStreet] ?? "").filter((word) => /\d/u.test(word) && !house.includes(word)).map((word) => [word]))
+    .concat(words(lines[lineStreet] ?? "").filter((word) => /\d/u.test(word) && !houseWords.includes(word)).map((word) => [word]))
     .map((forms) => forms.map(numeral));
   // A suggestion's street, its parts after the street, and its parts but the street.
   const sides = (text: string) => {
@@ -162,7 +163,7 @@ export const resolveAddressWith = async <T>(
       return undefined;
     const { after, street: own } = sides(text);
     const ownWords = words(own);
-    if (house.length > 0 && names.length > 0 && !names.some((forms) => forms.some((form) => ownWords.some((word) => numeral(word) === form))))
+    if (house.length > 0 && names.length > 0 && !names.some((forms) => forms.some((form) => ownWords.some((word) => !houseWords.includes(word) && numeral(word) === form))))
       return undefined;
     const share = Math.max(
       0,
@@ -231,10 +232,10 @@ export const resolveAddressWith = async <T>(
  * street opens with its house number, a suggestion with another one (12A and 12 A alike) is
  * another address and never usable, and so is one whose street keeps none of the caller's street
  * name words: its street's words but the last, a street type such as Ave, when it has another, of
- * three letters or more, and every word holding a digit, as the 9 of Route 9, each in any of its
- * usual forms from `spellingsOf` (Fifth for 5th) and a number without its ordinal ending (107 for
- * 107th). So St or Ave ending the street, or a direction letter, alone keeps none, and nor does a
- * misspelled street. So is one that reads a caller's ZIP as its house number. Of the rest, it
+ * three letters or more, and every word holding a digit but the house number's own, as the 9 of
+ * Route 9, each in any of its usual forms from `spellingsOf` (Fifth for 5th) and a number without
+ * its ordinal ending (107 for 107th). So St or Ave ending a street with a longer name word, or a
+ * direction letter, alone keeps none, and nor does a misspelled street. So is one that reads a caller's ZIP as its house number. Of the rest, it
  * prefers the one that shows the caller's ZIP while its own street keeps more than half the
  * caller's street words of two letters or more, as typed or tidied, each in any of its usual forms
  * from `spellingsOf`; then the one whose parts after its street keep the most words of
