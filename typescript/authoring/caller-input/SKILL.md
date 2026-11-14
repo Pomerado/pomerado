@@ -216,8 +216,10 @@ already asked for, or to solve a CAPTCHA.
      parts: call `fillCard({ fields: [{ selector, slot }], total })` with each card
      field's own selector, even inside the payment processor's frame, its slot
      (`card_number`, `card_expiry`, `card_cvc`) and the order total the checkout shows as
-     `{ amount, currency }`. The host fills the card and clicks nothing, so submit the
-     payment in a later call under the write's commit rules. Wherever source calls
+     `{ amount, currency }`. On a checkout the site opened in a pop-up, also pass
+     `popup: { opener: "primary", origin }` as a sign-in step names it. The host fills
+     the card and clicks nothing, so submit the payment in a later call under the
+     write's commit rules. Wherever source calls
      `fillCard`, no source reads a field's value or the page's markup, runs or plants code
      in the page, opens a DevTools session, takes an accessibility snapshot, screenshot or
      PDF of the page, records the page, or reads a request body, so delete such probes
