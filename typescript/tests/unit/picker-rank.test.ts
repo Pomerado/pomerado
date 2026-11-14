@@ -200,7 +200,7 @@ describe("rankChoices other written forms", () => {
     expect(rankForms([choice("Exampleville Ukraine")], "Exampleville UK")).toEqual({ status: "missing" });
     expect(rankForms([choice("上海 站")], "上海虹桥 站")).toEqual({ status: "missing" });
     expect(rankForms([choice("Exampleville, UK")], "Exampleville, Ukraine")).toEqual({ status: "missing" });
-    expect(rankForms([choice("Example County Road")], "Example Country Rd")).toEqual({ status: "missing" });
+    expect(rankForms([choice("Example County Rd")], "Example Country Road")).toEqual({ status: "missing" });
   });
 
   test("international, center, mount, fort and and written short or as a sign match", () => {
