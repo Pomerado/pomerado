@@ -50,13 +50,17 @@ export const cardFillFields = <Handled extends { readonly handle: string }, I>(
       fields: cardFields(
         Schema.Struct({
           selector: Selector,
-          slot: Schema.Literal("card_number", "card_expiry", "card_cvc"),
+          slot: Schema.Literal("card_number", "card_expiry", "card_cvc", "billing_postal_code"),
         }),
         (field) => field.slot,
         "name each card slot once",
       ),
       total: CardFillTotal,
-    }),
+    }).pipe(
+      Schema.filter((step) => step.fields.some((field) => field.slot !== "billing_postal_code"), {
+        message: () => "name a card slot besides the billing postal code",
+      }),
+    ),
   );
 
 /** What a script sends: one to four card fields with a card handle each, or a slot each and the total. */
