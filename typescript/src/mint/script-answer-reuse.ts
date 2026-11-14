@@ -98,13 +98,15 @@ const sameQuestion = (left: KeptQuestion, right: KeptQuestion) =>
  * The kept answers a script's ask may reuse, as a fresh answer's shape, or undefined to ask the
  * owner. Every question needs a kept answer to the same question, still valid for the question as
  * asked now. Any step may reuse it, the one that got it included, as often as the question comes
- * back and however long ago the owner gave it.
+ * back and however long ago the owner gave it. A purchase confirm, which carries its order, is
+ * always asked again.
  */
 export const reusedScriptAnswers = (
   asked: InputRequest,
   keys: readonly (KeptQuestion | undefined)[],
   kept: readonly KeptScriptAnswer[],
 ): ValidAnswers | undefined => {
+  if (asked.order !== undefined) return undefined;
   const found: Record<string, KeptScriptAnswer["answer"]> = {};
   for (const key of keys) {
     const entry =

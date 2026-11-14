@@ -123,8 +123,8 @@ export const ScriptOption = Schema.Struct({
 export type ScriptOption = typeof ScriptOption.Type;
 
 /**
- * A purchase confirm's order as the checkout shows it (`OrderFacts`): a long item name reaches the
- * caller shortened (`cutTo`).
+ * A purchase confirm's order as the checkout shows it (`OrderFacts`): an item name reaches the
+ * caller on one line, and a long one shortened (`cutTo`).
  */
 const ScriptOrder = Schema.Struct({
   ...OrderFacts.fields,
@@ -494,7 +494,7 @@ export const makeScriptInput = (
           ...decoded.right,
           items: decoded.right.items.map((item) => ({
             ...item,
-            name: cutTo(item.name.trim(), longestItemName),
+            name: cutTo(item.name.replace(/\s+/gu, " ").trim(), longestItemName),
           })),
         };
       }

@@ -291,14 +291,14 @@ export const Question = Schema.Union(
 );
 export type Question = typeof Question.Type;
 
-/** An amount as the checkout shows it, in the order's currency. */
-const Amount = Schema.String.pipe(Schema.pattern(/^\d+(?:\.\d{1,3})?$/u));
+/** An amount as the checkout shows it, in the order's currency, never a long number. */
+const Amount = Schema.String.pipe(Schema.pattern(/^\d{1,9}(?:\.\d{1,3})?$/u));
 /** The longest item name an order shows, in UTF-16 code units. */
 export const longestItemName = 200;
 /** One line of an order: the item as the checkout names it, how many, and its price each. */
 export const OrderItem = Schema.Struct({
-  name: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(longestItemName)),
-  quantity: Schema.Int.pipe(Schema.positive()),
+  name: Schema.String.pipe(Schema.pattern(/\S/u), Schema.maxLength(longestItemName)),
+  quantity: Schema.Int.pipe(Schema.between(1, 99_999)),
   price: Amount,
 });
 /**
@@ -314,11 +314,14 @@ export const OrderFacts = Schema.Struct({
 });
 export type OrderFacts = typeof OrderFacts.Type;
 
-/** An order's facts in the host's own words, as a request's notice shows them. */
+/**
+ * An order's facts in the host's own words, as a request's notice shows them. Each item name is
+ * quoted, so no name reads as the host's words.
+ */
 export const orderNotice = (order: OrderFacts) => {
   const money = (amount: string) => `${amount} ${order.currency}`;
   const items = order.items.map(
-    (item) => `${item.quantity} × ${item.name} at ${money(item.price)} each`,
+    (item) => `${item.quantity} × ${JSON.stringify(item.name)} at ${money(item.price)} each`,
   );
   return [
     `Order: ${items.join("; ")}.`,

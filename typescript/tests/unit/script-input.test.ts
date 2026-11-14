@@ -7,6 +7,11 @@ import {
   type ScriptQuestionDeclarations,
 } from "../../src/runtime/script-input.js";
 import { asksAsDeclared } from "../../src/execution/declared-questions.js";
+import {
+  keptScriptAnswers,
+  reusedScriptAnswers,
+  scriptQuestionKeys,
+} from "../../src/mint/script-answer-reuse.js";
 
 const questions: ScriptQuestionDeclarations = {
   pick: { type: "choice", prompt: "Which entry?" },
@@ -300,6 +305,7 @@ describe("a purchase confirm's order", () => {
   it("reaches the request in fixed words while the account option stays masked, and nothing else does", () => {
     const declared: ScriptQuestionDeclarations = {
       confirm_order: { type: "choice", prompt: "Place this order?" },
+      note: { type: "text", prompt: "Any note?" },
     };
     const options: ReadonlyArray<ScriptOption> = [
       {
@@ -335,7 +341,7 @@ describe("a purchase confirm's order", () => {
     const { result, request } = asked(order);
     expect(result).toEqual(Either.right({ confirm_order: "place" }));
     expect(request?.notice).toBe(
-      "Order: 2 × Synthetic cable at 4.50 USD each. Shipping: 0.00 USD. Tax: 0.81 USD. Total: 9.81 USD.",
+      'Order: 2 × "Synthetic cable" at 4.50 USD each. Shipping: 0.00 USD. Tax: 0.81 USD. Total: 9.81 USD.',
     );
     expect(request?.questions[0]).toMatchObject({
       options: [
@@ -346,6 +352,14 @@ describe("a purchase confirm's order", () => {
     expect(request && asksAsDeclared(request, declared)).toBe(true);
     const added = request && { ...request, notice: `${request.notice} Ship to Synthetic Street 1.` };
     expect(added && asksAsDeclared(added, declared)).toBe(false);
+    const note = { id: "note", type: "text", prompt: "Any note?" } as const;
+    const onText = request && { ...request, questions: [note] };
+    expect(onText && asksAsDeclared(onText, declared)).toBe(false);
+    // A purchase confirm is asked again, never answered from an earlier yes.
+    const keys = request && Effect.runSync(scriptQuestionKeys(request, Effect.succeed));
+    const yes = { confirm_order: { type: "choice" as const, value: "o1" } };
+    const kept = keys && keptScriptAnswers([], keys, yes);
+    expect(request && keys && kept && reusedScriptAnswers(request, keys, kept)).toBeUndefined();
 
     const refused = asked({ ...order, address: "Synthetic Street 1" });
     expect(refused.result).toEqual(Either.left(expect.objectContaining({ code: "InvalidOptions" })));

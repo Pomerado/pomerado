@@ -239,13 +239,13 @@ already asked for, or to solve a CAPTCHA.
    address is replaced by the label's last four digits or a numbered placeholder.
    A purchase's final confirm, a choice or a confirm, also passes `order` with the
    checkout's `currency`, its `items` (each `name`, `quantity` and `price`), `shipping`,
-   `tax` and `total`, amounts as decimal text. Everyone sees it unmasked, so it never
-   holds the address or card.
+   `tax` and `total`, amounts as decimal text, which everyone sees unmasked, so never the
+   address or card.
 4. Ask once for everything the step needs, between two execute calls:
    - `await ask("code")` returns that question's answer;
    - `await ask(["seat", "note"])` returns one answer per id;
    - `await ask({ seat: { options: seats }, code: {} })` passes a choice's options, and
-     nothing for the other types except a confirm's `order`.
+     nothing for the other types.
 
    With an array or an object, `ask` returns one answer per question id, so read
    `answer.<id>`, as in `answer.seat`.
