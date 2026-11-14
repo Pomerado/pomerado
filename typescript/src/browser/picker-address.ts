@@ -126,6 +126,10 @@ export const resolveAddressWith = async <T>(
       .filter((word) => word.length > 1 && !house.includes(word))
       .map((word) => match.spellings(word).map((form) => match.fold(form))),
   );
+  // The caller's street name: those words but the last, a street type such as Ave, when there is
+  // another, and of three letters or more, so a street type or a direction such as St or NE alone
+  // never keeps the street.
+  const names = streetForms.flatMap((list) => (list.length > 1 ? list.slice(0, -1) : list).filter((forms) => (forms[0] ?? "").length > 2));
   // A suggestion's street, its parts after the street, and its parts but the street.
   const sides = (text: string) => {
     const split = text.split(",");
@@ -139,13 +143,13 @@ export const resolveAddressWith = async <T>(
   const holds = (forms: readonly string[], within: string) => forms.some((form) => form.trim() !== "" && within.includes(form));
   const keeps = (list: readonly ReturnType<typeof toPlace>[], within: string) =>
     list.reduce((sum, part) => sum + (holds(part.forms, within) ? part.words.length : part.words.filter((each) => holds(each, within)).length), 0);
-  // A suggestion with another house number, or one that reads the caller's ZIP as its house number,
-  // is another address: undefined. Any other ranks, in order, by showing the caller's ZIP while its
-  // own street keeps more than half the caller's street words; by the place words, a unit-shaped
-  // part's included, it keeps after its own street; by the share of the caller's street words its
-  // street keeps; and by showing no other ZIP. It is whole when its street keeps any of the
-  // caller's street words, it keeps every place word, not counting a unit-shaped part, and it shows
-  // no other ZIP.
+  // A suggestion with another house number, one whose street keeps none of the caller's street name
+  // words, or one that reads the caller's ZIP as its house number, is another address: undefined.
+  // Any other ranks, in order, by showing the caller's ZIP while its own street keeps more than half
+  // the caller's street words; by the place words, a unit-shaped part's included, it keeps after its
+  // own street; by the share of the caller's street words its street keeps; and by showing no other
+  // ZIP. It is whole when its street keeps any of the caller's street words, it keeps every place
+  // word, not counting a unit-shaped part, and it shows no other ZIP.
   const score = (text: string) => {
     const theirs = houseOf(text);
     const shown = zipOf(text);
@@ -153,6 +157,7 @@ export const resolveAddressWith = async <T>(
       return undefined;
     const { after, street: own } = sides(text);
     const ownWords = words(own);
+    if (house.length > 0 && names.length > 0 && !names.some((forms) => forms.some((form) => ownWords.includes(form)))) return undefined;
     const share = Math.max(
       0,
       ...streetForms.map((list) => (list.length === 0 ? 0 : list.filter((forms) => forms.some((form) => ownWords.includes(form))).length / list.length)),
@@ -218,10 +223,13 @@ export const resolveAddressWith = async <T>(
  * taken keeps its number outside its own street, as a town and postcode or a street would be; such
  * a part before the street or ending the address is asked for as typed first. For an address whose
  * street opens with its house number, a suggestion with another one (12A and 12 A alike) is
- * another address and never usable, and so is one that reads a caller's ZIP as its house number.
- * Of the rest, it prefers the one that shows the caller's ZIP while its own street keeps more than
- * half the caller's street words of two letters or more, as typed or tidied, each in any of its
- * usual forms from `spellingsOf`; then the one whose parts after its street keep the most words of
+ * another address and never usable, and so is one whose street keeps none of the caller's street
+ * name words: its street's words of three letters or more but the last, a street type such as Ave,
+ * when it has another, each in any of its usual forms from `spellingsOf` (Fifth for 5th), so a
+ * street type or a direction alone, or a misspelled street, keeps none. So is one that reads a
+ * caller's ZIP as its house number. Of the rest, it prefers the one that shows the caller's ZIP
+ * while its own street keeps more than half the caller's street words of two letters or more, as
+ * typed or tidied, each in any of its usual forms from `spellingsOf`; then the one whose parts after its street keep the most words of
  * the caller's place, the words after the street in any of their usual forms; then the one whose
  * street keeps the largest share of the caller's street words, so a direction letter the site adds
  * or drops weighs less than the town and state; then one that shows no other ZIP; then the one the
