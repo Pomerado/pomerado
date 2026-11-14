@@ -230,6 +230,13 @@ export const runCardFill = <E>(input: {
     readonly inspection: AutofillInspection;
     readonly total: CardFillTotal | undefined;
   }) => Effect.Effect<AutofillStepReport, E>;
+  /**
+   * The payer's billing postal code, for a step that names slots with a `billing_postal_code`
+   * field, which `fillVia` never gets: once the host filled every card field, core finds that
+   * field again under the same checks and types the code into it as it types a card answer.
+   * Absent, such a step is refused.
+   */
+  readonly billingPostalCode?: string | undefined;
 }): Effect.Effect<CardFillOutcome, E> =>
   Effect.gen(function* () {
     const origins = input.paymentFrameOrigins ?? listedOrigins;
@@ -237,6 +244,11 @@ export const runCardFill = <E>(input: {
     const fillVia = slotted ? input.fillVia : undefined;
     if (slotted && fillVia === undefined)
       return refusedWith("This host doesn't fill payment methods.");
+    const postalCode = input.billingPostalCode;
+    const postal = (field: { readonly selector: string; readonly slot?: CardSlot }) =>
+      field.slot === "billing_postal_code";
+    if (input.step.fields.some(postal) && postalCode === undefined)
+      return refusedWith("The host typed nothing: it has no billing postal code to fill.");
     const fields: { selector: string; slot: CardSlot; handle?: string }[] = [];
     for (const field of input.step.fields) {
       if ("slot" in field) {
@@ -290,8 +302,56 @@ export const runCardFill = <E>(input: {
             // The step clicks nothing, so the host waits for no page to send what it typed.
             settleMs: 0,
           })
-        : yield* fillVia({ step, inspection: inspected, total });
-    return filled(report, origins);
+        : yield* fillVia({
+            step: { ...step, fields: step.fields.filter((field) => !postal(field)) },
+            inspection: inspected,
+            total,
+          });
+    const postalStep = { ...step, fields: step.fields.filter(postal) };
+    if (
+      postalCode === undefined ||
+      postalStep.fields.length === 0 ||
+      report.outcome !== "filled" ||
+      report.fields.some((field) => field.status !== "filled")
+    )
+      return filled(report, origins);
+    // The page now holds a card, so the field is found and checked again before the code goes in.
+    const found = yield* inspectAutofillStep({
+      step: postalStep,
+      page: input.page,
+      siteOrigin: input.siteOrigin,
+      authenticationOrigins: [],
+      paymentFrameOrigins: origins,
+      checkoutOrigins: input.checkoutOrigins,
+      judgedBeforeTyping: input.judgedBeforeTyping ?? origins,
+    });
+    const typed =
+      "outcome" in found
+        ? found
+        : yield* fillAutofillStep({
+            step: postalStep,
+            values: [postalCode],
+            inspection: found,
+            page: input.page,
+            keyboard: input.keyboard,
+            ...(input.typing === undefined ? {} : { typing: input.typing }),
+            settleMs: 0,
+          });
+    return filled(
+      {
+        ...report,
+        fields: [
+          ...report.fields,
+          ...(typed.outcome === "filled"
+            ? typed.fields
+            : [{ slot: "billing_postal_code" as const, status: "failed" as const }]),
+        ],
+        ...(typed.outcome === "filled" || typed.failureDetail === undefined
+          ? {}
+          : { failureDetail: typed.failureDetail }),
+      },
+      origins,
+    );
   });
 
 /**

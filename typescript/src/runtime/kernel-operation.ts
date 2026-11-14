@@ -182,8 +182,9 @@ export interface KernelOperationContext<
   /**
    * Fills the caller's payment method into the card fields of the site's own checkout, on a host
    * that fills the card from a payment method. Pass each field's own selector, even inside a
-   * payment processor's frame, with its slot (card_number, card_expiry or card_cvc), each slot
-   * once, and the order total the checkout shows. The host fills only when the page's top document
+   * payment processor's frame, with its slot (card_number, card_expiry, card_cvc or
+   * billing_postal_code, which the host fills from the payer's billing address), each slot once,
+   * and the order total the checkout shows. The host fills only when the page's top document
    * is on this site and each field is on the site or in a frame on an allowlisted payment
    * processor's origin. It clicks nothing: submit the payment in a later call, under the write's
    * commit rules. It returns `outcome: "filled"` with each field's part and status, and throws

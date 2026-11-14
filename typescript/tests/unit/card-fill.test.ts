@@ -60,6 +60,8 @@ const stripeFields = [
  */
 const scriptedPage = (
   options: {
+    /** From this call on: the inspection of the last field alone, its focus, then the read. */
+    readonly lastAloneAt?: number;
     readonly frameUrl?: string;
     readonly topUrl?: string;
     readonly ancestors?: readonly string[];
@@ -92,6 +94,14 @@ const scriptedPage = (
       execute: (code: string) =>
         Effect.sync(() => {
           calls.push(code);
+          const alone = calls.length - (options.lastAloneAt ?? Infinity);
+          if (alone >= 0)
+            return (
+              [
+                { fields: targets(frameUrl).slice(-1), submit: null, buttons: [], url: topUrl },
+                { focused: true, url: topUrl },
+              ][alone] ?? { submit: "none", url: topUrl }
+            );
           if (calls.length === options.swappedAt)
             return {
               changed: {
@@ -148,6 +158,8 @@ const stripeStep = (handle: (id: keyof typeof cardAnswers) => string) => ({
 
 const run = (
   options: {
+    readonly lastAloneAt?: number;
+    readonly billingPostalCode?: string;
     readonly frameUrl?: string;
     readonly topUrl?: string;
     readonly ancestors?: readonly string[];
@@ -184,6 +196,7 @@ const run = (
         },
       },
       ...(options.fillVia === undefined ? {} : { fillVia: options.fillVia }),
+      billingPostalCode: options.billingPostalCode,
       ...(options.checkoutOrigins === undefined ? {} : { checkoutOrigins: options.checkoutOrigins }),
       page,
       keyboard: {
@@ -530,6 +543,31 @@ describe("a card-fill step the host fills from a payment method", () => {
     expect(JSON.parse(result.observations).message).toBe("This host doesn't fill payment methods.");
     expect([typed, reviews, calls]).toEqual([[], [], []]);
   });
+
+  it("types the payer's billing postal code itself once the host filled the card", async () => {
+    const withPostal = () => ({
+      ...slotStep(),
+      fields: [...slotStep().fields, { selector: "#payment-postalCodeInput", slot: "billing_postal_code" as const }],
+    });
+    const { filledBy, fillVia } = hostFill();
+    const { outcome, typed, reviews, calls } = run({ step: withPostal, fillVia, billingPostalCode: "94110", lastAloneAt: 2 });
+    const result = await outcome;
+    expect(JSON.parse(result.observations)).toEqual({
+      cardFill: "filled",
+      fields: ["card_number", "card_expiry", "card_cvc", "billing_postal_code"].map((slot) => ({ slot, status: "filled" })),
+    });
+    expect(reviews.map((review) => review.step)).toEqual([withPostal()]);
+    expect(filledBy[0]?.step).toEqual({ fields: slotStep().fields });
+    expect(typed).toEqual(["94110"]);
+    expect(calls).toHaveLength(4);
+    expect(JSON.stringify(reviews)).not.toContain("94110");
+
+    const unsaved = run({ step: withPostal, fillVia });
+    expect(JSON.parse((await unsaved.outcome).observations).message).toBe(
+      "The host typed nothing: it has no billing postal code to fill.",
+    );
+    expect([unsaved.calls, unsaved.reviews, filledBy.length]).toEqual([[], [], 1]);
+  });
 });
 
 describe("the execute request", () => {
@@ -567,6 +605,20 @@ describe("the execute request", () => {
       },
     });
     expect(Either.isLeft(decoded)).toBe(true);
+  });
+
+  it("takes a billing postal code slot only beside a card slot", () => {
+    const decode = (slots: readonly string[]) =>
+      Either.isRight(
+        Schema.decodeUnknownEither(ExecutionRequest)({
+          ...request,
+          cardFillStep: {
+            fields: slots.map((slot, index) => ({ selector: `#field-${index}`, slot })),
+            total: { amount: "12.50", currency: "USD" },
+          },
+        }),
+      );
+    expect([decode(["card_number", "billing_postal_code"]), decode(["billing_postal_code"])]).toEqual([true, false]);
   });
 });
 
