@@ -237,6 +237,10 @@ already asked for, or to solve a CAPTCHA.
    and MCP show the masked label with a notice; only the owner's protected page shows
    the full label. A masked label that still shows five or more digits or an email
    address is replaced by the label's last four digits or a numbered placeholder.
+   A purchase's final confirm, a choice or a confirm, also passes `order` with the
+   checkout's `currency`, its `items` (each `name`, `quantity` and `price`), `shipping`,
+   `tax` and `total`, amounts as decimal text, which everyone sees unmasked, so never the
+   address or card.
 4. Ask once for everything the step needs, between two execute calls:
    - `await ask("code")` returns that question's answer;
    - `await ask(["seat", "note"])` returns one answer per id;
