@@ -291,6 +291,43 @@ export const Question = Schema.Union(
 );
 export type Question = typeof Question.Type;
 
+/** An amount as the checkout shows it, in the order's currency. */
+const Amount = Schema.String.pipe(Schema.pattern(/^\d+(?:\.\d{1,3})?$/u));
+/** The longest item name an order shows, in UTF-16 code units. */
+export const longestItemName = 200;
+/** One line of an order: the item as the checkout names it, how many, and its price each. */
+export const OrderItem = Schema.Struct({
+  name: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(longestItemName)),
+  quantity: Schema.Int.pipe(Schema.positive()),
+  price: Amount,
+});
+/**
+ * The facts of the order a purchase confirm asks about. Everyone who sees the request sees them,
+ * so they hold nothing from the caller's own account, such as an address or a card.
+ */
+export const OrderFacts = Schema.Struct({
+  currency: Schema.String.pipe(Schema.pattern(/^[A-Z]{3}$/u)),
+  items: Schema.Array(OrderItem).pipe(Schema.minItems(1), Schema.maxItems(20)),
+  shipping: Schema.optional(Amount),
+  tax: Schema.optional(Amount),
+  total: Amount,
+});
+export type OrderFacts = typeof OrderFacts.Type;
+
+/** An order's facts in the host's own words, as a request's notice shows them. */
+export const orderNotice = (order: OrderFacts) => {
+  const money = (amount: string) => `${amount} ${order.currency}`;
+  const items = order.items.map(
+    (item) => `${item.quantity} × ${item.name} at ${money(item.price)} each`,
+  );
+  return [
+    `Order: ${items.join("; ")}.`,
+    ...(order.shipping === undefined ? [] : [`Shipping: ${money(order.shipping)}.`]),
+    ...(order.tax === undefined ? [] : [`Tax: ${money(order.tax)}.`]),
+    `Total: ${money(order.total)}.`,
+  ].join(" ");
+};
+
 /** Who raised the request; it decides deterministically where the answer goes. */
 export const InputSource = Schema.Literal("kernel_auth", "agent", "script", "system");
 export type InputSource = typeof InputSource.Type;
@@ -309,6 +346,8 @@ export const InputRequest = Schema.Struct({
     }),
   ),
   notice: Schema.optional(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(16_384))),
+  /** A script's purchase confirm: its order's facts, which its notice shows (`orderNotice`). */
+  order: Schema.optional(OrderFacts),
   questions: Schema.Array(Question).pipe(
     Schema.minItems(1),
     Schema.maxItems(maximumQuestions),

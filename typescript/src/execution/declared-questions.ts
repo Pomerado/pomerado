@@ -1,4 +1,9 @@
-import { longestPrompt, type InputRequest, type Question } from "../runtime/input-request.js";
+import {
+  longestPrompt,
+  orderNotice,
+  type InputRequest,
+  type Question,
+} from "../runtime/input-request.js";
 import type {
   ScriptQuestionDeclaration,
   ScriptQuestionDeclarations,
@@ -70,13 +75,16 @@ const matchesDeclaration = (
   return keepsBounds[declared.type](question, declared);
 };
 
-/** Whether a script's request asks only what `declared` allows, and adds no text of its own. */
+/**
+ * Whether a script's request asks only what `declared` allows, and adds no text of its own: its
+ * only notice is its order's facts in the host's words (`orderNotice`).
+ */
 export const asksAsDeclared = (
   request: InputRequest,
   declared: ScriptQuestionDeclarations,
 ): boolean =>
   request.source === "script" &&
-  request.notice === undefined &&
+  request.notice === (request.order === undefined ? undefined : orderNotice(request.order)) &&
   request.questions.every((question) =>
     matchesDeclaration(
       question,
