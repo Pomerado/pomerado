@@ -23,6 +23,15 @@ describe("resolveAddress", () => {
       query: "1 Example St, Exampleton",
       unit: "#4B",
     });
+    expect(await resolveAddress("Acme Corp, 12 Example St, Suite 2, Exampleton, IL", echo)).toMatchObject({
+      query: "Acme Corp, 12 Example St, Exampleton, IL",
+      unit: "Suite 2",
+    });
+    // A unit-shaped last part is asked for as typed, then left out, and is the unit unless the
+    // suggestion taken keeps it.
+    const { typed, suggest } = site({ "1 Example St": ["1 Example St, Exampleton, IL, USA"] });
+    expect(await resolveAddress("1 Example St, Apt 2", suggest)).toMatchObject({ label: "1 Example St, Exampleton, IL, USA", unit: "Apt 2" });
+    expect(typed).toEqual(["1 Example St, Apt 2", "1 Example St"]);
     // A town, a ZIP, a town opening with a number, a postal code, a last part or a part after no
     // house number is no unit.
     for (const address of [
@@ -57,6 +66,12 @@ describe("resolveAddress", () => {
     const towns = ["1 Example St, Sampleton, IL, USA", "1 Example St, Exampleton, IL, USA"];
     expect(await resolveAddress("1 Example St, Exampleton, IL 60000", () => towns)).toMatchObject({ label: towns[1] });
     expect(await resolveAddress("1 Example St, Exampletn IL", () => ["1 Example St, Exampleton, NY, USA", towns[1] ?? ""])).toMatchObject({ label: towns[1] });
+    // The caller's ZIP outweighs place words, a place word in a suggestion's street never counts,
+    // and then the caller's street words decide.
+    const zips = ["1 Example St, North Sampleton, IL 60999, USA", "1 Example St, Exampleton, IL 60000, USA"];
+    expect(await resolveAddress("1 Example St, North Sampleton, IL 60000", () => zips)).toMatchObject({ label: zips[1] });
+    const streets = ["1 Exampleton Rd, Sampleton, IL, USA", "1 Example St, Exampleton, NY, USA"];
+    expect(await resolveAddress("1 Example St, Exampleton, IL", () => streets)).toMatchObject({ label: streets[1] });
     // A suggestion that shows no ZIP still keeps the state, and a state's name matches its code.
     expect(await resolveAddress("1 Example St, Exampleton, Illinois 60000", () => choices.slice(0, 2).concat("1 Example St, Exampleton, IL, USA"))).toMatchObject({
       label: "1 Example St, Exampleton, IL, USA",
@@ -89,6 +104,7 @@ describe("resolveAddress", () => {
       "12 Example St, Exampleton, IL, USA",
     );
     expect(await houses("12A Example St, Exampleton, IL", ["12 A Example St, Exampleton, IL, USA"])).toBe("12 A Example St, Exampleton, IL, USA");
+    expect(await houses("2nd Floor, 12 Example St, Exampleton, IL", ["12 Example St, Exampleton, IL, USA"])).toBe("12 Example St, Exampleton, IL, USA");
     expect(await houses("1 Example St, Exampleton, IL", ["100 Example St Apt 1, Exampleton, IL, USA"])).toBe(false);
   });
 
