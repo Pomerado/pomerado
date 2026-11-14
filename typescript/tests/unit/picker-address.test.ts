@@ -38,6 +38,7 @@ describe("resolveAddress", () => {
     expect(await resolveAddress("Suite 200, 12 Example St, Exampleton, IL", before.suggest)).toMatchObject({ query: "12 Example St, Exampleton, IL", unit: "Suite 200" });
     expect(before.typed).toEqual(["Suite 200, 12 Example St, Exampleton, IL", "12 Example St, Exampleton, IL"]);
     expect(await resolveAddress("100 Example St, Suite 100", () => ["100 Example St, Exampleton, IL, USA"])).toMatchObject({ unit: "Suite 100" });
+    expect(await resolveAddress("1 Example St, Fl 2, Exampleton, FL", () => ["1 Example St, Exampleton, FL, USA"])).toMatchObject({ unit: "Fl 2" });
     const towns = ["1 Example St, Otherton 3000, Australia", "1 Example St, Exampleton 4000, Australia"];
     expect(await resolveAddress("1 Example St, Exampleton 4000, Australia", () => towns)).toMatchObject({ label: towns[1], unit: "" });
     // A town, a ZIP, a town opening with a number, a postal code, a last part or a part after no
@@ -74,10 +75,12 @@ describe("resolveAddress", () => {
     const towns = ["1 Example St, Sampleton, IL, USA", "1 Example St, Exampleton, IL, USA"];
     expect(await resolveAddress("1 Example St, Exampleton, IL 60000", () => towns)).toMatchObject({ label: towns[1] });
     expect(await resolveAddress("1 Example St, Exampletn IL", () => ["1 Example St, Exampleton, NY, USA", towns[1] ?? ""])).toMatchObject({ label: towns[1] });
-    // The caller's ZIP outweighs place words, a place word in a suggestion's street never counts,
-    // and then the caller's street words decide.
+    // The caller's ZIP outweighs place words, which outweigh another ZIP; a place word in a
+    // suggestion's street never counts, and then the caller's street words decide.
     const zips = ["1 Example St, North Sampleton, IL 60999, USA", "1 Example St, Exampleton, IL 60000, USA"];
     expect(await resolveAddress("1 Example St, North Sampleton, IL 60000", () => zips)).toMatchObject({ label: zips[1] });
+    const others = ["1 Example St, Sampleton, IL, USA", "1 Example St, Exampleton, IL 60999, USA"];
+    expect(await resolveAddress("1 Example St, Exampleton, IL 60000", () => others)).toMatchObject({ label: others[1] });
     const streets = ["1 Exampleton Rd, Sampleton, IL, USA", "1 Example St, Exampleton, NY, USA"];
     expect(await resolveAddress("1 Example St, Exampleton, IL", () => streets)).toMatchObject({ label: streets[1] });
     // A suggestion that shows no ZIP still keeps the state, and a state's name matches its code.

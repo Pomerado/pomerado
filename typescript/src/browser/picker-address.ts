@@ -107,8 +107,7 @@ export const resolveAddressWith = async <T>(
     .filter((part) => part !== "")
     .map(toPlace);
   const unitPlace = next === "" ? [] : [toPlace(next)];
-  const count = (list: readonly { readonly words: readonly unknown[] }[]) => list.reduce((sum, part) => sum + part.words.length, 0);
-  const total = count(places);
+  const total = places.reduce((sum, part) => sum + part.words.length, 0);
   // The street's own words, its house number left out, each in its usual forms (Street for St).
   const streetWords = words(lines[lineStreet] ?? "")
     .filter((word) => !house.includes(word))
@@ -127,11 +126,10 @@ export const resolveAddressWith = async <T>(
   const keeps = (list: readonly ReturnType<typeof toPlace>[], within: string) =>
     list.reduce((sum, part) => sum + (holds(part.forms, within) ? part.words.length : part.words.filter((each) => holds(each, within)).length), 0);
   // A suggestion with another house number, or one that reads the caller's ZIP as its house number,
-  // is another address: undefined. Any other scores the place words, a unit-shaped part's included,
-  // it keeps after its own street, half more for showing the caller's ZIP, and below any that shows
-  // no other ZIP when it shows another; then, among equals, the street words its own street keeps.
-  // It is whole when it keeps every place word, not counting a unit-shaped part, and shows no other
-  // ZIP.
+  // is another address: undefined. Any other ranks first by showing the caller's ZIP, then by the
+  // place words, a unit-shaped part's included, it keeps after its own street, then by showing no
+  // other ZIP, then by the street words its own street keeps. It is whole when it keeps every place
+  // word, not counting a unit-shaped part, and shows no other ZIP.
   const score = (text: string) => {
     const theirs = houseOf(text);
     const shown = zipOf(text);
@@ -141,8 +139,9 @@ export const resolveAddressWith = async <T>(
     const kept = keeps(places, after);
     const all = kept + keeps(unitPlace, after);
     const other = zip !== "" && shown !== "" && shown !== zip;
+    const same = zip !== "" && shown === zip;
     return {
-      value: 100 * (other ? all - total - count(unitPlace) - 1 : all + (zip !== "" && shown === zip ? 0.5 : 0)) + streetWords.filter((each) => holds(each, road)).length,
+      value: (same ? 10_000 : 0) + 100 * all - (other ? 50 : 0) + streetWords.filter((each) => holds(each, road)).length,
       whole: kept === total && !other,
     };
   };
@@ -183,7 +182,10 @@ export const resolveAddressWith = async <T>(
   }
   if (best === undefined)
     return { picked: false, reason: "option_missing", wanted: squash(address), available: [...new Set(seen)].slice(0, 100), matches: [], unit: next || (marker?.[2] ?? "") };
-  const unit = next !== "" && keeps(unitPlace, sides(best.label).others) === 0 ? next : (marker?.[2] ?? "");
+  // A unit-shaped part the suggestion keeps, its number outside the suggestion's own street, was a
+  // town and postcode or a street rather than a unit.
+  const number = phrase(next.split(" ").find((word) => /[\d#]/u.test(word)) ?? "");
+  const unit = next !== "" && !holds([number], sides(best.label).others) ? next : (marker?.[2] ?? "");
   return { picked: true, choice: best.choice, label: best.label, query: best.query, unit };
 };
 
@@ -193,23 +195,24 @@ export const resolveAddressWith = async <T>(
  * address lookup request, and `label(item)` reads one as text (`String` by default).
  *
  * It splits off a unit first: the part right after a street with a house number, else the part
- * right before it, when it has at most two words, one of them holding a digit or a #, no ZIP, and no
- * plain number opening it before another word; or a # and what follows it ending the street. It
- * asks for the rest, and returns the unit for the site's own unit field unless the suggestion taken
- * keeps its words, as a town and postcode or a street would be; such a part before the street or
- * ending the address is asked for as typed first. For an address whose street opens with its house
- * number, a suggestion with another one (12A and 12 A alike) is another address and never usable,
- * and so is one that reads a caller's ZIP as its house number. Of the rest, it prefers the one whose
- * parts after its street keep the most words of the caller's place, the words after the street in
- * any of their usual forms from `spellingsOf`, ranking one that shows another ZIP below the others
- * and one that shows the caller's ZIP above its equals; then the one whose street keeps the most
- * words of the caller's street; then the one the text names most closely (`rankChoices`); then the
- * site's first. When the text brings no usable suggestion, or none that keeps every place word and
- * shows no other ZIP, it asks once more with a tidied text: joined words split, the ZIP and a unit
- * asked for as typed left out, and stray punctuation dropped. It accepts the best suggestion either
- * text brought, so the tool reports the site's version as it does any rewrite, and refuses only
- * when neither brought a usable one, with `picked: false` and every suggestion the site gave as
- * `available`, for `pickRefusal`. It keeps no list of words or addresses of its own.
+ * right before it, when it has at most two words, one of them holding a digit or a #, no ZIP, and
+ * no plain number opening it before another word; or a # and what follows it ending the street. It
+ * asks for the rest, and returns the unit for the site's own unit field unless the suggestion
+ * taken keeps its number outside its own street, as a town and postcode or a street would be; such
+ * a part before the street or ending the address is asked for as typed first. For an address whose
+ * street opens with its house number, a suggestion with another one (12A and 12 A alike) is
+ * another address and never usable, and so is one that reads a caller's ZIP as its house number.
+ * Of the rest, it prefers the one that shows the caller's ZIP; then the one whose parts after its
+ * street keep the most words of the caller's place, the words after the street in any of their
+ * usual forms from `spellingsOf`; then one that shows no other ZIP; then the one whose street
+ * keeps the most words of the caller's street; then the one the text names most closely
+ * (`rankChoices`); then the site's first. When the text brings no usable suggestion, or none that
+ * keeps every place word and shows no other ZIP, it asks once more with a tidied text: joined
+ * words split, the ZIP and a unit asked for as typed left out, and stray punctuation dropped. It
+ * accepts the best suggestion either text brought, so the tool reports the site's version as it
+ * does any rewrite, and refuses only when neither brought a usable one, with `picked: false` and
+ * every suggestion the site gave as `available`, for `pickRefusal`. It keeps no list of words or
+ * addresses of its own.
  */
 export const resolveAddress = <T = string>(
   address: string,
