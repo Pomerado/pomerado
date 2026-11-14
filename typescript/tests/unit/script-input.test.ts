@@ -340,26 +340,34 @@ describe("a purchase confirm's order", () => {
 
     const { result, request } = asked(order);
     expect(result).toEqual(Either.right({ confirm_order: "place" }));
-    expect(request?.notice).toBe(
+    if (request === undefined) throw new Error("the order was not asked");
+    expect(request.notice).toBe(
       'Order: 2 × "Synthetic cable" at 4.50 USD each. Shipping: 0.00 USD. Tax: 0.81 USD. Total: 9.81 USD.',
     );
-    expect(request?.questions[0]).toMatchObject({
+    expect(request.questions[0]).toMatchObject({
       options: [
         { id: "o1", accountSpecific: true, maskedLabel: "Saved card" },
         { id: "o2", label: "Cancel" },
       ],
     });
-    expect(request && asksAsDeclared(request, declared)).toBe(true);
-    const added = request && { ...request, notice: `${request.notice} Ship to Synthetic Street 1.` };
-    expect(added && asksAsDeclared(added, declared)).toBe(false);
+    expect(asksAsDeclared(request, declared)).toBe(true);
+    const added = { ...request, notice: `${request.notice} Ship to Synthetic Street 1.` };
+    expect(asksAsDeclared(added, declared)).toBe(false);
     const note = { id: "note", type: "text", prompt: "Any note?" } as const;
-    const onText = request && { ...request, questions: [note] };
-    expect(onText && asksAsDeclared(onText, declared)).toBe(false);
-    // A purchase confirm is asked again, never answered from an earlier yes.
-    const keys = request && Effect.runSync(scriptQuestionKeys(request, Effect.succeed));
+    expect(asksAsDeclared({ ...request, questions: [note] }, declared)).toBe(false);
+
+    // A kept yes answers only the same order, even once a host matched its question to today's key.
+    const keysOf = (asking: InputRequest) =>
+      Effect.runSync(scriptQuestionKeys(asking, Effect.succeed));
     const yes = { confirm_order: { type: "choice" as const, value: "o1" } };
-    const kept = keys && keptScriptAnswers([], keys, yes);
-    expect(request && keys && kept && reusedScriptAnswers(request, keys, kept)).toBeUndefined();
+    const kept = keptScriptAnswers([], keysOf(request), yes);
+    expect(reusedScriptAnswers(request, keysOf(request), kept)).toEqual(yes);
+    const other = asked({ ...order, total: "98.10" }).request;
+    if (other === undefined) throw new Error("the other order was not asked");
+    const otherKeys = keysOf(other);
+    expect(reusedScriptAnswers(other, otherKeys, kept)).toBeUndefined();
+    const matched = kept.map((entry) => ({ ...entry, question: otherKeys[0] ?? entry.question }));
+    expect(reusedScriptAnswers(other, otherKeys, matched)).toBeUndefined();
 
     const refused = asked({ ...order, address: "Synthetic Street 1" });
     expect(refused.result).toEqual(Either.left(expect.objectContaining({ code: "InvalidOptions" })));
