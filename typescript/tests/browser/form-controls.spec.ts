@@ -453,6 +453,22 @@ test("chooseOption refuses two different options that both match", async ({ page
   expect(await submitted(page)).toEqual({ plan: "a" });
 });
 
+test("chooseOption takes the first of an option listed twice, and still refuses options with one label and other values", async ({ page }) => {
+  await page.setContent(`<form><label>Country<select name="country">
+<option value="">Choose</option><option value="US">United States</option><option value="CA">Canada</option>
+<option value="US">United States</option></select></label><label>Branch<select name="branch">
+<option value="">Choose</option><option value="b-40">Springfield</option><option value="b-12">Springfield</option>
+</select></label></form>`);
+  expect(await call(page, `return await chooseOption(page.getByLabel("Country"), "United States");`)).toEqual({
+    result: { shape: "select", label: "United States", value: "US" },
+  });
+  expect(await page.getByLabel("Country").evaluate((select: HTMLSelectElement) => select.selectedIndex)).toBe(1);
+  expect(await call(page, `return await chooseOption(page.getByLabel("Branch"), "Springfield");`)).toEqual({
+    error: "option_ambiguous",
+  });
+  expect(await submitted(page)).toEqual({ country: "US", branch: "" });
+});
+
 test("chooseOption types into a dropdown that filters as you type", async ({ page }) => {
   const countries = ["Canada", "Chile", "China", "France", "Germany"].map(
     (name) => [name.slice(0, 2).toUpperCase(), name] as const,

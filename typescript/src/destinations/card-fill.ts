@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+import type { AutofillPopup } from "./autofill-contracts.js";
 import { fillAutofillStep } from "./autofill-fill.js";
 import { unsupportedSelector } from "./autofill-locate-code.js";
 import {
@@ -22,11 +23,12 @@ import type { CardFillTotal, ScriptCardFillAnswer } from "../runtime/script-card
  * A host card-fill step: the caller's card answers typed into a checkout's card fields the way a
  * sign-in step types a password. The minter names each field's selector and the card handle it
  * takes; the host checks every handle is a card answer's, finds each field in the frame that holds
- * it on the primary tab, refuses unless the page's top document is on the site or an exact checkout
- * origin the owner approved and each field is on one of those or in a frame on an exact payment
- * frame origin, has Guardian review the step and the screen with handles only, then inserts each
- * value natively into the field it bound. No value ever enters page code, Guardian's input, the
- * minter's context or the step's result, and the step clicks nothing: the submit that books or
+ * it on the primary tab, or on the pop-up the step names, which a sign-in step's pop-up rules bind
+ * every call and the typing to, refuses unless the page's top document is on the site or an exact
+ * checkout origin the owner approved and each field is on one of those or in a frame on an exact
+ * payment frame origin, has Guardian review the step and the screen with handles only, then inserts
+ * each value natively into the field it bound. No value ever enters page code, Guardian's input,
+ * the minter's context or the step's result, and the step clicks nothing: the submit that books or
  * buys is a later step under the write rules. A step that names each field's card slot instead,
  * with the checkout's total, is one a host fills from a payment method the caller named
  * (`fillVia`): core runs the same checks and review, then hands the host the checked fields and
@@ -35,9 +37,11 @@ import type { CardFillTotal, ScriptCardFillAnswer } from "../runtime/script-card
 
 /**
  * A card-fill step as the minter names it: each field's own selector and its card handle, or each
- * field's selector and card slot with the checkout's total.
+ * field's selector and card slot with the checkout's total, and the pop-up the checkout is in, if
+ * the site opened one.
  */
 export interface CardFillFields {
+  readonly popup?: AutofillPopup | undefined;
   readonly fields: readonly (
     | { readonly selector: string; readonly handle: string }
     | { readonly selector: string; readonly slot: CardSlot }
@@ -113,9 +117,13 @@ const inspectionRefused = (
   checkoutOrigins: readonly string[] = [],
 ) => {
   const check = contextText(refusal, "check");
-  if (check === "top_document")
+  // A pop-up's page is its own top document, judged by its origin before any page call.
+  if (
+    check === "top_document" ||
+    (check === "destination" && contextText(refusal, "part") === "popup")
+  )
     return refusedWith(
-      `The host typed nothing: the page's top document is not on this site${checkoutOrigins.length === 0 ? "" : ` or its approved checkout origins (${checkoutOrigins.join(", ")})`}. Card answers go only into this site's own page or a payment frame on it, never a provider's page, a popup or a new tab.`,
+      `The host typed nothing: the page's top document is not on this site${checkoutOrigins.length === 0 ? "" : ` or its approved checkout origins (${checkoutOrigins.join(", ")})`}. Card answers go only into this site's own page or a payment frame on it, never a provider's page or a pop-up or tab off this site.`,
       refusal,
     );
   const field = typeof refusal.target === "number" ? refusal.target + 1 : undefined;
@@ -155,12 +163,17 @@ const inspectionRefused = (
     /\.(?:ownerUrl|ancestors|documentOrigin)\b/u.test(contextText(refusal, "changed") ?? "")
   )
     return inFrame(contextText(refusal, "frameOrigin"));
+  // The page the host searched, by origin, and how many frames it searched there.
+  const pageOrigin = contextText(refusal, "pageOrigin");
+  const framesSearched = refusal.failureDetail?.context?.["framesSearched"];
   return {
     status: "refused" as const,
     observations: JSON.stringify({
       cardFill: "refused",
       reason: refusal.reason,
       ...(field === undefined ? {} : { field }),
+      ...(pageOrigin === undefined ? {} : { pageOrigin }),
+      ...(typeof framesSearched === "number" ? { framesSearched } : {}),
     }),
     report: refusal,
   };
@@ -191,12 +204,12 @@ const filled = (report: AutofillStepReport, origins: readonly string[]): CardFil
 };
 
 /**
- * Runs one card-fill step on the primary tab: refuses before any page call a handle that is not a
- * card answer's and a selector that crosses frames, then inspects, has Guardian review the step
- * (`review`, which fails to stop it), runs `beforeTyping` and types each value, or for a step
- * that names slots has the host fill them (`fillVia`). A refusal after inspection typed nothing.
- * `judgedBeforeTyping` is the origins the host's inspections judged before it first typed into
- * this page, when it did, which a refusal may name besides the site's.
+ * Runs one card-fill step on the primary tab, or on the pop-up it names: refuses before any page
+ * call a handle that is not a card answer's and a selector that crosses frames, then inspects, has
+ * Guardian review the step (`review`, which fails to stop it), runs `beforeTyping` and types each
+ * value, or for a step that names slots has the host fill them (`fillVia`). A refusal after
+ * inspection typed nothing. `judgedBeforeTyping` is the origins the host's inspections judged
+ * before it first typed into this page, when it did, which a refusal may name besides the site's.
  */
 export const runCardFill = <E>(input: {
   readonly step: CardFillFields;
@@ -222,8 +235,10 @@ export const runCardFill = <E>(input: {
    * A host's own fill of a step that names slots, from a payment method the caller named: called
    * once the step passed the checks, the review and `beforeTyping`, with the fields as the host
    * found them and the checkout's total. The page may change after the inspection, so the host
-   * checks the fields and their destination again just before it fills. It returns what it filled,
-   * with no value in it. Absent, such a step is refused.
+   * checks the fields and their destination again just before it fills. On a step that names a
+   * pop-up, the host binds the fill to the pop-up the inspection found (`inspection.popupTargetId`),
+   * never the primary tab. It returns what it filled, with no value in it. Absent, such a step is
+   * refused.
    */
   readonly fillVia?: (checked: {
     readonly step: AutofillStep<CardSlot>;
@@ -247,7 +262,9 @@ export const runCardFill = <E>(input: {
       if (slot === undefined) return notCardAnswer(field.handle);
       fields.push({ selector: field.selector, slot, handle: field.handle });
     }
+    const popup = input.step.popup;
     const step: AutofillStep<CardSlot> = {
+      ...(popup === undefined ? {} : { popup }),
       fields: fields.map(({ selector, slot }) => ({ selector, slot })),
     };
     const crossing = unsupportedSelector(step);

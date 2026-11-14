@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { AutofillPopup } from "../destinations/autofill-contracts.js";
 
 /**
  * A published script's card fill (`fillCard`): the script names each card field's selector and
@@ -33,16 +34,19 @@ const cardFields = <A, I>(field: Schema.Schema<A, I>, part: (field: A) => string
 /**
  * A card-fill step's fields: each the handle of a card answer (`handleField`), each handle once,
  * or each the card slot a host fills from a payment method, each slot once, with the checkout's
- * total.
+ * total. On a checkout the site opened in a pop-up, either names that pop-up as a sign-in step
+ * does.
  */
 export const cardFillFields = <Handled extends { readonly handle: string }, I>(
   handleField: Schema.Schema<Handled, I>,
 ) =>
   Schema.Union(
     Schema.Struct({
+      popup: Schema.optional(AutofillPopup),
       fields: cardFields(handleField, (field) => field.handle, "name each card handle once"),
     }),
     Schema.Struct({
+      popup: Schema.optional(AutofillPopup),
       fields: cardFields(
         Schema.Struct({
           selector: Selector,
