@@ -6,6 +6,12 @@ import {
   type ScriptOption,
   type ScriptQuestionDeclarations,
 } from "../../src/runtime/script-input.js";
+import { asksAsDeclared } from "../../src/execution/declared-questions.js";
+import {
+  keptScriptAnswers,
+  reusedScriptAnswers,
+  scriptQuestionKeys,
+} from "../../src/mint/script-answer-reuse.js";
 
 const questions: ScriptQuestionDeclarations = {
   pick: { type: "choice", prompt: "Which entry?" },
@@ -292,5 +298,71 @@ describe("a site-field question's label", () => {
     expect(
       sent({ pick: { label: "Engraving", options: [{ value: "a", label: "A" }] } as never }).result,
     ).toEqual(refused);
+  });
+});
+
+describe("a purchase confirm's order", () => {
+  it("reaches the request in fixed words while the account option stays masked, and nothing else does", () => {
+    const declared: ScriptQuestionDeclarations = {
+      confirm_order: { type: "choice", prompt: "Place this order?" },
+      note: { type: "text", prompt: "Any note?" },
+    };
+    const options: ReadonlyArray<ScriptOption> = [
+      {
+        value: "place",
+        label: "Synthetic Street 1 | Card 0000",
+        accountSpecific: true,
+        maskedLabel: "Saved card",
+      },
+      { value: "cancel", label: "Cancel" },
+    ];
+    const order = {
+      currency: "USD",
+      items: [{ name: "Synthetic cable", quantity: 2, price: "4.50" }],
+      shipping: "0.00",
+      tax: "0.81",
+      total: "9.81",
+    };
+    const asked = (given: unknown) => {
+      const sent: InputRequest[] = [];
+      const result = Effect.runSync(
+        Effect.either(
+          makeScriptInput(declared, (request) =>
+            Effect.sync(() => {
+              sent.push(request);
+              return { confirm_order: "o1" };
+            }),
+          ).ask({ confirm_order: { options, order: given } } as never),
+        ),
+      );
+      return { result, request: sent[0] };
+    };
+
+    const { result, request } = asked(order);
+    expect(result).toEqual(Either.right({ confirm_order: "place" }));
+    if (request === undefined) throw new Error("the order was not asked");
+    expect(request.notice).toBe(
+      'Order: 2 × "Synthetic cable" at 4.50 USD each. Shipping: 0.00 USD. Tax: 0.81 USD. Total: 9.81 USD.',
+    );
+    expect(request.questions[0]).toMatchObject({
+      options: [
+        { id: "o1", accountSpecific: true, maskedLabel: "Saved card" },
+        { id: "o2", label: "Cancel" },
+      ],
+    });
+    expect(asksAsDeclared(request, declared)).toBe(true);
+    const added = { ...request, notice: `${request.notice} Ship to Synthetic Street 1.` };
+    expect(asksAsDeclared(added, declared)).toBe(false);
+    const note = { id: "note", type: "text", prompt: "Any note?" } as const;
+    expect(asksAsDeclared({ ...request, questions: [note] }, declared)).toBe(false);
+
+    // A purchase confirm is asked again, the identical order included: one yes buys once.
+    const keys = Effect.runSync(scriptQuestionKeys(request, Effect.succeed));
+    const yes = { confirm_order: { type: "choice" as const, value: "o1" } };
+    expect(reusedScriptAnswers(request, keys, keptScriptAnswers([], keys, yes))).toBeUndefined();
+
+    const refused = asked({ ...order, address: "Synthetic Street 1" });
+    expect(refused.result).toEqual(Either.left(expect.objectContaining({ code: "InvalidOptions" })));
+    expect(refused.request).toBeUndefined();
   });
 });

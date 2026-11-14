@@ -37,6 +37,7 @@ export type {
   ScriptAskHooks,
   ScriptAnswer,
   ScriptOption,
+  ScriptOrder,
   ScriptQuestionDeclaration,
   ScriptQuestionDeclarations,
   ScriptQuestionHandler,

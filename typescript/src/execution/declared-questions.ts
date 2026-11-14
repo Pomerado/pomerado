@@ -1,4 +1,9 @@
-import { longestPrompt, type InputRequest, type Question } from "../runtime/input-request.js";
+import {
+  longestPrompt,
+  orderNotice,
+  type InputRequest,
+  type Question,
+} from "../runtime/input-request.js";
 import type {
   ScriptQuestionDeclaration,
   ScriptQuestionDeclarations,
@@ -70,13 +75,27 @@ const matchesDeclaration = (
   return keepsBounds[declared.type](question, declared);
 };
 
-/** Whether a script's request asks only what `declared` allows, and adds no text of its own. */
+/** Whether one of the request's questions is declared a choice or a confirm, which take an order. */
+const confirmsOrder = (request: InputRequest, declared: ScriptQuestionDeclarations) =>
+  request.questions.some((question) => {
+    const declaration = Object.hasOwn(declared, question.id) ? declared[question.id] : undefined;
+    const type = declaration === undefined ? undefined : typed(declaration).type;
+    return type === "choice" || type === "confirm";
+  });
+
+/**
+ * Whether a script's request asks only what `declared` allows, and adds no text of its own: its
+ * only notice is the facts of the order a choice or a confirm asks about, in the host's words
+ * (`orderNotice`).
+ */
 export const asksAsDeclared = (
   request: InputRequest,
   declared: ScriptQuestionDeclarations,
 ): boolean =>
   request.source === "script" &&
-  request.notice === undefined &&
+  (request.order === undefined
+    ? request.notice === undefined
+    : request.notice === orderNotice(request.order) && confirmsOrder(request, declared)) &&
   request.questions.every((question) =>
     matchesDeclaration(
       question,
