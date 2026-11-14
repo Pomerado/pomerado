@@ -60,6 +60,27 @@ test("pickValue picks the suggestion whose whole name shares the value's stem wh
   expect(await submitted(page)).toEqual({ person: "2" });
 });
 
+// An address with a unit after a comma and a street written as one word the site splits: the unit
+// is split off, and the street the site suggests nothing for is typed again tidied.
+test("pickAddress splits off the unit and picks the suggestion a tidied street brings", async ({ page }) => {
+  const addresses = '[["a1","2 N Example Ton St, Exampleton, IL, USA"],["a2","2 N Example Tonne St, Exampleton, IL, USA"]]';
+  await serve(page, combobox.replace("Assignee", "Address").replace(/const people = \[.*\];/, `const people = ${addresses};`));
+  const field = 'page.getByRole("combobox", { name: "Address" })';
+  expect(await call(page, `return await pickAddress(${field}, "2 N ExampleTon St, Suite 5, Exampleton, IL", fast);`)).toEqual({
+    result: {
+      picked: true,
+      kind: "typeahead",
+      label: "2 N Example Ton St, Exampleton, IL, USA",
+      value: "a1",
+      rank: "exact",
+      refills: 0,
+      query: "2 N Example Ton St, Exampleton, IL",
+      unit: "Suite 5",
+    },
+  });
+  expect(await submitted(page)).toEqual({ person: "a1" });
+});
+
 test("pickValue picks a native select's option by label, value or another spelling", async ({ page }) => {
   await serve(page, `<form><label>State <select name="state">
 <option value="">Choose a state</option><option value="CA">California</option><option value="NV">Nevada</option>

@@ -3,6 +3,7 @@ import { timeoutDefaults } from "../runtime/deadline.js";
 import { operationErrors } from "../runtime/operation-failure.js";
 import { foldChoiceText, rankByWords, spellingsOf } from "../runtime/text.js";
 import { typeKeys, typingPauses } from "../runtime/typing-pace.js";
+import { resolveAddressWith } from "./picker-address.js";
 import { closestFirst, pickerRanks, rankChoices } from "./picker-rank.js";
 
 /**
@@ -511,6 +512,12 @@ const pickerPageCode = String.raw`(element, args) => {
  *   returns `{ kind, options: [{ label, value, disabled }] }`, every option it lists, scrolled
  *   through when the list renders as it scrolls, then closes it: the page's live options for a
  *   caller question or an `available` list.
+ * - `pickAddress(control, address, options?)` resolves an address the caller typed through the
+ *   field's suggestions as `resolveAddress` does, reading them with `pickerOptions`, then picks
+ *   the one it accepted with `pickValue`, typing the text that brought it and taking the first of
+ *   copies. It returns `pickValue`'s outcome with that text as `query` and the unit it split off
+ *   as `unit`, for the site's own unit field, or, when it accepts none, `option_missing` with
+ *   every suggestion the field gave as `available` and `unit`.
  *
  * The kind is detected from the control, or set as `options.kind`: `select`, `datalist`,
  * `typeahead` (an editable field: type, then choose a suggestion), `dropdown` (a button or div
@@ -1567,6 +1574,15 @@ const pickerOptions = async (control, options = {}) => {
     await s.handle?.dispose().catch(() => undefined);
   }
 };
+const pickerResolveAddress = ${String(resolveAddressWith)};
+const pickAddress = async (control, address, options = {}) => {
+  const suggest = async (query) => (await pickerOptions(control, { ...options, query })).options.filter((option) => !option.disabled);
+  const match = { fold: pickerFold, spellings: pickerSpellings, rank: pickerRankChoices };
+  const found = await pickerResolveAddress(String(address ?? ""), suggest, (option) => option.label, match);
+  if (!found.picked) return found;
+  const picked = await pickValue(control, found.label, { ...options, query: found.query, tie: "first" });
+  return picked.picked ? { ...picked, query: found.query, unit: found.unit } : { ...picked, wanted: String(address ?? "").replace(/\s+/g, " ").trim(), unit: found.unit };
+};
 `;
 
 const NotPicked = Schema.Struct({
@@ -1580,8 +1596,9 @@ const NotPicked = Schema.Struct({
 const PickedValue = Schema.Struct({ label: Schema.String, value: Schema.String, added: Schema.Boolean });
 
 /**
- * What `pickValue` returns, for decoding a call's result: the option it committed, or why the
- * caller's value is not among the options (`pickRefusal` turns that into `InvalidInput`).
+ * What `pickValue` and `pickAddress` return, for decoding a call's result: the option it
+ * committed, or why the caller's value is not among the options (`pickRefusal` turns that into
+ * `InvalidInput`).
  */
 export const PickOutcome = Schema.Union(
   Schema.Struct({
@@ -1593,8 +1610,11 @@ export const PickOutcome = Schema.Union(
     refills: Schema.Number,
     // Only after `tie: "first"` took the first of several: the options that tied, as `matches` lists them.
     tied: Schema.optional(Schema.Array(Schema.String)),
+    // Only from `pickAddress`: the text that brought the suggestion, and the unit split off.
+    query: Schema.optional(Schema.String),
+    unit: Schema.optional(Schema.String),
   }),
-  NotPicked,
+  Schema.extend(NotPicked, Schema.Struct({ unit: Schema.optional(Schema.String) })),
 );
 export type PickOutcome = typeof PickOutcome.Type;
 
