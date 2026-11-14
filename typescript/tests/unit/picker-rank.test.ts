@@ -185,6 +185,24 @@ describe("rankChoices other written forms", () => {
     expect(rankForms([choice("St-Mary"), choice("Maryville")], "Saint Mary")).toEqual({ status: "picked", index: 0, rank: "folded" });
   });
 
+  test("a name whose whole parts hold the value's words, written short or with parts interleaved, matches last", () => {
+    expect(rankForms([choice("Example Hall, 1 Harbor Plz, Example City, CA")], "Example Hall, 1 Harbor Plaza")).toEqual({
+      status: "picked",
+      index: 0,
+      rank: "anyOrder",
+    });
+    const stations = [choice("Transit - Lakeside Station, 12 Main St, Example City, CA"), choice("Transit - Lakeside Station, 40 Pier Rd")];
+    expect(rankForms(stations, "Lakeside Transit Station, Example City, CA")).toEqual({ status: "picked", index: 0, rank: "anyOrder" });
+    expect(rankForms(stations, "Lakeside Transit Station")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "anyOrder" });
+    // Only the name's word is ever the short one, only in Latin letters, and a part matched only
+    // through short forms, or by a short word that is no short form, never counts.
+    expect(rankForms([choice("123 Oakwood St, Example City")], "123 Oak St")).toEqual({ status: "missing" });
+    expect(rankForms([choice("Exampleville Ukraine")], "Exampleville UK")).toEqual({ status: "missing" });
+    expect(rankForms([choice("上海 站")], "上海虹桥 站")).toEqual({ status: "missing" });
+    expect(rankForms([choice("Exampleville, UK")], "Exampleville, Ukraine")).toEqual({ status: "missing" });
+    expect(rankForms([choice("Example County Rd")], "Example Country Road")).toEqual({ status: "missing" });
+  });
+
   test("international, center, mount, fort and and written short or as a sign match", () => {
     expect(rankForms([choice("Harbor City Intl (HCX)"), choice("Harbor City Regional (HCR)")], "Harbor City International")).toEqual({
       status: "picked",
