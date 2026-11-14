@@ -295,6 +295,8 @@
 ### Other changes
 
 - The workspace guide says every `applied_*` field reports the value the site actually used, read from the site's committed state, never the typed value or a suggestion the site did not use. A recorded minter response keyed on the exact workspace guide text needs recording again.
+- The core skill says to trim every string a tool returns from the site before returning it. Before, a tool could pass site text with spaces at its ends through to a trimmed output field, so a correct read failed its output schema and went to repair. No host check changes.
+  - A recorded minter response keyed on the exact core skill text needs recording again.
 - Guardian's publication policy (`publicationOutputPolicy`) no longer asks a tool whose source calls `fillCard` to read a field's value back in its own code. The host refuses any source of such a tool that reads a field's value or the page's markup, so a paying tool the review asked to read the payer's typed details back before paying could not publish: adding the read drew the host's refusal, and removing it drew the review's denial again. The review now takes an SDK fill's own result and text the page shows, such as a review step or a confirmation showing the value, as the read-back of what such a tool typed. The host's card rule and Guardian's are unchanged.
   - No exported type or signature changes, and `pomerado.hostProtocol` stays 1. A recorded Guardian response keyed on the exact publication policy, or a minter response keyed on the exact publication-review reference, needs recording again.
 - Guardian's execution policy and the core, cart and forms skills add notes from live checkouts.

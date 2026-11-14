@@ -455,7 +455,8 @@ description says, except as below and for a write's record later cancelled, refu
 - Type each output field as strictly as its value: required text is non-empty and trimmed
   (`Schema.NonEmptyTrimmedString`), a date or time keeps its `pattern`, and a field that reports
   an input's value reuses that input's enum or pattern. Make one optional or nullable only where
-  the page may genuinely not show the value.
+  the page may genuinely not show the value. Trim every string you return from the site before
+  returning it.
 - The one exception is a record whose own page genuinely does not show the value, such as an
   item that is sold out and shows no amount, or a listing that shows no date yet. Then the value may be null only together with a
   field that says why, such as its availability, and both descriptions say so.
