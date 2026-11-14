@@ -305,6 +305,9 @@ export const runCardFill = <E>(input: {
       paymentFrameOrigins: origins,
       checkoutOrigins: input.checkoutOrigins,
       judgedBeforeTyping: input.judgedBeforeTyping,
+      // A card form may switch its postal field on only once it holds the host's card, and core
+      // checks that field again before it types the code.
+      postalCodeAfterCard: fillVia !== undefined,
     });
     if ("outcome" in inspected)
       return inspectionRefused(inspected, origins, input.checkoutOrigins);
