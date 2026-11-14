@@ -140,7 +140,7 @@ describe("resolveAddress", () => {
     expect(await houses("1 Example St, Exampleton, IL", ["100 Example St Apt 1, Exampleton, IL, USA"])).toBe(false);
   });
 
-  test("refuses only when no form brings a suggestion with the caller's house number, listing what the site gave", async () => {
+  test("refuses only when no form brings a suggestion with the caller's house number and street name, listing what the site gave", async () => {
     expect(await resolveAddress("3 Example St, Exampleton", () => ["5 Example St, Exampleton, IL, USA", "Example St, Exampleton, IL, USA"])).toEqual({
       picked: false,
       reason: "option_missing",
@@ -150,5 +150,22 @@ describe("resolveAddress", () => {
       unit: "",
     });
     expect(await resolveAddress("3 Example St, Apt 1, Exampleton", () => [])).toMatchObject({ picked: false, available: [], unit: "Apt 1" });
+    // A suggestion whose street keeps no word of the caller's street name, its street type alone
+    // included, is another street.
+    const other = ["12 Other Ave, Exampleton, IL, USA", "12 Other St, Exampleton, IL, USA"];
+    expect(await resolveAddress("12 Example St, Exampleton, IL", () => other)).toMatchObject({ picked: false, available: other });
+    expect(await resolveAddress("12-34 Example St, Exampleton, NY", () => ["12-34 Other St, Exampleton, NY, USA"])).toMatchObject({ picked: false });
+    // A number in the street, with or without its ordinal ending, or a close name, its words joined
+    // or split or written as initials, keeps the street; a close name with another ZIP does not.
+    for (const [address, shown] of [
+      ["12 Route 9, Exampleton, NJ", "12 US-9, Exampleton, NJ, USA"],
+      ["12 SW 107 Ave, Exampleton, FL", "12 SW 107th Ave, Exampleton, FL, USA"],
+      ["12 N La Salle St, Exampleton, IL", "12 N LaSalle St, Exampleton, IL, USA"],
+      ["12 Mian St, Exampleton, IL", "12 Main St, Exampleton, IL, USA"],
+      ["12 MLK Jr Way, Exampleton, GA", "12 Dr Martin Luther King Jr Way, Exampleton, GA, USA"],
+    ])
+      expect(await resolveAddress(address ?? "", () => [shown ?? ""])).toMatchObject({ label: shown });
+    expect(await resolveAddress("12 Exampel St, Exampleton, IL 60000", () => ["12 Example St, Exampleton, IL 60001, USA"])).toMatchObject({ picked: false });
+    expect(await resolveAddress("1234 NE 45th St, Exampleton, WA", () => ["1234 NE 46th St, Exampleton, WA, USA"])).toMatchObject({ picked: false });
   });
 });
