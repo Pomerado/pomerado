@@ -167,5 +167,6 @@ describe("resolveAddress", () => {
       expect(await resolveAddress(address ?? "", () => [shown ?? ""])).toMatchObject({ label: shown });
     expect(await resolveAddress("12 Exampel St, Exampleton, IL 60000", () => ["12 Example St, Exampleton, IL 60001, USA"])).toMatchObject({ picked: false });
     expect(await resolveAddress("1234 NE 45th St, Exampleton, WA", () => ["1234 NE 46th St, Exampleton, WA, USA"])).toMatchObject({ picked: false });
+    expect(await resolveAddress("12 Old Mill Rd, Exampleton, IL", () => ["12 Oak Leaf Dr, Exampleton, IL, USA"])).toMatchObject({ picked: false });
   });
 });

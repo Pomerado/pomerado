@@ -143,7 +143,8 @@ export const resolveAddressWith = async <T>(
   // letters or more joined, the last left out when there is another, fewer edits than a third of
   // the shorter's letters, a swap of two letters one edit, turn one into the other (Exampel or Mian
   // for Example or Main, LaSalle for La Salle); or when a word of three letters or more of one is
-  // among the first letters of the other's words (MLK for Dr Martin Luther King Jr).
+  // among the first letters of the other's words but the last (MLK for Dr Martin Luther King Jr
+  // Blvd).
   const close = (one: readonly string[], two: readonly string[]) => {
     const numbers = (list: readonly string[]) => list.filter((word) => /\d/u.test(word)).join(" ");
     if (numbers(one) !== "" && numbers(two) !== "" && numbers(one) !== numbers(two)) return false;
@@ -161,7 +162,7 @@ export const resolveAddressWith = async <T>(
       }
       [before, row] = [row, next];
     }
-    const initials = (list: readonly string[]) => list.map((word) => word[0]).join("");
+    const initials = (list: readonly string[]) => (list.length > 1 ? list.slice(0, -1) : list).map((word) => word[0]).join("");
     return (
       (row[b.length] ?? 0) * 3 < Math.min(a.length, b.length) ||
       name(one).some((word) => word.length > 2 && initials(two).includes(word)) ||
@@ -275,9 +276,9 @@ export const resolveAddressWith = async <T>(
  * its ordinal ending (107 for 107th), unless it shows no other ZIP and its street's name is close
  * to the caller's: the numbers both show agree and, with their words joined, fewer edits than a
  * third of the shorter's letters, a swap of two letters one edit, turn one into the other (Exampel
- * or Mian for Example or Main, LaSalle for La Salle), or a word of one is among the first letters of
- * the other's words (MLK for Dr Martin Luther King Jr). So St or Ave ending a street with a longer name
- * word, or a direction letter, alone keeps none. So is one that reads a caller's ZIP as its house
+ * or Mian for Example or Main, LaSalle for La Salle), or a word of three letters or more of one is
+ * among the first letters of the other's words but the last (MLK for Dr Martin Luther King Jr Blvd).
+ * So St or Ave ending a street with a longer name word, or a direction letter, alone keeps none. So is one that reads a caller's ZIP as its house
  * number. Of the rest, it prefers the one that shows the caller's ZIP while its own street keeps
  * more than half the caller's street words of two letters or more, as typed or tidied, each in any
  * of its usual forms from `spellingsOf`; then the one whose parts after its street keep the most
