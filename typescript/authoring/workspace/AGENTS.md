@@ -659,8 +659,8 @@ never with final text, which the host treats as unfinished work:
   optional and the input the write session ran leaves unset, the writes skill's ask whether to
   publish without it comes first. When the site offers a clear alternative for the same goal,
   such as ordering for later instead of now or delivery instead of pickup, ask the user with
-  `request_input` whether to use it before you report this. An app-download or location prompt
-  in the way is no such evidence (core skill, "Cookie banners").
+  `request_input` whether to use it before you report this or teach the tool to refuse it. An
+  app-download or location prompt in the way is no such evidence (core skill, "Cookie banners").
 - `site_declined`: the site offers what the task needs but declines this example's own facts,
   such as an applicant it will not quote. Name the reason the site gave in `explanation`. A
   decline can be temporary: the site turns the request away now but would take it later, such as
