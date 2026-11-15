@@ -73,20 +73,41 @@ const markedAriaSnapshot = async (locator, options) => {
           ["button", "input", "select", "textarea", "img"].includes(element.localName) ||
           (element.localName === "a" && element.hasAttribute("href")) ||
           element.hasAttribute("role");
-        // A candidate's anchor: rendered text, or a control's own label; "" for neither.
+        const named = (value) => (value?.trim() ? value : null);
+        // A control's own name. Text it holds names it in the snapshot, and is an anchor of its
+        // own, so what names an icon counts only for a control with none.
+        const nameOf = (element) => {
+          const textless = () =>
+            ["input", "select", "textarea", "img"].includes(element.localName) ||
+            // innerText leaves out what is not rendered, such as an SVG's title.
+            !/\\S/.test(element.innerText);
+          const labelledBy = () =>
+            element
+              .getAttribute("aria-labelledby")
+              ?.split(/\\s+/)
+              .map((id) => document.getElementById(id)?.textContent)
+              .join(" ");
+          const label = element.labels?.[0];
+          const button =
+            element.localName === "input" && ["button", "submit", "reset"].includes(element.type);
+          return (
+            (element.hasAttribute("aria-labelledby") && textless() ? named(labelledBy()) : null) ??
+            named(element.getAttribute("aria-label")) ??
+            (element.localName === "img" ? named(element.getAttribute("alt")) : null) ??
+            // A label around the control also holds the control's own text, such as its options.
+            (label?.contains(element) ? null : named(label?.textContent)) ??
+            named(element.getAttribute("placeholder")) ??
+            (button ? named(element.value) : null) ??
+            (textless()
+              ? (named(element.getAttribute("title")) ??
+                named(element.querySelector("svg title")?.textContent))
+              : null)
+          );
+        };
+        // A candidate's anchor: rendered text, or a control's own name; "" for neither.
         const anchorOf = (node) => {
           const text = node.nodeType === Node.TEXT_NODE;
-          const button =
-            node.localName === "input" && ["button", "submit", "reset"].includes(node.type);
-          const anchor = words(
-            text
-              ? node.nodeValue
-              : (node.getAttribute("aria-label") ??
-                  (node.localName === "img" ? node.getAttribute("alt") : null) ??
-                  node.labels?.[0]?.textContent ??
-                  node.getAttribute("placeholder") ??
-                  (button ? node.value : "")),
-          );
+          const anchor = words(text ? node.nodeValue : nameOf(node));
           return anchor !== "" && rendered(text ? node.parentElement : node) ? anchor : "";
         };
         const walker = document.createTreeWalker(
@@ -125,6 +146,8 @@ const markedAriaSnapshot = async (locator, options) => {
             if (anchor !== "") {
               splits.push([...before, anchor]);
               before = undefined;
+              // The next split's anchors start here, where this one's line is found.
+              recent.length = 0;
             }
           }
           recent.push(node);
