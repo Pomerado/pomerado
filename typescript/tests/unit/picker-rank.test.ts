@@ -544,7 +544,7 @@ describe("rankChoices same name written another way", () => {
     expect(rankAll([choice("Example Boulevard")], "Example Blvd")).toEqual({ status: "picked", index: 0, rank: "alike" });
   });
 
-  test("a word with a vowel is never a short form, and a name that pairs only through short forms never matches", () => {
+  test("a word with a vowel is no short form away from a unit's number, and a name that pairs only through short forms never matches", () => {
     for (const [name, value] of [
       ["Ukraine", "UK"],
       ["UK", "Ukraine"],
@@ -566,6 +566,40 @@ describe("rankChoices same name written another way", () => {
       index: 1,
       rank: "leading",
     });
+  });
+
+  test("an address keeps its name when the site writes a unit's word short or adds the ZIP+4", () => {
+    // As a typeahead lists its results: the address written short with its ZIP+4 first.
+    const listed = [
+      "1 Harbor Bldg Exampleton, CA 94110-1234, US",
+      "Exampleton Harbor Terminal (Harbor Building Gate E) 1 Example Quay, Exampleton, CA, US",
+      "Harbor Building 301 Trade Ctr, Exampleton, CA, US",
+    ];
+    expect(rankListed(listed.map((name) => choice(name)), "1 Harbor Building, Exampleton, CA 94110")).toEqual({ status: "picked", index: 0, rank: "alike" });
+    expect(rankListed([place("1 Harbor Bldg", "Exampleton, CA 94110-1234, US")], "1 Harbor Building, Exampleton, CA 94110")).toEqual({ status: "picked", index: 0, rank: "alike" });
+    for (const [name, value] of [
+      ["151 3rd St Exampleton, CA 94103-3107, US", "151 3rd St, Exampleton, CA 94103"],
+      ["151 3rd St, Exampleton, CA 94103, US", "151 3rd St, Exampleton, CA 94103-3107"],
+      ["100 Example St Suite 200, Exampleton, IL 62701", "100 Example St Ste 200, Exampleton, IL 62701"],
+      ["100 Example St Ste 200, Exampleton, IL 62701-1234", "100 Example St Suite 200, Exampleton, IL 62701"],
+      ["100 Example St Floor 3, Exampleton, IL 62701", "100 Example St Fl 3, Exampleton, IL 62701"],
+      ["100 Example St Fl 3, Exampleton, IL 62701", "100 Example St Floor 3, Exampleton, IL 62701"],
+      ["100 Example St Apartment 4B, Exampleton, IL 62701", "100 Example St Apt 4B, Exampleton, IL 62701"],
+      ["100 Example St Apt 4B, Exampleton, IL 62701", "100 Example St Apartment 4B, Exampleton, IL 62701"],
+    ] as const)
+      expect(rankAll([choice(name)], value), `${name} | ${value}`).toEqual({ status: "picked", index: 0, rank: "alike" });
+  });
+
+  test("a short word with a vowel pairs only before a unit's number, never as the other's start, and two ZIP+4s never pair", () => {
+    for (const [name, value] of [
+      ["151 3rd St, Exampleton, CA 94103-9999", "151 3rd St, Exampleton, CA 94103-3107"],
+      ["100 Example State Park", "100 Example Ste Park"],
+      ["100 Bailey St", "100 Bay St"],
+      ["Example Coast Toy", "Example Cat Toy"],
+      ["100 Example St Aptos 4", "100 Example St Apt 4"],
+      ["Exampleton, Floor 33101", "Exampleton, FL 33101"],
+    ] as const)
+      expect(rankAll([choice(name)], value), `${name} | ${value}`).toEqual({ status: "missing" });
   });
 });
 

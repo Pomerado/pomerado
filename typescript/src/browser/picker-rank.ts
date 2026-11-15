@@ -44,8 +44,10 @@ export type PickerRanking =
  * above Example Square, Exampleton, CA), then the same name written another way: a name, or
  * with `options.leading` its leading part,
  * whose words pair one for one, in order, with a spelling's, splitting words at spacing and
- * punctuation (not a period, comma or colon between digits, nor a mark that ends a word, as in C#
- * or 1%, other than a bracket, quote or . , : ; ! ?), each pair equal, a singular and its
+ * punctuation (not a period, comma or colon between digits, nor a hyphen joining a ZIP's five
+ * digits to four more, nor a mark that ends a word, as in C# or 1%, other than a bracket, quote or
+ * . , : ; ! ?), each pair equal, a ZIP and its own ZIP+4 (94110 and 94110-1234, never two
+ * ZIP+4s), a singular and its
  * plural (a final s, not after s; es after s, x, z, ch, sh or o; or ies for a y after a consonant;
  * the singular three or more letters, so Adam pairs with Adams), or one written
  * short for the other either way, and at least one pair not short (`alike`: Union Square for
@@ -53,9 +55,13 @@ export type PickerRanking =
  * Sq alone). A word written short there is an abbreviation: two to four Latin letters with no
  * vowel (a, e, i, o, u or y), at least two fewer than the other, starting with its first letter
  * and holding the rest of its letters in order, such as Sq, Blvd or NW, so UK never pairs with
- * Ukraine nor Oak with Oakwood, either way; with `options.spellings`, a short word that has other
- * written forms there, such as St or a state's code, pairs only with those, so MS never pairs with
- * Missouri nor St with Station. Then a name holding a spelling as whole words (New
+ * Ukraine nor Oak with Oakwood, either way; right before a word holding a digit, as a unit's word
+ * stands before its number, it may hold a vowel when it is not the other's start, so Ste 200 pairs
+ * with Suite 200 and Apt 4B with Apartment 4B, but Ste Park never with State Park nor Apt 4 with
+ * Aptos 4; with `options.spellings`, a short word that has other written forms there, such as St
+ * or a state's code, pairs only with those, so MS never pairs with Missouri nor St with Station,
+ * and a state's code is one only where a place ends the value, so Fl 3 pairs with Floor 3 while
+ * FL 33101 stays Florida. Then a name holding a spelling as whole words (New
  * York for York), then a name made of a
  * spelling's words, no more and no fewer,
  * whose parts, as its own or the spelling's commas, semicolons, colons, slashes, bars, brackets or
@@ -240,11 +246,12 @@ export const rankChoices = (
     other === one + "s" || other === one + "es" || (one.endsWith("y") && other === one.slice(0, -1) + "ies");
   const pairsAsNoun = (want: string, have: string) => want === have || plural(want, have) || plural(have, want);
   // A text's words for `alike`, past a leading "the": spacing and punctuation split them, except a
-  // period, comma or colon between two digits, which is part of a number, and a mark that ends a
-  // word, as in C# or 1%, which is part of the word; brackets, quotes and . , : ; ! ? never are.
+  // period, comma or colon between two digits, which is part of a number, a hyphen between a
+  // ZIP's five digits and four more, which make one ZIP+4, and a mark that ends a word, as in C#
+  // or 1%, which is part of the word; brackets, quotes and . , : ; ! ? never are.
   const alikeWords = (text: string) => {
     const each = fold(text)
-      .split(/(?:\s|(?!(?<=[\p{L}\p{N}])(?:(?![.,:;!?'"\u00a1\u00bf])\p{Po})+(?=[^\p{L}\p{N}]|$))(?!(?<=\p{N})[.,:]\p{N})\p{P})+/u)
+      .split(/(?:\s|(?!(?<=[\p{L}\p{N}])(?:(?![.,:;!?'"\u00a1\u00bf])\p{Po})+(?=[^\p{L}\p{N}]|$))(?!(?<=\p{N})[.,:]\p{N})(?!(?<=(?<![\p{N}-])\d{5})-\d{4}(?![\p{N}]|-\p{N}))\p{P})+/u)
       .filter(Boolean);
     return each[0] === "the" && each.length > 1 ? each.slice(1) : each;
   };
@@ -255,29 +262,46 @@ export const rankChoices = (
     (other === one + "es" && /(?:s|x|z|ch|sh|o)$/u.test(one)) ||
     (/[^aeiou]y$/u.test(one) && other === one.slice(0, -1) + "ies");
   // A short word whose other written forms are known, such as St or a state's code, stands only
-  // for those forms, so MS never pairs with Missouri nor St with Station.
-  const knownForms = once((brief: string) => {
-    const forms = (options.spellings?.(brief) ?? []).map(bare).filter((form) => form !== brief);
+  // for those forms, so MS never pairs with Missouri nor St with Station. Read with the word after
+  // it, a state's code is one only where a place ends the value, so FL 33101 is Florida and Fl 3 is
+  // not.
+  const knownForms = once((text: string) => {
+    const [brief = "", ...rest] = text.split(" ");
+    const after = rest.length === 0 ? "" : " " + rest.join(" ");
+    const forms = (options.spellings?.(text) ?? [])
+      .map(bare)
+      .flatMap((form) => (form.endsWith(after) ? [form.slice(0, form.length - after.length)] : []))
+      .filter((form) => form !== brief);
     return forms.length === 0 ? undefined : new Set(forms);
   });
-  // An abbreviation: two to four Latin letters with no vowel, written short for a longer word, and
-  // for one of its known forms when it has any.
-  const abbreviates = (brief: string, full: string) =>
-    !/[aeiouy]/u.test(brief) && short(brief, full) && (knownForms(brief)?.has(full) ?? true);
-  // How two words pair at `alike`: "same" as written, "noun" as a singular and its plural, "short"
-  // as an abbreviation either way, or not at all.
-  const alikePair = (want: string, have: string) =>
-    want === have
+  // An abbreviation: two to four Latin letters, written short for a longer word, and for one of
+  // its known forms when it has any. It holds no vowel, unless the word after it holds a digit, as
+  // a unit's number follows its word (Ste 4, Apt 4B), and it is not the longer word's start.
+  const abbreviates = (brief: string, full: string, next: string) => {
+    const unit = /\p{N}/u.test(next);
+    return (
+      (!/[aeiouy]/u.test(brief) || (unit && !full.startsWith(brief))) &&
+      short(brief, full) &&
+      (knownForms(unit ? `${brief} ${next}` : brief)?.has(full) ?? true)
+    );
+  };
+  // A ZIP+4's own ZIP, its first five digits.
+  const zipOf = (word: string) => (/^\d{5}-\d{4}$/u.test(word) ? word.slice(0, 5) : undefined);
+  // How two words pair at `alike`: "same" as written, or as a ZIP and its own ZIP+4 either way,
+  // "noun" as a singular and its plural, "short" as an abbreviation either way, or not at all.
+  // `wantNext` and `haveNext` are the words after each.
+  const alikePair = (want: string, have: string, wantNext = "", haveNext = "") =>
+    want === have || zipOf(want) === have || zipOf(have) === want
       ? "same"
       : /^\p{L}{3,}$/u.test(want.length < have.length ? want : have) && (alikePlural(want, have) || alikePlural(have, want))
         ? "noun"
-        : abbreviates(want, have) || abbreviates(have, want)
+        : abbreviates(want, have, wantNext) || abbreviates(have, want, haveNext)
           ? "short"
           : undefined;
   // Whether two texts' words pair one for one, in order, not only through abbreviations.
   const alikeAll = (want: readonly string[], have: readonly string[]) => {
     if (want.length !== have.length || want.length === 0) return false;
-    const pairs = want.map((word, at) => alikePair(word, have[at] ?? ""));
+    const pairs = want.map((word, at) => alikePair(word, have[at] ?? "", want[at + 1], have[at + 1]));
     return pairs.every((pair) => pair !== undefined) && pairs.some((pair) => pair !== "short");
   };
   const spellings = wanted.map(squash).filter((spelling) => spelling !== "");
