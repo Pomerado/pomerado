@@ -22,7 +22,7 @@ import {
 import { Unanswered } from "./login-field-asks.js";
 import { credentialUnavailable } from "./autofill-fresh-values.js";
 import type { ReplaySession } from "./autofill-replay-session.js";
-import type { RejectedMarker } from "../destinations/autofill-recipe.js";
+import { isSecondFactor, type RejectedMarker } from "../destinations/autofill-recipe.js";
 import type { AutofillLogin } from "./autofill-values.js";
 import {
   emptyReplayFields,
@@ -187,6 +187,21 @@ export const runReplayStep = <E extends YieldableError, V extends string, L exte
       inspection,
     );
     if (refused !== undefined) return refused;
+    // A recorded password refill with no second factor goes out only while the site shows no
+    // error: a screen that asks for the password alone again may be one that refused it.
+    if (
+      planned.includes("password") &&
+      sent.maySent.has("password") &&
+      !asked.fields.some((field) => isSecondFactor(field.slot))
+    ) {
+      const shown = yield* session.observeRejections;
+      if (shown === "unavailable") return "credential_already_filled" as const;
+      const marked = shown.find((slot) => slot !== "code");
+      if (marked !== undefined)
+        return marked === "password"
+          ? ("password_rejected" as const)
+          : ("username_rejected" as const);
+    }
     // Admitted past a code that may have gone out with no refusal: the screen's planned code
     // refill, which is spent now, however the screen sends (a code box that sends itself reports
     // no send).

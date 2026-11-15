@@ -228,7 +228,7 @@ it("records no naming of a control that carries a registered secret", async () =
   expect(scripts.join("\n")).not.toContain(copied);
 });
 
-it("marks a screen as asking for the password again beside a second factor no earlier screen took, or right after the screen that took it", () => {
+it("marks a screen as asking for the password again only beside a second factor no earlier screen took", () => {
   const page = "https://login.example.test/password";
   const screen = (...slots: ("password" | "code")[]) => ({
     page,
@@ -238,13 +238,11 @@ it("marks a screen as asking for the password again beside a second factor no ea
   const open = state();
   open.steps.push(screen("password"));
   expect(reasksPassword(open, lateCode, ["password"])).toBe(true);
-  expect(reasksPassword(open, screen("password"), ["password"])).toBe(true);
-  // No refill of the password, or a sign-in that is not open.
+  // No refill of the password, a screen without a code, or a sign-in that is not open.
   expect(reasksPassword(open, lateCode, [])).toBe(false);
+  expect(reasksPassword(open, screen("password"), ["password"])).toBe(false);
   expect(reasksPassword(undefined, lateCode, ["password"])).toBe(false);
-  // A code already went out on an earlier screen: a run's replay would refuse the refill, and the
-  // screen before a password-only screen took no password.
+  // A code already went out on an earlier screen: a run's replay would refuse the refill.
   open.steps.push(screen("code"));
   expect(reasksPassword(open, lateCode, ["password"])).toBe(false);
-  expect(reasksPassword(open, screen("password"), ["password"])).toBe(false);
 });

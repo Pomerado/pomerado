@@ -37,9 +37,9 @@ import {
   provesLogin,
   noteRefill,
   passwordFillsSpent,
-  passwordRefillUnrefused,
   reasksCode,
   reasksPassword,
+  reasksPasswordAlone,
   recordResubmit,
   recordStep,
   registeredSecretIn,
@@ -597,8 +597,14 @@ export const makeSignInRecorder = (input: {
       const { state, refund } =
         open === undefined ? openSignIn(at) : { state: open, refund: () => undefined };
       const reasked =
-        reasksPassword(open, step, refills) &&
-        (yield* passwordRefillUnrefused(open, step, h.reportCorrelation))
+        reasksPassword(open, step, refills) ||
+        (yield* reasksPasswordAlone(
+          open,
+          step,
+          refills,
+          afterSubmit !== undefined && afterSubmit.open === open ? afterSubmit.slots : [],
+          h.reportCorrelation,
+        ))
           ? ("password" as const)
           : reasksCode(open, step, refills, inspected.screen.fields)
             ? ("code" as const)

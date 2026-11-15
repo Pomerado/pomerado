@@ -515,11 +515,10 @@ export const armStep = (
 
 /**
  * Whether a screen of the open sign-in (`open`, none for a sign-in it starts or a successor's
- * restart) asks for the password an earlier screen of it took, as its fill refills (`refills`):
+ * restart) asks for the password an earlier screen of it took, as its fill refills (`refills`),
  * beside a second factor none of its earlier screens took, as a site that wants the password
- * re-entered with a one-time code does, or with no second factor right after the screen that took
- * it, as a site that asks for it on each of two screens does. The recipe records the refill there,
- * and only there a run's replay makes it.
+ * re-entered with a one-time code does: the recipe records the refill there, and only there a
+ * run's replay makes it. A screen with no second factor is `reasksPasswordAlone`'s.
  */
 export const reasksPassword = (
   open: AutofillSignInState | undefined,
@@ -528,25 +527,35 @@ export const reasksPassword = (
 ) => {
   const earlier = (which: (slot: AutofillSlot) => boolean) =>
     open?.steps.some((taken) => taken.fields.some((field) => which(field.slot))) === true;
-  if (!refills.includes("password")) return false;
-  return step.fields.some((field) => isSecondFactor(field.slot))
-    ? earlier((slot) => slot === "password") && !earlier(isSecondFactor)
-    : open?.steps.at(-1)?.fields.some((field) => field.slot === "password") === true;
+  return (
+    refills.includes("password") &&
+    step.fields.some((field) => isSecondFactor(field.slot)) &&
+    earlier((slot) => slot === "password") &&
+    !earlier(isSecondFactor)
+  );
 };
 
 /**
- * Whether the recorder may mark a screen that asks for the password again (`reasksPassword`) as a
- * refill: one with a second factor always, one without only when no error marker the open
- * sign-in's screens recorded shows now (`recordedRejections`), so the site moved on from the
- * screen before with no rejection. A look that fails marks nothing.
+ * Whether a screen of the open sign-in (`open`) asks for the password again with no second factor,
+ * right after the screen that took it, as its fill refills (`refills`), as a site that asks for
+ * the password on each of two screens does, while the site showed none of the sign-in's recorded
+ * error markers: neither right after the last submit (`shownAfterSubmit`, their slots) nor now
+ * (`recordedRejections`). The recipe records the refill there, and only there a run's replay
+ * makes it. A look that fails records none.
  */
-export const passwordRefillUnrefused = (
+export const reasksPasswordAlone = (
   open: AutofillSignInState | undefined,
   step: AutofillStep,
+  refills: readonly AutofillSlot[],
+  shownAfterSubmit: readonly string[],
   correlation?: unknown,
 ) =>
-  open === undefined || step.fields.some((field) => isSecondFactor(field.slot))
-    ? Effect.succeed(true)
+  open === undefined ||
+  !refills.includes("password") ||
+  step.fields.some((field) => isSecondFactor(field.slot)) ||
+  open.steps.at(-1)?.fields.some((field) => field.slot === "password") !== true ||
+  shownAfterSubmit.length > 0
+    ? Effect.succeed(false)
     : recordedRejections(open.hooks, open.steps.map(recipeStep), correlation).pipe(
         Effect.map((shown) => shown !== "unavailable" && shown.length === 0),
       );

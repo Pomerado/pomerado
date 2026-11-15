@@ -702,11 +702,13 @@ it("records a screen that asks for the password again with a code, or right afte
   expect(again?.recipe.version).toBe(5);
   expect(again?.recipe.steps[1]).toMatchObject({ refills: ["password"] });
 
-  // The login screen's recorded error showed after its submit: the site refused the password.
+  // The login screen's recorded error showed right after its submit, and went before the next
+  // screen: the site refused the password.
   const refused = harness({ held: account, toast: "#wrong-password" });
   const unmarked = await refused.run((recorder) =>
     Effect.gen(function* () {
       yield* recorder.step(markedLogin, undefined, Effect.void);
+      refused.shown.clear();
       yield* recorder.step(passwordOnly, undefined, Effect.void);
       yield* recorder.step(signedIn, undefined, Effect.void);
       return recorder.published();

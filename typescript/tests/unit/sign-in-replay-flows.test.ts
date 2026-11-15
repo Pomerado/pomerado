@@ -679,6 +679,25 @@ it("takes the site's error after a recorded refill of the password as its reject
   expect(passwords).toHaveLength(2);
 });
 
+it("takes the site's error on a login screen still showing as a rejection before a recorded refill of the password in its box", async () => {
+  const fake = scriptedSite({
+    entry: "login",
+    screens: { login: loginScreen, account: [] },
+    fill: () => ({ markers: ["#password-error"] }),
+  });
+  const sameBox = {
+    ...againRefill,
+    page: `${origin}/login`,
+    fields: [{ selector: "#password", slot: "password" as const }],
+    submit: "#sign-in",
+  };
+  const { result } = await signIn(lateCodeRecipe(loginStep, sameBox), fake);
+  expect(result).toEqual(
+    Either.left(new SignInRunFailed({ code: "CredentialsRejected", reason: "password" })),
+  );
+  expect(fake.fills.map(({ page }) => page)).toEqual(["login"]);
+});
+
 it("enters the password again with the code on a screen the recipe records as asking for both", async () => {
   const fake = lateCodeSite();
   const { result } = await signIn(lateCodeRecipe(loginStep, lateCodeStep), fake);
