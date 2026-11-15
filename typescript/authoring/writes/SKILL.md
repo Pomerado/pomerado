@@ -659,7 +659,10 @@ account ID, is a free-form input, never an enum member, example or default in th
 public schema (core's input schema rules). The last choice or confirm asked before a commit that
 buys or pays, once the page shows that commit's items and total, passes `order` (the caller-input
 skill). When you change a script whose last such question passes none, add it, whatever the change
-is for.
+is for. Fill `order` as the checkout shows it: each item's real quantity, its `unit` when sold by
+weight or measure, and its price each, its line total or both; fees, a tip and a discount go in
+their own fields. When an item's measure is in a unit `unit` does not list, give
+it quantity 1 and its line total, with the measure as the checkout shows it in its name.
 
 The composed script publishes without ever running end to end, so it ends with a check that
 tells whether its action succeeded: its commit response checked as above, the site's

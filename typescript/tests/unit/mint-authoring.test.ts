@@ -925,6 +925,26 @@ it("has a write's last question before a commit that pays pass order, in any cha
 });
 
 /*
+ * A checkout's final confirm folded each line's quantity into its name, passed the line total as
+ * the price each, and listed its fees and tip as items. The writes and caller-input skills name
+ * the order's own fields for those, and the cart skill suggests the same parts for a checkout's
+ * output, apart from the confirm's fixed fields.
+ */
+it("has a purchase confirm's order and a checkout's output give lines, fees and tip their own fields", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
+  expect(text("writes")).toContain(
+    "Fill `order` as the checkout shows it: each item's real quantity, its `unit` when sold by weight or measure, and its price each, its line total or both; fees, a tip and a discount go in their own fields. When an item's measure is in a unit `unit` does not list, give it quantity 1 and its line total, with the measure as the checkout shows it in its name.",
+  );
+  expect(text("caller-input")).toContain(
+    "its `items` (each `name`, `quantity`, `unit` for an item sold by weight or measure, and `price` each, `lineTotal` or both), `fees` (each `name` and `amount`), `discount`, `shipping`, `tax`, `tip` and `total`",
+  );
+  expect(text("cart")).toContain(
+    "Prefer returning each line bought with its quantity, its unit when the site sells it by weight or measure, its price each and its line total (the core skill's output fields), and each fee as its own entry, by its name on the site and its amount, with the tip and any discount in their own fields. This output is a suggestion, separate from the `order` a purchase's final confirm passes (the caller-input skill), which has its own fixed fields.",
+  );
+});
+
+/*
  * An accounting app's invoice list already showed the sent invoice, and the minter kept reading
  * other pages for minutes, some of them refused for not proving the record or for reading without
  * bound. The first bounded read-back that matches confirms the write, and nothing from before the
@@ -1392,9 +1412,9 @@ it("renders the pinned standalone authoring", async () => {
     ["a08f1ef89cc10bf11e17b8d6086b6e37649b1d5d11b78c0542cc7db32460b7e3", "testing"],
     ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
     ["b38084ecbbecd8db08c15170c700a55ba96ee1c8ca598fabc56a8aa9f30c110d", "forms"],
-    ["bcdd6b33117fa7d05ad002e87eac2976ab9203e2d37e4c10f4bd97a44f77ab21", "writes"],
-    ["ec18eb55ff00bdd4eb4dc9bc4cc7e0adbeaa0f1e004c0b4e37ab92cd0c3b775c", "cart"],
-    ["1a9849b499346afcc9ff8ff2621ee6b308f5fdab0ced671c0919d5cd469c7dc3", "caller-input"],
+    ["826a65fc4a984dd79675123f76388a0c12ea0e4fe1e2ae80b7c87140d743d28a", "writes"],
+    ["e2921d7f83706385e627dbf0d123aaaa08fe61af31e04f779bc890aea93361da", "cart"],
+    ["0d715b32ed61f324f4da915935bc5db1e0b3d87d17aa4a86e276197a79bdcd6d", "caller-input"],
     ["47cba18121554c05c379f6ac754de07e8bfa7515250055585e631a2eb88b7468", "publication"],
     ["2dc797e8ced82dc914d311a8b42739e9234e806b14213fa1bdf2cfbaf5a4474f", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],

@@ -295,38 +295,102 @@ export type Question = typeof Question.Type;
 const Amount = Schema.String.pipe(Schema.pattern(/^\d{1,9}(?:\.\d{1,3})?$/u));
 /** The longest item name an order shows, in UTF-16 code units. */
 export const longestItemName = 200;
-/** One line of an order: the item as the checkout names it, how many, and its price each. */
+const ItemName = Schema.String.pipe(Schema.pattern(/\S/u), Schema.maxLength(longestItemName));
+/**
+ * One line of an order: the item as the checkout names it, how many, its price each and the
+ * line's total, as the checkout shows them. An item sold by weight or measure gives its `unit`,
+ * its quantity in that unit and its price per unit.
+ */
 export const OrderItem = Schema.Struct({
-  name: Schema.String.pipe(Schema.pattern(/\S/u), Schema.maxLength(longestItemName)),
-  quantity: Schema.Int.pipe(Schema.between(1, 99_999)),
-  price: Amount,
+  name: ItemName,
+  /**
+   * A whole number unless the item gives its `unit`; then up to three decimal places (checked in
+   * OrderFacts).
+   */
+  quantity: Schema.Number.pipe(
+    Schema.between(0.001, 99_999),
+    Schema.filter((quantity) => Number(quantity.toFixed(3)) === quantity),
+  ),
+  unit: Schema.optional(
+    Schema.Literal(
+      "g",
+      "kg",
+      "mg",
+      "oz",
+      "lb",
+      "ml",
+      "L",
+      "fl oz",
+      "pt",
+      "qt",
+      "gal",
+      "mm",
+      "cm",
+      "m",
+      "in",
+      "ft",
+      "yd",
+    ),
+  ),
+  /** At least one of `price` and `lineTotal` (checked in OrderFacts). */
+  price: Schema.optional(Amount),
+  lineTotal: Schema.optional(Amount),
 });
+/** A fee the checkout charges, by its name there. */
+export const OrderFee = Schema.Struct({ name: ItemName, amount: Amount });
 /**
  * The facts of the order a purchase confirm asks about. Everyone who sees the request sees them,
- * so they hold nothing from the caller's own account, such as an address or a card.
+ * so they hold nothing from the caller's own account, such as an address or a card. Fees, a
+ * discount and a tip go in their own fields.
  */
 export const OrderFacts = Schema.Struct({
   currency: Schema.String.pipe(Schema.pattern(/^[A-Z]{3}$/u)),
-  items: Schema.Array(OrderItem).pipe(Schema.minItems(1), Schema.maxItems(20)),
+  items: Schema.Array(OrderItem).pipe(
+    Schema.minItems(1),
+    Schema.maxItems(20),
+    Schema.filter(
+      (items) =>
+        items.every(
+          (item) =>
+            (item.unit !== undefined || Number.isInteger(item.quantity)) &&
+            (item.price !== undefined || item.lineTotal !== undefined),
+        ),
+      { message: () => "each item has a price or line total, and a whole quantity unless a unit" },
+    ),
+  ),
+  discount: Schema.optional(Amount),
+  fees: Schema.optional(Schema.Array(OrderFee).pipe(Schema.maxItems(10))),
   shipping: Schema.optional(Amount),
   tax: Schema.optional(Amount),
+  tip: Schema.optional(Amount),
   total: Amount,
 });
 export type OrderFacts = typeof OrderFacts.Type;
 
 /**
- * An order's facts in the host's own words, as a request's notice shows them. Each item name is
- * quoted, so no name reads as the host's words.
+ * An order's facts in the host's own words, as a request's notice shows them. Each item and fee
+ * name is quoted, so no name reads as the host's words. An order with none of the later fields
+ * (`unit`, `lineTotal`, `discount`, `fees`, `tip`) reads exactly as it did before them.
  */
 export const orderNotice = (order: OrderFacts) => {
   const money = (amount: string) => `${amount} ${order.currency}`;
-  const items = order.items.map(
-    (item) => `${item.quantity} × ${JSON.stringify(item.name)} at ${money(item.price)} each`,
+  const items = order.items.map((item) =>
+    [
+      `${item.quantity}${item.unit === undefined ? "" : ` ${item.unit}`} × ${JSON.stringify(item.name)}`,
+      ...(item.price === undefined
+        ? []
+        : [`at ${money(item.price)} ${item.unit === undefined ? "each" : `per ${item.unit}`}`]),
+      ...(item.lineTotal === undefined ? [] : [`(${money(item.lineTotal)})`]),
+    ].join(" "),
   );
+  const fees = (order.fees ?? []).map((fee) => `${JSON.stringify(fee.name)} ${money(fee.amount)}`);
   return [
     `Order: ${items.join("; ")}.`,
+    ...(order.discount === undefined ? [] : [`Discount: ${money(order.discount)}.`]),
+    ...(fees.length === 0 ? [] : [`Fees: ${fees.join("; ")}.`]),
     ...(order.shipping === undefined ? [] : [`Shipping: ${money(order.shipping)}.`]),
     ...(order.tax === undefined ? [] : [`Tax: ${money(order.tax)}.`]),
+    ...(order.tip === undefined ? [] : [`Tip: ${money(order.tip)}.`]),
     `Total: ${money(order.total)}.`,
   ].join(" ");
 };
