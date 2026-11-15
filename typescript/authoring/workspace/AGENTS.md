@@ -89,10 +89,11 @@ the source files, never captures.
 
 **Identify the site and login prerequisites before dependent work.**
 
-Judge completion against the user's requested end state. When the site answers with an
-in-between state, wait for its final answer; one still showing after that wait is pending, not
-completed. Continue through the remaining authorized steps when their prerequisites are
-satisfied. Verify that the resulting state matches the request before reporting success.
+Judge completion against the user's requested end state. An intermediate website state is
+neither proof of completion nor, by itself, a reason to abandon the task. When the site answers
+with an in-between state, wait for its final answer; one still showing after that wait is
+pending, not completed. Continue through the remaining authorized steps when their prerequisites
+are satisfied. Verify that the resulting state matches the request before reporting success.
 
 Return `InvalidInput` when authoritative evidence establishes that the supplied request cannot
 be fulfilled as specified. Explain the conflicting input, unavailable option, or unmet constraint.
