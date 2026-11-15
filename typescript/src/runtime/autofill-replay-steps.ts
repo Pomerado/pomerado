@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Effect, Schema } from "effect";
 import type { YieldableError } from "effect/Cause";
+import type { MarkerSettle } from "../destinations/marker-settle.js";
 import type { SignInRecipe } from "../destinations/sign-in-recipe.js";
 import type { CheckedWorkspace, ReplayWorkspace } from "./autofill-replay-workspace.js";
 import {
@@ -120,6 +121,11 @@ export interface AutofillReplayTiming {
    * between its marker checks (1 s when absent).
    */
   readonly codeLookMs?: number;
+  /**
+   * How long a hand-off screen's full check waits for a marker drawn late, on a page that settled
+   * without one (`markerSettle` when absent).
+   */
+  readonly markerSettle?: MarkerSettle;
 }
 /** How long a replay waits for a recorded screen's fields before it gives up: sign-in pages are often slow. */
 const recordedScreenWaitMs = 30_000;

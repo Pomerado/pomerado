@@ -13,6 +13,7 @@ import type {
   AutofillStep,
 } from "../destinations/autofill-step.js";
 import { handOffPrompt } from "../destinations/autofill-contracts.js";
+import { settledMarkerCheck } from "../destinations/marker-settle.js";
 import { refusalEvidence } from "../destinations/autofill-refusal-evidence.js";
 import { isIdentifier, screenSubmit, submittedLoginProof } from "./autofill-state.js";
 import type { AutofillLogin } from "./autofill-values.js";
@@ -323,11 +324,37 @@ const handOffShown = <E extends YieldableError, V extends string, L extends Auto
   });
 
 /**
+ * The recipe's full check, once, on a page that settled without the marker: a saved session's page
+ * may draw it late, or show it only on the account page the check opens (`openPath`). It waits for
+ * a late marker as `settledMarkerCheck` does, and passes only when the marker shows.
+ */
+const signedInLate = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  input: AutofillReplayInput<E, V, L>,
+  replay: Replay<E, V, L>,
+) =>
+  settledMarkerCheck(
+    (indicator) =>
+      replay
+        .verify(indicator)
+        .pipe(
+          Effect.map(
+            (shown): AutofillSignedInCheck =>
+              shown
+                ? { signedIn: true, url: "" }
+                : { signedIn: false, failed: "indicator_not_visible" },
+          ),
+        ),
+    input.recipe.signedIn,
+    replay.timing.markerSettle,
+  ).pipe(Effect.map((check) => check.signedIn));
+
+/**
  * A recorded hand-off screen (`approval: "handoff"`), which needs no identifier first. Once the
- * page settles without the marker, a replay that may not hand off stops there unsent
- * (`valuesNeeded`), as at any approval; one that may (`handOff`) asks the person one
- * `browser_handoff` question there, with no values. The person signs in in the browser and marks it
- * done; nothing is typed, and the check after the screens decides (`signedInByHandOff`).
+ * page settles without the marker and the recipe's full check fails there (`signedInLate`), a
+ * replay that may not hand off stops unsent (`valuesNeeded`) on the page the browser then settles
+ * on, as at any approval; one that may (`handOff`) asks the person one `browser_handoff` question
+ * there, with no values. The person signs in in the browser and marks it done; nothing is typed,
+ * and the check after the screens decides (`signedInByHandOff`).
  */
 const handOffScreen = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   input: AutofillReplayInput<E, V, L>,
@@ -335,7 +362,12 @@ const handOffScreen = <E extends YieldableError, V extends string, L extends Aut
   until: number,
 ) =>
   Effect.gen(function* () {
-    const shown = yield* handOffShown(replay, until);
+    let shown = yield* handOffShown(replay, until);
+    // The full check may open the account page, so a hand-off waits for a page to settle again.
+    if (shown instanceof URL)
+      shown = (yield* signedInLate(input, replay))
+        ? "signed_in"
+        : yield* handOffShown(replay, (yield* Clock.currentTimeMillis) + replay.timing.stepWaitMs);
     if (shown === "signed_in") {
       yield* input.emit({ stage: "skipped", reason: "signed_in_indicator" });
       return shown;
