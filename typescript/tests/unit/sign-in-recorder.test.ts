@@ -655,7 +655,7 @@ it("refuses a password screen before any identifier screen while the build holds
   expect(host.filled).toEqual([]);
 });
 
-it("records a screen that asks for the password again with a code as a version 5 refill, and a refill without a code as none", async () => {
+it("records a screen that asks for the password again with a code, or right after the screen that took it, as a version 5 refill, unless the site's error shows", async () => {
   const host = harness({ held: account, answers: { code: ["482913"] } });
   const published = await host.run((recorder) =>
     Effect.gen(function* () {
@@ -699,8 +699,22 @@ it("records a screen that asks for the password again with a code as a version 5
       return recorder.published();
     }),
   );
-  expect(again?.recipe.version).toBe(1);
-  expect(again?.recipe.steps[1]).not.toHaveProperty("refills");
+  expect(again?.recipe.version).toBe(5);
+  expect(again?.recipe.steps[1]).toMatchObject({ refills: ["password"] });
+
+  // The login screen's recorded error showed right after its submit, and went before the next
+  // screen: the site refused the password.
+  const refused = harness({ held: account, toast: "#wrong-password" });
+  const unmarked = await refused.run((recorder) =>
+    Effect.gen(function* () {
+      yield* recorder.step(markedLogin, undefined, Effect.void);
+      refused.shown.clear();
+      yield* recorder.step(passwordOnly, undefined, Effect.void);
+      yield* recorder.step(signedIn, undefined, Effect.void);
+      return recorder.published();
+    }),
+  );
+  expect(unmarked?.recipe.steps[1]).not.toHaveProperty("refills");
 });
 
 it("records no refill on a screen that asks for the password again after a code already went out", async () => {

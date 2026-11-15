@@ -16,10 +16,12 @@ import type {
 import {
   type AutofillRecipeStep,
   isSecondFactor,
+  recipeStep,
   type RefillSlot,
 } from "../destinations/autofill-recipe.js";
 import type { ControlIdentity } from "../destinations/autofill-page-code.js";
 import type { TypedBox } from "../destinations/autofill-fill.js";
+import { recordedRejections } from "./autofill-rejection.js";
 import { report, type SignInReportContext } from "./sign-in-telemetry.js";
 
 /**
@@ -516,7 +518,7 @@ export const armStep = (
  * restart) asks for the password an earlier screen of it took, as its fill refills (`refills`),
  * beside a second factor none of its earlier screens took, as a site that wants the password
  * re-entered with a one-time code does: the recipe records the refill there, and only there a
- * run's replay makes it.
+ * run's replay makes it. A screen with no second factor is `reasksPasswordAlone`'s.
  */
 export const reasksPassword = (
   open: AutofillSignInState | undefined,
@@ -532,6 +534,31 @@ export const reasksPassword = (
     !earlier(isSecondFactor)
   );
 };
+
+/**
+ * Whether a screen of the open sign-in (`open`) asks for the password again with no second factor,
+ * right after the screen that took it, as its fill refills (`refills`), as a site that asks for
+ * the password on each of two screens does, while the site showed none of the sign-in's recorded
+ * error markers: neither right after the last submit (`shownAfterSubmit`, their slots) nor now
+ * (`recordedRejections`). The recipe records the refill there, and only there a run's replay
+ * makes it. A look that fails records none.
+ */
+export const reasksPasswordAlone = (
+  open: AutofillSignInState | undefined,
+  step: AutofillStep,
+  refills: readonly AutofillSlot[],
+  shownAfterSubmit: readonly string[],
+  correlation?: unknown,
+) =>
+  open === undefined ||
+  !refills.includes("password") ||
+  step.fields.some((field) => isSecondFactor(field.slot)) ||
+  open.steps.at(-1)?.fields.some((field) => field.slot === "password") !== true ||
+  shownAfterSubmit.length > 0
+    ? Effect.succeed(false)
+    : recordedRejections(open.hooks, open.steps.map(recipeStep), correlation).pipe(
+        Effect.map((shown) => shown !== "unavailable" && shown.length === 0),
+      );
 
 /** What named a control when the host found it: its `id` and `name` attributes. */
 type ControlNames = Pick<ControlIdentity, "id" | "name">;
