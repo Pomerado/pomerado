@@ -35,11 +35,11 @@ product number and a size, so a caller can pass a search or details tool's outpu
 When `reference/site-tools.json` lists such a tool, use its identifier, field names and option
 values (the core skill). Quantity, each option the product offers and, when the site lets a
 visitor set one, the location or store are inputs. When the store, stock or prices follow the
-delivery address, prefer an add-to-cart tool that takes it as an optional input, one of the
-account's saved addresses, and keeps the address the account has selected when it is left out:
-an add places no order, and a checkout still chooses its address as below. Set the options as
-"Configure, then read" in the core skill says before adding the product: a value the product
-does not offer throws `InvalidInput` with `field` and `available`.
+delivery address, an add-to-cart tool takes it as an optional input, one of the account's saved
+addresses, and keeps the address the account has selected when it is left out: an add places no
+order, and a checkout still chooses its address as below. Set the options as "Configure, then
+read" in the core skill says before adding the product: a value the product does not offer
+throws `InvalidInput` with `field` and `available`.
 
 ## Quantity
 
