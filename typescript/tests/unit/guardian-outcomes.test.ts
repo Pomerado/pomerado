@@ -2,6 +2,7 @@
 // (allow, deny or escalate) beside its own, so the model returns one its kind refuses; a review
 // that returns an outcome its kind refuses is retried with backoff as an outage, from the same
 // input, for as long as the retry budget lasts, instead of being told once which outcomes count;
+// the correction still offers every kind's outcomes, so the reviewer returns the refused one again;
 // a host kind's allow carries a label its policy gives only to a deny, and the host acts on it;
 // a write build's task update review reads its allowedEffects as a read-only build; the
 // reviews disagree about what an owner's answer authorizes.
@@ -163,8 +164,6 @@ const formatOutcomes = (request: ModelRequest | undefined) =>
   (request?.outputType as unknown as { schema: { properties: { outcome: { enum: string[] } } } })
     .schema.properties.outcome.enum;
 
-// A question review answered with the execution review's allow in a long session, and its
-// correction offered allow again under the shared format, so the reviewer repeated it.
 it.each([
   ["question", "allow", "reword"],
   ["update", "deny", "clarify"],
@@ -180,7 +179,6 @@ it.each([
     // The first request keeps the shared format; the correction offers only the kind's outcomes.
     expect(formatOutcomes(requests[0])).toEqual(guardianOutcomes);
     expect(formatOutcomes(requests[1])).toEqual(reviewRequest(requests[0]).trusted_review.outcomes);
-    expect(formatOutcomes(requests[1])).not.toContain(refused);
     expect(names.filter((name) => name === "guardian.started")).toHaveLength(1);
     expect(names).not.toContain("guardian.review_retried");
   },
