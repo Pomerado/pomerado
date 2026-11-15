@@ -560,8 +560,8 @@ const pickerPageCode = String.raw`(element, args) => {
  * accents and punctuation (from here on a leading "the" makes no other name), at `leading` or at
  * `place` is picked, unless, in a typeahead's results, it matched an option of several lines by its
  * first line alone and an enabled option listed before it holds the value's text before its first
- * comma as whole words in its first line: a search lists the place it means first, so those options
- * are refused as `option_unclear`.
+ * comma as whole words in its first line and the value's later comma parts in its text: a search
+ * lists the place it means first, so those options are refused as `option_unclear`.
  * One at a looser rank is refused as
  * `option_unclear`, alone or tied. Two options at the best rank are ambiguous, unless they are
  * copies with one label, text and a value, such as a country listed twice, which are one option, so
