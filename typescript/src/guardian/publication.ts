@@ -559,7 +559,7 @@ export const publicationWritePathPolicy =
  * or total; the review finds it wherever it is, a repair's unchanged code included.
  */
 export const publicationPurchaseOrderPolicy =
-  "The last declared choice or confirm a write asks before a commit that buys or pays passes `order` to `ask` with the items and total the page shows. One that passes none is a confirmation finding at that `ask`, in a repair too, even in code the repair did not change.";
+  "The last declared choice or confirm a write asks before a commit that buys or pays, once the page shows the items and total that commit pays, passes them as `order` to `ask`. One that passes none is a confirmation finding at that `ask`, in a repair too, even in code the repair did not change.";
 
 /** What Guardian reads about the output notes file, beside the example output's own rule. */
 export const publicationOutputNotesPolicy =
