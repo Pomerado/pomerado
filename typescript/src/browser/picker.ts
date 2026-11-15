@@ -510,15 +510,17 @@ const pickerPageCode = String.raw`(element, args) => {
  *   `"add"` (default: keep the chips already there) or `"replace"` (remove the others), and
  *   `options.create` types a value the list lacks and presses Enter to make a free-entry tag.
  * - `pickerOptions(control, options?)` opens the picker (typing `options.query` when given) and
- *   returns `{ kind, options: [{ label, value, disabled }] }`, every option it lists, scrolled
+ *   returns `{ kind, options: [{ label, text, value, disabled }] }` (`text` the option's whole text,
+ *   every line of it), every option it lists, scrolled
  *   through when the list renders as it scrolls, then closes it: the page's live options for a
  *   caller question or an `available` list.
  * - `pickAddress(control, address, options?)` resolves an address the caller typed through the
- *   field's suggestions as `resolveAddress` does, reading them with `pickerOptions`, then picks
- *   the one it accepted with `pickValue`, typing the text that brought it and taking the first of
- *   copies. It returns `pickValue`'s outcome with that text as `query` and the unit it split off
- *   as `unit`, for the site's own unit field, or, when it accepts none, `option_missing` with
- *   every suggestion the field gave as `available` and `unit`.
+ *   field's suggestions as `resolveAddress` does, reading each by its whole text with
+ *   `pickerOptions`, then picks the one it accepted with `pickValue`, typing the text that brought
+ *   it and taking the first of copies. It returns `pickValue`'s outcome with that text as `query`
+ *   and the unit it split off as `unit`, for the site's own unit field, or, when it accepts none,
+ *   `resolveAddress`'s refusal, `option_missing` or `option_unclear`, with every suggestion the
+ *   field gave as `available` and `unit`.
  *
  * The kind is detected from the control, or set as `options.kind`: `select`, `datalist`,
  * `typeahead` (an editable field: type, then choose a suggestion), `dropdown` (a button or div
@@ -1548,7 +1550,7 @@ const pickerOptions = async (control, options = {}) => {
     s.kind = await pickerDetect(s);
     if (["select", "select-multiple", "datalist"].includes(s.kind)) {
       const list = await pickerNativeRead(s, (options) => pickerAvailable(options).length === 0);
-      return { kind: s.kind, options: list.map((option) => ({ label: option.label, value: option.value, disabled: option.disabled })) };
+      return { kind: s.kind, options: list.map((option) => ({ label: option.label, text: option.label, value: option.value, disabled: option.disabled })) };
     }
     let scan;
     let field = s.control;
@@ -1572,7 +1574,7 @@ const pickerOptions = async (control, options = {}) => {
     const found = await pickerCollect(s, scan, null);
     if (!found.complete) throw pickerLoadingFailure(s, found.scan, s.markedAt, undefined, found.list.length);
     await pickerClose(s, field);
-    return { kind: s.kind, options: found.list.map((option) => ({ label: option.label, value: option.value, disabled: option.disabled })) };
+    return { kind: s.kind, options: found.list.map((option) => ({ label: option.label, text: pickerText(option), value: option.value, disabled: option.disabled })) };
   } catch (error) {
     throw pickerTimedOut(error, s);
   } finally {
@@ -1585,7 +1587,7 @@ const pickerResolveAddress = ${String(resolveAddressWith)};
 const pickAddress = async (control, address, options = {}) => {
   const suggest = async (query) => (await pickerOptions(control, { ...options, query })).options.filter((option) => !option.disabled);
   const match = { fold: pickerFold, spellings: pickerSpellings, rank: pickerRankChoices };
-  const found = await pickerResolveAddress(String(address ?? ""), suggest, (option) => option.label, match);
+  const found = await pickerResolveAddress(String(address ?? ""), suggest, (option) => option.text, match);
   if (!found.picked) return found;
   const picked = await pickValue(control, found.label, { ...options, query: found.query, tie: "first" });
   return picked.picked ? { ...picked, query: found.query, unit: found.unit } : { ...picked, wanted: String(address ?? "").replace(/\s+/g, " ").trim(), unit: found.unit };

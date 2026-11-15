@@ -4,8 +4,9 @@ import { rankChoices } from "./picker-rank.js";
 /**
  * What `resolveAddress` accepted: the site's suggestion as `suggest` gave it (`choice`) and as
  * `label` reads it, the text that brought it (`query`) and the unit split off the caller's
- * address (`unit`, "" for none). Or, when no text brought a usable suggestion, a refusal that
- * `pickRefusal` takes, listing every suggestion the site gave as `available`.
+ * address (`unit`, "" for none). Or a refusal that `pickRefusal` takes, listing every suggestion
+ * the site gave as `available`: `option_missing` when no text brought a usable suggestion, or
+ * `option_unclear`, with the usable ones as `matches`, when the best keeps the address only in part.
  */
 export type AddressOutcome<T> =
   | {
@@ -17,7 +18,7 @@ export type AddressOutcome<T> =
     }
   | {
       readonly picked: false;
-      readonly reason: "option_missing";
+      readonly reason: "option_missing" | "option_unclear";
       readonly wanted: string;
       readonly available: readonly string[];
       readonly matches: readonly string[];
@@ -189,7 +190,12 @@ export const resolveAddressWith = async <T>(
   // the caller's street words; by the place words, a unit-shaped part's included, it keeps after its
   // own street; by the share of the caller's street words its street keeps; and by showing no other
   // ZIP. It is whole when its street keeps any of the caller's street words, it keeps every place
-  // word, not counting a unit-shaped part, and it shows no other ZIP.
+  // word, not counting a unit-shaped part, and it shows no other ZIP. It is clean when it keeps the
+  // address field by field: its street keeps the caller's street name or any of its street words,
+  // its text holds every place word anywhere, as a suggestion whose lines were joined may hold its
+  // town in its street's part, and it shows no other ZIP; or it shows the caller's ZIP on a street
+  // that keeps more than half the caller's street words, or the caller's ZIP when that is all they
+  // gave.
   const score = (text: string) => {
     const theirs = houseOf(text);
     const shown = zipOf(text);
@@ -210,9 +216,12 @@ export const resolveAddressWith = async <T>(
       ...streetForms.map((list) => (list.length === 0 ? 0 : list.filter((forms) => forms.some((form) => ownWords.includes(form))).length / list.length)),
     );
     const kept = keeps(places, after);
+    // Its street kept the caller's street name, as checked above, or keeps any of its street words.
+    const named = share > 0 || (house.length > 0 && names.length > 0);
     return {
       value: [zip !== "" && shown === zip && share > 0.5 ? 1 : 0, kept + keeps(unitPlace, after), Math.round(share * 1000), other ? 0 : 1],
       whole: share > 0 && kept === total && !other,
+      clean: (named && keeps(places, phrase(text)) === total && !other) || (zip !== "" && shown === zip && (share > 0.5 || words(query).join(" ") === zip)),
     };
   };
   // Which of two scores ranks higher: above zero for the first, below for the second.
@@ -224,12 +233,16 @@ export const resolveAddressWith = async <T>(
   const at = zip === "" ? -1 : base.lastIndexOf(zip);
   const tidied = tidy(at < 0 ? base : base.slice(0, at) + base.slice(at + zip.length).replace(/^-\d{4}/u, ""));
   const seen: string[] = [];
-  let best: { readonly choice: T; readonly label: string; readonly query: string; readonly value: readonly number[] } | undefined;
+  const usable: string[] = [];
+  let best:
+    | { readonly choice: T; readonly label: string; readonly query: string; readonly value: readonly number[]; readonly clean: boolean }
+    | undefined;
   for (const text of [...new Set([query, tidied])].filter((form) => form !== "")) {
     const items = [...(await suggest(text))];
     const labels = items.map((item) => squash(label(item)));
     seen.push(...labels.filter((name) => name !== ""));
     const scores = labels.map((name) => (name === "" ? undefined : score(name)));
+    usable.push(...labels.filter((_, index) => scores[index] !== undefined));
     const top = scores.reduce<readonly number[] | undefined>(
       (most, each) => (each === undefined || (most !== undefined && compare(each.value, most) <= 0) ? most : each.value),
       undefined,
@@ -245,11 +258,18 @@ export const resolveAddressWith = async <T>(
     );
     const pick = tied[ranking.status === "picked" ? ranking.index : ranking.status === "ambiguous" ? (ranking.indexes[0] ?? 0) : 0] ?? 0;
     if (best === undefined || compare(top, best.value) > 0)
-      best = { choice: items[pick] as T, label: labels[pick] ?? "", query: text, value: top };
+      best = { choice: items[pick] as T, label: labels[pick] ?? "", query: text, value: top, clean: scores[pick]?.clean === true };
     if (scores[pick]?.whole === true) break;
   }
-  if (best === undefined)
-    return { picked: false, reason: "option_missing", wanted: squash(address), available: [...new Set(seen)].slice(0, 100), matches: [], unit: next || (marker?.[2] ?? "") };
+  if (best === undefined || !best.clean)
+    return {
+      picked: false,
+      reason: best === undefined ? "option_missing" : "option_unclear",
+      wanted: squash(address),
+      available: [...new Set(seen)].slice(0, 100),
+      matches: best === undefined ? [] : [...new Set(usable)].slice(0, 100),
+      unit: next || (marker?.[2] ?? ""),
+    };
   // A unit-shaped part the suggestion keeps, its number outside the suggestion's own street, was a
   // town and postcode or a street rather than a unit.
   const number = phrase(next.split(" ").find((word) => /[\d#]/u.test(word)) ?? "");
@@ -288,10 +308,14 @@ export const resolveAddressWith = async <T>(
  * text names most closely (`rankChoices`); then the site's first. When the text brings no usable
  * suggestion, or none that keeps any of the caller's street words and every place word and shows
  * no other ZIP, it asks once more with a tidied text: joined words split, the ZIP and a unit asked for as typed left out, and
- * stray punctuation dropped. It accepts the best suggestion either text brought, so the tool
- * reports the site's version as it does any rewrite, and refuses only when neither brought a
- * usable one, with `picked: false` and every suggestion the site gave as `available`, for
- * `pickRefusal`. It keeps no list of words or addresses of its own.
+ * stray punctuation dropped. It accepts the best suggestion either text brought when it keeps the
+ * address field by field, so the tool reports the site's version as it does any rewrite: its
+ * street keeps the caller's street name, as above, or any of the caller's street words, it keeps
+ * every place word and shows no other ZIP; or it shows the caller's ZIP on a street that keeps more
+ * than half the caller's street words, or shows the caller's ZIP when that is all the caller gave. Otherwise it refuses, with
+ * `picked: false` and every suggestion the site gave as `available`, for `pickRefusal`: as
+ * `option_missing` when neither text brought a usable one, else as `option_unclear`, with the
+ * usable ones as `matches`. It keeps no list of words or addresses of its own.
  */
 export const resolveAddress = <T = string>(
   address: string,

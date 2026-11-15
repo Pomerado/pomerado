@@ -70,16 +70,13 @@ describe("resolveAddress", () => {
   test("prefers a suggestion that keeps the caller's ZIP and state, then the site's order", async () => {
     const choices = ["1 Example St, Exampleton, NY, USA", "1 Example St, Exampleton, IL 60001, USA", "1 Example St, Exampleton, IL 60000, USA"];
     expect(await resolveAddress("1 Example St, Exampleton, IL 60000", () => choices)).toMatchObject({ label: choices[2] });
-    // Each place word counts, so the caller's town wins within a state, and a misspelled town still
-    // keeps its state.
+    // Each place word counts, so the caller's town wins within a state.
     const towns = ["1 Example St, Sampleton, IL, USA", "1 Example St, Exampleton, IL, USA"];
     expect(await resolveAddress("1 Example St, Exampleton, IL 60000", () => towns)).toMatchObject({ label: towns[1] });
-    expect(await resolveAddress("1 Example St, Exampletn IL", () => ["1 Example St, Exampleton, NY, USA", towns[1] ?? ""])).toMatchObject({ label: towns[1] });
     // The caller's ZIP comes first only on a street that keeps more than half the caller's street
     // words, then the place words, then the share of the street words kept, so another street with
     // the caller's ZIP, a street type the caller got wrong, a direction letter added or dropped, or
-    // a misspelled street never sends the address to another town; then another ZIP; a place word
-    // in a suggestion's street never counts.
+    // a misspelled street never sends the address to another town.
     const street = ["12 Other Ave, Exampleton, IL 60000, USA", "12 Example St, Exampleton, IL, USA"];
     expect(await resolveAddress("12 Example St, Exampleton, IL 60000", () => street)).toMatchObject({ label: street[1] });
     const sunset = ["12 Sunset Ave, Exampleton, IL 60000, USA", "12 Example Rd, Exampleton, IL, USA"];
@@ -100,10 +97,6 @@ describe("resolveAddress", () => {
     expect(await resolveAddress("12 Exampel St, Exampleton, IL", () => misspelled)).toMatchObject({ label: misspelled[1] });
     const zips = ["1 Example St, North Sampleton, IL 60999, USA", "1 Example St, Exampleton, IL 60000, USA"];
     expect(await resolveAddress("1 Example St, North Sampleton, IL 60000", () => zips)).toMatchObject({ label: zips[1] });
-    const others = ["1 Example St, Sampleton, IL, USA", "1 Example St, Exampleton, IL 60999, USA"];
-    expect(await resolveAddress("1 Example St, Exampleton, IL 60000", () => others)).toMatchObject({ label: others[1] });
-    const streets = ["1 Exampleton Rd, Sampleton, IL, USA", "1 Example St, Exampleton, NY, USA"];
-    expect(await resolveAddress("1 Example St, Exampleton, IL", () => streets)).toMatchObject({ label: streets[1] });
     // A suggestion that shows no ZIP still keeps the state, and a state's name matches its code.
     expect(await resolveAddress("1 Example St, Exampleton, Illinois 60000", () => choices.slice(0, 2).concat("1 Example St, Exampleton, IL, USA"))).toMatchObject({
       label: "1 Example St, Exampleton, IL, USA",
@@ -113,10 +106,28 @@ describe("resolveAddress", () => {
       label: "Exampleton, IL 60000, USA",
     });
     expect(await resolveAddress("60000", () => ["60000 Example Rd, Sampleville, NY, USA"])).toMatchObject({ picked: false });
-    // With none that keeps them on any form, the site's first is accepted for the tool to report.
+  });
+
+  test("returns the suggestions as candidates when the best keeps the caller's address only in part", async () => {
+    // Another state, another ZIP, or a misspelled town: none keeps the town, state and ZIP, and
+    // none shows the caller's ZIP on its street.
     const { typed, suggest } = site({ "1 Example St, Exampleton, IL 60000": ["1 Example St, Exampleton, NY, USA"] });
-    expect(await resolveAddress("1 Example St, Exampleton, IL 60000", suggest)).toMatchObject({ label: "1 Example St, Exampleton, NY, USA" });
+    expect(await resolveAddress("1 Example St, Exampleton, IL 60000", suggest)).toEqual({
+      picked: false,
+      reason: "option_unclear",
+      wanted: "1 Example St, Exampleton, IL 60000",
+      available: ["1 Example St, Exampleton, NY, USA"],
+      matches: ["1 Example St, Exampleton, NY, USA"],
+      unit: "",
+    });
     expect(typed).toEqual(["1 Example St, Exampleton, IL 60000", "1 Example St, Exampleton, IL"]);
+    const others = ["1 Example St, Sampleton, IL, USA", "1 Example St, Exampleton, IL 60999, USA"];
+    expect(await resolveAddress("1 Example St, Exampleton, IL 60000", () => others)).toMatchObject({ picked: false, reason: "option_unclear", available: others });
+    const misspelled = ["1 Example St, Exampleton, NY, USA", "1 Example St, Exampleton, IL, USA"];
+    expect(await resolveAddress("1 Example St, Exampletn IL", () => misspelled)).toMatchObject({ picked: false, reason: "option_unclear", available: misspelled });
+    // A place word in a suggestion's street never counts, so only the other state's is usable.
+    const streets = ["1 Exampleton Rd, Sampleton, IL, USA", "1 Example St, Exampleton, NY, USA"];
+    expect(await resolveAddress("1 Example St, Exampleton, IL", () => streets)).toMatchObject({ picked: false, reason: "option_unclear", matches: [streets[1]] });
   });
 
   test("takes the suggestion that matches the typed text among those that tie, and returns the site's own item", async () => {

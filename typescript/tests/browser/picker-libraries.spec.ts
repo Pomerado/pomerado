@@ -510,7 +510,7 @@ button.addEventListener("keydown", (event) => { if (event.key === "Escape") { li
   expect(answer).toMatchObject({ result: { kind: "dropdown" } });
   const options = (answer as { result: { options: { label: string; value: string; disabled: boolean }[] } }).result.options;
   expect(options).toHaveLength(60);
-  expect(options[59]).toEqual({ label: "Seat 59", value: "s59", disabled: true });
+  expect(options[59]).toEqual({ label: "Seat 59", text: "Seat 59", value: "s59", disabled: true });
   await expect(page.getByRole("listbox")).toBeHidden();
 });
 
