@@ -579,8 +579,8 @@ note.
   that read-back, prefer needing only what proves the change, the record's identity and the
   values the input sets, and passing every other field to `waitForRows` or `waitForValues` as
   `optional`. After `verified()`, return a field the request doesn't need as null when it read
-  nothing, and throw `OperationFailure` naming a value the request needs (core skill), so the run
-  fails as applied.
+  nothing, and throw `OperationFailure` naming a value the request needs, or one it can't tie to
+  the written record (core skill), so the run fails as applied.
   List each field the input sets that the site saved differently, from the commit response or
   the read-back, in an optional output field `saved_differences`: `{ field, wanted, shown }`,
   as `saveAndReadBack` returns it, with `shown` left out when the site shows none, and
