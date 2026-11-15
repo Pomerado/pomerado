@@ -16,6 +16,11 @@ const rankForms = (choices: readonly PickerChoice[], ...wanted: string[]) =>
   rankChoices(choices, wanted, foldChoiceText, { spellings: spellingsOf });
 const rankLeading = (choices: readonly PickerChoice[], ...wanted: string[]) =>
   rankChoices(choices, wanted, foldChoiceText, { leading: true });
+/** As a typeahead's results are ranked: listed by how well they match, with the value's other forms. */
+const rankListed = (choices: readonly PickerChoice[], ...wanted: string[]) =>
+  rankChoices(choices, wanted, foldChoiceText, { leading: true, listedFirst: true, spellings: spellingsOf });
+/** An option as a picker reads a row of several lines: its first line and its whole text. */
+const place = (...lines: string[]): PickerChoice => ({ names: [lines[0] ?? "", lines.join(" ")], lines, value: "", disabled: false, key: lines.join("|") });
 
 describe("rankChoices", () => {
   test("a name as written beats one that matches only once case and spacing are ignored", () => {
@@ -59,6 +64,74 @@ describe("rankChoices", () => {
     expect(rankLeading([choice("Yorktown, VA")], "York")).toEqual({ status: "missing" });
     // The value may run to a later comma of the name.
     expect(rankLeading([choice("South Austin, TX"), choice("Austin, TX, USA")], "Austin, TX")).toEqual({ status: "picked", index: 1, rank: "leading" });
+  });
+
+  test("a value naming an option's first line, then some of its later lines' comma parts in order, matches as place", () => {
+    const square = place("Example Square", "Main St, Exampleton, CA, US");
+    const hotel = place("The Sample Hotel - Example Square, Sample Collection", "524 Sample St, Exampleton, CA, US");
+    const monument = place("Sample Monument", "Example Square, Exampleton, CA");
+    const value = "Example Square, Exampleton, CA";
+    expect(rankLeading([square, hotel, monument], value)).toEqual({ status: "picked", index: 0, rank: "place" });
+    // Rows that only hold the place's name elsewhere stay loose, and two such places tie.
+    expect(rankLeading([hotel, monument], value)).toEqual({ status: "picked", index: 1, rank: "words" });
+    expect(rankLeading([square, place("Example Square", "Second St, Exampleton, CA, US")], value)).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "place" });
+    // Its later parts must be the option's, in the option's order.
+    expect(rankLeading([square], "Example Square, CA, Exampleton")).not.toMatchObject({ rank: "place" });
+    expect(rankLeading([square], "Example Square, Otherton, CA")).not.toMatchObject({ rank: "place" });
+    // A leading "The" makes no other name in the later parts either.
+    expect(rankLeading([place("Example Hall", "The Strand, Exampleton, UK")], "Example Hall, The Strand, UK")).toEqual({ status: "picked", index: 0, rank: "place" });
+  });
+
+  test("in a list ranked by match, a clean match on an option's first line alone is withdrawn when an enabled row listed before it names the place", () => {
+    // A landmark the site lists first, and a business of the same name further down.
+    const rows = [
+      place("The Example Tower", "20 Sample Ave, Example City Metro, NY"),
+      place("Sample Cafe Example Tower Store", "35 Sample Ave, Example City, NY"),
+      place("The Sample Hotel", "4 Main St, Example City, NY"),
+      place("Example Tower Co.", "60 Sample St, Example City, NY"),
+      place("Example Tower", "350 Sample Rd #14a, Example City, NY"),
+    ];
+    expect(rankListed(rows, "Example Tower, Example City, NY")).toEqual({ status: "ambiguous", indexes: [0, 1, 3, 4], rank: "words" });
+    expect(rankListed(rows, "Example Tower")).toEqual({ status: "ambiguous", indexes: [0, 1, 3, 4], rank: "words" });
+    // A row's text as a refusal lists it, its lines joined with commas, picks it as written, and a
+    // leading "The" makes no other name.
+    expect(rankListed(rows, "Example Tower, 350 Sample Rd #14a, Example City, NY")).toEqual({ status: "picked", index: 4, rank: "exact" });
+    expect(rankListed(rows.slice(0, 1), "Example Tower")).toEqual({ status: "picked", index: 0, rank: "folded" });
+    const terminals = [place("Terminal 2 Parking", "Example Airport, Example City, CA, US"), place("Terminal 2", "Example Airport, Example City, CA, US")];
+    expect(rankListed(terminals, "Terminal 2")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
+    expect(rankListed(terminals, "Terminal 2, Example Airport, Example City, CA, US")).toEqual({ status: "picked", index: 1, rank: "exact" });
+    const square = place("Example Square", "Main St, Exampleton, CA, US");
+    const hotel = place("The Sample Hotel - Example Square, Sample Collection", "524 Sample St, Exampleton, CA, US");
+    expect(rankListed([hotel, square], "Example Square, Exampleton, CA")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
+    // A place whose second line begins with its town is named by its first line alone too, unless
+    // the value is its whole text.
+    const town = place("Example Square", "Exampleton, CA, US");
+    expect(rankListed([hotel, town], "Example Square, Exampleton, CA")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
+    // Its parts are read from the value as written, as its other written forms lose their commas.
+    expect(rankListed([hotel, town], "Example Square, Exampleton, California")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
+    expect(rankListed([hotel, town], "Example Square, Exampleton, CA, US")).toEqual({ status: "picked", index: 1, rank: "exact" });
+    expect(rankListed([rows[0] ?? town, place("Example Tower", "Example City, NY, US")], "Example Tower, Example City, NY")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
+    expect(rankListed([rows[0] ?? town, place("Example Tower", "Example City, NY, US")], "Example Tower, Example City, New York")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
+    // A value is an option's whole text, and so picks it, with or without a leading "The", also
+    // among other spellings.
+    const tower = [place("Example Tower Hotel", "1 Sample St, Example City, NY, US"), place("The Example Tower", "20 Sample Ave, Example City Metro, NY")];
+    expect(rankListed(tower, "Example Tower, 20 Sample Ave, Example City Metro, NY")).toEqual({ status: "picked", index: 1, rank: "folded" });
+    expect(rankListed(tower, "Example Tower, NY")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
+    // An earlier row withdraws it only when it also holds the value's later parts, in any written form.
+    expect(rankListed(tower, "Example Tower, Example City Metro, NY")).toEqual({ status: "picked", index: 1, rank: "place" });
+    expect(rankListed([place("New York", "NY, USA"), place("York", "PA, USA")], "York, PA")).toEqual({ status: "picked", index: 1, rank: "leading" });
+    const art = [place("Example Museum of Art", "15 3rd St, Example City, CA, US"), place("Example Museum", "15 Third St, Example City, CA, USA")];
+    expect(rankListed(art, "Example Museum, 15 Third St, Example City, CA")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
+    expect(rankListed(art, "Example Museum, 15 Third Street, Example City, CA")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
+    expect(rankListed([hotel, town], "Example Square, Exampleton, CA, US", "Example Square")).toEqual({ status: "picked", index: 1, rank: "exact" });
+    // A first row that is the place keeps its clean pick.
+    const museum = [place("Example Museum", "15 Third St, Example City, CA, USA"), place("Example Museum of Art", "15 3rd St, Example City, CA, US")];
+    expect(rankListed(museum, "Example Museum, 15 Third St, Example City, CA")).toEqual({ status: "picked", index: 0, rank: "leading" });
+    // Rows of one line, a greyed-out earlier row, or a list in a fixed order, as a dropdown's, withdraw nothing.
+    expect(rankListed([place("Example Tower Co."), place("Example Tower")], "Example Tower")).toEqual({ status: "picked", index: 1, rank: "exact" });
+    const greyed = { ...place("Example Tower Co.", "60 Sample St, Example City, NY"), disabled: true };
+    expect(rankListed([greyed, place("Example Tower", "350 Sample Rd #14a, Example City, NY")], "Example Tower")).toEqual({ status: "picked", index: 1, rank: "exact" });
+    expect(rankLeading([place("X-Small", "Out of stock"), place("Small", "In stock")], "Small")).toEqual({ status: "picked", index: 1, rank: "exact" });
   });
 
   test("without leading, options that hold the value as a word or before a comma tie as before", () => {

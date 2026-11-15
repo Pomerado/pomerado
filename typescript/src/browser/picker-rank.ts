@@ -7,10 +7,15 @@ export interface PickerChoice {
   readonly disabled: boolean;
   /** Options with one key are one option seen twice; different keys are different options. */
   readonly key: string;
+  /**
+   * The lines the option shows, its first line first, when the picker read them (rank `place`).
+   * Joined with commas, as a picker's refusal lists the option, they are one more of its names.
+   */
+  readonly lines?: readonly string[];
 }
 
 /** How closely the winning option matched, best first. */
-export const pickerRanks = ["exact", "normalized", "folded", "leading", "words", "allWords", "anyOrder", "stem", "extraWords"] as const;
+export const pickerRanks = ["exact", "normalized", "folded", "leading", "place", "words", "allWords", "anyOrder", "stem", "extraWords"] as const;
 export type PickerRank = (typeof pickerRanks)[number];
 
 export type PickerRanking =
@@ -29,7 +34,12 @@ export type PickerRanking =
  * punctuation (`fold`), then, only with `options.leading`, a name whose leading part, its text
  * before one of its commas that are not between two digits, is a spelling, folded the same way
  * (`leading`: York, UK for York, or Austin, TX, USA for Austin, TX, but not 1,000 miles for 1),
- * then a name holding a spelling as whole words (New York for York), then a name made of a
+ * then, for an option whose `lines` are known, a spelling whose text before one of those commas is
+ * the option's first line and each of whose later comma parts, in order, is one of the comma parts
+ * of the option's later lines, all folded, any of those left out (`place`: Example Square,
+ * Exampleton, CA for Example Square above Main St, Exampleton, CA, US, but not Sample Monument
+ * above Example Square, Exampleton, CA), then a name holding a spelling as whole words (New York
+ * for York), then a name made of a
  * spelling's words, no more and no fewer,
  * whose parts, as its own or the spelling's commas, semicolons, colons, slashes, bars, brackets or
  * spaced dashes separate them, come in another order, each part's words in order and the numbers
@@ -68,25 +78,38 @@ export type PickerRanking =
  * its forms. As whole words, a place's other form counts only after the value's other words and
  * where it ends the name or one of its parts, so Ontario never matches Turn on and Example City,
  * Oregon never matches Example City or Town; at `extraWords`, only the forms that are no place
- * count. Each name and each list of spellings is read once per call.
+ * count. From `folded` on, a leading "the" makes no other name, so The Example Tower is Example
+ * Tower. With `options.listedFirst`, for options listed by how well they match, as a search's
+ * results are, a match at `exact`, `normalized`, `folded`, `leading` or `place` that an option of
+ * several `lines` makes through its first line alone, by a spelling whose text up to one of its
+ * commas is that line, none being the option's whole text, is withdrawn when an enabled option
+ * listed before it holds the spelling's text before its first comma as whole words in its first
+ * line and each of the spelling's later comma parts, or, with `options.spellings`, another written
+ * form of it, as whole words in its text: a search lists the place it means first, so those options and the matches are
+ * returned ambiguous, at `words`, in the list's order. Each name and each list of spellings is read once per call.
  *
  * It is pure and self-contained: the page code of `pickerCode` embeds this same function with
  * `fold` set to `foldChoiceText`.
  */
 export const rankChoices = (
-  choices: readonly PickerChoice[],
+  given: readonly PickerChoice[],
   wanted: readonly string[],
   fold: (text: string) => string,
   options: {
     readonly leading?: boolean;
     readonly stem?: boolean;
     readonly extraWords?: boolean;
+    readonly listedFirst?: boolean;
     readonly spellings?: (
       text: string,
       options?: { readonly places?: "end" | "after-words" | "never" },
     ) => readonly string[];
   } = {},
 ): PickerRanking => {
+  const choices = given.map((choice) => {
+    const lines = choice.lines ?? [];
+    return lines.length > 1 ? { ...choice, names: [...choice.names, lines.map((line) => line.replace(/[\s,;]+$/u, "")).join(", ")] } : choice;
+  });
   const squash = (text: string) => String(text ?? "").replace(/\s+/gu, " ").trim();
   const lower = (text: string) => squash(text).toLowerCase();
   const words = (text: string) => fold(text).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
@@ -99,6 +122,12 @@ export const rankChoices = (
       return known.get(text) as T;
     };
   };
+  // A text's parts between its commas that are not thousands separators, as in 1,000.
+  const commaParts = (text: string) =>
+    String(text ?? "")
+      .split(/(?<!\p{N}),|,(?!\p{N})/u)
+      .map((part) => part.trim())
+      .filter(Boolean);
   // A text's words in the parts its own commas, semicolons, colons, slashes, bars, brackets or
   // spaced dashes separate, such as "Harbor Street Station" and "Example City" in "Harbor Street
   // Station - Example City". A hyphen inside a word, as in St-Mary, separates nothing.
@@ -163,9 +192,11 @@ export const rankChoices = (
     };
     return from(0);
   };
+  // Folded, with a leading "the" dropped, so The Example Tower names what Example Tower does.
+  const bare = (text: string) => fold(text).replace(/^the\s+/u, "");
   const named = {
     lower: once(lower),
-    fold: once(fold),
+    fold: once(bare),
     words: once(words),
     phrase: once(phrase),
     parted: once(parted),
@@ -213,7 +244,7 @@ export const rankChoices = (
   };
   const formSets = {
     lower: perList((list) => new Set(list.map(lower).filter((spelling) => spelling !== ""))),
-    fold: perList((list) => new Set(list.map(fold).filter((spelling) => spelling !== ""))),
+    fold: perList((list) => new Set(list.map(bare).filter((spelling) => spelling !== ""))),
   };
   const phrases = perList((list) => ({
     anywhere: list.filter((form) => !placed.has(form)).map(phrase).filter((part) => part.trim() !== ""),
@@ -245,13 +276,34 @@ export const rankChoices = (
               return choice.names.some((name) => {
                 const text = String(name ?? "");
                 // The name up to each comma that is not a thousands separator, as in 1,000.
-                return [...text.matchAll(/(?<!\p{N}),|,(?!\p{N})/gu)].some((comma) => (comma.index ?? 0) > 0 && forms.has(fold(text.slice(0, comma.index))));
+                return [...text.matchAll(/(?<!\p{N}),|,(?!\p{N})/gu)].some((comma) => (comma.index ?? 0) > 0 && forms.has(bare(text.slice(0, comma.index))));
               });
             },
             true,
           ],
         ] as const)
       : []),
+    [
+      "place",
+      (choice, list) => {
+        const lines = choice.lines ?? [];
+        if (lines.length < 2) return false;
+        const first = named.fold(lines[0] ?? "");
+        const later = lines.slice(1).flatMap(commaParts).map(named.fold);
+        return list.some((spelling) => {
+          const parts = commaParts(spelling).map(fold);
+          return parts.some((_, end) => {
+            if (end === 0 || bare(parts.slice(0, end).join(" ")) !== first) return false;
+            let at = 0;
+            return parts.slice(end).map(bare).every((part) => {
+              while (at < later.length && later[at] !== part) at++;
+              return at++ < later.length;
+            });
+          });
+        });
+      },
+      true,
+    ],
     [
       "words",
       (choice, list) => {
@@ -323,6 +375,57 @@ export const rankChoices = (
       true,
     ],
   ];
+  // In a list ordered by how well each option matches, a clean match on an option's first line
+  // alone, of an option that shows more lines, is withdrawn when an enabled option listed before it
+  // holds the value's name, its text before its first comma, as whole words in its first line, and
+  // each of the value's later comma parts, in any written form, as whole words in its text, as a
+  // search lists the place it means first: those options and the matches come back in the list's
+  // order, as matching by words.
+  const namedEarlier = (rank: PickerRank, list: readonly string[], matched: readonly number[]): PickerRanking | undefined => {
+    if (!["exact", "normalized", "folded", "leading", "place"].includes(rank)) return undefined;
+    // The spellings as given, whose commas their other forms drop, name an option by its first line
+    // alone when one's text up to one of its commas is that line and no spelling or form at this
+    // rank is the option's whole text.
+    const alone = matched.filter((index) => {
+      const lines = choices[index]?.lines ?? [];
+      if (lines.length < 2) return false;
+      const first = phrase(bare(lines[0] ?? ""));
+      const whole = phrase(bare(lines.join(" ")));
+      return (
+        ![...spellings, ...list].some((spelling) => phrase(bare(spelling)) === whole) &&
+        spellings.some((spelling) => {
+          const parts = commaParts(spelling);
+          return parts.some((_, end) => phrase(bare(parts.slice(0, end + 1).join(" "))) === first);
+        })
+      );
+    });
+    if (alone.length === 0) return undefined;
+    // Each spelling's name, and its later comma parts, each with its other written forms.
+    const asked = spellings
+      .map((spelling) => {
+        const [head = "", ...rest] = commaParts(spelling);
+        const later = rest.map((part) => [part, ...(options.spellings?.(part) ?? [])].map((form) => phrase(bare(form))));
+        return { head: phrase(bare(head)), later: later.filter((forms) => (forms[0] ?? "").trim() !== "") };
+      })
+      .filter(({ head }) => head.trim() !== "");
+    const earlier = choices.slice(0, Math.min(...alone)).flatMap((choice, index) => {
+      if (matched.includes(index) || choice.disabled) return [];
+      const first = phrase(bare(choice.lines?.[0] ?? choice.names[0] ?? ""));
+      const text = phrase([...(choice.lines ?? []), ...choice.names].join(" "));
+      return asked.some(({ head, later }) => first.includes(head) && later.every((forms) => forms.some((form) => text.includes(form)))) ? [index] : [];
+    });
+    if (earlier.length === 0) return undefined;
+    const keys = new Set<string | undefined>();
+    const indexes = [...earlier, ...matched]
+      .sort((a, b) => a - b)
+      .filter((index) => {
+        const key = choices[index]?.key;
+        if (keys.has(key)) return false;
+        keys.add(key);
+        return true;
+      });
+    return { status: "ambiguous", indexes, rank: "words" };
+  };
   for (const [rank, test, byName] of tests) {
     // At each rank the spellings as given decide first; their other forms only when they match
     // nothing there, and never an option's value.
@@ -332,6 +435,8 @@ export const rankChoices = (
     for (const list of lists) {
       const matched = choices.flatMap((choice, index) => (test(choice, list) ? [index] : []));
       if (matched.length === 0) continue;
+      const withdrawn = byName && options.listedFirst === true ? namedEarlier(rank, list, matched) : undefined;
+      if (withdrawn !== undefined) return withdrawn;
       const keys = [...new Set(matched.map((index) => choices[index]?.key))];
       if (keys.length > 1) {
         const indexes = keys.map((key) => matched.find((index) => choices[index]?.key === key) ?? 0);
