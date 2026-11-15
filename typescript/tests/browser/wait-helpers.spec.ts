@@ -3,7 +3,7 @@ import type { Page } from "playwright";
 import { chromium as patchright } from "patchright";
 import { Either, Schema } from "effect";
 import { outcomeWaitCode } from "../../src/browser/outcome-wait.js";
-import { waitCode } from "../../src/browser/wait.js";
+import { confirmCommitCode, waitCode } from "../../src/browser/wait.js";
 import { probeCallCode } from "../../src/runtime/host-execute.js";
 import { defineOperation } from "../../src/runtime/operation.js";
 import { makeLocalKernel } from "../../src/testing/local-kernel.js";
@@ -98,6 +98,67 @@ test("an answer already on the page returns at the first look, with no second lo
   expect(answer.shown).toBe("results");
   expect(answer.report?.[0]?.looks).toBe(1);
   expect(answer.report?.[0]?.summary).toMatch(/^waitForOutcome: "results" showed after \d+ ms \(1 look\); /u);
+});
+
+// A cancel whose page shows the site's in-between banner after `workingMs`, then its final one
+// after `doneMs` (never when null).
+const cancelPage = (page: Page, workingMs: number, doneMs: number | null) =>
+  page.setContent(`
+    <button type="button" id="cancel">Cancel order</button><div id="answer"></div>
+    <script>
+      const show = (html) => { document.querySelector("#answer").innerHTML = html; };
+      document.querySelector("#cancel").onclick = () => {
+        setTimeout(() => show('<div role="alert" class="info">Attempting to cancel</div>'), ${workingMs});
+        ${doneMs === null ? "" : `setTimeout(() => show('<div class="success">Cancelled</div>'), ${doneMs});`}
+      };
+    </script>`);
+
+const cancelWait = `waitForOutcomeResult({ cancelled: page.locator(".success"), attempting: page.locator(".info") }, {
+    action: () => page.locator("#cancel").click(), pending: "attempting", noProgressMs: 400, timeout: 600,
+  })`;
+
+test("an in-between answer named pending holds the wait past the no-progress window and the timeout for the final one", async ({
+  page,
+}) => {
+  await cancelPage(page, 100, 1500);
+  const answer = await call(page, `const started = Date.now();
+    const { outcome } = await ${cancelWait};
+    return { outcome, ms: Date.now() - started };`);
+  expect(answer.result).toMatchObject({ outcome: "cancelled" });
+  expect((answer.result as { ms: number }).ms).toBeGreaterThanOrEqual(1400);
+});
+
+test("an in-between answer still showing as the call nears its end is the answer, which confirmCommit reports pending", async ({
+  page,
+}) => {
+  await cancelPage(page, 100, null);
+  const tool = defineOperation({ input: Schema.Struct({}), output: Schema.Unknown }, async ({ kernel, sessionId, errors }) => {
+    const answer = await kernel.browsers.playwright.execute(sessionId, {
+      timeout_sec: 8,
+      code: `${waitCode}
+        ${confirmCommitCode}
+        const started = Date.now();
+        const answer = await ${cancelWait};
+        return { outcome: answer.outcome, pending: answer.pending, ms: Date.now() - started, confirmed: await confirmCommit(answer, page) };`,
+    });
+    if (!answer.success) throw new errors.OperationFailure(String(answer.error), { stderr: answer.stderr });
+    return answer.result;
+  });
+  const run = await runExample(page, tool, {});
+  const result = Either.getOrUndefined(run.result) as { ms: number };
+  expect(result).toMatchObject({
+    outcome: "attempting",
+    pending: true,
+    confirmed: {
+      state: "done",
+      status: "pending",
+      status_label: "Attempting to cancel",
+      reason: '"attempting" was still pending when the wait ended, with no error on the page',
+    },
+  });
+  // The hold ends 5 s before the call's own end, a second before its 8 s timeout.
+  expect(result.ms).toBeGreaterThanOrEqual(1500);
+  expect(result.ms).toBeLessThan(3500);
 });
 
 test("a page showing a loading sign keeps the wait alive past the no-progress window", async ({
@@ -439,6 +500,22 @@ test("an infinite list stops at the rows asked for, or where the list ends", asy
   expect(ended.result).toEqual(Array.from({ length: 18 }, (_, index) => `r${index + 1}`));
 });
 
+test("a needed field a row lacks once the page stops changing fails as a page mismatch that names it", async ({
+  page,
+}) => {
+  await page.setContent(`
+    <ol id="results">
+      <li data-id="room-1"><h3>Room 1</h3><span class="price">$101</span></li>
+      <li data-id="room-2"><h3>Room 2</h3></li>
+    </ol>`);
+  const run = await runExample(page, searchTool(2), {});
+  const failed = failure(run.result) as { _tag: string; message: string };
+  expect(failed._tag).toBe("BrowserActionTimeout");
+  expect(failed.message).toMatch(
+    /^page_mismatch after \d+ ms, 400 ms without progress: 2 identified rows of 2, needed 2; price missing in row 2; /u,
+  );
+});
+
 test("a record's values are waited for until filled and holding, and an optional one may be absent", async ({
   page,
 }) => {
@@ -466,7 +543,7 @@ test("a needed value that never shows fails and names it", async ({ page }) => {
     page,
     `await waitForValues({ title: page.getByRole("heading", { level: 1 }), price: page.locator("#price") }, { noProgressMs: 300 });`,
   );
-  expect(answer.error).toMatch(/^values_loading after \d+ ms, 300 ms without progress: price missing; no progress seen$/u);
+  expect(answer.error).toMatch(/^page_mismatch after \d+ ms, 300 ms without progress: price missing; no progress seen$/u);
 });
 
 // A booking quote: choosing guests shows a spinner for `spinnerMs`, then the total becomes `total`.

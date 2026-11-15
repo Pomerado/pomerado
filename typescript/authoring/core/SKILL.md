@@ -866,8 +866,9 @@ Prefer the wait helpers' own settling over loops of your own that poll until val
 the same on two looks.
 `waitForChange(fields, { before, action, loading })` returns `{ values, changed }` after a choice:
 changed, or the same with no progress sign for `unchangedMs`. They throw a `ValueWaitFailure`:
-`values_loading` when a value is still loading as progress stops, `change_unknown` when the
-fields are missing, `values_timeout` at the cap. A host may retry a read once after
+`values_loading` when a value is still loading as progress stops, `page_mismatch` when a needed
+field is missing then, `change_unknown` when the fields are missing, `values_timeout` at the
+cap. A host may retry a read once after
 `outcome_timeout`, `outcome_unknown`, `values_loading`, `values_timeout` or `change_unknown`,
 so let them throw. `waitReport()` returns a one-line summary of how each wait in the call ended.
 A field is a Playwright locator, or `{ locator, attribute, optional, all }`, where `all` reads
