@@ -1414,7 +1414,7 @@ it("renders the pinned standalone authoring", async () => {
     ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
     ["163cf7fc8b0d2f37de85e2cabff3b01992aff157304b0872636a9e6d8d521071", "writes"],
     ["37f041f4a7c7f1b5870222d4e25a6996e77b509edc0223bc0e54fec0d36fa3ff", "cart"],
-    ["9758de389c8bb39faa3008311f9d1b0d7696063f4bf279a3bbe780a1884cf133", "caller-input"],
+    ["f643513e28aa0065d7d99ac437c81372605c7c32e9a9db94fca52613c33ad91f", "caller-input"],
     ["47cba18121554c05c379f6ac754de07e8bfa7515250055585e631a2eb88b7468", "publication"],
     ["b984aa7754cbe7756c3e9e77aae1f1d5f5340479c96a1e201a66ab734613bafd", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
