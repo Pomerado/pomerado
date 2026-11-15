@@ -39,7 +39,8 @@ delivery address, an add-to-cart tool takes it as an optional input, one of the 
 addresses, and keeps the address the account has selected when it is left out: an add places no
 order, and a checkout still chooses its address as below. Set the options as "Configure, then
 read" in the core skill says before adding the product: a value the product does not offer
-throws `InvalidInput` with `field` and `available`.
+throws `InvalidInput` with `field` and `available`. Opening an item's details or options from
+its own card, name or picture, not a control labelled add or plus, is a read.
 
 ## Quantity
 
@@ -117,6 +118,8 @@ differ, so take and return what this one offers.
 Prefer taking as inputs what the site lets a caller choose, such as the items with their options
 and quantities, with the unit for an item sold by weight or measure, pickup or delivery with its
 place and time, a tip, and a limit such as a maximum total, checked as "Minimums and refusals" says.
+Take each as an input without asking the owner whether to, and list a branch the session did not
+run as untested (publication skill).
 
 Prefer returning what the site shows for the order placed, such as the order or confirmation
 number and its status, the lines bought, the subtotal, fees, tax, tip and total charged, the

@@ -465,7 +465,7 @@ export const publicationLiveTestsPolicy = [
  * Part of the caller decision rule and of the input schema review, so both read the same limit.
  */
 export const publicationPaidChoiceLimit =
-  `${sentence(publicationCostlyChoice)}, that a write meets on its path stays an input or a declared question for every caller: a caller's decision may settle it only as ${publicationCostlyChoiceDefault}.`;
+  `${sentence(publicationCostlyChoice)}, that a write meets on its path stays an input or a declared question for every caller: a caller's decision may settle it only as ${publicationCostlyChoiceDefault}. A card fill that names card slots settles the payment method it fills for each call, since the host fills the one each caller names.`;
 
 /**
  * When the caller settled how the tool behaves, through the request's explicit words, an answer

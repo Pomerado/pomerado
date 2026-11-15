@@ -584,6 +584,12 @@ export interface PendingExecution {
       readonly purpose: string;
       readonly entrypoint?: string;
       readonly outcome: "done" | "not_done" | "unknown" | "unassessed";
+      /**
+       * The commit marks the write's step sent (entered `sent` or `confirmed`), empty when it
+       * sent none. Leave it out unless the step's own commit report was read and nothing it did
+       * could have sent past its marks.
+       */
+      readonly sent?: readonly string[];
     }[];
     /**
      * Execution reviews only: this attempt's latest live test batches, and any older one holding
