@@ -46,8 +46,7 @@ export type PickerRanking =
  * whose words pair one for one, in order, with a spelling's, splitting words at spacing and
  * punctuation (not a period, comma or colon between digits, nor a hyphen joining a ZIP's five
  * digits to four more, nor a mark that ends a word, as in C# or 1%, other than a bracket, quote or
- * . , : ; ! ?), each pair equal, a ZIP and its own ZIP+4 (94110 and 94110-1234, never two
- * ZIP+4s), a singular and its
+ * . , : ; ! ?), each pair equal, a ZIP and its own ZIP+4, a singular and its
  * plural (a final s, not after s; es after s, x, z, ch, sh or o; or ies for a y after a consonant;
  * the singular three or more letters, so Adam pairs with Adams), or one written
  * short for the other either way, and at least one pair not short (`alike`: Union Square for
@@ -55,13 +54,11 @@ export type PickerRanking =
  * Sq alone). A word written short there is an abbreviation: two to four Latin letters with no
  * vowel (a, e, i, o, u or y), at least two fewer than the other, starting with its first letter
  * and holding the rest of its letters in order, such as Sq, Blvd or NW, so UK never pairs with
- * Ukraine nor Oak with Oakwood, either way; right before a word holding a digit, as a unit's word
- * stands before its number, it may hold a vowel when it is not the other's start, so Ste 200 pairs
- * with Suite 200 and Apt 4B with Apartment 4B, but Ste Park never with State Park nor Apt 4 with
- * Aptos 4; with `options.spellings`, a short word that has other written forms there, such as St
- * or a state's code, pairs only with those, so MS never pairs with Missouri nor St with Station,
- * and a state's code is one only where a place ends the value, so Fl 3 pairs with Floor 3 while
- * FL 33101 stays Florida. Then a name holding a spelling as whole words (New
+ * Ukraine nor Oak with Oakwood, either way; right before a word holding a digit, it may hold a
+ * vowel when it is not the other's start; with `options.spellings`, a short word that has other
+ * written forms there, such as St or a state's code, pairs only with those, so MS never pairs with
+ * Missouri nor St with Station, and a state's code is one only where a place ends the value. Then
+ * a name holding a spelling as whole words (New
  * York for York), then a name made of a
  * spelling's words, no more and no fewer,
  * whose parts, as its own or the spelling's commas, semicolons, colons, slashes, bars, brackets or
@@ -263,8 +260,7 @@ export const rankChoices = (
     (/[^aeiou]y$/u.test(one) && other === one.slice(0, -1) + "ies");
   // A short word whose other written forms are known, such as St or a state's code, stands only
   // for those forms, so MS never pairs with Missouri nor St with Station. Read with the word after
-  // it, a state's code is one only where a place ends the value, so FL 33101 is Florida and Fl 3 is
-  // not.
+  // it, a state's code is one only where a place ends the value.
   const knownForms = once((text: string) => {
     const [brief = "", ...rest] = text.split(" ");
     const after = rest.length === 0 ? "" : " " + rest.join(" ");
@@ -276,7 +272,7 @@ export const rankChoices = (
   });
   // An abbreviation: two to four Latin letters, written short for a longer word, and for one of
   // its known forms when it has any. It holds no vowel, unless the word after it holds a digit, as
-  // a unit's number follows its word (Ste 4, Apt 4B), and it is not the longer word's start.
+  // a unit's number follows its word, and it is not the longer word's start.
   const abbreviates = (brief: string, full: string, next: string) => {
     const unit = /\p{N}/u.test(next);
     return (
