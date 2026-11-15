@@ -578,8 +578,8 @@ describe("rankChoices same name written another way", () => {
     expect(rankListed(listed.map((name) => choice(name)), "1 Harbor Building, Exampleton, CA 94110")).toEqual({ status: "picked", index: 0, rank: "alike" });
     expect(rankListed([place("1 Harbor Bldg", "Exampleton, CA 94110-1234, US")], "1 Harbor Building, Exampleton, CA 94110")).toEqual({ status: "picked", index: 0, rank: "alike" });
     for (const [name, value] of [
-      ["151 3rd St Exampleton, CA 94103-3107, US", "151 3rd St, Exampleton, CA 94103"],
-      ["151 3rd St, Exampleton, CA 94103, US", "151 3rd St, Exampleton, CA 94103-3107"],
+      ["151 Example St Exampleton, CA 94103-1234, US", "151 Example St, Exampleton, CA 94103"],
+      ["151 Example St, Exampleton, CA 94103, US", "151 Example St, Exampleton, CA 94103-1234"],
       ["100 Example St Suite 200, Exampleton, IL 62701", "100 Example St Ste 200, Exampleton, IL 62701"],
       ["100 Example St Ste 200, Exampleton, IL 62701-1234", "100 Example St Suite 200, Exampleton, IL 62701"],
       ["100 Example St Floor 3, Exampleton, IL 62701", "100 Example St Fl 3, Exampleton, IL 62701"],
@@ -590,16 +590,23 @@ describe("rankChoices same name written another way", () => {
       expect(rankAll([choice(name)], value), `${name} | ${value}`).toEqual({ status: "picked", index: 0, rank: "alike" });
   });
 
-  test("a short word with a vowel pairs only before a unit's number, never as the other's start, and two ZIP+4s never pair", () => {
+  test("a short word with a vowel pairs only before a unit's number, with its vowels first or last, never as the other's start, and two ZIP+4s never pair", () => {
     for (const [name, value] of [
-      ["151 3rd St, Exampleton, CA 94103-9999", "151 3rd St, Exampleton, CA 94103-3107"],
+      ["151 Example St, Exampleton, CA 94103-9999", "151 Example St, Exampleton, CA 94103-1234"],
       ["100 Example State Park", "100 Example Ste Park"],
-      ["100 Bailey St", "100 Bay St"],
-      ["Example Coast Toy", "Example Cat Toy"],
       ["100 Example St Aptos 4", "100 Example St Apt 4"],
       ["Exampleton, Floor 33101", "Exampleton, FL 33101"],
     ] as const)
       expect(rankAll([choice(name)], value), `${name} | ${value}`).toEqual({ status: "missing" });
+    // A vowel inside the short word keeps it a looser match, even before a number.
+    for (const [name, value] of [
+      ["Room 5", "Restroom 5"],
+      ["Main 3", "Mountain 3"],
+      ["Sat 10", "Saint 10"],
+      ["Via 3", "Vista 3"],
+      ["Rue 3", "Route 3"],
+    ] as const)
+      expect(rankAll([choice(name)], value), `${name} | ${value}`).toEqual({ status: "picked", index: 0, rank: "anyOrder" });
   });
 });
 
