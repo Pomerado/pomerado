@@ -80,7 +80,7 @@ const markedAriaSnapshot = async (locator, options) => {
           const textless = () =>
             ["input", "select", "textarea", "img"].includes(element.localName) ||
             // innerText leaves out what is not rendered, such as an SVG's title.
-            !/\\S/.test(element.innerText);
+            !/\\S/.test(element.innerText ?? "");
           const labelledBy = () =>
             element
               .getAttribute("aria-labelledby")
