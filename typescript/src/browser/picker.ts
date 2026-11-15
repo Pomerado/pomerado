@@ -537,8 +537,9 @@ const pickerPageCode = String.raw`(element, args) => {
  * is the value's text before one of its commas and whose other lines' comma parts hold each of the
  * value's later parts, in their order, any of them left out (rank `place`: Example Square,
  * Exampleton, CA for a row Example Square above Main St, Exampleton, CA, US), then the same name
- * written another way, word for word, each word as written, a singular or plural, or an
- * abbreviation of the other with no vowel either way, such as Sq for Square (rank `alike`), then a
+ * written another way, word for word, each word as written, a ZIP for its own ZIP+4, a singular or
+ * plural, or an abbreviation of the other with no vowel either way, such as Sq for Square, or with
+ * one as its first or last letter before a unit's number (rank `alike`), then a
  * name holding the value as whole words (New York for York), then a
  * name made of the value's words, no more and no fewer, with the parts its or the value's commas or
  * spaced dashes separate in another order and the numbers in the value's order (rank `allWords`:
