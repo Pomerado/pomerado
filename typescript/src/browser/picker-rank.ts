@@ -43,9 +43,9 @@ export type PickerRanking =
  * Exampleton, CA for Example Square above Main St, Exampleton, CA, US, but not Sample Monument
  * above Example Square, Exampleton, CA), then the same name written another way: a name, or
  * with `options.leading` its leading part,
- * whose words pair one for one, in order, with a spelling's, splitting words at spacing and at
- * punctuation between two letters or digits (not a period, comma or colon between digits), so
- * punctuation at a word's edge, as in C#, stays part of it, each pair equal, a singular and its
+ * whose words pair one for one, in order, with a spelling's, splitting words at spacing and
+ * punctuation (not a period, comma or colon between digits, nor a mark that ends a word, as in C#
+ * or 1%, other than a bracket, quote or . , : ; ! ?), each pair equal, a singular and its
  * plural (a final s, not after s; es after s, x, z, ch, sh or o; or ies for a y after a consonant;
  * the singular three or more letters, so Adam pairs with Adams), or one written
  * short for the other either way, and at least one pair not short (`alike`: Union Square for
@@ -237,13 +237,15 @@ export const rankChoices = (
   const plural = (one: string, other: string) =>
     other === one + "s" || other === one + "es" || (one.endsWith("y") && other === one.slice(0, -1) + "ies");
   const pairsAsNoun = (want: string, have: string) => want === have || plural(want, have) || plural(have, want);
-  // A text's words for `alike`, past a leading "the": spacing splits them, and so does punctuation
-  // between two letters or digits, except a period, comma or colon between two digits, which is
-  // part of a number. Punctuation at a word's edge, as in C# or 1%, stays part of the word.
-  const alikeWords = (text: string) =>
-    bare(text)
-      .split(/\s+|(?<=[\p{L}\p{N}])(?:(?!(?<=\p{N})[.,:]\p{N})\p{P})+(?=[\p{L}\p{N}])/u)
+  // A text's words for `alike`, past a leading "the": spacing and punctuation split them, except a
+  // period, comma or colon between two digits, which is part of a number, and a mark that ends a
+  // word, as in C# or 1%, which is part of the word; brackets, quotes and . , : ; ! ? never are.
+  const alikeWords = (text: string) => {
+    const each = fold(text)
+      .split(/(?:\s|(?!(?<=[\p{L}\p{N}])(?:(?![.,:;!?'"\u00a1\u00bf])\p{Po})+(?=\s|$))(?!(?<=\p{N})[.,:]\p{N})\p{P})+/u)
       .filter(Boolean);
+    return each[0] === "the" && each.length > 1 ? each.slice(1) : each;
+  };
   // A singular and its plural at `alike`: plus s, except after s; plus es after s, x, z, ch, sh or
   // o; or y after a consonant as ies.
   const alikePlural = (one: string, other: string) =>

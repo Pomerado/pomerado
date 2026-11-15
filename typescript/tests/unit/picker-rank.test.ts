@@ -499,7 +499,7 @@ describe("rankChoices same name written another way", () => {
     expect(rankAll([choice("Union Square, Exampleton"), choice("Union Sq")], "Union Sq")).toEqual({ status: "picked", index: 1, rank: "exact" });
   });
 
-  test("a plural adds es only after s, x, z, ch, sh or o, and punctuation at a word's edge stays part of it", () => {
+  test("a plural adds es only after s, x, z, ch, sh or o, and a mark that ends a word stays part of it", () => {
     expect(rankAll([choice("Example Buses")], "example bus")).toEqual({ status: "picked", index: 0, rank: "alike" });
     expect(rankAll([choice("Example Boxes")], "example box")).toEqual({ status: "picked", index: 0, rank: "alike" });
     expect(rankAll([choice("Blue Green")], "Blue/Green")).toEqual({ status: "picked", index: 0, rank: "alike" });
@@ -512,13 +512,23 @@ describe("rankChoices same name written another way", () => {
       ["Rates", "Rat"],
     ] as const)
       expect(rankAll([choice(name)], value)).toEqual({ status: "missing" });
-    // A word that differs by a mark at its edge holds the value as a word, a looser match.
+    // A mark that ends a word is part of it, so such a word holds the value only as a looser match.
     for (const [name, value] of [
       ["C#", "C"],
       ["1%", "1"],
-      ["#1", "1"],
     ] as const)
       expect(rankAll([choice(name)], value)).toEqual({ status: "picked", index: 0, rank: "words" });
+    // Brackets, quotes, a mark before a word, a standalone mark, and a comma or colon before a space split words.
+    for (const [name, value] of [
+      ["Joe's Pizza (Downtown)", "Joe's Pizza Downtown"],
+      ["(317) 555-1234", "317 555 1234"],
+      ["Suite #100", "Suite 100"],
+      ['"The Grill"', "The Grill"],
+      ["Room 1, 2", "Room 1 2"],
+      ["Pizza: Downtown", "Pizza Downtown"],
+      ["Rock & Roll", "Rock Roll"],
+    ] as const)
+      expect(rankAll([choice(name)], value)).toEqual({ status: "picked", index: 0, rank: "alike" });
   });
 
   test("a word with a vowel is never a short form, and a name that pairs only through short forms never matches", () => {
