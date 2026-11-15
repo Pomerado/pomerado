@@ -413,6 +413,15 @@ interface CallInput {
    */
   readonly settleMs?: number;
   /**
+   * How long a step whose every field takes a code only looks, after its last field went in, for
+   * the page to send the code itself before the first click (`lookFirst`): the step's send window
+   * at most, which is the default. A host that reads its own requests for the code going out
+   * (`codeSent`) may shorten it, since each click first asks that, so a page that sends the code
+   * on its last digit never gets it twice; a page that waits longer than this before it sends
+   * may. A code goes stale in minutes, so the sooner it reaches the site the better.
+   */
+  readonly codeLookMs?: number;
+  /**
    * Whether the submit call reads the page's alerts just before its click, so its report counts
    * the ones after it that are new (`newAlerts`). The read waits for every frame, so only a host
    * that reads the count asks; a read that takes longer than `alertsBeforeMs` counts nothing.
@@ -787,6 +796,7 @@ const submitWhenEnabled = (
   Effect.gen(function* () {
     const started = Date.now();
     const sendMs = sendWindow(input);
+    const lookMs = Math.min(sendMs, input.codeLookMs ?? sendMs);
     const readsOnly = !hostSubmits(input.step) && sendMs > 0;
     const look =
       lookFirst && call.kind === "submit" && codeOnly(input.step) && sendMs > 0
@@ -798,7 +808,7 @@ const submitWhenEnabled = (
     const changes = { count: 0 };
     let url = "";
     for (;;) {
-      const looking = look !== undefined && Date.now() - started < sendMs;
+      const looking = look !== undefined && Date.now() - started < lookMs;
       // The page may have sent the code itself while its screen stays as typed (`codeSent`).
       if (look !== undefined && !looking && (yield* sent))
         return Either.right<CallAnswer>({ pageSent: true, url });

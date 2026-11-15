@@ -110,6 +110,7 @@ const fill = async (
   step: AutofillStep,
   values: readonly string[],
   hook: "reads" | "none" | "throws" = "reads",
+  codeLookMs?: number,
 ) => {
   const requests: { readonly at: number; readonly body: string }[] = [];
   page.on("request", (request) => requests.push({ at: Date.now(), body: request.postData() ?? "" }));
@@ -138,6 +139,7 @@ const fill = async (
       typing: "keyboard",
       settleMs: 2_000,
       ...(hook === "none" ? {} : { codeSent }),
+      ...(codeLookMs === undefined ? {} : { codeLookMs }),
     }),
   );
   expectNotCarried(host.calls, code);
@@ -270,5 +272,27 @@ test("a code in one field is typed by held keys, and Verify is clicked once", as
   });
   expect(felt.filter((event) => event.type === "keydown").map(({ key }) => key)).toEqual([...code]);
   for (const held of holds(felt)) expect(held).toBeGreaterThanOrEqual(55);
+  expect(sent).toEqual([code]);
+});
+
+// A code goes stale in minutes, so a host that reads its own requests may look for a page's own
+// send for less than the step's whole window before it clicks.
+test("a host's shorter code look clicks Verify soon after the last key", async ({ page }) => {
+  const { felt, sent } = await serve(page, fieldScreen);
+  const { report } = await fill(page, fieldStep, [code], "reads", 300);
+  expect(report).toMatchObject({ outcome: "filled", submit: "clicked" });
+  const lastKey = felt.filter((event) => event.type === "keyup").at(-1)?.at ?? Number.NaN;
+  const click = felt.find((event) => event.type === "click" && event.field === "verify")?.at;
+  expect((click ?? Number.NaN) - lastKey).toBeLessThan(1_000);
+  expect(sent).toEqual([code]);
+});
+
+test("with a shorter code look, a split code whose page sends it itself on the last digit is still never clicked", async ({
+  page,
+}) => {
+  const { felt, sent } = await serve(page, rowScreen({ advances: true, sends: "request" }));
+  const { report } = await fill(page, rowStep, [...code], "reads", 300);
+  expect(report).toMatchObject({ outcome: "filled", submit: "page" });
+  expect(felt.filter((event) => event.type === "click" && event.field === "verify")).toEqual([]);
   expect(sent).toEqual([code]);
 });
