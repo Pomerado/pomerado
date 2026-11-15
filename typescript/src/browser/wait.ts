@@ -43,11 +43,13 @@ export interface WaitRecord {
  * `confirmCommit`'s answer (`confirmCommitCode`): whether the write's final commit went through
  * (`done`), did not (`not_done`) or can't be told from the response and the page (`unclear`); its
  * status in the core notation, `queued` with the site's own word in `status_label` when the site
- * took the work to finish later; and a sentence saying what decided it.
+ * took the work to finish later, or `pending` with the site's text in `status_label` when the
+ * in-between answer its wait named still showed as the wait ended; and a sentence saying what
+ * decided it.
  */
 export interface CommitConfirmation {
   readonly state: "done" | "not_done" | "unclear";
-  readonly status: "completed" | "queued" | "failed" | "unconfirmed";
+  readonly status: "completed" | "queued" | "pending" | "failed" | "unconfirmed";
   readonly status_label?: string;
   readonly reason: string;
 }
@@ -94,6 +96,7 @@ const waitLimits = Object.freeze(${JSON.stringify({
   settle: timeoutDefaults.settle,
   unchanged: timeoutDefaults.unchanged,
   lateFillCap: timeoutDefaults.lateFillCap,
+  pending: timeoutDefaults.pending,
 })});
 const waitRecords = [];
 // Every wait this call ran, oldest first, each with a sentence saying how it ended.
@@ -543,10 +546,20 @@ const outcomeWaitObserve = async (outcomes, key, state, events) => {
 // once the deadline passed.
 const outcomeWaitGraceMs = 1000;
 const outcomeWaitLateMs = 500;
+// What a pending hold leaves of the call, whose end the runtime declares as __pomeradoCallEnds, for
+// the code after the wait, such as confirmCommit's reads.
+const outcomeWaitCallRoomMs = 5000;
 const waitForOutcomeResult = async (outcomes, options = {}) => {
   const names = Object.keys(outcomes ?? {});
   if (names.length === 0) throw new TypeError("waitForOutcome needs at least one outcome");
   const candidates = names.map((name) => outcomeWaitCandidate(name, outcomes[name]));
+  const pendingNames = new Set(options.pending === undefined ? [] : [options.pending].flat());
+  for (const name of pendingNames) {
+    const kind = candidates.find((candidate) => candidate.name === name)?.kind;
+    if (kind === undefined) throw new TypeError('waitForOutcome pending "' + name + '" names none of its outcomes');
+    if (["response", "dialog", "popup"].includes(kind))
+      throw new TypeError('waitForOutcome pending "' + name + '" names a ' + kind + " outcome; pending takes outcomes the page shows");
+  }
   const timeout = options.timeout ?? waitLimits.answerCap;
   const noProgressMs = options.noProgressMs ?? waitLimits.answer;
   const progress = waitProgress({ ...options, noProgressMs, whileSending: true });
@@ -604,10 +617,11 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
     progress.begin();
     begun = Date.now();
     // deadline, a Date.now() time such as the call's own, bounds the wait wherever the action left it.
-    const until = Math.min(begun + timeout, options.deadline ?? Infinity);
+    let until = Math.min(begun + timeout, options.deadline ?? Infinity);
     // Past the deadline, every page call shares outcomeWaitLateMs of grace and then ends: the wait
     // never outlasts hardStop, however long the page holds it.
-    const hardStop = until + outcomeWaitLateMs;
+    let hardStop = until + outcomeWaitLateMs;
+    let pendingSince;
     const beforeStop = () => Math.max(0, hardStop - Date.now());
     cleanupMs = () => Math.min(250, beforeStop());
     const unchangedMs = options.unchangedMs ?? waitLimits.unchanged;
@@ -648,9 +662,11 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
         : Object.fromEntries(candidates.flatMap((each) =>
           evented.includes(each.kind) ? [[each.name, outcomeWaitEventRead(each, events)]]
             : observations[each.name] === undefined ? [] : [[each.name, observations[each.name]]]));
+      const pending = pendingNames.has(candidate.name);
       const answer = {
         outcome: candidate.name,
         kind: candidate.kind,
+        ...(pending ? { pending: true } : {}),
         afterMs: Date.now() - begun,
         looks,
         evidence,
@@ -666,6 +682,7 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
       finish(
         { outcome: candidate.name },
         '"' + candidate.name + '"' + (candidate.kind === "locator" ? "" : " (" + candidate.kind + ")") + " showed after " +
+          (pending ? pendingSince - begun + " ms and was still pending after " : "") +
           answer.afterMs + " ms (" + looks + (looks === 1 ? " look)" : " looks)") +
           also.map((each) => '; "' + each.name + '" (' + each.kind + ") also matched").join("") +
           (answer.dialog === undefined ? "" : "; a native " + answer.dialog.type() + " dialog is left open on the result's dialog"),
@@ -699,10 +716,23 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
       // While a navigation the action set off is on its way, the elements shown are the old
       // document's, about to be replaced: a locator or invalid fields count only on the new one.
       const replacing = key !== undefined && events.navigating(state.actedAt);
-      const shown = candidates.find((candidate) =>
+      const shows = (candidate, staleNow = stale) =>
         blocked ? ["response", "dialog", "popup"].includes(candidate.kind) && events.hit(candidate.name) !== undefined
           : !(replacing && (candidate.kind === "locator" || candidate.kind === "invalid")) &&
-            outcomeWaitShows(candidate, observations?.[candidate.name], state, stale, now));
+            outcomeWaitShows(candidate, observations?.[candidate.name], state, staleNow, now);
+      // An in-between answer the code named in pending never decides while it shows: it holds the
+      // wait for a final one, up to waitLimits.pending from the first look that shows it, never past
+      // the deadline nor later than outcomeWaitCallRoomMs before the call's own end. One still
+      // showing when the hold ends is the answer. One that showed before the action, unchanged, is
+      // no answer to it and never holds the wait.
+      const shown = candidates.find((candidate) => !pendingNames.has(candidate.name) && shows(candidate));
+      const held = blocked ? undefined : candidates.find((candidate) => pendingNames.has(candidate.name) && shows(candidate, true));
+      if (held !== undefined && pendingSince === undefined) {
+        pendingSince = now;
+        const callEnds = typeof __pomeradoCallEnds === "number" ? __pomeradoCallEnds - outcomeWaitCallRoomMs : Infinity;
+        until = Math.max(until, Math.min(now + waitLimits.pending, options.deadline ?? Infinity, callEnds));
+        hardStop = until + outcomeWaitLateMs;
+      }
       if (shown !== undefined) {
         const observation = observations?.[shown.name];
         if (shown.kind === "locator" && observation.count > 1) {
@@ -740,6 +770,14 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
       // An outcome the page announced as an event during the sample decides at the next look.
       if (events.dialogOpen() || events.anyHit()) continue;
       signature = current;
+      if (now >= until && held !== undefined) {
+        const evidence = await waitBounded(
+          outcomeWaitEvidence(held, observations[held.name], state, events, now),
+          Math.max(250, until - Date.now()),
+          {},
+        );
+        return result(held, observations, evidence);
+      }
       if (now >= until) {
         const seen = last ?? (beforeStop() > 0 ? await look().catch(() => undefined) : undefined) ?? {};
         const failure = outcomeWaitFailure(
@@ -756,7 +794,7 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
       // A quiet page fails only when the next look agrees, since the page may have answered
       // between this look's outcomes and its progress sample.
       const anyShown = candidates.some((candidate) => outcomeWaitShowsAny(candidate, observations?.[candidate.name]));
-      const quiet = !anyShown && progress.quietMs() >= noProgressMs;
+      const quiet = !anyShown && held === undefined && progress.quietMs() >= noProgressMs;
       if (quiet && !quietBefore) quietBefore = true;
       else if (quiet) {
         const seen = last ?? {};
@@ -1072,7 +1110,10 @@ const waitForRows = async (rows, fields, options = {}) => {
       // The rows are read before the signs beside them, so a loader leaving in between restarts
       // the settle, and the next look sees the rows it left for.
       snapshot: JSON.stringify([listSigns, taken]),
-      reason: "values_loading",
+      // A needed field the page still lacks once it stopped changing is a page the code does not
+      // match, not one still loading.
+      reason: Object.keys(missing).length > 0 && Object.keys(loading).length === 0 && Object.keys(hidden).length === 0
+        ? "page_mismatch" : "values_loading",
       problems:
         identified.length + " identified rows of " + read.length + ", needed " + count +
         (problems.length === 0 ? "" : "; " + problems.join("; ")),
@@ -1129,7 +1170,7 @@ const waitForValues = async (fields, options = {}) => {
       settleMs: settle,
       filled: state.filled,
       snapshot: JSON.stringify(state.values),
-      reason: "values_loading",
+      reason: state.absent && state.problems.every((problem) => problem.endsWith(" missing")) ? "page_mismatch" : "values_loading",
       problems: state.problems.join("; "),
       summary: (elapsed, looks) => Object.keys(specs).length + " values filled and holding after " + elapsed + " ms (" + looks + " looks)",
       result: { values: state.values },
@@ -1196,7 +1237,7 @@ const waitForChange = async (fields, options = {}) => {
  * and when progress stopped. `waitReport()` returns one record per wait this call ran, each with a
  * `summary` sentence: return it from a probe to see how each wait ended.
  *
- * `waitForOutcome(outcomes, { action, loading, region, siteDomain, noProgressMs, timeout,
+ * `waitForOutcome(outcomes, { action, pending, loading, region, siteDomain, noProgressMs, timeout,
  * unchangedMs }?)` waits for whichever of the page's possible answers appears, after a step whose
  * answer can vary, such as a search, a filter, a date pick or a submit, and returns its key.
  * `outcomes` names one locator per answer, highest priority first, such as `{ refused, failed,
@@ -1213,7 +1254,14 @@ const waitForChange = async (fields, options = {}) => {
  * at most `lateFillCap` (15 s), and never past `timeout` less `unchangedMs`, so the match still
  * counts before the timeout.
  * `timeout`, `noProgressMs` and `unchangedMs` start once the action returns; `deadline`, a
- * `Date.now()` time such as the call's own, ends the wait by then however long the action took. Its
+ * `Date.now()` time such as the call's own, ends the wait by then however long the action took.
+ * `pending` names the outcomes, one key or a list, that are the site's in-between answers to the
+ * action, such as a save it is still processing, each one the page shows (never a response, dialog
+ * or popup), and counting only once new or changed since the action. One never decides while it
+ * shows: from the first look that shows one, the wait holds for a final outcome for `pending` (60 s) past it, or past
+ * `timeout` when that ends later, never past `deadline` nor later than 5 s before the call's own
+ * end. A final outcome wins at once. One still showing when the hold ends is the answer, with
+ * `pending: true` on the result. Its
  * `OutcomeWaitFailure` has `observations` (`OutcomeObservation` by key) and one of these reasons:
  *
  * - `outcome_ambiguous`, when the winning outcome's locator matches more than one element; its
@@ -1312,7 +1360,8 @@ const waitForChange = async (fields, options = {}) => {
  * A value is still loading, never absent, while it is empty, reads as a loading word or only dots,
  * matches the field's `placeholder` pattern, or sits in an `aria-busy`, skeleton or shimmer
  * element. An `optional` field may be absent and is then `null`; a needed one may not. A value
- * still loading when progress stops fails with `values_loading`, whether optional or not;
+ * still loading when progress stops fails with `values_loading`, whether optional or not; a needed
+ * one missing then, when only missing ones held the wait back, with `page_mismatch`;
  * `change_unknown` when waitForChange's fields are missing; `values_timeout` at the cap. Each is a
  * `ValueWaitFailure`.
  */
@@ -1370,7 +1419,9 @@ return { outcomeWaitFailure, outcomeWaitNote, outcomeWaitChanged, outcomeWaitObs
  *   field still marked invalid as before, is `unclear`.
  * - Otherwise the commit is `done`: `queued` for a 202, or a body whose status says queued, pending
  *   or processing, with that word as `status_label`, else `completed`. An outcome with no response
- *   is `not_done` when the page shows a new error, else `unclear`. A native dialog that opened
+ *   is `not_done` when the page shows a new error, else `unclear`, except a `pending` answer still
+ *   showing when its wait ended: that is `done` and `pending`, with its text as `status_label`,
+ *   unless the page shows a new message other than an alert. A native dialog that opened
  *   during the wait and says the write failed is `not_done`, unless the response is a 5xx or
  *   proves a record (a 201 with a Location): that is `unclear`, naming both. While one stays open
  *   the page can't be read, which is `unclear`.
@@ -1506,6 +1557,7 @@ const confirmCommit = await (async () => {
       }];
     });
   };
+  const neutralAlert = " (an alert that says neither error nor success)";
   const fieldKey = (field) => field.field + "\u0000" + field.message;
   const fieldText = (field) => field.field + (field.message === "" ? " is marked invalid" : ": " + field.message);
   // Notes the page as it stands now, before the click: its address, how many messages show each
@@ -1539,7 +1591,7 @@ const confirmCommit = await (async () => {
       else if (refuses) open.push(message.text + " (a success beside a refusal)");
       else if (openWords.test(message.text)) open.push(message.text);
       else if (message.errorStyle && !message.successStyle) open.push(message.text + " (styled as an error, with no words of one)");
-      else if (message.alert && !succeeds) open.push(message.text + " (an alert that says neither error nor success)");
+      else if (message.alert && !succeeds) open.push(message.text + neutralAlert);
     }
     return { errors: [...new Set(errors)], open: [...new Set(open)] };
   };
@@ -1602,6 +1654,17 @@ const confirmCommit = await (async () => {
       const answered = outcome?.outcome === undefined ? "" : '; "' + outcome.outcome + '" answered the wait';
       if (seen !== undefined && seen.errors.length > 0)
         return notDone("no commit response" + answered + "; the page shows " + list(seen.errors));
+      // A pending answer still showing when its wait ended is the site's own word that it took the
+      // write and is still working on it, unless the page shows more than an alert beside it.
+      if (outcome?.pending === true && seen !== undefined && seen.open.every((text) => text.endsWith(neutralAlert))) {
+        const text = outcome.evidence?.text;
+        return {
+          state: "done",
+          status: "pending",
+          ...(typeof text === "string" && text !== "" ? { status_label: outcomeWaitClean(text, 100) } : {}),
+          reason: '"' + outcome.outcome + '" was still pending when the wait ended, with no error on the page',
+        };
+      }
       return unclear("no commit response to confirm" + answered);
     }
     const status = response.status();
