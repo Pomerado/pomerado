@@ -243,8 +243,8 @@ export const mintPublication =
       yield* unverifiedSignInRefusal(state, sample);
       const write = sample.purpose === "act";
       // A write's composed contract decodes the input its session ran: the agent's exampleInput
-      // when the caller sent none, as the first act step that passed one fixed it, even when the
-      // named step ran before it; else the caller's own.
+      // when the caller sent none or it added values the request states, as the first act step
+      // that passed one fixed it, even when the named step ran before it; else the caller's own.
       const input = write ? (writeSession.input ?? sample.input) : sample.input;
       // The composed contract, read offline: the files that ship, screened for secrets and
       // handles, reviewed by Guardian and run in contract mode on the input.

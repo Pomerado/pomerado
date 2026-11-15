@@ -81,14 +81,14 @@ describe("allowedEffectsFor", () => {
     const derived = allowedEffectsFor({ ...live("act"), input: "intent_derived" })[0];
     expect(derived).toMatch(/^The caller's requested task, done once across this session's steps/u);
     expect(derived).toContain(
-      "Every value in that input must be stated by the trusted intent or an answered question",
+      "Every value the caller sent stays as sent; every other value in that input must be stated by the trusted intent or an answered question",
     );
     // What the page supplies stays under the general policy, and add-ons need the owner's word.
     expect(derived).toContain(
       "Values the page supplies, such as a site option the request selects, a default, a form token or a suggestion, follow the general policy as before.",
     );
     expect(derived).toContain(
-      "An add-on, optional purchase, pre-selected paid option, saved payment or private detail is enabled, accepted or declined only as the trusted intent or an answered question says, never as that input alone says",
+      "An add-on, optional purchase, pre-selected paid option, saved payment or private detail is enabled, accepted or declined only as a value the caller sent, the trusted intent or an answered question says, never as a value the agent added alone says; when none of them settles it, the step stops before choosing it.",
     );
     expect(derived).not.toContain("every value a step types, chooses or submits");
     for (const purpose of ["explore", "test", "example"] as const)

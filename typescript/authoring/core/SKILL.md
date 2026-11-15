@@ -167,10 +167,12 @@ request and the flow, never from one caller's account or example.
 
 A value the request's text supplies, such as a code, a quantity or a choice, is the build's to
 use even when the caller's structured input is empty: pass the request's values as
-`exampleInput`, as `AGENTS.md` says (`execute`), never as a build-time question. Decide from the request and the site which inputs are
+`exampleInput`, as `AGENTS.md` says (`execute`), never as a build-time question. Prefer making
+each value or choice the request makes an input, with the request's value as its example, also
+when the request words it as a rule for choosing. Decide from the request and the site which inputs are
 required. An optional input plus a declared question the tool asks before any effect is only for
 a value the request genuinely leaves open; never make a required field optional with nothing
-that asks. A choice the request or the owner's answer settled as how the tool behaves, such as
+that asks. A choice the request or the owner's answer states for every call, such as
 sorting by price or which kind of record it creates, is the tool's default, never a required
 input or a question at run time. When a caller could reasonably want another value, declare it
 with `defaultedInput(schema, answeredValue)` from the runtime, an optional input whose published

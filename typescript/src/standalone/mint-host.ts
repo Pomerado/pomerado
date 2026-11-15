@@ -172,6 +172,8 @@ const mintDependencies = (state: MintState, publicationDecisions: PublicationDec
             callerExampleRefused: state.refusedCallerExamples.some((refused) =>
               isDeepStrictEqual(refused, context.input),
             ),
+            // Each act step's review names the keys the caller sent (`callerKeys`).
+            extendsCallerInput: true,
           });
         if (refusal !== undefined) return refusal;
         const boundary =

@@ -120,6 +120,29 @@ describe("exampleInputRefusal", () => {
     ).toBeUndefined();
   });
 
+  it("lets a write's act step add values the request states to the caller's input, keeping each value as sent", () => {
+    const caller = { store: "Main St", payer: { name: "Pat Example" } };
+    const extending = { ...scope("write", caller), extendsCallerInput: true };
+    expect(
+      exampleInputRefusal(act({ ...caller, item: "Tea", maxPrice: 10 }), extending),
+    ).toBeUndefined();
+    // A value the caller sent that the input changes or leaves out is refused, by name.
+    expect(exampleInputRefusal(act({ ...caller, store: "Elm St", item: "Tea" }), extending)).toEqual({
+      supported: false,
+      reason:
+        'An act step\'s exampleInput keeps every value the caller sent as sent and only adds values the request states; this one changes or leaves out "store". Correct or remove exampleInput and execute again. Nothing was executed.',
+    });
+    expect(
+      exampleInputRefusal(act({ store: "Main St", item: "Tea" }), extending)?.reason,
+    ).toContain('changes or leaves out "payer".');
+    // With no caller input, the session runs the agent's reading of the request, as before.
+    expect(exampleInputRefusal(act(), { ...scope("write"), extendsCallerInput: true })).toBeUndefined();
+    // A host that does not opt in runs the caller's input as it is.
+    expect(exampleInputRefusal(act({ ...caller, item: "Tea" }), scope("write", caller))?.reason).toContain(
+      "The caller supplied input, and the session runs it as it is.",
+    );
+  });
+
   it("lets a later act step fix the session's input after steps that ran on the caller's empty input", () => {
     // The session's earlier act steps passed none, so they ran the caller's empty input.
     const ranEmpty = { started: true, input: undefined };
@@ -255,6 +278,36 @@ describe("stepInput", () => {
       await Effect.runPromise(stepInput(act(), { callerInput: {}, sessionInput: undefined })),
     ).toEqual({
       input: {},
+    });
+  });
+
+  it("names as the caller's only the keys whose values the act step's input holds as the caller's input has them", async () => {
+    const act = (extra: Partial<ExecutionRequest> = {}) =>
+      request({ purpose: "act", target: "liveBrowser", ...extra });
+    const select = (
+      submitted: ExecutionRequest,
+      callerInput: unknown,
+      sessionInput?: Readonly<Record<string, unknown>>,
+    ) => Effect.runPromise(stepInput(submitted, { callerInput, sessionInput }));
+    const session = { store: "Main St", item: "Tea" };
+    expect(
+      await select(act({ exampleInput: JSON.stringify(session) }), { store: "Main St" }),
+    ).toStrictEqual({ input: session, mark: "intent_derived", callerKeys: ["store"] });
+    // An update changed the caller's input after the session fixed its own: only a value both hold
+    // is the caller's, never the one the update replaced.
+    expect(await select(act(), { store: "Elm St", item: "Tea" }, session)).toStrictEqual({
+      input: session,
+      mark: "intent_derived",
+      callerKeys: ["item"],
+    });
+    expect(await select(act(), { store: "Elm St" }, session)).toStrictEqual({
+      input: session,
+      mark: "intent_derived",
+    });
+    // With no caller input, nothing in the session's input is the caller's.
+    expect(await select(act({ exampleInput: JSON.stringify(session) }), {})).toStrictEqual({
+      input: session,
+      mark: "intent_derived",
     });
   });
 

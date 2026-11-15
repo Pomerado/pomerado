@@ -125,7 +125,7 @@ Prefer avoiding these, which fit the tool to the build's one order:
 
 - a rule the request sets for that order, such as which item to pick or a price range, written
   into the code, the tool's name or its description: make it an input, with the request's value
-  in `exampleInput`, or as its default only when the request sets it for every run (the core
+  in `exampleInput`, or as its default only when the request states it for every call (the core
   skill);
 - a value the page works out for that order, such as its total or a fee, written in as a
   constant, whether passed to `fillCard`, checked before the commit or used to find a control,

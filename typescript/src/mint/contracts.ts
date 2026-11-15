@@ -1012,7 +1012,9 @@ export const ExecutionRequest = Schema.Struct({
   /**
    * Only when the caller's input is empty (`{}`), on a read build's example or a write build's
    * act step: the tool's input as JSON text, which the agent writes from the request and the
-   * owner's answers. The example, or each act step that passes it, runs it. In a write session,
+   * owner's answers. A write's act step may also pass the caller's own input with values the
+   * request states added, on a host that allows it (`exampleInputRefusal`). The example, or each
+   * act step that passes it, runs it. In a write session,
    * the first act step that passes it fixes it, whichever step that is: its later act steps
    * repeat it unchanged, or omit it where the host keeps the session's input and runs it on them.
    */
