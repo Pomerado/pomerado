@@ -982,10 +982,10 @@ it("has a write mark only the steps that send and wait for every answer the site
   // address autocomplete, sends no change, so it is never a commit. Nor is a click that only opens
   // a checkout or review page: a run that fails there placed nothing.
   expect(writes).toContain(
-    "- Place a commit mark only on the step that sends the change to the site, such as a submit, save or confirm control, or a control whose handler sends the caller's change to the site. Opening a form and typing into its fields change only the page's own state, so leave them unmarked unless the site's requests show they save the caller's change, such as an autosave; a lookup, suggestion, validation or analytics request saves nothing. A click that only opens a checkout or review page is no commit, whatever it sends, unless that click can itself complete the purchase. Place the first commit mark at the first step that saves on the site.",
+    "- Place a commit mark only on the step that sends the change to the site, such as a submit, save or confirm control, or a control whose handler sends the caller's change to the site. Opening a form and typing into its fields change only the page's own state, so leave them unmarked unless the site's requests show they save the caller's change, such as an autosave; a lookup, suggestion, validation or analytics request saves nothing. A click that only opens a checkout or review page is no commit unless that click can itself complete the purchase. Place the first commit mark at the first step that saves on the site.",
   );
   expect(writes).toContain(
-    "or a control whose handler sends the caller's change to the site. Opening a form and typing into its fields change only the page's own state, so leave them unmarked unless the site's requests show they save the caller's change, such as an autosave; a lookup, suggestion, validation or analytics request saves nothing. A click that only opens a checkout or review page is no commit, whatever it sends, unless that click can itself complete the purchase. Mark every such step, including autosaves,",
+    "or a control whose handler sends the caller's change to the site. Opening a form and typing into its fields change only the page's own state, so leave them unmarked unless the site's requests show they save the caller's change, such as an autosave; a lookup, suggestion, validation or analytics request saves nothing. A click that only opens a checkout or review page is no commit unless that click can itself complete the purchase. Mark every such step, including autosaves,",
   );
   expect(writes).toContain(
     "- Mark the commit at the step that submits the booking or order; a hold that expires on its own, such as a reserved table or a cart timer, is not the commit.",
@@ -1356,7 +1356,7 @@ it("renders the pinned standalone authoring", async () => {
     ["a08f1ef89cc10bf11e17b8d6086b6e37649b1d5d11b78c0542cc7db32460b7e3", "testing"],
     ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
     ["697db57a4a588c632e52549b7ef5f8a6f6dc7304eca71ff0cc5940daa98c17d2", "forms"],
-    ["a4b7f8c75b3dcdf98b618a7dfb204d3a306a7dc0cdc10c5dae389e114204ab95", "writes"],
+    ["62132ce79e2b38b80ba0165ba419d1893990e0aed0d5ff4231fd43cdfc8f9aea", "writes"],
     ["6bf9ea9ba0e8d5e6eba6c34cb220c4476dd8318e653174ddb9a36cef67bc4c57", "cart"],
     ["eacd0e0d4b332d75516df296f3bcf2f4b973a098d77996392f89b70c814f75fc", "caller-input"],
     ["890d7f3c8f64f5e360c01fbf782356290cce21529dc7360b113cacd60c348ddf", "publication"],
