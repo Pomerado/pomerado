@@ -247,6 +247,7 @@ const executeLocally = (operation: Parameters<typeof executeKernelOperation>[0])
     };
     return yield* executeKernelOperation(operation, start.input, {
       kernel,
+      ...(start.effect === undefined ? {} : { effect: start.effect }),
       ...(start.files === true && start.offline !== true
         ? {
             files: {

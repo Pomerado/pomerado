@@ -205,8 +205,8 @@ During the session:
   offered exactly one suggestion for it that matches it cleanly or that `pickAddress` accepted,
   take the site's version, as you would a picked
   option: later read-backs, such as a review page, summary or confirmation, compare against
-  it, and the output returns it for that field. Any other lone suggestion is a candidate:
-  throw its `pickRefusal`. The one suggestion counts only for a
+  it, and the output returns it for that field. Ask about any other lone suggestion as about a
+  looser match (core skill). The one suggestion counts only for a
   free-text value the caller typed, such as an address or a name in a text box the site
   completes, never for a picker that selects a record, such as a person, assignee, customer,
   linked record, store or account, which keeps the reference rules in "Check the read-back"
