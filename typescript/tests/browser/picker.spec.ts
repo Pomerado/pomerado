@@ -54,8 +54,8 @@ const moreResults = `
   <input type="hidden" name="pickup">
 </div></form>
 <script>
-const shown = [["a1","Harbor Gallery","151 Third St, Example City, CA, USA"],["a2","Harbor Gallery Cafe","12 Pier Rd, Example City, CA, USA"]];
-const more = [["b1","Example Museum of Harbor Art","151 3rd St, Example City, CA, US"],["b2","Harbor Gallery Annex","9 Bay St, Example City, CA, US"]];
+const shown = [["a1","Harbor Gallery","15 Third St, Example City, CA, USA"],["a2","Harbor Gallery Cafe","12 Pier Rd, Example City, CA, USA"]];
+const more = [["b1","Example Museum of Harbor Art","15 3rd St, Example City, CA, US"],["b2","Harbor Gallery Annex","9 Bay St, Example City, CA, US"]];
 const input = document.getElementById("pickup"), list = document.getElementById("places"), drop = document.getElementById("drop"), hidden = document.querySelector("[name=pickup]");
 window.moreClicks = 0;
 const words = (text) => text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
@@ -81,10 +81,12 @@ list.addEventListener("click", (event) => {
 </script>`;
 
 test("pickValue picks from the list shown for the typed text, opening more results only without a clean match there", async ({ page }) => {
+  test.setTimeout(60_000);
   await serve(page, moreResults);
-  const pick = (value: string) =>
-    `return await pickValue(page.getByRole("combobox", { name: "Pickup" }), ${JSON.stringify(value)}, { ...fast, timeout: 15000, more: page.getByRole("button", { name: "See more results" }) });`;
-  expect(await call(page, pick("Harbor Gallery, 151 Third St, Example City, CA"))).toEqual({
+  const button = 'page.getByRole("button", { name: "See more results" })';
+  const pick = (value: string, more = button, extra = "") =>
+    `return await pickValue(page.getByRole("combobox", { name: "Pickup" }), ${JSON.stringify(value)}, { ...fast, timeout: 15000, more: ${more}${extra} });`;
+  expect(await call(page, pick("Harbor Gallery, 15 Third St, Example City, CA"))).toEqual({
     result: { picked: true, kind: "typeahead", label: "Harbor Gallery", value: "a1", rank: "leading", refills: 0 },
   });
   expect(await page.evaluate(() => (window as unknown as { moreClicks: number }).moreClicks)).toBe(0);
@@ -92,17 +94,66 @@ test("pickValue picks from the list shown for the typed text, opening more resul
   // each by its lines joined with commas.
   const unclear = await call(page, pick("Harbor"));
   const candidates = [
-    "Harbor Gallery, 151 Third St, Example City, CA, USA",
+    "Harbor Gallery, 15 Third St, Example City, CA, USA",
     "Harbor Gallery Cafe, 12 Pier Rd, Example City, CA, USA",
-    "Example Museum of Harbor Art, 151 3rd St, Example City, CA, US",
+    "Example Museum of Harbor Art, 15 3rd St, Example City, CA, US",
     "Harbor Gallery Annex, 9 Bay St, Example City, CA, US",
   ];
   expect(unclear).toMatchObject({ result: { picked: false, reason: "option_unclear", matches: candidates } });
-  // A candidate only the further results list is picked by its first line typed alone.
-  expect(await call(page, pick(candidates[2] ?? ""), 30)).toEqual({
-    result: { picked: true, kind: "typeahead", label: "Example Museum of Harbor Art", value: "b1", rank: "folded", refills: 0 },
+  // A candidate only the further results list, which a function opens here, is picked by its
+  // first line typed alone, as written; typing the long candidate at a person's pace takes longer
+  // than one action's limit.
+  expect(await call(page, pick(candidates[2] ?? "", `() => ${button}.click()`), 30)).toEqual({
+    result: { picked: true, kind: "typeahead", label: "Example Museum of Harbor Art", value: "b1", rank: "exact", refills: 0 },
   });
   expect(await submitted(page)).toEqual({ pickup: "b1" });
+  // A value with no match for itself or its first comma part lists what both typings found; with
+  // query set, it is typed once.
+  expect(await call(page, pick("Gallery, Example City"), 30)).toMatchObject({
+    result: { picked: false, reason: "option_missing", available: ["Harbor Gallery", "Harbor Gallery Cafe", "Harbor Gallery Annex"] },
+  });
+  expect(await call(page, pick("Gallery, Example City", button, ', query: "Gallery, Example City"'), 30)).toMatchObject({
+    result: { picked: false, reason: "option_missing", available: ["Harbor Gallery", "Harbor Gallery Cafe"] },
+  });
+});
+
+// The first comma part's typing that never settles, as a list still loading, leaves the answer to
+// the value's own typing instead of failing the call.
+test("pickValue keeps the value's own answer when typing its first comma part alone fails", async ({ page }) => {
+  await serve(
+    page,
+    moreResults.replace(
+      'input.addEventListener("input", () => render(',
+      'input.addEventListener("input", () => (input.value.includes(",") ? list.removeAttribute("aria-busy") : list.setAttribute("aria-busy", "true")));\ninput.addEventListener("input", () => input.value.includes(",") && render(',
+    ),
+  );
+  expect(await call(page, `return await pickValue(page.getByRole("combobox", { name: "Pickup" }), "Gallery, Example City", { ...fast, timeout: 12000 });`, 30)).toEqual({
+    result: { picked: false, reason: "option_missing", wanted: "Gallery, Example City", available: ["Harbor Gallery", "Harbor Gallery Cafe"], matches: [] },
+  });
+});
+
+// In a dropdown, whose order is fixed, an option named as the value is picked though an option
+// above it holds the value among its words.
+test("pickValue picks the option named as the value in a dropdown of several-line options", async ({ page }) => {
+  await serve(page, `<form><button type="button" id="pick" aria-label="Size" aria-haspopup="listbox" aria-expanded="false" aria-controls="sizes">Choose</button>
+<ul id="sizes" role="listbox" hidden><li role="option" data-value="xs"><div>X-Small</div><div>Out of stock</div></li><li role="option" data-value="s"><div>Small</div><div>In stock</div></li></ul>
+<input type="hidden" name="size"></form>
+<script>
+const button = document.getElementById("pick"), list = document.getElementById("sizes");
+button.addEventListener("click", () => { list.hidden = !list.hidden; button.setAttribute("aria-expanded", String(!list.hidden)); });
+list.addEventListener("click", (event) => {
+  const option = event.target.closest("[role=option]");
+  if (!option) return;
+  button.textContent = option.firstElementChild.textContent;
+  document.querySelector("[name=size]").value = option.dataset.value;
+  list.hidden = true;
+  button.setAttribute("aria-expanded", "false");
+});
+</script>`);
+  expect(await call(page, `return await pickValue(page.getByRole("button", { name: "Size" }), "Small", fast);`)).toEqual({
+    result: { picked: true, kind: "dropdown", label: "Small", value: "s", rank: "exact", refills: 0 },
+  });
+  expect(await submitted(page)).toEqual({ size: "s" });
 });
 
 // With the stem option, a word finds the one suggestion whose whole name is a word it begins, ahead
@@ -538,6 +589,24 @@ test("pickValue still refuses a place a starting-up page never offers, and its o
   expect(await submitted(page)).toEqual({ where: "" });
 });
 
+// A value with a first comma part is typed once; on a page that drops that typing, as one still
+// starting up does, typing the first part is the second try, and finding nothing then is the answer.
+test("pickValue types a value's first comma part when the page ignored the value's own typing", async ({ page }) => {
+  await serve(
+    page,
+    startingUp.replace(/input\.addEventListener\("focus"[\s\S]*?\n\}\);/, 'input.addEventListener("input", () => { if (input.value === "") ready = true; });'),
+    (params) => ({ delayMs: 60, body: ["Tokyo, Japan", "Tokyo Bay, Japan", "Toronto, Canada"].filter((place) => place.startsWith(params.get("q") ?? "")) }),
+  );
+  const field = 'page.getByLabel("Destination")';
+  expect(await call(page, `return await pickValue(${field}, "Tokyo, Japan", { ...fast, option: ${notAiRow} });`)).toEqual({
+    result: { picked: true, kind: "typeahead", label: "Tokyo, Japan", value: "Tokyo, Japan", rank: "exact", refills: 0 },
+  });
+  await page.reload();
+  expect(await call(page, `return await pickValue(${field}, "Qxzvw, Japan", { ...fast, option: ${notAiRow} });`)).toEqual({
+    result: { picked: false, reason: "option_missing", wanted: "Qxzvw, Japan", available: [], matches: [] },
+  });
+});
+
 /**
  * A search box that asks the site for its default list, with an empty term, when it takes focus,
  * and for matches as you type, drawing each answer as it lands. A new visitor's default list is
@@ -861,7 +930,7 @@ test("pickValue returns the options by their full text when no match is clean, e
   });
   expect(await submitted(page)).toEqual({ customer: "" });
   expect(await call(page, `return await pickValue(${field}, "Example Square, Second St, Otherton, IL, US", fast);`)).toMatchObject({
-    result: { picked: true, value: "mk", rank: "folded" },
+    result: { picked: true, value: "mk", rank: "exact" },
   });
   // Options that tie cleanly still take the first with tie first, and one in its town is a place.
   expect(await call(page, `return await pickValue(${field}, "example square", { ...fast, tie: "first" });`)).toMatchObject({

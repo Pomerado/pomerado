@@ -229,7 +229,7 @@ exception: it is optional unless the task can't run without it (below).
   by parts of its other lines, in their order. With `rankChoices` and `leading: true`, that is
   rank `exact`, `normalized`, `folded`, `leading` or, for options read with their `lines`,
   `place`. Any looser match, such as a name with words the value lacks, is a candidate, never
-  a pick, and so is a match on an option's first line alone when an option the site lists
+  a pick, and so is a match on an option's first line alone when an option a typeahead lists
   before it holds the value's text before its first comma, as whole words, in its first line:
   `pickValue` returns it as `option_unclear`, with the site's options, each by its full text. A
   value it lacks lists the site's closest options first. With no clean match, throw its

@@ -7,7 +7,10 @@ export interface PickerChoice {
   readonly disabled: boolean;
   /** Options with one key are one option seen twice; different keys are different options. */
   readonly key: string;
-  /** The lines the option shows, its first line first, when the picker read them (rank `place`). */
+  /**
+   * The lines the option shows, its first line first, when the picker read them (rank `place`).
+   * Joined with commas, as a picker's refusal lists the option, they are one more of its names.
+   */
   readonly lines?: readonly string[];
 }
 
@@ -76,29 +79,35 @@ export type PickerRanking =
  * where it ends the name or one of its parts, so Ontario never matches Turn on and Example City,
  * Oregon never matches Example City or Town; at `extraWords`, only the forms that are no place
  * count. From `folded` on, a leading "the" makes no other name, so The Example Tower is Example
- * Tower. A match at `exact`, `normalized`, `folded`, `leading` or `place` that an option of several
- * `lines` makes through its first line alone is withdrawn when an option listed before it holds the
- * spelling's text before its first comma as whole words in its first line: a site lists the place
- * it means first, so those options and the matches are returned ambiguous, at `words`, in the
- * list's order. Each name and each list of spellings is read once per call.
+ * Tower. With `options.listedFirst`, for options listed by how well they match, as a search's
+ * results are, a match at `exact`, `normalized`, `folded`, `leading` or `place` that an option of
+ * several `lines` makes through its first line alone is withdrawn when an enabled option listed
+ * before it holds the spelling's text before its first comma as whole words in its first line: a
+ * search lists the place it means first, so those options and the matches are returned ambiguous,
+ * at `words`, in the list's order. Each name and each list of spellings is read once per call.
  *
  * It is pure and self-contained: the page code of `pickerCode` embeds this same function with
  * `fold` set to `foldChoiceText`.
  */
 export const rankChoices = (
-  choices: readonly PickerChoice[],
+  given: readonly PickerChoice[],
   wanted: readonly string[],
   fold: (text: string) => string,
   options: {
     readonly leading?: boolean;
     readonly stem?: boolean;
     readonly extraWords?: boolean;
+    readonly listedFirst?: boolean;
     readonly spellings?: (
       text: string,
       options?: { readonly places?: "end" | "after-words" | "never" },
     ) => readonly string[];
   } = {},
 ): PickerRanking => {
+  const choices = given.map((choice) => {
+    const lines = choice.lines ?? [];
+    return lines.length > 1 ? { ...choice, names: [...choice.names, lines.map((line) => line.replace(/[\s,;]+$/u, "")).join(", ")] } : choice;
+  });
   const squash = (text: string) => String(text ?? "").replace(/\s+/gu, " ").trim();
   const lower = (text: string) => squash(text).toLowerCase();
   const words = (text: string) => fold(text).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
@@ -364,10 +373,11 @@ export const rankChoices = (
       true,
     ],
   ];
-  // A clean match on an option's first line alone, of an option that shows more lines, is withdrawn
-  // when an option listed before it holds the value's name, its text before its first comma, as
-  // whole words in its first line, as a site lists the place it means first: those options and
-  // the matches come back in the list's order, as matching by words.
+  // In a list ordered by how well each option matches, a clean match on an option's first line
+  // alone, of an option that shows more lines, is withdrawn when an enabled option listed before it
+  // holds the value's name, its text before its first comma, as whole words in its first line, as
+  // a search lists the place it means first: those options and the matches come back in the list's
+  // order, as matching by words.
   const namedEarlier = (rank: PickerRank, test: Test, list: readonly string[], matched: readonly number[]): PickerRanking | undefined => {
     if (!["exact", "normalized", "folded", "leading", "place"].includes(rank)) return undefined;
     const alone = matched.filter((index) => {
@@ -380,7 +390,7 @@ export const rankChoices = (
     const heads = list.map((spelling) => phrase(bare(commaParts(spelling)[0] ?? ""))).filter((head) => head.trim() !== "");
     const earlier = choices
       .slice(0, Math.min(...alone))
-      .flatMap((choice, index) => (!matched.includes(index) && heads.some((head) => phrase(bare(choice.lines?.[0] ?? choice.names[0] ?? "")).includes(head)) ? [index] : []));
+      .flatMap((choice, index) => (!matched.includes(index) && !choice.disabled && heads.some((head) => phrase(bare(choice.lines?.[0] ?? choice.names[0] ?? "")).includes(head)) ? [index] : []));
     if (earlier.length === 0) return undefined;
     const keys = new Set<string | undefined>();
     const indexes = [...earlier, ...matched]
@@ -402,8 +412,8 @@ export const rankChoices = (
     for (const list of lists) {
       const matched = choices.flatMap((choice, index) => (test(choice, list) ? [index] : []));
       if (matched.length === 0) continue;
-      const named = byName ? namedEarlier(rank, test, list, matched) : undefined;
-      if (named !== undefined) return named;
+      const withdrawn = byName && options.listedFirst === true ? namedEarlier(rank, test, list, matched) : undefined;
+      if (withdrawn !== undefined) return withdrawn;
       const keys = [...new Set(matched.map((index) => choices[index]?.key))];
       if (keys.length > 1) {
         const indexes = keys.map((key) => matched.find((index) => choices[index]?.key === key) ?? 0);

@@ -558,9 +558,10 @@ const pickerPageCode = String.raw`(element, args) => {
  * and the like) are tried against names, so Fifth Avenue for 5th Avenue outranks an option with
  * the same words in another order. Only a best match as written, ignoring case and spacing, ignoring
  * accents and punctuation (from here on a leading "the" makes no other name), at `leading` or at
- * `place` is picked, unless it matched an option of several lines by its first line alone and an
- * option listed before it holds the value's text before its first comma as whole words in its first
- * line: a site lists the place it means first, so those options are refused as `option_unclear`.
+ * `place` is picked, unless, in a typeahead's results, it matched an option of several lines by its
+ * first line alone and an enabled option listed before it holds the value's text before its first
+ * comma as whole words in its first line: a search lists the place it means first, so those options
+ * are refused as `option_unclear`.
  * One at a looser rank is refused as
  * `option_unclear`, alone or tied. Two options at the best rank are ambiguous, unless they are
  * copies with one label, text and a value, such as a country listed twice, which are one option, so
@@ -629,8 +630,10 @@ const pickerPageCode = String.raw`(element, args) => {
  * `option_unclear` those closest to the value first (`rankByWords`), and for `option_unclear`
  * each option by its whole text, its lines joined with commas, as `matches` lists them. A
  * typeahead value with no clean match whose text before its first comma is shorter, as such a text
- * passed back is, is typed again as that text alone while a quarter of the budget is left, and that
- * list ranked against the whole value, so the option is found by its first line. Decode with `PickOutcome` and throw
+ * passed back is, is typed once, then as that text alone while more than a third of the budget is
+ * left, unless `query` is set, and that list ranked against the whole value, so the option is found
+ * by its first line, where its text as listed matches as written; that second typing failing
+ * leaves the first one's answer. Decode with `PickOutcome` and throw
  * `pickRefusal(outcome, field)` (`InvalidInput` with `field` and `available`, which for options
  * that tie is `matches`), or ask the caller to choose among `matches`. In a tool that takes the
  * first of options that tie instead (each tool decides), pass `tie: "first"`, so the picker takes
@@ -655,7 +658,9 @@ const pickerRankChoices = ${String(rankChoices)};
 const pickerSpellings = ${String(spellingsOf)};
 const pickerRankByWords = ${String(rankByWords)};
 const pickerClosestFirst = ${String(closestFirst)};
-const pickerRank = (s, list, wanted) => pickerRankChoices(list, wanted, pickerFold, { leading: true, stem: s.options.stem === true, extraWords: s.options.extraWords === true, spellings: pickerSpellings });
+// A typeahead lists its results by how well they match, so a place it lists first is the one it means.
+const pickerRank = (s, list, wanted) =>
+  pickerRankChoices(list, wanted, pickerFold, { leading: true, stem: s.options.stem === true, extraWords: s.options.extraWords === true, listedFirst: s.kind === "typeahead", spellings: pickerSpellings });
 const pickerPage = ${pickerPageCode};
 const pickerLimits = Object.freeze(${JSON.stringify({
   timeout: 10_000,
@@ -1066,7 +1071,8 @@ const pickerPageQuiet = async (s, maxMs) => {
 // the field is typed once more key by key once the page's own requests go quiet (up to the quiet
 // limit), never with the Enter or Search button of step 1. Never for a free-entry field or the
 // author's own typing. Typing again that fails, such as out of time, refuses as the empty list did.
-const pickerQuery = async (s, field, wanted, seenAvailable = [], typing = undefined) => {
+// Typed once, a query is never typed again, as when another typing follows it.
+const pickerQuery = async (s, field, wanted, seenAvailable = [], typing = undefined, once = false) => {
   const queries = typing ?? (s.options.query ? [String(s.options.query)] : wanted);
   let lastFound = null;
   const available = [...seenAvailable];
@@ -1097,6 +1103,7 @@ const pickerQuery = async (s, field, wanted, seenAvailable = [], typing = undefi
       lastFound = found;
       if (found.ranking.status !== "missing") return { found, field };
       available.push(...pickerAvailable(found.list, wanted));
+      if (once) break;
       // A tag input that may create values and shows nothing for the text is a free-entry field.
       if (!reacted && s.options.create) break;
       if (!reacted && step < 1) continue;
@@ -1150,15 +1157,24 @@ const pickerMore = async (s, typed, wanted, query) => {
   const list = [...typed.found.list, ...further.list];
   return { ...typed, found: { list, ranking: pickerRank(s, pickerChoices(list), wanted), scan: further.scan, complete: true } };
 };
-// Types the value, then, with no clean match for it and a quarter of the budget left, its first comma
-// part alone, as an option's first line that a refusal's candidate begins with, ranking that
-// list against the whole value; with no clean match then either, both lists are the candidates.
+// Types the value, then, with no clean match for it and more than a third of the budget left, its
+// first comma part alone, as an option's first line that a refusal's candidate begins with, ranking
+// that list against the whole value; with no clean match then either, both lists are the
+// candidates. Each is typed once, the second typing standing for typing the value again, and the
+// second never fails the call: when it does, the first typing's answer stands.
 const pickerTypeahead = async (s, wanted) => {
   const value = String(wanted[0] ?? "").trim();
-  const typed = await pickerMore(s, await pickerQuery(s, s.control, wanted), wanted, String(s.options.query ?? value));
   const head = value.split(/(?<!\p{N}),|,(?!\p{N})/u)[0].trim();
-  if (pickerCleanly(typed.found.ranking) || s.options.query || head === "" || head === value || s.left() <= (s.until - s.started) / 4) return typed;
-  const again = await pickerMore(s, await pickerQuery(s, s.control, wanted, [], [head]), wanted, head);
+  const retry = !s.options.query && head !== "" && head !== value;
+  const typed = await pickerMore(s, await pickerQuery(s, s.control, wanted, [], undefined, retry), wanted, String(s.options.query ?? value));
+  if (!retry || pickerCleanly(typed.found.ranking) || s.left() <= (s.until - s.started) / 3) return typed;
+  let again;
+  try {
+    again = await pickerMore(s, await pickerQuery(s, s.control, wanted, [], [head], true), wanted, head);
+  } catch (error) {
+    if (pickerTimedOut(error, s)?.name === "PickerFailure") return typed;
+    throw error;
+  }
   if (pickerCleanly(again.found.ranking)) return again;
   const list = [...typed.found.list, ...again.found.list];
   return { ...again, found: { ...again.found, list, ranking: pickerRank(s, pickerChoices(list), wanted) }, available: [...(typed.available ?? []), ...(again.available ?? [])] };
