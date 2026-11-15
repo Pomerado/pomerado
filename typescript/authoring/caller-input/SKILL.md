@@ -123,10 +123,8 @@ separately are both applied as given, even when they're far apart.
      holds for signed-in tools and writes too.
 
    Never pick another value for the caller, such as a near match, the page's default or the
-   first option, except a value that matches several site entries equally, where the tool may
-   take the first and return the one it used (core skill), or the stem match a read of a
-   category or term takes with
-   `stem: true`, returning the option it used (forms skill), and never report a refused or
+   first option, except a value that matches several site entries equally and cleanly, where the tool may
+   take the first and return the one it used (core skill), and never report a refused or
    unapplied value in the output instead of throwing, such as a `sort_applied: false` flag or a
    "best-effort" or "lookup-only" description. The cases above that return results with what
    applied, and a declared refusal, are the only exceptions.

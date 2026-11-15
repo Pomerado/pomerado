@@ -220,21 +220,16 @@ exception: it is optional unless the task can't run without it (below).
   up the way a person would, with `pickValue` from `pickerCode` (forms skill), or with
   `rankChoices` and `spellingsOf` on options read as data, as in an HTTP version, never with
   matching of your own. `pickValue` types the caller's value into the site's own search,
-  reads every suggestion, matches names loosely
-  (case, accents, spacing, punctuation, whole words, then the same words with their
-  comma-separated parts in another order, so a name with a neighborhood or an airport code in
-  brackets, or a station the site lists as "Station, City", still matches, but never a name with
-  words the value lacks, except with `extraWords: true` below), tries the usual other forms of
-  the value's words, such as 5th
-  and Fifth, St and Street or Saint, or a state's code and name, with a whole-name or code match
-  outranking a partial one, and counts the matches at the best rank. A value it lacks lists the
-  site's closest options first. A read of a category or term passes `stem: true`
-  so a caller's word also matches an option word it begins or that begins it, such as Dentist and
-  Dentistry, and returns the option it used (forms skill). With none, throw its `pickRefusal`, an
-  `InvalidInput` with `field` and `available`, the entries the site showed, except on a write
-  whose site offered exactly one suggestion for a free-text value the caller typed, never a
-  picker that selects a record: take it as the writes skill says for a value the site
-  rewrites. With one, use it. With several, decide per tool: take the first in the site's own
+  reads every suggestion, tries the usual other forms of the value's words, such as 5th
+  and Fifth, St and Street or Saint, or a state's code and name, and picks only a clean match:
+  a name that is the value as written or differs only in case, spacing, accents or
+  punctuation, or, with `tie: "first"`, an option's name before its comma. With `rankChoices`,
+  that is rank `exact`, `normalized`, `folded` or `leading`. Any looser match, such as a name
+  with words the value lacks, is a candidate, never a pick: `pickValue` returns it as
+  `option_unclear`, with the site's options, each by its full text. A value it lacks lists the
+  site's closest options first. With no clean match, throw its `pickRefusal`, an
+  `InvalidInput` with `field` and `available`, the entries the site showed, even when the site
+  offered only one. With one, use it. With several, decide per tool: take the first in the site's own
   order and return the one it used, as the site labels it, or list those matches as the site
   labels them for the caller to choose one, each selecting exactly one, with a declared choice
   question (.agents/caller-input/SKILL.md) or `pickRefusal`, which lists them as `available`.
@@ -245,24 +240,21 @@ exception: it is optional unless the task can't run without it (below).
   none.
 - Match the caller's proper nouns, such as places, venues and company names, with a fuzzy
   match that accepts the usual forms of the same name, such as a name with or without its
-  accents (Abaca for Abacá), a city alone or with its state and country, or a company with
-  or without Ltd. or Inc. Never require an exact match. `sameText` from `pomerado/runtime`
+  accents (Abaca for Abacá), or a city alone or with its state and country after a comma.
+  Never require an exact match, but return a name with words added or dropped as a candidate,
+  never as the pick. `sameText` from `pomerado/runtime`
   matches a name that differs only in case, accents, spacing, apostrophes, periods, commas or
   hyphens, or in a word the site writes short, such as St-Jean for Saint-Jean, but not one
   with a word added or dropped. Prefer it for confirming the pick, so the read-back agrees with
   the choice, but not for choosing from a list, where a short label can match a longer name it
   isn't, such as UK for Ukraine.
-  When more than one option matches equally, decide per tool: take the first in the site's
+  When more than one option matches equally and cleanly, decide per tool: take the first in the site's
   order and return the one it used, as the site labels it, or list them for the caller to
   choose one, each selecting exactly one.
-- In a product or catalog search, unlike a proper noun, a result whose name has every word of
-  the caller's value, in any order, each as written or in its singular or plural form, matches
-  even with words the value lacks, when it names the item itself rather than something made from
-  it or flavored with it. A value with a number in it gets no such match. Take the closest match
-  first, as `pickValue` ranks matches, then the first in the site's order, since the site's own
-  ranking already weighs relevance. Return the one it used, as the site labels it. With none,
-  throw `InvalidInput` with `field` and `available`, the closest names first. `pickValue` matches
-  such names with `extraWords: true`, and takes the first with `tie: "first"`.
+- In a product or catalog search, a result whose name has every word of the caller's value
+  among words the value lacks is a candidate, never a pick: with no clean match, throw
+  `InvalidInput` with `field` and `available`, the closest names first. `pickValue` with
+  `extraWords: true` returns such names as its `option_unclear` matches.
 - Look up anything the caller names that the site can search, such as a place, business,
   product, provider or record, through the site's own search, typeahead or picker, rather than
   matching only the options the page already shows, such as a menu of popular choices or the

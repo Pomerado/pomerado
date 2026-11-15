@@ -44,9 +44,9 @@ test("pickValue types into an ARIA combobox and clicks the matching option", asy
   expect(await submitted(page)).toEqual({ person: "3" });
 });
 
-// With the stem option, a word picks the one suggestion whose whole name is a word it begins, ahead
-// of the suggestions that hold that word among others.
-test("pickValue picks the suggestion whose whole name shares the value's stem when asked", async ({ page }) => {
+// With the stem option, a word finds the one suggestion whose whole name is a word it begins, ahead
+// of the suggestions that hold that word among others, but no stem is a clean match.
+test("pickValue lists the suggestion whose whole name shares the value's stem when asked, never picking it", async ({ page }) => {
   const specialties = '[["1","Example Dentistry"],["2","Dentistry"],["3","Sample Dentistry"],["4","Placeholder Dentistry (Test Annex)"]]';
   await serve(page, combobox.replace("Assignee", "Specialty").replace(/const people = \[.*\];/, `const people = ${specialties};`));
   const field = 'page.getByRole("combobox", { name: "Specialty" })';
@@ -54,10 +54,10 @@ test("pickValue picks the suggestion whose whole name shares the value's stem wh
   expect(await call(page, `return await pickValue(${field}, "Dentist", fast);`)).toMatchObject({
     result: { picked: false, reason: "option_missing" },
   });
-  expect(await call(page, `return await pickValue(${field}, "Dentist", { ...fast, stem: true });`)).toEqual({
-    result: { picked: true, kind: "typeahead", label: "Dentistry", value: "2", rank: "stem", refills: 0 },
+  expect(await call(page, `return await pickValue(${field}, "Dentist", { ...fast, stem: true });`)).toMatchObject({
+    result: { picked: false, reason: "option_unclear", matches: ["Dentistry"] },
   });
-  expect(await submitted(page)).toEqual({ person: "2" });
+  expect(await submitted(page)).toEqual({ person: "" });
 });
 
 // An address with a unit after a comma and a street written as one word the site splits: the unit
@@ -137,18 +137,18 @@ return await pickValue(page.getByLabel("Time"), "6:30 PM", fast);`),
   expect(await submitted(page)).toEqual({ date: "2030-03-05", time: "18:30" });
 });
 
-// A town the list writes in one of the usual other forms, such as St for Saint, or short in any
-// other way, such as Pte for Pointe, is picked.
-test("pickValue picks a town the list writes with a short form", async ({ page }) => {
+// A town the list writes in one of the usual other forms, such as St for Saint, is picked; one it
+// writes short in any other way, such as Pte for Pointe, is only a candidate.
+test("pickValue picks a town the list writes with a usual short form, and lists one written short otherwise", async ({ page }) => {
   await serve(page, `<form><label>Town <select name="town">
 <option value="">Choose a town</option><option value="1">St-Exemple-sur-Lac</option><option value="2">Pte-Exemple</option></select></label></form>`);
   expect(
     await call(page, `return await pickValue(page.getByLabel("Town"), "Saint-Exemple-sur-Lac", fast);`),
   ).toMatchObject({ result: { picked: true, label: "St-Exemple-sur-Lac", value: "1" } });
   expect(await call(page, `return await pickValue(page.getByLabel("Town"), "Pointe-Exemple", fast);`)).toMatchObject({
-    result: { picked: true, label: "Pte-Exemple", value: "2", rank: "anyOrder" },
+    result: { picked: false, reason: "option_unclear", matches: ["Pte-Exemple"] },
   });
-  expect(await submitted(page)).toEqual({ town: "2" });
+  expect(await submitted(page)).toEqual({ town: "1" });
 });
 
 // A value the list lacks lists the options closest to it first, so the nearest ones survive the cap
@@ -249,7 +249,7 @@ const countryApi = (params: URLSearchParams) => ({
     .map(([code, name]) => ({ code, name })),
 });
 
-test("pickValue waits out an autocomplete's loading panel and picks among partial matches", async ({ page }) => {
+test("pickValue waits out an autocomplete's loading panel and picks among partial matches, listing a loose one", async ({ page }) => {
   await serve(page, remoteAutocomplete, countryApi);
   const country = 'page.getByRole("combobox", { name: "Country" })';
   // "Chile" also matches "Chilean Antarctic Territory" as a prefix: the exact name wins.
@@ -257,9 +257,9 @@ test("pickValue waits out an autocomplete's loading panel and picks among partia
     result: { picked: true, kind: "typeahead", label: "Chile", value: "CL", rank: "exact", refills: 0 },
   });
   expect(await submitted(page)).toEqual({ country: "CL" });
-  // A whole word of one option's name picks it.
+  // A whole word of one option's name is no clean match: it comes back as a candidate.
   expect(await call(page, `return await pickValue(${country}, "antarctic", fast);`)).toMatchObject({
-    result: { picked: true, value: "AQ", rank: "words" },
+    result: { picked: false, reason: "option_unclear", matches: ["Chilean Antarctic Territory"] },
   });
 });
 
@@ -736,16 +736,51 @@ test("pickValue reports two options with one label as ambiguous, each by its ful
   });
 });
 
+// A place that only a longer name holds among its parts, such as a hotel named after it, is no
+// clean match: the options come back, each by its full text, and one passed back is picked.
+test("pickValue returns the options by their full text when no match is clean, even with tie first", async ({ page }) => {
+  await serve(
+    page,
+    dropdown([
+      ["sq", "Example Square<br>Post St, Exampleton, CA, US"],
+      ["mk", "Example Square<br>Market St, Exampleton, CA, US"],
+      ["ht", "The Sample Hotel - Example Square, Premier Collection<br>524 Sample St, Exampleton, CA, US"],
+    ]),
+  );
+  const field = 'page.getByRole("button", { name: "Customer" })';
+  expect(await call(page, `return await pickValue(${field}, "Example Square, Exampleton, CA", { ...fast, tie: "first" });`)).toEqual({
+    result: {
+      picked: false,
+      reason: "option_unclear",
+      wanted: "Example Square, Exampleton, CA",
+      available: [
+        "Example Square Post St, Exampleton, CA, US",
+        "Example Square Market St, Exampleton, CA, US",
+        "The Sample Hotel - Example Square, Premier Collection 524 Sample St, Exampleton, CA, US",
+      ],
+      matches: ["The Sample Hotel - Example Square, Premier Collection 524 Sample St, Exampleton, CA, US"],
+    },
+  });
+  expect(await submitted(page)).toEqual({ customer: "" });
+  expect(await call(page, `return await pickValue(${field}, "Example Square Market St, Exampleton, CA, US", fast);`)).toMatchObject({
+    result: { picked: true, value: "mk", rank: "exact" },
+  });
+  // Options that tie cleanly still take the first with tie first.
+  expect(await call(page, `return await pickValue(${field}, "example square", { ...fast, tie: "first" });`)).toMatchObject({
+    result: { picked: true, value: "sq", rank: "normalized", tied: ["Example Square Post St, Exampleton, CA, US", "Example Square Market St, Exampleton, CA, US"] },
+  });
+});
+
 test("pickValue with tie first takes the first of the options that tie, in the site's order, and names them", async ({ page }) => {
   await serve(page, `<form><label>City <select name="city">
 <option value="">Choose a city</option><option value="spf-il">Springfield, Illinois</option>
 <option value="spf-mo">Springfield, Missouri</option><option value="shb">Shelbyville</option></select></label></form>`);
   const city = 'page.getByLabel("City")';
-  // Without the option a tie is refused, as before.
+  // Without the option both only hold the value as a word, so neither is picked.
   expect(await call(page, `return await pickValue(${city}, "Springfield", fast);`)).toEqual({
     result: {
       picked: false,
-      reason: "option_ambiguous",
+      reason: "option_unclear",
       wanted: "Springfield",
       available: ["Springfield, Illinois", "Springfield, Missouri", "Shelbyville"],
       matches: ["Springfield, Illinois", "Springfield, Missouri"],
@@ -806,11 +841,11 @@ test("pickValue with tie first takes a city whose name before its comma is the v
 <option value="">Choose a city</option><option value="nyc">New York</option>
 <option value="yrk">York, UK</option><option value="ykt">Yorktown</option></select></label></form>`);
   const city = 'page.getByLabel("City")';
-  // Without tie first, both hold York as a word and tie, refused as before.
+  // Without tie first, both only hold York as a word, so neither is picked.
   expect(await call(page, `return await pickValue(${city}, "York", fast);`)).toEqual({
     result: {
       picked: false,
-      reason: "option_ambiguous",
+      reason: "option_unclear",
       wanted: "York",
       available: ["New York", "York, UK", "Yorktown"],
       matches: ["New York", "York, UK"],
@@ -1162,8 +1197,8 @@ list.addEventListener("click", (event) => { input.value = event.target.textConte
 input.addEventListener("blur", () => { if (airports.includes(input.value)) document.getElementById("chosen").textContent = input.value; });
 </script>`);
   expect(
-    await call(page, `return await pickValue(page.getByLabel("Airport"), "OSL", { ...fast, committed: page.locator("#chosen") });`),
-  ).toMatchObject({ result: { picked: true, label: "Oslo (OSL)", rank: "words", refills: 0 } });
+    await call(page, `return await pickValue(page.getByLabel("Airport"), "Oslo (OSL)", { ...fast, committed: page.locator("#chosen") });`),
+  ).toMatchObject({ result: { picked: true, label: "Oslo (OSL)", rank: "exact", refills: 0 } });
   await expect(page.locator("#chosen")).toHaveText("Oslo (OSL)");
 });
 
