@@ -118,19 +118,22 @@ total, checked as "Minimums and refusals" says.
 Prefer returning what the site shows for the order placed, such as the order or confirmation
 number and its status, the lines bought, the subtotal, fees, tax, tip and total charged, the
 payment method as the page labels it, the pickup or delivery time and place, and any link to the
-order's status: only fields the build saw filled for its own order, named and typed as the core
-skill says.
+order's status: only fields the session's confirming step read filled for its own order, named and
+typed as the core skill says.
 
 Prefer avoiding these, which fit the tool to the build's one order:
 
 - a rule the request sets for that order, such as which item to pick or a price range, written
   into the code, the tool's name or its description: make it an input, with the request's value
-  only in `exampleInput`;
+  in `exampleInput`, or as its default only when the request sets it for every run (the core
+  skill);
 - a value the page works out for that order, such as its total or a fee, written in as a
   constant, whether passed to `fillCard`, checked before the commit or used to find a control,
   such as a pay button labeled with it: read it in each run;
-- an input required that the site doesn't require, such as a second address line or a price
-  limit, or a choice the site offers, such as an item's options, with no input.
+- an input made required that neither the site nor every caller needs, such as a second address
+  line or a price limit, or a choice the site offers, such as an item's options, with no input. A
+  costly choice the site pre-selects, such as a tip, still stays an input or a question (the
+  writes skill).
 
 ## Description
 
