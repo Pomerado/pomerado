@@ -22,7 +22,7 @@ const slot = "{{ tenant_policy_config }}";
 // sha256 of upstream-policy.md before the notice was added. A deliberate policy edit updates it.
 const policyBodySha256 = "bf072035fd6233158822b23d95a8037a8fc85324c5d57254dbbbbfc30c2fd352";
 // sha256 of the local host's execution policy. A deliberate policy edit updates it.
-const nativePolicySha256 = "5d5b9b4a5f68175a56e72b34fa31b8a9a8f381461885d14020f4b395f8dd5136";
+const nativePolicySha256 = "1daa2f44fc9edc3357d7444379374b4833e501002a3ccc0efa1ce53852bcb6bb";
 const sha256 = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
 
 const shippedPolicy = readFileSync(

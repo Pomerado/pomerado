@@ -448,15 +448,16 @@ export const signInForRun = <E>(input: {
         yield* input.browser.clearSiteData();
         continue;
       }
+      // A sign-in by hand-off takes no login, and this host hands no sign-in to a person, so the
+      // run stops there, whatever login it holds.
+      if (handsOffSignIn(recipe))
+        return yield* new SignInRunFailed({
+          code: "RecipeFailed",
+          reason: replayed.reason === valuesNeeded ? "handoff_unavailable" : replayed.reason,
+        });
       // The value-free check did not find the session signed in: the login is read once, and the
-      // sign-in replays again from the entry page. A sign-in by hand-off has no login, and this
-      // host hands no sign-in to a person, so the run stops there.
+      // sign-in replays again from the entry page.
       if (held === undefined) {
-        if (handsOffSignIn(recipe))
-          return yield* new SignInRunFailed({
-            code: "RecipeFailed",
-            reason: replayed.reason === valuesNeeded ? "handoff_unavailable" : replayed.reason,
-          });
         held = yield* runLogin.values;
         continue;
       }
