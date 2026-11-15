@@ -151,7 +151,7 @@ const reviewerTools = (tools: OutcomeReviewTools, signal: () => AbortSignal) => 
     ),
     entry(
       "request_observation",
-      "Ask the minter for a readback that would settle one write, such as reading the account's saved list. The minter runs it through its normal reviewed execution; its result reaches you in a later turn.",
+      "Ask the minter for a readback that would settle one write: the page it landed on, or the account only when the page can't tell. The minter runs it through its normal reviewed execution; its result reaches you in a later turn.",
       {
         properties: {
           executionId: { type: "string" },

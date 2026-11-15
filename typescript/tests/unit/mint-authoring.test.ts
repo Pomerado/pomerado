@@ -1046,7 +1046,7 @@ it("has a write confirm from its own commit request, and read back only when tha
     "- Read the site's own proof instead only when the commit request can't confirm the write: no such request went out; it failed, got no answer or returned an error status; its body shows an error, or can't be read on an endpoint that reports errors with a 200, such as GraphQL or a batch call; the page shows an error; the commit went over a websocket or a GET link; or a later stage the site can still refuse, such as sending what an earlier click saved, sent no request of its own. Then prefer the confirmation the page shows after the click: an order, booking or reference number, or a success message or toast that appears after the click with no error on the page. Open the saved state, such as the orders page, the booking list or the updated profile, only when the page shows no confirmation. Match it to the caller's values, return the number or record in the output, and call `verified()` as above. A 200 from any other request is not a confirmation.",
   );
   expect(text("writes")).toContain(
-    "Before any further write, run an `act` step that only reads the page or the account. When `stateChangingRequests` shows the failed step's commit request went through, that step starts from the page as it stands: check it for an error or validation message, read what the output needs, and call `verified()` there.",
+    "Before any further write, run an `act` step that only reads the page, or the account only when the page can't tell. When `stateChangingRequests` shows the failed step's commit request went through, with a body you can read showing no error, that step starts from the page as it stands: check it for an error or validation message, read what the output needs, and call `verified()` there.",
   );
   expect(text("writes")).not.toContain("a 200 response is not a confirmation");
   expect(text("forms")).toContain(
@@ -1062,6 +1062,24 @@ it("has a write confirm from its own commit request, and read back only when tha
   expect(text("core")).toContain(
     "For a write session, the list shows the commit your step caused and any autosave, with the status the site answered: a 2xx or 3xx on the commit's route, with no error after it, is what the writes skill confirms from. A 200 whose body reports an error, as GraphQL can, did not go through.",
   );
+});
+
+/*
+ * A purchase whose order request answered 200 with a body nobody could read, on a page that
+ * showed no outcome, went first to the account's order history. An unclear write reads the page
+ * it landed on first and the account only when the page can't tell, and only a commit reply it
+ * can read counts as having gone through.
+ */
+it("reads an unclear write back from the page first, and the account only when the page can't tell", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const writes = (texts.get("writes") ?? "").replace(/\s+/g, " ");
+  expect(writes).toContain(
+    "Before any further write, run an `act` step that only reads the page, or the account only when the page can't tell.",
+  );
+  expect(writes).toContain(
+    "When `stateChangingRequests` shows the failed step's commit request went through, with a body you can read showing no error, that step starts from the page as it stands",
+  );
+  expect(writes).not.toContain("reads the page or the account");
 });
 
 /*
@@ -1358,7 +1376,7 @@ it("renders the pinned standalone authoring", async () => {
     ["a08f1ef89cc10bf11e17b8d6086b6e37649b1d5d11b78c0542cc7db32460b7e3", "testing"],
     ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
     ["b38084ecbbecd8db08c15170c700a55ba96ee1c8ca598fabc56a8aa9f30c110d", "forms"],
-    ["9a5184e35e7ef6bcdd20562c6680d254e8ad6c61340205ac2195fd51df1b5211", "writes"],
+    ["3ff167e21f2fb1d1588f7eb1801e3e7daa292d035ffcd3b84822bdf28ad173ae", "writes"],
     ["ec18eb55ff00bdd4eb4dc9bc4cc7e0adbeaa0f1e004c0b4e37ab92cd0c3b775c", "cart"],
     ["1a9849b499346afcc9ff8ff2621ee6b308f5fdab0ced671c0919d5cd469c7dc3", "caller-input"],
     ["417fc0b27e7718af9b34ca2f822fabfc1f5122e062e8f2908b9d34472ab7e0e5", "publication"],

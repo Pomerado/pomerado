@@ -3581,7 +3581,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             error.code,
             error.reason,
             {},
-            `Not published: this build has not demonstrated the requested write. ${error.publishesOnRefusal === true ? `${siteRefusalPublication} Otherwise, continue` : "Continue"} the remaining authorized work, and never run a write that completed again. If a step may already have committed, read back first, in a new act step that only reads the page or the account: if the write happened, record it with verified() in that step and call finish_build naming it. The host runs a step that may have committed only once, unless the outcome review finds it did not happen; a repeat is refused until then. If the site offers no read-back that can tell, never submit again: publish the write as unverifiable against the step that could have committed. If the caller's inputs cannot work on the site as given, or the site already shows the requested change done, ask the owner with request_input whether to revise them. A path that skipped the write does not show a working write tool.`,
+            `Not published: this build has not demonstrated the requested write. ${error.publishesOnRefusal === true ? `${siteRefusalPublication} Otherwise, continue` : "Continue"} the remaining authorized work, and never run a write that completed again. If a step may already have committed, read back first, in a new act step that only reads the page, or the account only when the page can't tell: if the write happened, record it with verified() in that step and call finish_build naming it. The host runs a step that may have committed only once, unless the outcome review finds it did not happen; a repeat is refused until then. If the site offers no read-back that can tell, never submit again: publish the write as unverifiable against the step that could have committed. If the caller's inputs cannot work on the site as given, or the site already shows the requested change done, ask the owner with request_input whether to revise them. A path that skipped the write does not show a working write tool.`,
           );
         if (error.reason === "write_path_unfinished")
           return reply(
@@ -4066,7 +4066,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           return (
             (applied
               ? `This step repeats a write that already changed the site (${writes}), as the outcome review found. Never run it again: continue with the next step, read back the result, or publish. Nothing was executed.`
-              : `This step repeats a write that may already have changed the site (${writes}), and no review has shown it did not. A write is never repeated unless its outcome review finds it did not happen. Read back the account or page in a step that changes nothing, so the review can settle it, or publish: a write whose outcome stays unknown is reported as possibly applied. Nothing was executed.`) +
+              : `This step repeats a write that may already have changed the site (${writes}), and no review has shown it did not. A write is never repeated unless its outcome review finds it did not happen. Read back the page, or the account only when the page can't tell, in a step that changes nothing, so the review can settle it, or publish: a write whose outcome stays unknown is reported as possibly applied. Nothing was executed.`) +
             newFile
           );
         });
