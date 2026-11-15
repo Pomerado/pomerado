@@ -1249,6 +1249,26 @@ describe("the publication policy", () => {
     );
   });
 
+  // A search tool's own matching of the site's result rows drops the site's real matches, a
+  // refusal listing choices its field refuses offers nothing a caller could send back, and a money
+  // field the site shows meaning something else misleads a caller who acts on it.
+  it("finds own matching of result rows, refused choices and a misread amount", () => {
+    const rule = (name: string, next: string) =>
+      publicationOutputPolicy.slice(
+        publicationOutputPolicy.indexOf(name),
+        publicationOutputPolicy.indexOf(next),
+      );
+    expect(rule("Own picker:", "Unapplied supplied input:")).toContain(
+      "It is also this finding when source drops rows of a search's results from the list it returns because they fail matching of its own against the caller's text, instead of ranking them with `rankChoices` with `spellingsOf`, or returns an empty list when none matches cleanly instead of the site's rows, in the site's order, as candidates.",
+    );
+    expect(rule("Wrong failure:", "Strict name check:")).toContain(
+      "So is an InvalidInput whose `available` lists values its `field`'s own input schema refuses.",
+    );
+    expect(rule("Unchecked amount:", "Unapplied input:")).toBe(
+      "Unchecked amount: a money field filled from a site value that the site's own display, in the captures, shows to mean something other than what the field's name and description say. ",
+    );
+  });
+
   // Matching a record by today's date, or turning the site's "Tomorrow" into a date, picks the
   // wrong day as surely as refusing a past date does when today is UTC's. A time with no offset
   // names no moment, but a repair or change is judged only on the times it adds or changes, so
