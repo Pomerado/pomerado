@@ -54,8 +54,9 @@ export type PickerRanking =
  * Sq alone). A word written short there is an abbreviation: two to four Latin letters with no
  * vowel (a, e, i, o, u or y), at least two fewer than the other, starting with its first letter
  * and holding the rest of its letters in order, such as Sq, Blvd or NW, so UK never pairs with
- * Ukraine nor Oak with Oakwood, either way; right before a word holding a digit, it may hold a
- * vowel as its first or last letter when it is not the other's start; with `options.spellings`, a
+ * Ukraine nor Oak with Oakwood, either way; right before a word holding a digit, one of three
+ * letters or more may hold a vowel as its first or last letter when it is not the other's start;
+ * with `options.spellings`, a
  * short word that has other written forms there, such as St or a state's code, pairs only with
  * those, so MS never pairs with Missouri nor St with Station, and a state's code is one only where
  * a place ends the value. Then a name holding a spelling as whole words (New
@@ -272,12 +273,13 @@ export const rankChoices = (
   });
   // An abbreviation: two to four Latin letters, written short for a longer word, and for one of
   // its known forms when it has any. It holds no vowel, unless the word after it holds a digit, as
-  // a unit's number follows its word, its vowels are its first or last letter and it is not the
-  // longer word's start.
+  // a unit's number follows its word, it has three letters or more, its vowels are its first or
+  // last letter and it is not the longer word's start.
   const abbreviates = (brief: string, full: string, next: string) => {
     const unit = /\p{N}/u.test(next);
     return (
-      (!/[aeiouy]/u.test(brief) || (unit && !/[aeiouy]/u.test(brief.slice(1, -1)) && !full.startsWith(brief))) &&
+      (!/[aeiouy]/u.test(brief) ||
+        (unit && brief.length > 2 && !/[aeiouy]/u.test(brief.slice(1, -1)) && !full.startsWith(brief))) &&
       short(brief, full) &&
       (knownForms(unit ? `${brief} ${next}` : brief)?.has(full) ?? true)
     );
