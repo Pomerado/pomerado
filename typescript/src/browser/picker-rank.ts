@@ -27,9 +27,10 @@ export type PickerRanking =
  * The one option `wanted` names, a list of spellings of one choice, by rank: a name or the value
  * as written (trimmed), then ignoring case and spacing, then also ignoring accents and
  * punctuation (`fold`), then, only with `options.leading`, a name whose leading part, its text
- * before its first comma that is not between two digits, is a spelling, folded the same way
- * (`leading`: York, UK for York, but not 1,000 miles for 1), then a name holding a spelling as
- * whole words (New York for York), then a name made of a spelling's words, no more and no fewer,
+ * before one of its commas that are not between two digits, is a spelling, folded the same way
+ * (`leading`: York, UK for York, or Austin, TX, USA for Austin, TX, but not 1,000 miles for 1),
+ * then a name holding a spelling as whole words (New York for York), then a name made of a
+ * spelling's words, no more and no fewer,
  * whose parts, as its own or the spelling's commas, semicolons, colons, slashes, bars, brackets or
  * spaced dashes separate them, come in another order, each part's words in order and the numbers
  * in the spelling's order (`allWords`: Harbor Street Station, Example City for Example City Harbor
@@ -242,9 +243,9 @@ export const rankChoices = (
             (choice: PickerChoice, list: readonly string[]) => {
               const forms = formSets.fold(list);
               return choice.names.some((name) => {
-                // The first comma that is not a thousands separator, as in 1,000.
-                const comma = String(name ?? "").search(/(?<!\p{N}),|,(?!\p{N})/u);
-                return comma > 0 && forms.has(fold(String(name).slice(0, comma)));
+                const text = String(name ?? "");
+                // The name up to each comma that is not a thousands separator, as in 1,000.
+                return [...text.matchAll(/(?<!\p{N}),|,(?!\p{N})/gu)].some((comma) => (comma.index ?? 0) > 0 && forms.has(fold(text.slice(0, comma.index))));
               });
             },
             true,

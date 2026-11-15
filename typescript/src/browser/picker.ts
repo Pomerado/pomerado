@@ -531,8 +531,9 @@ const pickerPageCode = String.raw`(element, args) => {
  *
  * Matching (see `rankChoices`): a name or value as written, then ignoring case and spacing, then
  * accents and punctuation, then a name whose text
- * before its first comma (not one between digits) is the value, ignoring the same (rank `leading`:
- * York, UK for York), then a name holding the value as whole words (New York for York), then a
+ * before one of its commas (not one between digits) is the value, ignoring the same (rank
+ * `leading`: York, UK for York, or Austin, TX, USA for Austin, TX), then a name holding the value
+ * as whole words (New York for York), then a
  * name made of the value's words, no more and no fewer, with the parts its or the value's commas or
  * spaced dashes separate in another order and the numbers in the value's order (rank `allWords`:
  * Harbor Street Station, Example City for Example City Harbor Street Station), then a name some of
@@ -956,7 +957,7 @@ const pickerAvailable = (list, wanted, name = (option) => option.label) =>
 // An option's whole text, every line of it, so a caller who passes it back matches it as written.
 const pickerText = (option) => option.text || option.label;
 // Ranks that match the value itself: as written, ignoring case, spacing, accents or punctuation, or
-// as an option's name before its comma. Any looser match is no pick.
+// as an option's name before one of its commas. Any looser match is no pick.
 const pickerClean = ["exact", "normalized", "folded", "leading"];
 // Options that tie, each as the caller can tell it apart: its label, else its whole text, else
 // that and its value.
