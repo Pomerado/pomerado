@@ -44,6 +44,67 @@ test("pickValue types into an ARIA combobox and clicks the matching option", asy
   expect(await submitted(page)).toEqual({ person: "3" });
 });
 
+// A place search that lists matches for the typed words, and a name search behind "See more
+// results" with other place data, as some ride and map sites show.
+const moreResults = `
+<form><label for="pickup">Pickup</label>
+<div class="field">
+  <input id="pickup" role="combobox" aria-expanded="false" aria-controls="places" autocomplete="off">
+  <div id="drop" hidden><ul id="places" role="listbox" style="margin:0;padding:0;list-style:none"></ul><button type="button" id="more">See more results</button></div>
+  <input type="hidden" name="pickup">
+</div></form>
+<script>
+const shown = [["a1","Harbor Gallery","151 Third St, Example City, CA, USA"],["a2","Harbor Gallery Cafe","12 Pier Rd, Example City, CA, USA"]];
+const more = [["b1","Example Museum of Harbor Art","151 3rd St, Example City, CA, US"],["b2","Harbor Gallery Annex","9 Bay St, Example City, CA, US"]];
+const input = document.getElementById("pickup"), list = document.getElementById("places"), drop = document.getElementById("drop"), hidden = document.querySelector("[name=pickup]");
+window.moreClicks = 0;
+const words = (text) => text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+const render = (rows) => {
+  list.innerHTML = rows.map(([value, name, line]) => '<li role="option" data-value="' + value + '"><div>' + name + '</div><div>' + line + '</div></li>').join("");
+  drop.hidden = input.value === "";
+  input.setAttribute("aria-expanded", String(!drop.hidden));
+};
+input.addEventListener("input", () => render(shown.filter(([, name, line]) => words(input.value).every((word) => words(name + " " + line).includes(word)))));
+document.getElementById("more").addEventListener("click", () => {
+  window.moreClicks++;
+  render(more.filter(([, name]) => name.toLowerCase().includes(input.value.toLowerCase().trim())));
+});
+drop.addEventListener("mousedown", (event) => event.preventDefault());
+list.addEventListener("click", (event) => {
+  const option = event.target.closest("[role=option]");
+  if (!option) return;
+  hidden.value = option.dataset.value;
+  input.value = option.firstElementChild.textContent;
+  drop.hidden = true;
+  input.setAttribute("aria-expanded", "false");
+});
+</script>`;
+
+test("pickValue picks from the list shown for the typed text, opening more results only without a clean match there", async ({ page }) => {
+  await serve(page, moreResults);
+  const pick = (value: string) =>
+    `return await pickValue(page.getByRole("combobox", { name: "Pickup" }), ${JSON.stringify(value)}, { ...fast, timeout: 15000, more: page.getByRole("button", { name: "See more results" }) });`;
+  expect(await call(page, pick("Harbor Gallery, 151 Third St, Example City, CA"))).toEqual({
+    result: { picked: true, kind: "typeahead", label: "Harbor Gallery", value: "a1", rank: "leading", refills: 0 },
+  });
+  expect(await page.evaluate(() => (window as unknown as { moreClicks: number }).moreClicks)).toBe(0);
+  // With no clean match in either list, both lists' options come back, the shown list's first,
+  // each by its lines joined with commas.
+  const unclear = await call(page, pick("Harbor"));
+  const candidates = [
+    "Harbor Gallery, 151 Third St, Example City, CA, USA",
+    "Harbor Gallery Cafe, 12 Pier Rd, Example City, CA, USA",
+    "Example Museum of Harbor Art, 151 3rd St, Example City, CA, US",
+    "Harbor Gallery Annex, 9 Bay St, Example City, CA, US",
+  ];
+  expect(unclear).toMatchObject({ result: { picked: false, reason: "option_unclear", matches: candidates } });
+  // A candidate only the further results list is picked by its first line typed alone.
+  expect(await call(page, pick(candidates[2] ?? ""), 30)).toEqual({
+    result: { picked: true, kind: "typeahead", label: "Example Museum of Harbor Art", value: "b1", rank: "folded", refills: 0 },
+  });
+  expect(await submitted(page)).toEqual({ pickup: "b1" });
+});
+
 // With the stem option, a word finds the one suggestion whose whole name is a word it begins, ahead
 // of the suggestions that hold that word among others, but no stem is a clean match.
 test("pickValue lists the suggestion whose whole name shares the value's stem when asked, never picking it", async ({ page }) => {
@@ -764,7 +825,7 @@ test("pickValue reports two options with one label as ambiguous, each by its ful
       reason: "option_ambiguous",
       wanted: "John Smith",
       available: ["John Smith", "Jane Smith"],
-      matches: ["John Smith john.s@example.com", "John Smith jsmith@example.org"],
+      matches: ["John Smith, john.s@example.com", "John Smith, jsmith@example.org"],
     },
   });
   expect(await submitted(page)).toEqual({ customer: "" });
@@ -779,8 +840,8 @@ test("pickValue returns the options by their full text when no match is clean, e
   await serve(
     page,
     dropdown([
-      ["sq", "Example Square<br>First St, Exampleton, IL, US"],
-      ["mk", "Example Square<br>Second St, Exampleton, IL, US"],
+      ["sq", "Example Square<br>First St, Otherton, IL, US"],
+      ["mk", "Example Square<br>Second St, Otherton, IL, US"],
       ["ht", "The Sample Hotel - Example Square, Sample Collection<br>10 Sample St, Exampleton, IL, US"],
     ]),
   );
@@ -791,20 +852,23 @@ test("pickValue returns the options by their full text when no match is clean, e
       reason: "option_unclear",
       wanted: "Example Square, Exampleton, IL",
       available: [
-        "Example Square First St, Exampleton, IL, US",
-        "Example Square Second St, Exampleton, IL, US",
-        "The Sample Hotel - Example Square, Sample Collection 10 Sample St, Exampleton, IL, US",
+        "Example Square, First St, Otherton, IL, US",
+        "Example Square, Second St, Otherton, IL, US",
+        "The Sample Hotel - Example Square, Sample Collection, 10 Sample St, Exampleton, IL, US",
       ],
-      matches: ["The Sample Hotel - Example Square, Sample Collection 10 Sample St, Exampleton, IL, US"],
+      matches: ["The Sample Hotel - Example Square, Sample Collection, 10 Sample St, Exampleton, IL, US"],
     },
   });
   expect(await submitted(page)).toEqual({ customer: "" });
-  expect(await call(page, `return await pickValue(${field}, "Example Square Second St, Exampleton, IL, US", fast);`)).toMatchObject({
-    result: { picked: true, value: "mk", rank: "exact" },
+  expect(await call(page, `return await pickValue(${field}, "Example Square, Second St, Otherton, IL, US", fast);`)).toMatchObject({
+    result: { picked: true, value: "mk", rank: "folded" },
   });
-  // Options that tie cleanly still take the first with tie first.
+  // Options that tie cleanly still take the first with tie first, and one in its town is a place.
   expect(await call(page, `return await pickValue(${field}, "example square", { ...fast, tie: "first" });`)).toMatchObject({
-    result: { picked: true, value: "sq", rank: "normalized", tied: ["Example Square First St, Exampleton, IL, US", "Example Square Second St, Exampleton, IL, US"] },
+    result: { picked: true, value: "sq", rank: "normalized", tied: ["Example Square, First St, Otherton, IL, US", "Example Square, Second St, Otherton, IL, US"] },
+  });
+  expect(await call(page, `return await pickValue(${field}, "Example Square, Otherton, IL", fast);`)).toMatchObject({
+    result: { picked: false, reason: "option_ambiguous", matches: ["Example Square, First St, Otherton, IL, US", "Example Square, Second St, Otherton, IL, US"] },
   });
 });
 

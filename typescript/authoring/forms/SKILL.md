@@ -126,6 +126,8 @@ run the search as after a pick, with the site's Search button or Enter, and read
 page as any search's. Prefer refusing on the site's own words that it found nothing for that text
 over `pickRefusal`. Never use this fallback in a write. Handle a site's quirk with the helper's options, such as `query`,
 `answered`, `committed`, `commit: "keyboard"` or `blur: "tab"`, never with a picker of your own.
+Pass a control that lists more results as `more`, never click it in `type`: the picker opens it
+only when the list the site shows for the typed text has no clean match.
 Publication review sends one back ("Own picker").
 When a picker's options depend on another field, such as times on a date or a party size, models
 on a make or regions on a country, set that field first, whatever order the page shows them in,

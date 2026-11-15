@@ -224,12 +224,16 @@ exception: it is optional unless the task can't run without it (below).
   matching of your own. `pickValue` types the caller's value into the site's own search,
   reads every suggestion, tries the usual other forms of the value's words, such as 5th
   and Fifth, St and Street or Saint, or a state's code and name, and picks only a clean match:
-  a name that is the value as written or differs only in case, spacing, accents or
-  punctuation, or an option's name before its comma. With `rankChoices` and `leading: true`,
-  that is rank `exact`, `normalized`, `folded` or `leading`. Any looser match, such as a name
-  with words the value lacks, is a candidate, never a pick: `pickValue` returns it as
-  `option_unclear`, with the site's options, each by its full text. A value it lacks lists the
-  site's closest options first. With no clean match, throw its `pickRefusal`, an
+  a name that is the value as written or differs only in case, spacing, accents, punctuation
+  or a leading "the", an option's name before its comma, or an option's first line followed
+  by parts of its other lines, in their order. With `rankChoices` and `leading: true`, that is
+  rank `exact`, `normalized`, `folded`, `leading` or, for options read with their `lines`,
+  `place`. Any looser match, such as a name with words the value lacks, is a candidate, never
+  a pick, and so is a match on an option's first line alone when an option the site lists
+  before it holds the value's text before its first comma, as whole words, in its first line:
+  `pickValue` returns it as `option_unclear`, with the site's options, each by its full text. A
+  value it lacks lists the site's closest options first. With no clean match, throw its
+  `pickRefusal`, an
   `InvalidInput` with `field` and `available`, the entries the site showed, even when the site
   offered only one. With one, use it. With several, decide per tool: take the first in the site's own
   order and return the one it used, as the site labels it, or list those matches as the site
