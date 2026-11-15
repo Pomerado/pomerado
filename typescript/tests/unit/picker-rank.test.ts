@@ -533,6 +533,17 @@ describe("rankChoices same name written another way", () => {
       expect(rankAll([choice(name)], value)).toEqual({ status: "picked", index: 0, rank: "alike" });
   });
 
+  test("a short word with known other forms stands only for them", () => {
+    for (const [names, value] of [
+      [["Jackson, Missouri", "Jackson, Tennessee"], "Jackson, MS"],
+      [["Columbia, MS", "Columbia, SC"], "Columbia, Missouri"],
+      [["Fargo, Nevada"], "Fargo, ND"],
+      [["Union Station"], "Union St"],
+    ] as const)
+      expect(rankAll(names.map((name) => choice(name)), value)).toEqual({ status: "missing" });
+    expect(rankAll([choice("Example Boulevard")], "Example Blvd")).toEqual({ status: "picked", index: 0, rank: "alike" });
+  });
+
   test("a word with a vowel is never a short form, and a name that pairs only through short forms never matches", () => {
     for (const [name, value] of [
       ["Ukraine", "UK"],

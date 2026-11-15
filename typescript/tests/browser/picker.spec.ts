@@ -1022,6 +1022,17 @@ test("pickValue in a write lists a loose match first to ask about, and in a read
   expect(await submitted(page)).toEqual({ customer: "ht" });
 });
 
+// A state's code stands only for its own state, so a write never takes another state for it.
+test("pickValue in a write never takes another place for a short word with known forms", async ({ page }) => {
+  await serve(page, `<form><label>Store <select name="store">
+<option value="">Choose a store</option><option value="mo">Jackson, Missouri</option><option value="tn">Jackson, Tennessee</option>
+</select></label></form>`);
+  expect(await call(page, `return await pickValue(page.getByLabel("Store"), "Jackson, MS", fast);`, 20, "write")).toMatchObject({
+    result: { picked: false, reason: "option_missing" },
+  });
+  expect(await submitted(page)).toEqual({ store: "" });
+});
+
 // The same name written another way is clean, so a write picks it without asking.
 test("pickValue in a write picks a name written short, with a hyphen for a space, or without an apostrophe", async ({ page }) => {
   await serve(page, `<form><label>Place <select name="place">

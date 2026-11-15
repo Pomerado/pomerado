@@ -53,7 +53,9 @@ export type PickerRanking =
  * Sq alone). A word written short there is an abbreviation: two to four Latin letters with no
  * vowel (a, e, i, o, u or y), at least two fewer than the other, starting with its first letter
  * and holding the rest of its letters in order, such as Sq, Blvd or NW, so UK never pairs with
- * Ukraine nor Oak with Oakwood, either way. Then a name holding a spelling as whole words (New
+ * Ukraine nor Oak with Oakwood, either way; with `options.spellings`, a short word that has other
+ * written forms there, such as St or a state's code, pairs only with those, so MS never pairs with
+ * Missouri nor St with Station. Then a name holding a spelling as whole words (New
  * York for York), then a name made of a
  * spelling's words, no more and no fewer,
  * whose parts, as its own or the spelling's commas, semicolons, colons, slashes, bars, brackets or
@@ -252,8 +254,16 @@ export const rankChoices = (
     (other === one + "s" && !one.endsWith("s")) ||
     (other === one + "es" && /(?:s|x|z|ch|sh|o)$/u.test(one)) ||
     (/[^aeiou]y$/u.test(one) && other === one.slice(0, -1) + "ies");
-  // An abbreviation: two to four Latin letters with no vowel, written short for a longer word.
-  const abbreviates = (brief: string, full: string) => !/[aeiouy]/u.test(brief) && short(brief, full);
+  // A short word whose other written forms are known, such as St or a state's code, stands only
+  // for those forms, so MS never pairs with Missouri nor St with Station.
+  const knownForms = once((brief: string) => {
+    const forms = (options.spellings?.(brief) ?? []).map(bare).filter((form) => form !== brief);
+    return forms.length === 0 ? undefined : new Set(forms);
+  });
+  // An abbreviation: two to four Latin letters with no vowel, written short for a longer word, and
+  // for one of its known forms when it has any.
+  const abbreviates = (brief: string, full: string) =>
+    !/[aeiouy]/u.test(brief) && short(brief, full) && (knownForms(brief)?.has(full) ?? true);
   // How two words pair at `alike`: "same" as written, "noun" as a singular and its plural, "short"
   // as an abbreviation either way, or not at all.
   const alikePair = (want: string, have: string) =>
