@@ -102,8 +102,38 @@ An example item that is out of stock doesn't end the build. The tool returns tha
 refusal for the item, and the build publishes on it as the writes skill says.
 
 An "earliest" pickup or delivery time moves with the clock: pick it in the step that places the
-order. When the site says that time is gone and offers the next one, the next one is still the
-earliest.
+order, or right before the card fill when picking it reloads the checkout. When the site says
+that time is gone and offers the next one, the next one is still the earliest.
+
+## A checkout's inputs and output
+
+Prefer building a checkout for any order a caller could place on the site, not only the
+request's. The inputs and outputs below are good practice, not a must for every checkout: sites
+differ, so take and return what this one offers.
+
+Prefer taking as inputs what the site lets a caller choose, such as the items with their options
+and quantities, pickup or delivery with its place and time, a tip, and a limit such as a maximum
+total, checked as "Minimums and refusals" says.
+
+Prefer returning what the site shows for the order placed, such as the order or confirmation
+number and its status, the lines bought, the subtotal, fees, tax, tip and total charged, the
+payment method as the page labels it, the pickup or delivery time and place, and any link to the
+order's status: only fields the session's confirming step read filled for its own order, named and
+typed as the core skill says.
+
+Prefer avoiding these, which fit the tool to the build's one order:
+
+- a rule the request sets for that order, such as which item to pick or a price range, written
+  into the code, the tool's name or its description: make it an input, with the request's value
+  in `exampleInput`, or as its default only when the request sets it for every run (the core
+  skill);
+- a value the page works out for that order, such as its total or a fee, written in as a
+  constant, whether passed to `fillCard`, checked before the commit or used to find a control,
+  such as a pay button labeled with it: read it in each run;
+- an input made required that neither the site nor every caller needs, such as a second address
+  line or a price limit, or a choice the site offers, such as an item's options, with no input. A
+  costly choice the site pre-selects, such as a tip, still stays an input or a question (the
+  writes skill).
 
 ## Description
 
