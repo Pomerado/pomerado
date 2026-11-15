@@ -1175,12 +1175,17 @@ it("has a write put its step back before asking a field its click proved missing
 
 // A quote that expired before its commit is refreshed and committed once more, and a commit the
 // site refused with nothing created goes back unsent. Guardian's reviews accept both, so a write
-// that follows the skill is neither denied as a second submission nor flagged at publication.
+// that follows the skill is neither denied as a second submission nor flagged at publication. A
+// page can hold the quote it got when it loaded, so the commit step loads the checkout again for a
+// fresh one and selects it there: selecting it again alone can send the old one back.
 it("has a write retry an expired quote once, which Guardian's reviews accept", async () => {
   const texts = await renderedTexts("typescript/authoring");
   const writes = (texts.get("writes") ?? "").replace(/\s+/g, " ");
   expect(writes).toContain(
-    "When the site answers the click by saying the quote expired or the price changed, with that proof that it created nothing, call `notCommitted` for the step with `{ siteRefused: true }`, refresh the quote and check it again, then call `enteringCommit` again and click once more.",
+    "and selecting it again can send back the quote the page already holds. So have the commit step go to the checkout page's URL again, since a reload can resend the form that loaded the page, or start the checkout again, right before its mark, then select the fresh quote, set again any earlier choice this may have reset, such as the tip or a declined add-on, and check the quote and those choices against the caller's limits, such as the cap and the same item or route, before the mark as above, all in that one step, or right before the card fill when the host fills the card.",
+  );
+  expect(writes).toContain(
+    "When the site answers the click by saying the quote expired or the price changed, with that proof that it created nothing, call `notCommitted` for the step with `{ siteRefused: true }`, refresh the quote the same way and check it again, then call `enteringCommit` again and click once more.",
   );
   expect(guardianExecutionPolicy(nativeExecutionEnvironment)).toContain(
     "Nor is it when the site's own answer to the first click refused it as a whole and showed nothing was created, such as a quote that expired or a price that changed, and the step called notCommitted for that step once, refreshed the quote and checked it against the caller's limits before entering it again for one more click.",
@@ -1356,7 +1361,7 @@ it("renders the pinned standalone authoring", async () => {
     ["a08f1ef89cc10bf11e17b8d6086b6e37649b1d5d11b78c0542cc7db32460b7e3", "testing"],
     ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
     ["697db57a4a588c632e52549b7ef5f8a6f6dc7304eca71ff0cc5940daa98c17d2", "forms"],
-    ["9561f015feea78fe3a769d9d8202da59480214c5c866e136f5046eaa3f08c4d4", "writes"],
+    ["bf33290a7a8a59cee2fc02b41c9684033087f76cbc076c70a32851f4b4dc14e0", "writes"],
     ["ec18eb55ff00bdd4eb4dc9bc4cc7e0adbeaa0f1e004c0b4e37ab92cd0c3b775c", "cart"],
     ["eacd0e0d4b332d75516df296f3bcf2f4b973a098d77996392f89b70c814f75fc", "caller-input"],
     ["417fc0b27e7718af9b34ca2f822fabfc1f5122e062e8f2908b9d34472ab7e0e5", "publication"],
