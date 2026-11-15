@@ -420,6 +420,7 @@ const pickerPageCode = String.raw`(element, args) => {
       tag,
       key: base + "\u0000" + seen,
       label: lines[0] || clean(node.getAttribute("aria-label")) || clean(node.getAttribute("title")) || value,
+      text,
       names,
       value,
       disabled,
@@ -509,15 +510,17 @@ const pickerPageCode = String.raw`(element, args) => {
  *   `"add"` (default: keep the chips already there) or `"replace"` (remove the others), and
  *   `options.create` types a value the list lacks and presses Enter to make a free-entry tag.
  * - `pickerOptions(control, options?)` opens the picker (typing `options.query` when given) and
- *   returns `{ kind, options: [{ label, value, disabled }] }`, every option it lists, scrolled
+ *   returns `{ kind, options: [{ label, text, value, disabled }] }` (`text` the option's whole text,
+ *   every line of it), every option it lists, scrolled
  *   through when the list renders as it scrolls, then closes it: the page's live options for a
  *   caller question or an `available` list.
  * - `pickAddress(control, address, options?)` resolves an address the caller typed through the
- *   field's suggestions as `resolveAddress` does, reading them with `pickerOptions`, then picks
- *   the one it accepted with `pickValue`, typing the text that brought it and taking the first of
- *   copies. It returns `pickValue`'s outcome with that text as `query` and the unit it split off
- *   as `unit`, for the site's own unit field, or, when it accepts none, `option_missing` with
- *   every suggestion the field gave as `available` and `unit`.
+ *   field's suggestions as `resolveAddress` does, reading each by its whole text with
+ *   `pickerOptions`, then picks the one it accepted with `pickValue`, typing the text that brought
+ *   it and taking the first of copies. It returns `pickValue`'s outcome with that text as `query`
+ *   and the unit it split off as `unit`, for the site's own unit field, or, when it accepts none,
+ *   `resolveAddress`'s refusal, `option_missing` or `option_unclear`, with every suggestion the
+ *   field gave as `available` and `unit`.
  *
  * The kind is detected from the control, or set as `options.kind`: `select`, `datalist`,
  * `typeahead` (an editable field: type, then choose a suggestion), `dropdown` (a button or div
@@ -527,7 +530,7 @@ const pickerPageCode = String.raw`(element, args) => {
  * leaves the dialog open).
  *
  * Matching (see `rankChoices`): a name or value as written, then ignoring case and spacing, then
- * accents and punctuation, then, only for `pickValue` with `tie: "first"`, a name whose text
+ * accents and punctuation, then a name whose text
  * before its first comma (not one between digits) is the value, ignoring the same (rank `leading`:
  * York, UK for York), then a name holding the value as whole words (New York for York), then a
  * name made of the value's words, no more and no fewer, with the parts its or the value's commas or
@@ -535,7 +538,7 @@ const pickerPageCode = String.raw`(element, args) => {
  * Harbor Street Station, Example City for Example City Harbor Street Station), then a name some of
  * whose whole parts, each keeping its words' order, hold the value's words one for one, each
  * equal or written short in the name, such as Plz for Plaza (rank `anyOrder`: Transit - Lakeside
- * Station, 12 Main St for Lakeside Transit Station), then, only with `options.stem` set to true (as a read sets it; `pickValues` takes it too), a name with
+ * Station, 12 Main St for Lakeside Transit Station), then, only with `options.stem` set to true (`pickValues` takes it too), a name with
  * as many words as the value whose words each equal the value's in order or, for words of Latin
  * letters only, begin the value's or begin with them, the shorter of five or more letters, such as
  * Dentistry for Dentist (rank `stem`), then, only with `options.extraWords` set to true and a
@@ -548,7 +551,9 @@ const pickerPageCode = String.raw`(element, args) => {
  * St and Street or Saint, Ave and Avenue, a state's code and name where a place ends the value
  * (as whole words, only after the value's other words and ending the name or one of its parts),
  * and the like) are tried against names, so Fifth Avenue for 5th Avenue outranks an option with
- * the same words in another order. Two options at the best rank are ambiguous, unless they are
+ * the same words in another order. Only a best match as written, ignoring case and spacing, ignoring
+ * accents and punctuation, or at `leading` is picked; one at a looser rank is refused as
+ * `option_unclear`, alone or tied. Two options at the best rank are ambiguous, unless they are
  * copies with one label, text and a value, such as a country listed twice, which are one option, so
  * the first enabled copy is picked; an "Add ..." or "Create ..." row is never matched.
  *
@@ -606,9 +611,11 @@ const pickerPageCode = String.raw`(element, args) => {
  *
  * A caller's value the picker lacks is not an error of the page: they return
  * `{ picked: false, reason, wanted, available, matches }`, where `reason` is `option_missing`,
- * `option_ambiguous` (`matches` lists the options that tie) or `option_disabled`, and
- * `available` every enabled option it listed, up to 100, for `option_missing` those closest to the
- * value first (`rankByWords`). Decode with `PickOutcome` and throw
+ * `option_ambiguous` (`matches` lists the options that tie), `option_disabled` or
+ * `option_unclear` (`matches` lists the options that match only loosely), and
+ * `available` every enabled option it listed, up to 100, for `option_missing` and
+ * `option_unclear` those closest to the value first (`rankByWords`), and for `option_unclear`
+ * each option by its whole text, every line of it, as `matches` lists them. Decode with `PickOutcome` and throw
  * `pickRefusal(outcome, field)` (`InvalidInput` with `field` and `available`, which for options
  * that tie is `matches`), or ask the caller to choose among `matches`. In a tool that takes the
  * first of options that tie instead (each tool decides), pass `tie: "first"`, so the picker takes
@@ -633,7 +640,7 @@ const pickerRankChoices = ${String(rankChoices)};
 const pickerSpellings = ${String(spellingsOf)};
 const pickerRankByWords = ${String(rankByWords)};
 const pickerClosestFirst = ${String(closestFirst)};
-const pickerRank = (s, list, wanted) => pickerRankChoices(list, wanted, pickerFold, { leading: s.tie === true, stem: s.options.stem === true, extraWords: s.options.extraWords === true, spellings: pickerSpellings });
+const pickerRank = (s, list, wanted) => pickerRankChoices(list, wanted, pickerFold, { leading: true, stem: s.options.stem === true, extraWords: s.options.extraWords === true, spellings: pickerSpellings });
 const pickerPage = ${pickerPageCode};
 const pickerLimits = Object.freeze(${JSON.stringify({
   timeout: 10_000,
@@ -944,8 +951,13 @@ const pickerCollect = async (s, scan, wanted, cap = Infinity) => {
 // The enabled options as shown, never a native select's empty-valued prompt such as "Choose...".
 // For a value it lacks (wanted given), those closest to it first, so they survive the cap.
 const pickerClosest = (labels, wanted) => pickerClosestFirst([...new Set(labels)], wanted?.[0] ?? "", pickerRankByWords).slice(0, 100);
-const pickerAvailable = (list, wanted) =>
-  pickerClosest(list.filter((option) => !option.disabled && !(option.native && option.value === "")).map((option) => option.label).filter(Boolean), wanted);
+const pickerAvailable = (list, wanted, name = (option) => option.label) =>
+  pickerClosest(list.filter((option) => !option.disabled && !(option.native && option.value === "")).map(name).filter(Boolean), wanted);
+// An option's whole text, every line of it, so a caller who passes it back matches it as written.
+const pickerText = (option) => option.text || option.label;
+// Ranks that match the value itself: as written, ignoring case, spacing, accents or punctuation, or
+// as an option's name before its comma. Any looser match is no pick.
+const pickerClean = ["exact", "normalized", "folded", "leading"];
 // Options that tie, each as the caller can tell it apart: its label, else its whole text, else
 // that and its value.
 const pickerMatches = (options) => {
@@ -958,9 +970,18 @@ const pickerMatches = (options) => {
 // tied option greyed out is a value the site does not offer now. Options that tie as copies, with
 // one label, text and value, such as a country listed twice, are one option, taken the same way
 // without tie "first". Options with no value are never copies: what holds them, such as a group,
-// can tell them apart.
+// can tell them apart. A best match at a looser rank than pickerClean's is never picked, alone or
+// tied: it is refused as option_unclear, with those options as matches and every enabled option,
+// closest first, as available, each by its whole text.
 const pickerOutcome = (found, wanted, tie = false) => {
   const { ranking, list } = found;
+  if (ranking.status !== "missing" && !pickerClean.includes(ranking.rank)) {
+    const loose = ranking.status === "ambiguous" ? ranking.indexes.map((index) => list[index]) : [list[ranking.index]];
+    return {
+      status: "refused",
+      refusal: { picked: false, reason: "option_unclear", wanted: wanted[0], available: pickerAvailable(list, wanted, pickerText), matches: [...new Set(loose.filter((option) => !option.disabled).map(pickerText))] },
+    };
+  }
   if (ranking.status === "picked") return { status: "picked", option: list[ranking.index], rank: ranking.rank };
   const tied = ranking.status === "ambiguous" ? ranking.indexes.map((index) => list[index]) : [];
   const copies = new Set(tied.map((option) => JSON.stringify([option.label, option.names, option.value]))).size === 1 && tied[0].value !== "";
@@ -1463,9 +1484,9 @@ const pickValues = async (control, values, options = {}) => {
       for (let attempt = 0; attempt <= s.refills && !done; attempt++) {
         const { method } = pickerTry(options, attempt, attempt);
         let found = await pickerFind(s, wanted);
-        // A free-entry value is created rather than replaced by a suggestion that only holds it
-        // or shares its stem.
-        if (options.create && found.status === "picked" && ["leading", "words", "allWords", "anyOrder", "stem", "extraWords"].includes(found.rank))
+        // A free-entry value is created rather than replaced by a suggestion that only holds it,
+        // shares its stem or names it before a comma.
+        if (options.create && (found.status === "refused" ? found.refusal.reason === "option_unclear" : found.rank === "leading"))
           found = { status: "refused", field: found.field, refusal: { picked: false, reason: "option_missing", wanted: wanted[0], available: [], matches: [] } };
         const since = pickerMark(s);
         const showsChip = (label) => async () => {
@@ -1473,18 +1494,6 @@ const pickValues = async (control, values, options = {}) => {
           return pickerChipIs(now.map(chipNames), [label]) !== null;
         };
         if (found.status === "refused") {
-          // A site that stops suggesting a chosen option no longer lists a chip an earlier call
-          // picked by stem or as whole words, so the chips are ranked as the options were.
-          if (!options.create && found.refusal.reason === "option_missing") {
-            const chips = await pickerChips(s);
-            const chosen = pickerRank(s, chips.map(chipNames), wanted);
-            if (chosen.status === "picked") {
-              await pickerClose(s, found.field);
-              results.push({ label: chips[chosen.index].label, value: chips[chosen.index].value, added: false });
-              done = true;
-              continue;
-            }
-          }
           if (!(options.create && found.refusal.reason === "option_missing")) {
             await pickerClose(s, found.field);
             return { ...found.refusal, values: results };
@@ -1510,7 +1519,7 @@ const pickValues = async (control, values, options = {}) => {
     if (mode === "replace") {
       for (let round = 0; round < 50 && Date.now() < s.until; round++) {
         const chips = await pickerChips(s);
-        // A chip this call chose stays, even one it picked by stem or as whole words.
+        // A chip this call chose stays, found by its value or by the label of the option it chose.
         const chosen = [...list, ...results.map((result) => [result.label])];
         const extra = chips.find((chip) => !chosen.some((wanted) => pickerChipIs([chipNames(chip)], wanted)));
         if (!extra) break;
@@ -1541,7 +1550,7 @@ const pickerOptions = async (control, options = {}) => {
     s.kind = await pickerDetect(s);
     if (["select", "select-multiple", "datalist"].includes(s.kind)) {
       const list = await pickerNativeRead(s, (options) => pickerAvailable(options).length === 0);
-      return { kind: s.kind, options: list.map((option) => ({ label: option.label, value: option.value, disabled: option.disabled })) };
+      return { kind: s.kind, options: list.map((option) => ({ label: option.label, text: option.label, value: option.value, disabled: option.disabled })) };
     }
     let scan;
     let field = s.control;
@@ -1565,7 +1574,7 @@ const pickerOptions = async (control, options = {}) => {
     const found = await pickerCollect(s, scan, null);
     if (!found.complete) throw pickerLoadingFailure(s, found.scan, s.markedAt, undefined, found.list.length);
     await pickerClose(s, field);
-    return { kind: s.kind, options: found.list.map((option) => ({ label: option.label, value: option.value, disabled: option.disabled })) };
+    return { kind: s.kind, options: found.list.map((option) => ({ label: option.label, text: pickerText(option), value: option.value, disabled: option.disabled })) };
   } catch (error) {
     throw pickerTimedOut(error, s);
   } finally {
@@ -1578,7 +1587,7 @@ const pickerResolveAddress = ${String(resolveAddressWith)};
 const pickAddress = async (control, address, options = {}) => {
   const suggest = async (query) => (await pickerOptions(control, { ...options, query })).options.filter((option) => !option.disabled);
   const match = { fold: pickerFold, spellings: pickerSpellings, rank: pickerRankChoices };
-  const found = await pickerResolveAddress(String(address ?? ""), suggest, (option) => option.label, match);
+  const found = await pickerResolveAddress(String(address ?? ""), suggest, (option) => option.text, match);
   if (!found.picked) return found;
   const picked = await pickValue(control, found.label, { ...options, query: found.query, tie: "first" });
   return picked.picked ? { ...picked, query: found.query, unit: found.unit } : { ...picked, wanted: String(address ?? "").replace(/\s+/g, " ").trim(), unit: found.unit };
@@ -1587,7 +1596,7 @@ const pickAddress = async (control, address, options = {}) => {
 
 const NotPicked = Schema.Struct({
   picked: Schema.Literal(false),
-  reason: Schema.Literal("option_missing", "option_ambiguous", "option_disabled"),
+  reason: Schema.Literal("option_missing", "option_ambiguous", "option_disabled", "option_unclear"),
   wanted: Schema.String,
   available: Schema.Array(Schema.String),
   matches: Schema.Array(Schema.String),
@@ -1651,7 +1660,9 @@ export const pickRefusal = (
       ? `Several ${field} options match ${quoted}; choose one of: ${(outcome.matches ?? []).join("; ")}`
       : outcome.reason === "option_disabled"
         ? `The site lists ${field} ${quoted} but does not offer it now`
-        : `The site offers no ${field} matching ${quoted}`;
+        : outcome.reason === "option_unclear"
+          ? `The site offers no ${field} that clearly matches ${quoted}`
+          : `The site offers no ${field} matching ${quoted}`;
   const available =
     outcome.reason === "option_ambiguous" ? (outcome.matches ?? []) : (outcome.available ?? []);
   return new operationErrors.InvalidInput(message, { field, available, kind: outcome.reason });

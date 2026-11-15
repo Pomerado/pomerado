@@ -115,9 +115,8 @@ export const blockingFieldsHook = "__pomeradoBlockingFields";
  * - `chooseOption(control, wanted, { timeout }?)`: chooses the one option of a native select or a
  *   custom dropdown whose label or value is one of `wanted` (a string or a list of alternate
  *   spellings, such as `["CA", "California"]`), ignoring case, accents, spacing and punctuation.
- *   A label that equals one wins over a value that does,
- *   which wins over a label that holds it as whole words; two different options at the winning
- *   rank are ambiguous, while copies with one label and a value, both as read, such as a country
+ *   A label that equals one wins over a value that does; a label that only holds it among other
+ *   words is no match; two different options at the winning rank are ambiguous, while copies with one label and a value, both as read, such as a country
  *   listed twice, are one option, so the first enabled copy is chosen. A custom dropdown is
  *   opened, its own listbox found through `aria-controls` or `aria-owns` (else the one visible
  *   listbox), typed into when it filters as you type, and scrolled when it renders its options as
@@ -228,15 +227,18 @@ const formControlDateCandidates = (iso, format, locale) => {
   if (kind === "D") candidates.push(formControlOrdinal(iso.slice(8)));
   return [...new Set(candidates)];
 };
-/** The one option a choice names, by rank: label, then value, then whole words of the label. */
-const formControlPick = (read, wanted) => {
+/**
+ * The one option a choice names, by rank: label, then value, then, only with words set, as for a
+ * date's part, whole words of the label.
+ */
+const formControlPick = (read, wanted, words = false) => {
   const options = read.map((option) => ({ ...option, label: formControlText(option.label), value: formControlText(option.value) }));
   const names = new Set(wanted.map(formControlText).filter((name) => name !== ""));
-  const words = (label) => label.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  const wordsOf = (label) => label.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
   const ranks = [
     (option) => names.has(option.label),
     (option) => option.value !== "" && names.has(option.value),
-    (option) => [...names].some((name) => (" " + words(option.label).join(" ") + " ").includes(" " + name + " ")),
+    ...(words ? [(option) => [...names].some((name) => (" " + wordsOf(option.label).join(" ") + " ").includes(" " + name + " "))] : []),
   ];
   for (const rank of ranks) {
     const matched = options.filter(rank);
@@ -264,7 +266,7 @@ const formControlTypeKeys = (control, keys, timeout) =>
   formControlKeys(control, keys, formControlPauses(keys), { timeout }).catch(() => {
     throw formControlFailure("not_committed");
   });
-const formControlChooseNative = async (control, wanted, timeout) => {
+const formControlChooseNative = async (control, wanted, timeout, words) => {
   const options = await control.evaluate((select) =>
     Array.from(select.options).map((option, index) => ({
       index,
@@ -275,7 +277,7 @@ const formControlChooseNative = async (control, wanted, timeout) => {
     undefined,
     { timeout },
   );
-  const picked = formControlPick(options, wanted);
+  const picked = formControlPick(options, wanted, words);
   if (picked.failure) throw formControlFailure(picked.failure);
   await control.selectOption({ index: picked.option.index }, { timeout });
   if ((await control.evaluate((select) => select.selectedIndex, undefined, { timeout })) !== picked.option.index)
@@ -318,7 +320,7 @@ const formControlOptions = (listbox) =>
       disabled: option.getAttribute("aria-disabled") === "true",
     })),
   );
-const formControlChooseCustom = async (control, wanted, timeout) => {
+const formControlChooseCustom = async (control, wanted, timeout, words) => {
   const until = Date.now() + timeout;
   const frame = await formControlFrame(control, { timeout });
   if ((await control.getAttribute("aria-expanded", { timeout })) !== "true") await control.click({ timeout });
@@ -347,7 +349,7 @@ const formControlChooseCustom = async (control, wanted, timeout) => {
     const before = options.length;
     options = await formControlOptions(listbox);
     if (options.length !== before) stuck = 0;
-    picked = formControlPick(options, wanted);
+    picked = formControlPick(options, wanted, words);
     if (picked.failure !== "option_missing" || Date.now() >= until) break;
     // A dropdown that filters as you type shows its options for the typed text.
     if (editable && !typed) {
@@ -388,15 +390,16 @@ const formControlChooseCustom = async (control, wanted, timeout) => {
     await formControlSleep(50);
   }
 };
-const chooseOption = async (control, wanted, options = {}) => {
+const formControlChoose = async (control, wanted, options, words) => {
   const timeout = options.timeout ?? 10000;
   const choices = (Array.isArray(wanted) ? wanted : [wanted]).map(String);
   if (choices.length === 0) throw formControlFailure("option_missing");
   const shape = await formControlShape(control, { timeout });
-  if (shape === "select") return formControlChooseNative(control, choices, timeout);
-  if (shape === "combobox") return formControlChooseCustom(control, choices, timeout);
+  if (shape === "select") return formControlChooseNative(control, choices, timeout, words);
+  if (shape === "combobox") return formControlChooseCustom(control, choices, timeout, words);
   throw formControlFailure("control_unsupported");
 };
+const chooseOption = (control, wanted, options = {}) => formControlChoose(control, wanted, options, false);
 /** Letters and digits only: an input mask adds or drops separators, never the date itself. */
 const formControlSameText = (shown, expected) =>
   formControlText(shown).replace(/[^\p{L}\p{N}]/gu, "") === formControlText(expected).replace(/[^\p{L}\p{N}]/gu, "");
@@ -482,7 +485,7 @@ const fillDate = async (control, iso, format, options = {}) => {
     return formControlCommitDate(control, shape, { iso, text: iso, locale, whole: false }, options, timeout);
   }
   if (shape === "select" || shape === "combobox") {
-    await chooseOption(control, formControlDateCandidates(iso, format, locale), { timeout });
+    await formControlChoose(control, formControlDateCandidates(iso, format, locale), { timeout }, true);
     return { shape };
   }
   if (shape !== "text") throw formControlFailure("control_unsupported");

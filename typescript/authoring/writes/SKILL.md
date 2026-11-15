@@ -202,9 +202,11 @@ During the session:
   the option.
 - Read each typed value back once its field settles, before the step's commit. When the site
   rewrote it as it was typed or on leaving the field, such as an address it standardized, or
-  offered exactly one suggestion for it, take the site's version, as you would a picked
+  offered exactly one suggestion for it that matches it cleanly or that `pickAddress` accepted,
+  take the site's version, as you would a picked
   option: later read-backs, such as a review page, summary or confirmation, compare against
-  it, and the output returns it for that field. The one suggestion counts only for a
+  it, and the output returns it for that field. Any other lone suggestion is a candidate:
+  throw its `pickRefusal`. The one suggestion counts only for a
   free-text value the caller typed, such as an address or a name in a text box the site
   completes, never for a picker that selects a record, such as a person, assignee, customer,
   linked record, store or account, which keeps the reference rules in "Check the read-back"
@@ -349,12 +351,15 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   error and a fresh read of the same view you read before the mark shows each field whose sent
   value differs from that read unchanged, prefer the same put-back and ending as above; never on
   silence or a missing element.
-- A quote the site issued earlier, such as a fare, rate, cart price or hold, can expire before
-  the commit, for example while the step waits for review. Prefer having the commit step reload
-  or re-select it right before its mark, so the site issues a fresh one, and check that one
-  against the caller's limits, such as the cap and the same item or route, before the mark as
-  above. When the site answers the click by saying the quote expired or the price changed, with
-  that proof that it created nothing, call `notCommitted` for the step with `{ siteRefused: true }`, refresh the quote and check it again,
+- A quote the site issued earlier, such as a fare, rate, delivery time, cart price or hold, can
+  expire before the commit, for example while the step waits for review, and selecting it again
+  can send back the quote the page already holds. So have the commit step go to the checkout
+  page's URL again, since a reload can resend the form that loaded the page, or start the
+  checkout again, right before its mark, then select the fresh quote, set again any earlier
+  choice this may have reset, such as the tip or a declined add-on, and check the quote and those
+  choices against the caller's limits, such as the cap and the same item or route, before the
+  mark as above, all in that one step, or right before the card fill when the host fills the card. When the site answers the click by saying the quote expired or the price changed, with
+  that proof that it created nothing, call `notCommitted` for the step with `{ siteRefused: true }`, refresh the quote the same way and check it again,
   then call `enteringCommit` again and click once more. A fresh quote that breaks a limit refuses
   before the mark, so the run reports nothing applied. Retry only once: a step goes back once a
   run, so a second such answer ends the run with the site's words, returned where the

@@ -221,7 +221,7 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   ["core", "- The code works for every value the schema accepts."],
   [
     "core",
-    "- Match the caller's proper nouns, such as places, venues and company names, with a fuzzy match that accepts the usual forms of the same name, such as a name with or without its accents (Abaca for Abacá), a city alone or with its state and country, or a company with or without Ltd. or Inc. Never require an exact match. `sameText` from `pomerado/runtime` matches a name that differs only in case, accents, spacing, apostrophes, periods, commas or hyphens, or in a word the site writes short, such as St-Jean for Saint-Jean, but not one with a word added or dropped. Prefer it for confirming the pick, so the read-back agrees with the choice, but not for choosing from a list, where a short label can match a longer name it isn't, such as UK for Ukraine. When more than one option matches equally, decide per tool: take the first in the site's order and return the one it used, as the site labels it, or list them for the caller to choose one, each selecting exactly one.",
+    "- Match the caller's proper nouns, such as places, venues and company names, with a fuzzy match that accepts the usual forms of the same name, such as a name with or without its accents (Abaca for Abacá), or a city alone or with its state and country after a comma. Never require an exact match, but return a name with words added or dropped as a candidate, never as the pick. `sameText` from `pomerado/runtime` matches a name that differs only in case, accents, spacing, apostrophes, periods, commas or hyphens, or in a word the site writes short, such as St-Jean for Saint-Jean, but not one with a word added or dropped. Prefer it for confirming the pick, so the read-back agrees with the choice, but not for choosing from a list, where a short label can match a longer name it isn't, such as UK for Ukraine. When more than one option matches equally and cleanly, decide per tool: take the first in the site's order and return the one it used, as the site labels it, or list them for the caller to choose one, each selecting exactly one.",
   ],
   // A value the caller names goes through the site's own search, not only a menu the page shows.
   [
@@ -863,16 +863,13 @@ it("has a write take the site's rewrite of a typed value and note whether it cha
   const text = (name: string) =>
     (contents(skills)[skills.findIndex((skill) => skill.name === name)] ?? "").replace(/\s+/g, " ");
   expect(text("writes")).toContain(
-    "- Read each typed value back once its field settles, before the step's commit. When the site rewrote it as it was typed or on leaving the field, such as an address it standardized, or offered exactly one suggestion for it, take the site's version, as you would a picked option: later read-backs, such as a review page, summary or confirmation, compare against it, and the output returns it for that field. The one suggestion counts only for a free-text value the caller typed, such as an address or a name in a text box the site completes, never for a picker that selects a record, such as a person, assignee, customer, linked record, store or account, which keeps the reference rules in \"Check the read-back\" and the caller-input skill's. Add an optional output field `<input>_note`, such as `address_note`, that reports the rewrite with what the caller sent and what the site kept. Check it once with `sameText(shown, typed, { rewrite: true })`, which only decides what the note says: when it holds, the site only reformatted the value, and the note says so; when it fails, the site dropped or changed part of what the caller gave, and the note says it changed. The write goes on either way: never throw `InputNotApplied` for such a rewrite. A value cut short by the field's length limit, digits an input mask dropped, or a field that cleared is a failed fill, not a rewrite: fill it again in the field's format, or refuse as today. A value the site replaces only when a step saves follows the read-back before committing, above.",
+    "- Read each typed value back once its field settles, before the step's commit. When the site rewrote it as it was typed or on leaving the field, such as an address it standardized, or offered exactly one suggestion for it that matches it cleanly or that `pickAddress` accepted, take the site's version, as you would a picked option: later read-backs, such as a review page, summary or confirmation, compare against it, and the output returns it for that field. Any other lone suggestion is a candidate: throw its `pickRefusal`. The one suggestion counts only for a free-text value the caller typed, such as an address or a name in a text box the site completes, never for a picker that selects a record, such as a person, assignee, customer, linked record, store or account, which keeps the reference rules in \"Check the read-back\" and the caller-input skill's. Add an optional output field `<input>_note`, such as `address_note`, that reports the rewrite with what the caller sent and what the site kept. Check it once with `sameText(shown, typed, { rewrite: true })`, which only decides what the note says: when it holds, the site only reformatted the value, and the note says so; when it fails, the site dropped or changed part of what the caller gave, and the note says it changed. The write goes on either way: never throw `InputNotApplied` for such a rewrite. A value cut short by the field's length limit, digits an input mask dropped, or a field that cleared is a failed fill, not a rewrite: fill it again in the field's format, or refuse as today. A value the site replaces only when a step saves follows the read-back before committing, above.",
   );
   expect(text("core")).toContain(
-    "With none, throw its `pickRefusal`, an `InvalidInput` with `field` and `available`, the entries the site showed, except on a write whose site offered exactly one suggestion for a free-text value the caller typed, never a picker that selects a record: take it as the writes skill says for a value the site rewrites.",
+    "With no clean match, throw its `pickRefusal`, an `InvalidInput` with `field` and `available`, the entries the site showed, even when the site offered only one.",
   );
   expect(text("core")).toContain(
     "`wanted` being the option the tool picked from the site's list when it picked one, the site's version of a value a write typed and the site rewrote (writes skill), and the caller's value otherwise. It ignores case, accents, spacing, apostrophes, periods, commas and hyphens between letters, reads a space, hyphen, slash or parentheses between digits as one separator while the groups still count, so 29 59 matches 29-59 but never 2959 or 2 959, and accepts a word the page shortened, such as St for Saint.",
-  );
-  expect(text("forms")).toContain(
-    "On a write, a single suggestion for a free-text value the caller typed is the site's correction instead, never for a picker that selects a record: take it as the writes skill says.",
   );
   expect(text("caller-input")).toContain(
     "or a value a write typed that the site rewrote before any save, kept and reported as the writes skill says.",
@@ -1175,12 +1172,17 @@ it("has a write put its step back before asking a field its click proved missing
 
 // A quote that expired before its commit is refreshed and committed once more, and a commit the
 // site refused with nothing created goes back unsent. Guardian's reviews accept both, so a write
-// that follows the skill is neither denied as a second submission nor flagged at publication.
+// that follows the skill is neither denied as a second submission nor flagged at publication. A
+// page can hold the quote it got when it loaded, so the commit step loads the checkout again for a
+// fresh one and selects it there: selecting it again alone can send the old one back.
 it("has a write retry an expired quote once, which Guardian's reviews accept", async () => {
   const texts = await renderedTexts("typescript/authoring");
   const writes = (texts.get("writes") ?? "").replace(/\s+/g, " ");
   expect(writes).toContain(
-    "When the site answers the click by saying the quote expired or the price changed, with that proof that it created nothing, call `notCommitted` for the step with `{ siteRefused: true }`, refresh the quote and check it again, then call `enteringCommit` again and click once more.",
+    "and selecting it again can send back the quote the page already holds. So have the commit step go to the checkout page's URL again, since a reload can resend the form that loaded the page, or start the checkout again, right before its mark, then select the fresh quote, set again any earlier choice this may have reset, such as the tip or a declined add-on, and check the quote and those choices against the caller's limits, such as the cap and the same item or route, before the mark as above, all in that one step, or right before the card fill when the host fills the card.",
+  );
+  expect(writes).toContain(
+    "When the site answers the click by saying the quote expired or the price changed, with that proof that it created nothing, call `notCommitted` for the step with `{ siteRefused: true }`, refresh the quote the same way and check it again, then call `enteringCommit` again and click once more.",
   );
   expect(guardianExecutionPolicy(nativeExecutionEnvironment)).toContain(
     "Nor is it when the site's own answer to the first click refused it as a whole and showed nothing was created, such as a quote that expired or a price that changed, and the step called notCommitted for that step once, refreshed the quote and checked it against the caller's limits before entering it again for one more click.",
@@ -1350,15 +1352,15 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["a8938ed19ac778ddbf482fea581e5e4f02d4ac6f0505ac20dd66df9d0c8c637a", "core"],
+    ["df1f3a93d36a49ebed79f0f8dc5c484797fc1180e743d3c9e14c2f1f1e2c645b", "core"],
     ["e854aa6b9fe22ea741598abcf0643c529211b643d6b9b400281948a117156224", "search"],
     ["b56a046a1342ea36f392bf0652a0f37ef3bb8295a71329b86bf32a655c9438cd", "auth"],
     ["a08f1ef89cc10bf11e17b8d6086b6e37649b1d5d11b78c0542cc7db32460b7e3", "testing"],
     ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
-    ["697db57a4a588c632e52549b7ef5f8a6f6dc7304eca71ff0cc5940daa98c17d2", "forms"],
-    ["9561f015feea78fe3a769d9d8202da59480214c5c866e136f5046eaa3f08c4d4", "writes"],
+    ["b38084ecbbecd8db08c15170c700a55ba96ee1c8ca598fabc56a8aa9f30c110d", "forms"],
+    ["9a5184e35e7ef6bcdd20562c6680d254e8ad6c61340205ac2195fd51df1b5211", "writes"],
     ["ec18eb55ff00bdd4eb4dc9bc4cc7e0adbeaa0f1e004c0b4e37ab92cd0c3b775c", "cart"],
-    ["eacd0e0d4b332d75516df296f3bcf2f4b973a098d77996392f89b70c814f75fc", "caller-input"],
+    ["1a9849b499346afcc9ff8ff2621ee6b308f5fdab0ced671c0919d5cd469c7dc3", "caller-input"],
     ["417fc0b27e7718af9b34ca2f822fabfc1f5122e062e8f2908b9d34472ab7e0e5", "publication"],
     ["2dc797e8ced82dc914d311a8b42739e9234e806b14213fa1bdf2cfbaf5a4474f", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
