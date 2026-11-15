@@ -500,7 +500,7 @@ it("asks for the code a code screen needs, and a fresh one for a rejected code, 
   expect(await signIn(recipeOf(codeStep), fake, ask)).toEqual(Either.right({ alreadySignedIn: false }));
   expect(kinds(asked)).toEqual(["credential:missing_credentials", "code", "code", "code"]);
   expect(asked[2]?.questions[0]?.prompt).toBe(
-    `The site refused the last code. Enter the newest sign-in code ${site} sent you.`,
+    `The site refused the last code. Enter the newest sign-in code ${site} sent you. Codes expire in a few minutes, so enter it as soon as it arrives.`,
   );
   expect(fake.fills.filter(({ page }) => page === "code").map(({ values }) => values[0])).toEqual(["111111", code]);
 });

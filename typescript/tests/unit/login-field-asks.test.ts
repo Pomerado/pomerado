@@ -98,7 +98,7 @@ it("asks again for the newest code with the host's notice, masking it with and w
       id: "code",
       type: "secret",
       secretKind: "one_time_code",
-      prompt: "The site refused the last code. Enter the newest sign-in code example.com sent you.",
+      prompt: "The site refused the last code. Enter the newest sign-in code example.com sent you. Codes expire in a few minutes, so enter it as soon as it arrives.",
     },
   ]);
   expect(ask.registered).toEqual([

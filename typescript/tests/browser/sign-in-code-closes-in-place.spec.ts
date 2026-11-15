@@ -154,7 +154,7 @@ const run = async (page: Page, recipe: typeof codeRecipe) => {
   return { ended, prompts };
 };
 
-const codePrompt = `Enter the sign-in code ${host} sent you.`;
+const codePrompt = `Enter the sign-in code ${host} sent you. Codes expire in a few minutes, so enter it as soon as it arrives.`;
 
 test("a run signs in through a code screen that sends itself on its last digit and takes its Verify button away in place", async ({
   page,

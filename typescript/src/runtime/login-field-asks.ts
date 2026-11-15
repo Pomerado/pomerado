@@ -44,18 +44,67 @@ const cutTo = (text: string, room: number) =>
   text.length <= room ? text : `${text.slice(0, room - 1).replace(/[\uD800-\uDBFF]$/u, "")}…`;
 
 /**
- * The code question's prompt. With the screen's own instruction for the code (`instruction`), such
- * as to call a number or approve in an app, it quotes that, cut to fit, so the owner does what the
- * site asks; without one it names the code the site sent.
+ * How the site sent a code, as its code screen showed it: a text or a call to a phone, an email,
+ * or an authenticator app, with the destination only as the site masked it, such as
+ * `(•••) •••-1234` or `a•••@example.com`. The host reads it; the shared code only words it.
  */
-const codePrompt = (site: string, notice: string | undefined, instruction: string | undefined) => {
+export interface CodeChannel {
+  readonly kind: "text" | "email" | "call" | "authenticator";
+  readonly destination?: string | undefined;
+}
+
+/** The longest masked destination a code question names; a longer one is left out. */
+const destinationLimit = 80;
+
+/** How the code came, as the end of "Enter the sign-in code …", with the site's masked destination. */
+const sentBy = (site: string, channel: CodeChannel | undefined) => {
+  const destination =
+    channel?.destination !== undefined && channel.destination.length <= destinationLimit
+      ? channel.destination
+      : undefined;
+  const to = (verb: string, alone: string) =>
+    destination === undefined
+      ? `${site} ${alone}`
+      : destination.startsWith("ending in")
+        ? `${site} ${verb} to the number ${destination}`
+        : `${site} ${verb} to ${destination}`;
+  if (channel?.kind === "text") return to("texted", "texted you");
+  if (channel?.kind === "email") return to("emailed", "emailed you");
+  if (channel?.kind === "call") return to("read out in a call", "read out in a call");
+  return `${site} sent you`;
+};
+
+/**
+ * Why the code is asked for soon: a sent code expires within minutes, and an authenticator's
+ * changes about every 30 seconds.
+ */
+const codeClock = (channel: CodeChannel | undefined) =>
+  channel?.kind === "authenticator"
+    ? "It changes about every 30 seconds, so enter the one it shows now."
+    : "Codes expire in a few minutes, so enter it as soon as it arrives.";
+
+/**
+ * The code question's prompt, which says how soon to enter it (`codeClock`). With the screen's own
+ * instruction for the code (`instruction`), such as to call a number or approve in an app, it
+ * quotes that, cut to fit, so the owner does what the site asks; without one it names the code the
+ * site sent, and how it came when the host read that from the code screen (`channel`).
+ */
+const codePrompt = (
+  site: string,
+  notice: string | undefined,
+  instruction: string | undefined,
+  channel?: CodeChannel,
+) => {
   const lead = notice === undefined ? "" : `${notice} `;
-  if (instruction === undefined)
-    return notice === undefined
-      ? `Enter the sign-in code ${site} sent you.`
-      : `${lead}Enter the newest sign-in code ${site} sent you.`;
+  const clock = codeClock(channel);
+  if (instruction === undefined) {
+    const newest = notice === undefined ? "" : "newest ";
+    return channel?.kind === "authenticator"
+      ? `${lead}Enter the ${newest}sign-in code your authenticator app shows for ${site}. ${clock}`
+      : `${lead}Enter the ${newest}sign-in code ${sentBy(site, channel)}. ${clock}`;
+  }
   const opening = `${lead}${site} shows this on its sign-in screen: “`;
-  const closing = `” Follow it, then enter the ${notice === undefined ? "" : "newest "}code here.`;
+  const closing = `” Follow it, then enter the ${notice === undefined ? "" : "newest "}code here. ${clock}`;
   return `${opening}${cutTo(instruction, promptLimit - opening.length - closing.length)}${closing}`;
 };
 
@@ -65,6 +114,7 @@ const question = (
   site: string,
   notice?: string,
   instruction?: string,
+  channel?: CodeChannel,
 ): Question => {
   const withNotice = (prompt: string) => (notice === undefined ? prompt : `${notice} ${prompt}`);
   // A code asked with a notice is asked again, so it asks for the newest code the site sent.
@@ -75,7 +125,7 @@ const question = (
       id: "code",
       type: "secret",
       secretKind: "one_time_code",
-      prompt: codePrompt(site, notice, instruction),
+      prompt: codePrompt(site, notice, instruction, channel),
     };
   if (asked === "recovery_code")
     return {
@@ -174,8 +224,9 @@ const askedQuestions = (
   notice: string | undefined,
   offered: Question | undefined,
   instruction: string | undefined,
+  channel?: CodeChannel,
 ): Question[] => [
-  question(asked, site, notice, instruction),
+  question(asked, site, notice, instruction, channel),
   ...(offered !== undefined && asked !== "code" && asked !== "recovery_code" ? [offered] : []),
 ];
 
@@ -290,6 +341,8 @@ export const makeLoginFieldAsk = <E extends YieldableError>(dependencies: {
     codeBoxes?: number,
     /** A code screen's own instruction for the code, as the host read it (`codeInstruction`). */
     instruction?: string,
+    /** How the site sent the code, as the host read it from the code screen (`codeChannel`). */
+    channel?: CodeChannel,
   ): Effect.Effect<Unanswered | { slot: AskedSlot; value: string }, E> =>
     Effect.gen(function* () {
       const questions = askedQuestions(
@@ -298,6 +351,7 @@ export const makeLoginFieldAsk = <E extends YieldableError>(dependencies: {
         notice,
         offerSave ? saveOffer?.field : undefined,
         asked === "code" ? instruction : undefined,
+        asked === "code" ? channel : undefined,
       );
       const response = yield* Effect.either(
         asker({
@@ -315,7 +369,16 @@ export const makeLoginFieldAsk = <E extends YieldableError>(dependencies: {
       const misfit = misfitCode(kept, codeBoxes);
       if (kept === undefined || misfit) {
         if (attempt < 2)
-          return yield* ask(asker, asked, notice, offerSave, attempt + 1, codeBoxes, instruction);
+          return yield* ask(
+            asker,
+            asked,
+            notice,
+            offerSave,
+            attempt + 1,
+            codeBoxes,
+            instruction,
+            channel,
+          );
         return misfit
           ? new Unanswered(codeDoesNotFit)
           : yield* fail("autofill.ask", { check: "answer_kind" });

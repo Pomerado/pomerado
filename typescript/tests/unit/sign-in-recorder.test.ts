@@ -967,9 +967,9 @@ it("asks a new code after the site rejected one, and ends once three were reject
     "333333",
   ]);
   expect(host.asked.map(({ questions }) => questions[0]?.prompt)).toEqual([
-    "Enter the sign-in code example.test sent you.",
-    "The site refused the last code. Enter the newest sign-in code example.test sent you.",
-    "The site refused the last code. Enter the newest sign-in code example.test sent you.",
+    "Enter the sign-in code example.test sent you. Codes expire in a few minutes, so enter it as soon as it arrives.",
+    "The site refused the last code. Enter the newest sign-in code example.test sent you. Codes expire in a few minutes, so enter it as soon as it arrives.",
+    "The site refused the last code. Enter the newest sign-in code example.test sent you. Codes expire in a few minutes, so enter it as soon as it arrives.",
   ]);
   expect(exit).toEqual(
     Exit.fail(expect.objectContaining({ code: "CredentialsRejected", rejectedCredential: "code" })),

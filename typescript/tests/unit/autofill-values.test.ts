@@ -434,7 +434,7 @@ it("asks the owner for a code as given, masked with and without its separators, 
         id: "code",
         type: "secret",
         secretKind: "one_time_code",
-        prompt: "Enter the sign-in code example.test sent you.",
+        prompt: "Enter the sign-in code example.test sent you. Codes expire in a few minutes, so enter it as soon as it arrives.",
       },
     ],
   ]);
@@ -456,8 +456,8 @@ it("asks again for the newest code after a refusal, spending the sign-in's code 
   );
   expect(filled).toMatchObject({ values: ["222222"] });
   expect(owner.requests.map((request) => request.questions[0]?.prompt)).toEqual([
-    "The site refused the last code. Enter the newest sign-in code example.test sent you.",
-    "The site refused the last code. Enter the newest sign-in code example.test sent you.",
+    "The site refused the last code. Enter the newest sign-in code example.test sent you. Codes expire in a few minutes, so enter it as soon as it arrives.",
+    "The site refused the last code. Enter the newest sign-in code example.test sent you. Codes expire in a few minutes, so enter it as soon as it arrives.",
   ]);
   expect(codeRequests.current).toBe(2);
 });

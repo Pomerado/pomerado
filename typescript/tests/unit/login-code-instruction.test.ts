@@ -77,7 +77,7 @@ const askedPrompt = async (step: AutofillStep, screen: readonly ShownAnswerField
 
 it("asks for the code with the screen's own instruction, which the code field names", async () => {
   expect(await askedPrompt(codeStep, [shown({ questionText: instruction })])).toBe(
-    `example.test shows this on its sign-in screen: “${instruction}” Follow it, then enter the code here.`,
+    `example.test shows this on its sign-in screen: “${instruction}” Follow it, then enter the code here. Codes expire in a few minutes, so enter it as soon as it arrives.`,
   );
 });
 
@@ -85,7 +85,7 @@ it("keeps the screen's instruction when it asks again for a newer code", async (
   expect(
     await askedPrompt(codeStep, [shown({ questionText: instruction })], { codeAgain: "rejected" }),
   ).toBe(
-    `The site refused the last code. example.test shows this on its sign-in screen: “${instruction}” Follow it, then enter the newest code here.`,
+    `The site refused the last code. example.test shows this on its sign-in screen: “${instruction}” Follow it, then enter the newest code here. Codes expire in a few minutes, so enter it as soon as it arrives.`,
   );
 });
 
@@ -94,7 +94,7 @@ it("cuts a long instruction to fit the question", async () => {
   const prompt = await askedPrompt(codeStep, [shown({ questionText: long })]);
   expect(prompt?.length).toBeLessThanOrEqual(2_000);
   expect(prompt).toMatch(/^example\.test shows this on its sign-in screen: “Call the number/u);
-  expect(prompt).toMatch(/…” Follow it, then enter the code here\.$/u);
+  expect(prompt).toMatch(/…” Follow it, then enter the code here\. Codes expire in a few minutes, so enter it as soon as it arrives\.$/u);
 });
 
 it.each([
@@ -106,7 +106,7 @@ it.each([
     [shown({ questionText: instruction, questionUnread: true })],
   ],
 ] as const)("keeps today's question for %s", async (_name, step, screen) => {
-  expect(await askedPrompt(step, screen)).toBe("Enter the sign-in code example.test sent you.");
+  expect(await askedPrompt(step, screen)).toBe("Enter the sign-in code example.test sent you. Codes expire in a few minutes, so enter it as soon as it arrives.");
 });
 
 it("asks for one code with the instruction across a screen of code boxes", async () => {

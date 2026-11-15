@@ -139,7 +139,7 @@ const run = async (page: Page) => {
   return { ended, prompts };
 };
 
-const codePrompt = `Enter the sign-in code ${host} sent you.`;
+const codePrompt = `Enter the sign-in code ${host} sent you. Codes expire in a few minutes, so enter it as soon as it arrives.`;
 
 test("a read's sign-in in a dialog that signs in after the code without its recorded later screen ends as can't tell on the same page, and the read goes on", async ({
   page,

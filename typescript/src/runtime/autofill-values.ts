@@ -26,6 +26,7 @@ import { makeFreshAutofillValues } from "./autofill-fresh-values.js";
 import {
   type AutofillValueFailure,
   bareCode,
+  type CodeChannel,
   codeDoesNotFit,
   fitsCodeBoxes,
   makeLoginFieldAsk,
@@ -262,6 +263,11 @@ export interface AutofillLogin {
    * which the owner is asked for the code with.
    */
   readonly codeInstruction?: string;
+  /**
+   * How the site sent the code, as the host read it from the code screen, which the owner is asked
+   * for the code with.
+   */
+  readonly codeChannel?: CodeChannel | undefined;
   /** Whether an asked field may be kept with the login, with the owner's yes (`SaveOffer`). */
   readonly offerSave?: boolean;
   /** Whether a corrected answer to a rejected field may be kept, with the owner's yes. */
