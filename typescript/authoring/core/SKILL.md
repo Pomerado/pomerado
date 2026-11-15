@@ -566,10 +566,9 @@ Then, for every field:
 - Prefer parsing what the page shows into typed fields over returning a result row, card or
   itinerary as one text blob or summary, and keep every result row of the main list the page
   shows, up to the call's `limit` (pagination skill).
-- A build sees only some of a list's rows, so type each row field other than what identifies it
-  `Schema.NullOr(...)` and pass it to `waitForRows` as `optional`. A row that lacks one stays in
-  the list with that field null (a needed value also takes a field that says why, as "Never
-  loosen a value" says).
+- A build sees only some of a list's rows, so type each row field that is neither the row's key
+  nor a needed value as `Schema.NullOr(...)` and pass it to `waitForRows` as `optional`; a row
+  that lacks one stays in the list with that field null.
 - Read every output from the page or response on every run, so every returned field has
   observable support: never a literal, a default you invented, or a constant `null`, `[]`,
   `false`, `0` or fixed label where the page can show the value.
