@@ -128,6 +128,25 @@ test("an in-between answer named pending holds the wait past the no-progress win
   expect((answer.result as { ms: number }).ms).toBeGreaterThanOrEqual(1400);
 });
 
+test("a pending outcome counts only once the action brought it, and only as something the page shows", async ({
+  page,
+}) => {
+  await page.setContent(`<button type="button" id="cancel">Cancel order</button><div class="info">Attempting to cancel</div>`);
+  const answer = await call(page, `try {
+      return (await waitForOutcomeResult({ cancelled: page.locator(".success"), attempting: page.locator(".info") }, {
+        action: () => page.locator("#cancel").click(), pending: "attempting", noProgressMs: 400, timeout: 1000, unchangedMs: 200,
+      })).outcome;
+    } catch (error) {
+      return error.reason;
+    }`);
+  // The banner from before the click never holds the wait, which ends at its cap as before.
+  expect(answer.result).toBe("outcome_timeout");
+  const refused = await call(page, `await waitForOutcome({ sent: { response: { method: "POST" } }, done: page.locator(".success") }, {
+      action: () => page.locator("#cancel").click(), pending: "sent",
+    });`);
+  expect(refused.error).toContain('waitForOutcome pending "sent" names a response outcome; pending takes outcomes the page shows');
+});
+
 test("an in-between answer still showing as the call nears its end is the answer, which confirmCommit reports pending", async ({
   page,
 }) => {

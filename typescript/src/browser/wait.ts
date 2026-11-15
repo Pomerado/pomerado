@@ -554,8 +554,12 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
   if (names.length === 0) throw new TypeError("waitForOutcome needs at least one outcome");
   const candidates = names.map((name) => outcomeWaitCandidate(name, outcomes[name]));
   const pendingNames = new Set(options.pending === undefined ? [] : [options.pending].flat());
-  for (const name of pendingNames)
-    if (!names.includes(name)) throw new TypeError('waitForOutcome pending "' + name + '" names none of its outcomes');
+  for (const name of pendingNames) {
+    const kind = candidates.find((candidate) => candidate.name === name)?.kind;
+    if (kind === undefined) throw new TypeError('waitForOutcome pending "' + name + '" names none of its outcomes');
+    if (["response", "dialog", "popup"].includes(kind))
+      throw new TypeError('waitForOutcome pending "' + name + '" names a ' + kind + " outcome; pending takes outcomes the page shows");
+  }
   const timeout = options.timeout ?? waitLimits.answerCap;
   const noProgressMs = options.noProgressMs ?? waitLimits.answer;
   const progress = waitProgress({ ...options, noProgressMs, whileSending: true });
@@ -712,16 +716,17 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
       // While a navigation the action set off is on its way, the elements shown are the old
       // document's, about to be replaced: a locator or invalid fields count only on the new one.
       const replacing = key !== undefined && events.navigating(state.actedAt);
-      const shows = (candidate) =>
+      const shows = (candidate, staleNow = stale) =>
         blocked ? ["response", "dialog", "popup"].includes(candidate.kind) && events.hit(candidate.name) !== undefined
           : !(replacing && (candidate.kind === "locator" || candidate.kind === "invalid")) &&
-            outcomeWaitShows(candidate, observations?.[candidate.name], state, stale, now);
+            outcomeWaitShows(candidate, observations?.[candidate.name], state, staleNow, now);
       // An in-between answer the code named in pending never decides while it shows: it holds the
       // wait for a final one, up to waitLimits.pending from the first look that shows it, never past
       // the deadline nor later than outcomeWaitCallRoomMs before the call's own end. One still
-      // showing when the hold ends is the answer.
+      // showing when the hold ends is the answer. One that showed before the action, unchanged, is
+      // no answer to it and never holds the wait.
       const shown = candidates.find((candidate) => !pendingNames.has(candidate.name) && shows(candidate));
-      const held = blocked ? undefined : candidates.find((candidate) => pendingNames.has(candidate.name) && shows(candidate));
+      const held = blocked ? undefined : candidates.find((candidate) => pendingNames.has(candidate.name) && shows(candidate, true));
       if (held !== undefined && pendingSince === undefined) {
         pendingSince = now;
         const callEnds = typeof __pomeradoCallEnds === "number" ? __pomeradoCallEnds - outcomeWaitCallRoomMs : Infinity;
@@ -1251,8 +1256,9 @@ const waitForChange = async (fields, options = {}) => {
  * `timeout`, `noProgressMs` and `unchangedMs` start once the action returns; `deadline`, a
  * `Date.now()` time such as the call's own, ends the wait by then however long the action took.
  * `pending` names the outcomes, one key or a list, that are the site's in-between answers to the
- * action, such as a save it is still processing. One never decides while it shows: from the first
- * look that shows one, the wait holds for a final outcome for `pending` (60 s) past it, or past
+ * action, such as a save it is still processing, each one the page shows (never a response, dialog
+ * or popup), and counting only once new or changed since the action. One never decides while it
+ * shows: from the first look that shows one, the wait holds for a final outcome for `pending` (60 s) past it, or past
  * `timeout` when that ends later, never past `deadline` nor later than 5 s before the call's own
  * end. A final outcome wins at once. One still showing when the hold ends is the answer, with
  * `pending: true` on the result. Its
