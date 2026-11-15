@@ -57,6 +57,8 @@ describe("rankChoices", () => {
     // A whole name still beats a leading part, and a leading part is never a prefix of a word.
     expect(rankLeading([choice("York, UK"), choice("York")], "York")).toEqual({ status: "picked", index: 1, rank: "exact" });
     expect(rankLeading([choice("Yorktown, VA")], "York")).toEqual({ status: "missing" });
+    // The value may run to a later comma of the name.
+    expect(rankLeading([choice("South Austin, TX"), choice("Austin, TX, USA")], "Austin, TX")).toEqual({ status: "picked", index: 1, rank: "leading" });
   });
 
   test("without leading, options that hold the value as a word or before a comma tie as before", () => {

@@ -876,7 +876,8 @@ test("pickValue takes the first of an option listed twice, and still refuses opt
 test("pickValue takes a city whose name before its comma is the value over one holding it as a word, with or without tie first", async ({ page }) => {
   await serve(page, `<form><label>City <select name="city">
 <option value="">Choose a city</option><option value="nyc">New York</option>
-<option value="yrk">York, UK</option><option value="ykt">Yorktown</option><option value="spf">Springfield, IL, USA</option></select></label></form>`);
+<option value="yrk">York, UK</option><option value="ykt">Yorktown</option><option value="spf">Springfield, IL, USA</option>
+<option value="aus">Austin, TX, USA</option></select></label></form>`);
   const city = 'page.getByLabel("City")';
   // York, UK is York before its comma, while New York only holds York as a word, so nothing ties.
   expect(await call(page, `return await pickValue(${city}, "York", fast);`)).toEqual({
@@ -886,6 +887,10 @@ test("pickValue takes a city whose name before its comma is the value over one h
     result: { picked: true, kind: "select", label: "Springfield, IL, USA", value: "spf", rank: "leading", refills: 0 },
   });
   expect(await submitted(page)).toEqual({ city: "spf" });
+  // The value may itself run to a later comma of the name.
+  expect(await call(page, `return await pickValue(${city}, "Austin, TX", fast);`)).toEqual({
+    result: { picked: true, kind: "select", label: "Austin, TX, USA", value: "aus", rank: "leading", refills: 0 },
+  });
   expect(await call(page, `return await pickValue(${city}, "York", { ...fast, tie: "first" });`)).toEqual({
     result: { picked: true, kind: "select", label: "York, UK", value: "yrk", rank: "leading", refills: 0 },
   });
