@@ -516,6 +516,8 @@ describe("rankChoices same name written another way", () => {
     for (const [name, value] of [
       ["C#", "C"],
       ["1%", "1"],
+      ["(C#)", "C"],
+      ["Milk (1%)", "Milk 1"],
     ] as const)
       expect(rankAll([choice(name)], value)).toEqual({ status: "picked", index: 0, rank: "words" });
     // Brackets, quotes, a mark before a word, a standalone mark, and a comma or colon before a space split words.
