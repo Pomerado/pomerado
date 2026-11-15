@@ -376,9 +376,10 @@ exception: it is optional unless the task can't run without it (below).
   string", is no description. Annotate the field's own schema, inside `Schema.optional(...)`
   for an optional one. Callers see each beside its name.
 - Shape inputs and outputs like Pomerado's own API, so every tool reads alike. A notation the
-  request states, such as amounts as decimal strings or signed amounts, always wins; follow it
-  and say so in the field's description. Otherwise: field names in snake_case; dates as
-  `YYYY-MM-DD` and timestamps as ISO 8601 with an offset; money as an integer in minor units
+  request states, such as amounts as decimal strings or signed amounts, always wins, but a time
+  always keeps its zone; follow it and say so in the field's description. Otherwise: field names
+  in snake_case; dates as `YYYY-MM-DD` and every time as an ISO 8601 timestamp with its zone's
+  offset; money as an integer in minor units
   with the ISO 4217 `currency` the page shows beside it, such as `total_minor` 12999 and
   `currency` `"EUR"` read from "€129.99", and an amount that can go either way, such as a
   ledger entry, unsigned with a field that says its direction, such as `direction` `"debit"`
@@ -557,8 +558,11 @@ Then, for every field:
 - One field per fact, as the page states it, and variants as the dimensions and values the page
   lists.
 - Prefer numbers for amounts and counts, ISO 8601 for dates and times and minutes for durations;
-  type a date-only value as the runtime's `CalendarDate` (forms skill). A value that does not
-  parse cleanly may be the site's own text.
+  type a date-only value as the runtime's `CalendarDate` (forms skill) and name its zone in its
+  description. A value that does not parse cleanly may be the site's own text; return each time
+  it holds as a timestamp too. Compare a site's date or time with today or now only in the
+  site's or the place's zone, never UTC's: `todayIn` and `zonedTime` from `pomerado/runtime`
+  give both.
 
 **Configure, then read.** Many pages show values that depend on choices made on the page: a
 record's options or variants, a plan or tier, dates, a party size or quantity, units, a

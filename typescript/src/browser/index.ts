@@ -74,6 +74,7 @@ export { selectJson } from "../runtime/select-json.js";
 export type { JsonPath, JsonSelection, SelectJsonOptions } from "../runtime/select-json.js";
 export { normalizeText, rankByWords, readBackMatches, sameText, spellingsOf } from "../runtime/text.js";
 export { saveAndReadBack } from "../runtime/save-read-back.js";
+export { todayIn, zonedTime } from "../runtime/time-zone.js";
 export type { SavedValueDifference } from "../runtime/save-read-back.js";
 export { confirmCommitCode, waitCode } from "./wait.js";
 export {
