@@ -1248,6 +1248,26 @@ describe("the publication policy", () => {
       "So is an empty result that other evidence on the same page contradicts for the same inputs, even beside the site's no-results message: its fix throws OperationFailure naming what that evidence shows.",
     );
   });
+
+  // A search tool's own matching of the site's result rows drops the site's real matches, a
+  // refusal listing choices its field refuses offers nothing a caller could send back, and a money
+  // field the site shows meaning something else misleads a caller who acts on it.
+  it("finds own matching of result rows, refused choices and a misread amount", () => {
+    const rule = (name: string, next: string) =>
+      publicationOutputPolicy.slice(
+        publicationOutputPolicy.indexOf(name),
+        publicationOutputPolicy.indexOf(next),
+      );
+    expect(rule("Own picker:", "Unapplied supplied input:")).toContain(
+      "So is source that narrows a search's result rows to the caller's text with matching of its own instead of `rankChoices` with `spellingsOf`, or that returns none of those rows when none matches cleanly instead of the site's rows, in its order, as candidates.",
+    );
+    expect(rule("Wrong failure:", "Strict name check:")).toContain(
+      "So is an InvalidInput whose `available` lists values its `field`'s own input schema refuses.",
+    );
+    expect(rule("Unchecked amount:", "Unapplied input:")).toBe(
+      "Unchecked amount: a money field filled from a site value that the site's own display, in the captures, shows to mean something other than what the field's name and description say. ",
+    );
+  });
 });
 
 const message = (value: unknown): ModelResponse["output"][number] => ({
