@@ -62,6 +62,7 @@ import type { StandaloneSession } from "./session.js";
 import { error } from "./errors.js";
 import { failureDetail } from "../runtime/failure-detail.js";
 import { runtimeSourceEntry } from "../execution/runtime-sources.js";
+import { markedAriaSnapshotCode } from "../runtime/host-execute.js";
 import {
   loadEntry,
   stopLoadingCode,
@@ -196,8 +197,8 @@ const captureMarker = "\n…[truncated at 256 KiB]";
  */
 const captureElements = 10_000;
 /**
- * Reads the page in the browser worker: its URL, and its accessibility snapshot cut to 256 KiB
- * there, so no more crosses to the host. A page over the element limit is not snapshotted. The
+ * Reads the page in the browser worker: its URL, and its accessibility snapshot with hidden
+ * separators marked (`markedAriaSnapshotCode`), cut to 256 KiB there, so no more crosses to the host. A page over the element limit is not snapshotted. The
  * script ends on its own within 8 seconds: it waits at most 3 for the element count and 5 for the
  * snapshot, and a page that does not answer in time, as when its scripts keep it busy, is
  * reported unanswered.
@@ -214,11 +215,10 @@ const within = (seconds, work) => {
 const elements = await within(3, page.evaluate(() => document.getElementsByTagName("*").length));
 if (elements === late) return { url, unanswered: true };
 if (elements > ${captureElements}) return { url, elements };
+${markedAriaSnapshotCode}
 const snapshot = await within(
   5,
-  page
-    .locator("body")
-    .ariaSnapshot({ timeout: 4000 })
+  markedAriaSnapshot(page.locator("body"), { timeout: 4000 })
     .catch((error) => (error?.name === "TimeoutError" ? late : Promise.reject(error))),
 );
 if (snapshot === late) return { url, unanswered: true };
