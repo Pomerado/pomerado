@@ -586,7 +586,8 @@ export interface PendingExecution {
       readonly outcome: "done" | "not_done" | "unknown" | "unassessed";
       /**
        * The commit marks the write's step sent (entered `sent` or `confirmed`), empty when it
-       * sent none. A host that does not record them leaves it out.
+       * sent none. Leave it out unless the step's own commit report was read and nothing it did
+       * could have sent past its marks.
        */
       readonly sent?: readonly string[];
     }[];

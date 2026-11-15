@@ -118,8 +118,8 @@ differ, so take and return what this one offers.
 Prefer taking as inputs what the site lets a caller choose, such as the items with their options
 and quantities, with the unit for an item sold by weight or measure, pickup or delivery with its
 place and time, a tip, and a limit such as a maximum total, checked as "Minimums and refusals" says.
-Take each such choice without asking the owner whether to, even when the request's order does not
-use it, and list a branch the session did not run as untested (publication skill).
+Take each as an input without asking the owner whether to, and list a branch the session did not
+run as untested (publication skill).
 
 Prefer returning what the site shows for the order placed, such as the order or confirmation
 number and its status, the lines bought, the subtotal, fees, tax, tip and total charged, the
