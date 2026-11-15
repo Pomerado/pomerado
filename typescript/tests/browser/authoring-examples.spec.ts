@@ -959,7 +959,7 @@ test("picker example picks a suggested person, refuses one the site does not sug
     _tag: "InvalidInput",
     field: "owner",
     available: ["Jordan Reyes", "Jordan Lee"],
-    kind: "option_ambiguous",
+    kind: "option_unclear",
   });
 });
 

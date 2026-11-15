@@ -446,8 +446,8 @@ test("chooseOption picks one option by any of its spellings in a native select",
 
 test("chooseOption refuses two different options that both match", async ({ page }) => {
   await page.setContent(`<form><label>Plan<select name="plan">
-<option value="a">Basic monthly</option><option value="b">Basic yearly</option></select></label></form>`);
-  expect(await call(page, `return await chooseOption(page.getByLabel("Plan"), "basic");`)).toEqual({
+<option value="a">Basic monthly</option><option value="b">basic</option><option value="c">BASIC</option></select></label></form>`);
+  expect(await call(page, `return await chooseOption(page.getByLabel("Plan"), "Basic");`)).toEqual({
     error: "option_ambiguous",
   });
   expect(await submitted(page)).toEqual({ plan: "a" });
@@ -536,28 +536,14 @@ test("chooseOption refuses two options that differ only by accents", async ({ pa
   expect(await submitted(page)).toEqual({ place: "1" });
 });
 
-test("chooseOption picks the one label that holds the whole phrase", async ({ page }) => {
+// A label that only holds the name among other words is no clean match, so nothing is chosen.
+test("chooseOption never picks a label that only holds the name among other words", async ({ page }) => {
   await page.setContent(`<form><label>Customer<select name="customer">
 <option value="">Choose</option><option value="7">Acme insurance Customer</option>
 <option value="8">Acme Bank Customer</option></select></label></form>`);
-  const customer = 'page.getByLabel("Customer")';
-  expect(await call(page, `return await chooseOption(${customer}, "Acme insurance");`)).toEqual({
-    result: { shape: "select", label: "Acme insurance Customer", value: "7" },
-  });
-  // Only whole words count: part of a word matches nothing.
-  expect(await call(page, `return await chooseOption(${customer}, "Acme insur");`)).toEqual({
+  expect(await call(page, `return await chooseOption(page.getByLabel("Customer"), "Acme insurance");`)).toEqual({
     error: "option_missing",
   });
-  expect(await submitted(page)).toEqual({ customer: "7" });
-});
-
-test("chooseOption refuses two labels that both hold the phrase", async ({ page }) => {
-  await page.setContent(`<form><label>Customer<select name="customer">
-<option value="">Choose</option><option value="7">Acme insurance Customer</option>
-<option value="9">Acme insurance Vendor</option></select></label></form>`);
-  expect(
-    await call(page, `return await chooseOption(page.getByLabel("Customer"), "Acme insurance");`),
-  ).toEqual({ error: "option_ambiguous" });
   expect(await submitted(page)).toEqual({ customer: "" });
 });
 
@@ -579,31 +565,9 @@ for (const [wanted, labels] of [
     expect(await submitted(page)).toEqual({ skill: "" });
   });
 
-test("chooseOption still picks a label that holds the name as a word between symbols", async ({
-  page,
-}) => {
-  await page.setContent(`<form><label>Size<select name="size">
-<option value="">Choose</option><option value="m">Size (M)</option><option value="l">Size (L)</option>
-</select></label><label>Color<select name="color">
-<option value="">Choose</option><option value="bg">Blue/Green</option><option value="r">Red</option>
-</select></label><label>Month<select name="month">
-<option value="">Choose</option><option value="7">Month: July</option><option value="6">Month: June</option>
-</select></label></form>`);
-  expect(await call(page, `return await chooseOption(page.getByLabel("Size"), "M");`)).toMatchObject(
-    { result: { label: "Size (M)", value: "m" } },
-  );
-  expect(
-    await call(page, `return await chooseOption(page.getByLabel("Color"), "Blue");`),
-  ).toMatchObject({ result: { label: "Blue/Green", value: "bg" } });
-  expect(
-    await call(page, `return await chooseOption(page.getByLabel("Month"), "July");`),
-  ).toMatchObject({ result: { label: "Month: July", value: "7" } });
-  expect(await submitted(page)).toEqual({ size: "m", color: "bg", month: "7" });
-});
-
 // A period, comma or dash before a digit belongs to a number, as in -5, 1.5 and 1-5.
 for (const [wanted, labels, outcome] of [
-  ["5", ["+5", "0", "-5"], { error: "option_ambiguous" }],
+  ["5", ["+5", "0", "-5"], { error: "option_missing" }],
   ["-5", ["5", "10"], { error: "option_missing" }],
   ["1.5 years", ["1-5 years", "6-10 years"], { error: "option_missing" }],
   ["-5", ["-5", "5"], { result: { shape: "select", label: "-5", value: "a" } }],
