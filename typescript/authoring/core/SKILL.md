@@ -566,6 +566,10 @@ Then, for every field:
 - Prefer parsing what the page shows into typed fields over returning a result row, card or
   itinerary as one text blob or summary, and keep every result row of the main list the page
   shows, up to the call's `limit` (pagination skill).
+- A build sees only some of a list's rows, so type each row field other than what identifies it
+  `Schema.NullOr(...)` and pass it to `waitForRows` as `optional`. A row that lacks one stays in
+  the list with that field null (a needed value also takes a field that says why, as "Never
+  loosen a value" says).
 - Read every output from the page or response on every run, so every returned field has
   observable support: never a literal, a default you invented, or a constant `null`, `[]`,
   `false`, `0` or fixed label where the page can show the value.
@@ -775,7 +779,7 @@ and reading the same twice (`waitForRows`); keeping every result row means every
 page size. A slot that is present but empty, a skeleton, `aria-busy` or reading "Loading…" is
 still loading, never absent; a slot with no identifier is not a result. A value still loading
 when the page stops progressing fails the run, optional or not: null is only for a field this
-record's markup lacks altogether, as the build saw on records without it, never for a slow one.
+record's markup lacks altogether, never for a slow one.
 When a list row shows the site's own plain "unavailable" state for a value, such as a price,
 prefer treating that row as settled in the readiness wait and returning that state in an output
 that can carry it, over waiting for a value the site will not show.
