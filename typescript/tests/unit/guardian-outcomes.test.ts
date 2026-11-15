@@ -158,6 +158,13 @@ const guardianWith = (diagnostics?: GuardianDiagnostics) =>
     diagnostics,
   );
 
+/** The outcomes a request's output format offers. */
+const formatOutcomes = (request: ModelRequest | undefined) =>
+  (request?.outputType as unknown as { schema: { properties: { outcome: { enum: string[] } } } })
+    .schema.properties.outcome.enum;
+
+// A question review answered with the execution review's allow in a long session, and its
+// correction offered allow again under the shared format, so the reviewer repeated it.
 it.each([
   ["question", "allow", "reword"],
   ["update", "deny", "clarify"],
@@ -170,6 +177,10 @@ it.each([
     const reviewed = await Effect.runPromise(kinds[kind](guardianWith(diagnostics)));
     expect(reviewed.decision).toMatchObject({ outcome: accepted });
     expect(requests).toHaveLength(2);
+    // The first request keeps the shared format; the correction offers only the kind's outcomes.
+    expect(formatOutcomes(requests[0])).toEqual(guardianOutcomes);
+    expect(formatOutcomes(requests[1])).toEqual(reviewRequest(requests[0]).trusted_review.outcomes);
+    expect(formatOutcomes(requests[1])).not.toContain(refused);
     expect(names.filter((name) => name === "guardian.started")).toHaveLength(1);
     expect(names).not.toContain("guardian.review_retried");
   },
