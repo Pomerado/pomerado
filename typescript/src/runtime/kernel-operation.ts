@@ -868,9 +868,12 @@ const clickNavigationWait = String.raw`(until) => {
 export const withRunEffect = (code: string, effect: "read" | "write") =>
   `const __pomeradoEffect = ${JSON.stringify(effect)};${code}`;
 
-/** A call's code inside `clickNavigationWait`, which ends a second before its `timeout_sec`. */
+/**
+ * A call's code inside `clickNavigationWait`, which ends a second before its `timeout_sec`, with
+ * that end declared as `__pomeradoCallEnds`, where a pending `waitForOutcome` ends its hold.
+ */
 const withClickNavigationWait = (code: string, timeoutSec = 60) =>
-  `const __pomeradoClickNavigation = (${clickNavigationWait})(Date.now() + ${timeoutSec * 1000 - 1000}); try {${code}
+  `const __pomeradoCallEnds = Date.now() + ${timeoutSec * 1000 - 1000}; const __pomeradoClickNavigation = (${clickNavigationWait})(__pomeradoCallEnds); try {${code}
 } finally { __pomeradoClickNavigation(); }`;
 
 /**

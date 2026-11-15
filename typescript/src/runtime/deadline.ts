@@ -11,6 +11,8 @@ import { Effect } from "effect";
  * - `settle`: the gap between the two looks that must agree on the values a tool returns.
  * - `unchanged`: how long an answer or value from before an action must hold to count as unchanged.
  * - `lateFillCap`: the cap on waiting for values the site fills in after its answer.
+ * - `pending`: how long an answer wait holds, from the first look that shows an in-between answer
+ *   the code named (`pending`), for the site's final answer.
  * - `http`: an HTTP request that names no `timeoutMs` of its own, to its whole body.
  * - `httpRead`: a read's request that names none, such as each of `batchRead`'s and
  *   `batchFetch`'s. A site answers a read within a few seconds, and one that holds a read longer
@@ -27,6 +29,7 @@ export const timeoutDefaults = {
   settle: 500,
   unchanged: 2_000,
   lateFillCap: 15_000,
+  pending: 60_000,
   http: 60_000,
   httpRead: 8_000,
 } as const;
