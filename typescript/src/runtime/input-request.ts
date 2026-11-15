@@ -341,7 +341,7 @@ export const OrderFee = Schema.Struct({ name: ItemName, amount: Amount });
 /**
  * The facts of the order a purchase confirm asks about. Everyone who sees the request sees them,
  * so they hold nothing from the caller's own account, such as an address or a card. Fees, a
- * discount and a tip go in their own fields, never in `items`.
+ * discount and a tip go in their own fields.
  */
 export const OrderFacts = Schema.Struct({
   currency: Schema.String.pipe(Schema.pattern(/^[A-Z]{3}$/u)),

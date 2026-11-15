@@ -661,7 +661,7 @@ buys or pays, once the page shows that commit's items and total, passes `order` 
 skill). When you change a script whose last such question passes none, add it, whatever the change
 is for. Fill `order` as the checkout shows it: each item's real quantity, its `unit` when sold by
 weight or measure, and its price each, its line total or both; fees, a tip and a discount go in
-their own fields, never in `items`. When an item's measure is in a unit `unit` does not list, give
+their own fields. When an item's measure is in a unit `unit` does not list, give
 it quantity 1 and its line total, with the measure as the checkout shows it in its name.
 
 The composed script publishes without ever running end to end, so it ends with a check that
