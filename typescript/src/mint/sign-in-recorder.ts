@@ -638,6 +638,16 @@ export const makeSignInRecorder = (input: {
 
   const approval = (step: Extract<SignInStep, { readonly approval: unknown }>) =>
     Effect.gen(function* () {
+      // The local host hands no sign-in to a person.
+      if (step.approval === "handoff")
+        return {
+          result: {
+            approved: false,
+            failed: "handoff_unavailable",
+            nextStep:
+              "This host can't hand the browser to a person to sign in. Send the sign-in's screens as signInSteps instead.",
+          },
+        };
       const open = h.autofillSignIn.current;
       settleMinter(h, open);
       if (open === undefined || ![...open.submittedSlots].some(isIdentifier))

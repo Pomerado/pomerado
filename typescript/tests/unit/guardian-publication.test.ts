@@ -17,6 +17,7 @@ import {
   publicationPaidChoiceLimit,
   publicationLiveTestsPolicy,
   publicationOutputPolicy,
+  publicationPurchaseOrderPolicy,
   publicationSafetyDefaultPolicy,
   publicationWriteLaterStatePolicy,
   publicationWritePathPolicy,
@@ -1042,6 +1043,20 @@ describe("the publication policy", () => {
     expect(publicationCartPolicy.startsWith(`${rule} `)).toBe(true);
     expect(guardianPublicationPolicy.split(rule)).toHaveLength(2);
     expect(publicationFindingCategories).toContain("cart_sign_in");
+  });
+
+  // A purchase tool built before `order` existed asked its final confirm with no items or total,
+  // and a repair that fixed something else published it unchanged. The review finds that confirm
+  // wherever it is, a repair's unchanged code included, beside the rule on checks before a commit.
+  it("finds a write's last question before a commit that pays with no order, in a repair too", () => {
+    const rule =
+      "The last declared choice or confirm a write asks before a commit that buys or pays, once the page shows the items and total that commit pays, passes them as `order` to `ask`. One that passes none is a confirmation finding at that `ask`, in a repair too, even in code the repair did not change.";
+    expect(publicationPurchaseOrderPolicy).toBe(rule);
+    expect(guardianPublicationPolicy.split(rule)).toHaveLength(2);
+    expect(guardianPublicationPolicy).toContain(
+      `before that step's next enteringCommit. ${rule} A write that hands its browser to a person`,
+    );
+    expect(publicationFindingCategories).toContain("confirmation");
   });
 
   // A repair is judged on what it changed: an unchanged line is denied only when a failing run or
