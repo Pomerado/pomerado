@@ -1083,7 +1083,7 @@ test("a write session refuses exampleInput that is not an object, and takes it o
   }
 });
 
-test("a write session runs the caller's own input and refuses exampleInput beside it", async () => {
+test("a write session keeps the caller's own input, refusing exampleInput that changes it and running one that adds to it", async () => {
   test.setTimeout(90_000);
   const fixture = noteSite();
   const site = await fixture.start();
@@ -1095,23 +1095,31 @@ test("a write session runs the caller's own input and refuses exampleInput besid
       guardian,
       input: { note: "given" },
       turns: [
-        () => patch({ "src/read.mjs": readNote }),
+        () => patch({ "src/read.mjs": readNote, "src/again.mjs": readNote }),
         () => [call("execute", act("src/read.mjs", { note: "other" }), "beside")],
         () => [call("execute", act("src/read.mjs", undefined, writePath("save")), "read")],
+        () => [call("execute", act("src/again.mjs", { note: "given", tag: "stated" }), "added")],
       ],
     });
     expect(toolResult(last, "beside")).toMatchObject({ status: "unsupported" });
     expect(JSON.stringify(toolResult(last, "beside"))).toContain(
-      "The caller supplied input, and the session runs it as it is.",
+      'this one changes or leaves out \\"note\\".',
     );
     expect(toolResult(last, "read")).toMatchObject({ status: "completed" });
-    const [review] = executions(guardian.reviews);
+    expect(toolResult(last, "added")).toMatchObject({ status: "completed" });
+    const [review, added] = executions(guardian.reviews);
     expect((review?.input["submitted_call"] as Record<string, unknown>)["input"]).toBe(
       '{"note":"given"}',
     );
     expect(effectsOf(review)[0]).toMatch(
       /^The caller's requested task, done once with the caller's values/u,
     );
+    // The added values run, reviewed as the agent's reading beside the caller's own keys.
+    expect((added?.input["submitted_call"] as Record<string, unknown>)["input"]).toBe(
+      '{"note":"given","tag":"stated"}',
+    );
+    expect(currentOf(added!)).toMatchObject({ input: "intent_derived", callerKeys: ["note"] });
+    expect(effectsOf(added)[0]).toContain("Every value the caller sent stays as sent;");
   } finally {
     await site.close();
   }

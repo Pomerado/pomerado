@@ -9,9 +9,10 @@ A write build changes something real on the caller's account: an order, a bookin
 a submitted form, a saved profile. There is no practice run. The write is the whole
 task the request asks for, done once, live, with the caller's values, as a series
 of `act` steps. When the caller's input is empty (`{}`), pass the request's values and
-the owner's answers as `exampleInput` (JSON text) on each act step that needs them. The
-first act step that passes it fixes it: later steps repeat it unchanged or omit it, and
-every step from then on runs that one input. Decide from the
+the owner's answers as `exampleInput` (JSON text) on each act step that needs them. When it
+leaves out values the request states, pass it with them added as `exampleInput`, keeping every
+value the caller sent as sent. The first act step that passes it fixes it: later steps repeat
+it unchanged or omit it, and every step from then on runs that one input. Decide from the
 request and the site which inputs are required, and keep them required. An optional
 input plus a declared question the tool asks before any effect is only for a value the
 request genuinely leaves open; never make a value the request states optional with
@@ -627,7 +628,7 @@ Every option the session met on its path is an input of the script, add-ons and
 pre-selected defaults included: required only when the site requires a choice that neither
 the request nor an answer settled, optional otherwise. The script sets each option from its
 input. An unset optional input leaves the page's default, as in a read. An option the request
-or the owner's answer settled as how the tool behaves, such as which kind of record it
+or the owner's answer states for every call, such as which kind of record it
 creates, which line type a free-text line takes or whether a save runs the site's automation,
 is the tool's default: an optional input declared with `defaultedInput` and the answered value,
 whose description says so (core skill), never a required input or a question the script asks.
