@@ -200,9 +200,17 @@ export type AutofillPopup = typeof AutofillPopup.Type;
 export const SubmitKey = Schema.Literal("Enter");
 export type SubmitKey = typeof SubmitKey.Type;
 
-/** An off-page sign-in the owner completes before confirming through the protected input. */
-export const AutofillApproval = Schema.Literal("email_link", "device");
+/**
+ * An off-page sign-in the owner completes before confirming through the protected input, or, from
+ * recipe version 15, a hand-off: the host hands the browser to a person on that screen, who signs
+ * in there and marks it done. A hand-off types nothing and asks for no login.
+ */
+export const AutofillApproval = Schema.Literal("email_link", "device", "handoff");
 export type AutofillApproval = typeof AutofillApproval.Type;
+
+/** What the person a hand-off sign-in hands the browser to is asked (`approval: "handoff"`). */
+export const handOffPrompt = (site: string) =>
+  `Sign in to ${site} in this browser, then mark it done.`;
 
 /**
  * How an email-link approval reaches the browser: `paste` for a site whose emailed link signs in

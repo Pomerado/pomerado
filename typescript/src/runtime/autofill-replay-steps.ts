@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Effect, Schema } from "effect";
 import type { YieldableError } from "effect/Cause";
+import type { MarkerSettle } from "../destinations/marker-settle.js";
 import type { SignInRecipe } from "../destinations/sign-in-recipe.js";
 import type { CheckedWorkspace, ReplayWorkspace } from "./autofill-replay-workspace.js";
 import {
@@ -61,6 +62,7 @@ type SignedInReplay = {
  * How a run's replay of the published recipe ended:
  * - `signed_in`: the host checked the indicator and verified the login's identity;
  *   `alreadySignedIn` when the bound profile was signed in and no credential field was sent;
+ *   `handedOff` when a person signed in on a hand-off screen, with nothing typed;
  *   `cantTell` when a sign-in that may end on a page that can't tell ended on one (see
  *   `confirmCantTell`).
  * - `unsent`: nothing reached the site.
@@ -77,6 +79,8 @@ export type AutofillReplayOutcome<V extends string = string> =
       readonly alreadySignedIn: false;
       /** It submitted the login's identifier and its password or code, or passed an approval. */
       readonly loginProved: boolean;
+      /** A person signed in on the recipe's hand-off screen, and the marker shows. */
+      readonly handedOff?: true;
     })
   | {
       readonly outcome: "unsent";
@@ -117,6 +121,11 @@ export interface AutofillReplayTiming {
    * between its marker checks (1 s when absent).
    */
   readonly codeLookMs?: number;
+  /**
+   * How long a hand-off screen's full check waits for a marker drawn late, on a page that settled
+   * without one (`markerSettle` when absent).
+   */
+  readonly markerSettle?: MarkerSettle;
 }
 /** How long a replay waits for a recorded screen's fields before it gives up: sign-in pages are often slow. */
 const recordedScreenWaitMs = 30_000;
@@ -212,6 +221,12 @@ export interface AutofillReplayInput<
    * an approval, so the run reads its login only when it must.
    */
   readonly credentials: WebsiteCredentials | undefined;
+  /**
+   * The replay may hand the browser to a person on a recorded hand-off screen (`approval:
+   * "handoff"`), with one `browser_handoff` question through `ask`: for the replay a host runs
+   * after its check stopped there (`valuesNeeded`). Without it, a replay stops at that screen too.
+   */
+  readonly handOff?: boolean;
   /**
    * A session read just found the page signed out, and this value-free check is the sign-in that
    * follows it: its login entry never ends as one that can't tell (`entryCantTell`).
