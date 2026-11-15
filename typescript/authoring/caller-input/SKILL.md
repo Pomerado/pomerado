@@ -241,9 +241,9 @@ already asked for, or to solve a CAPTCHA.
    with a notice; only the owner's protected page shows the full label. A masked label
    that still shows five or more digits or an email address is replaced by the label's
    last four digits or a numbered placeholder. Prefer taking the saved entry the caller
-   can name as an optional input, matching each entry whose full label contains it, and
-   ask only when the input is empty or matches no entry or several, offering only the
-   matches when several match.
+   can name as an optional input, matching each entry whose full label contains it as
+   whole words, and ask only when the input is empty or matches no entry or several,
+   offering only the matches when several match.
    A purchase's final confirm, a choice or a confirm, also passes `order` with the
    checkout's `currency`, its `items` (each `name`, `quantity`, `unit` for an item sold by
    weight or measure, and `price` each, `lineTotal` or both), `fees` (each `name` and
