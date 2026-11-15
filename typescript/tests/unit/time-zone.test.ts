@@ -43,6 +43,7 @@ describe("zonedTime", () => {
     expect(zonedTime("2026-11-14", "20:36", "Asia/Kathmandu")).toBe("2026-11-14T20:36:00+05:45");
     expect(zonedTime("2026-11-15", "02:51:41", "UTC")).toBe("2026-11-15T02:51:41+00:00");
     expect(zonedTime("2026-11-14", "00:00", "America/Los_Angeles")).toBe("2026-11-14T00:00:00-08:00");
+    expect(zonedTime("0001-01-01", "00:00", "UTC")).toBe("0001-01-01T00:00:00+00:00");
     expect(Date.parse(zonedTime("2026-11-14", "18:51:41", "America/Los_Angeles"))).toBe(
       Date.parse("2026-11-15T02:51:41Z"),
     );

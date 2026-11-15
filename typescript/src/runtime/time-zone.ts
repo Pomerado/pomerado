@@ -25,7 +25,10 @@ const wallAt = (ms: number, timeZone: string) => {
       .map((part) => [part.type, Number(part.value)]),
   );
   const part = (type: Intl.DateTimeFormatPartTypes) => parts.get(type) ?? Number.NaN;
-  return Date.UTC(part("year"), part("month") - 1, part("day"), part("hour"), part("minute"), part("second"));
+  // setUTCFullYear, unlike Date.UTC, keeps years 0 to 99 as written.
+  const wall = new Date(0);
+  wall.setUTCFullYear(part("year"), part("month") - 1, part("day"));
+  return wall.setUTCHours(part("hour"), part("minute"), part("second"), 0);
 };
 
 /** Today's date in `timeZone`, `YYYY-MM-DD`. */

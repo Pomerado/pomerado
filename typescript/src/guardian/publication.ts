@@ -506,8 +506,9 @@ export const publicationWriteLaterStatePolicy =
  * shown only to some accounts or states, a write that does not reconcile the state it changes,
  * source that fails a record it opened from the site's results over a strict match of its visible
  * name, source that compares a site's date or time with today or the time in UTC rather than the
- * site's or place's, unless the site's own dates are in UTC, and an output time with no offset
- * that a build, repair or change adds; and last, the caller-confirmed design decisions
+ * site's or place's, unless the site's own dates are in UTC, and an output time with no offset,
+ * unless the output also returns it with one, that a build adds or a repair or change adds or
+ * changes; and last, the caller-confirmed design decisions
  * that the API-design rules among them yield to (`publicationCallerDecisionPolicy`).
  */
 export const publicationOutputPolicy = [
