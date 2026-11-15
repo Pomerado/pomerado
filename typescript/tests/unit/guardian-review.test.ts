@@ -767,6 +767,47 @@ describe("OpenAI reviewer policy and trusted authority", () => {
       expect(policy).toContain(sentence);
   });
 
+  // A step that only opened an item's options, sending none of its commit marks, was listed done,
+  // so the first add after it was denied as a repeat. A host may say which marks each listed
+  // write's step sent; a write it says nothing about reaches Guardian as before.
+  it("gives Guardian each listed write's sent commit marks, and none for a write without them", async () => {
+    const requests = readThenDecide({
+      outcome: "allow",
+      rationale: "Controlled source was read.",
+      action: "read",
+    });
+    const writes: NonNullable<NonNullable<PendingExecution["mintContext"]>["writes"]> = [
+      {
+        executionId: "exec_open",
+        purpose: "act",
+        entrypoint: "operation/open.mjs",
+        outcome: "done",
+        sent: [],
+      },
+      { executionId: "exec_add", purpose: "act", outcome: "unknown", sent: ["add_item"] },
+      { executionId: "exec_save", purpose: "act", outcome: "done" },
+    ];
+    await Effect.runPromise(
+      makeGuardian(reviewer(markedUpstreamPolicy)).review(
+        {
+          ...pending,
+          mintContext: {
+            repeatableRead: false,
+            operationSources: [pending.entrypoint],
+            currentExecution: { purpose: "explore", target: "liveBrowser" },
+            browser: "active",
+            executions: [],
+            writes,
+          },
+        },
+        readEntrypoint,
+      ),
+    );
+    const input = modelInput(requests);
+    expect(input).toHaveProperty("trusted_execution_context.writes", writes);
+    expect(input).not.toHaveProperty("trusted_execution_context.writes.2.sent");
+  });
+
   // A purchase build whose order click got a 200 it could not read and a page with no outcome
   // was advised, on its read-only steps, to read the account's orders first. The write's own
   // reply and the page it landed on come first; the account is the backstop when they can't tell.

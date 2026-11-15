@@ -584,6 +584,11 @@ export interface PendingExecution {
       readonly purpose: string;
       readonly entrypoint?: string;
       readonly outcome: "done" | "not_done" | "unknown" | "unassessed";
+      /**
+       * The commit marks the write's step sent (entered `sent` or `confirmed`), empty when it
+       * sent none. A host that does not record them leaves it out.
+       */
+      readonly sent?: readonly string[];
     }[];
     /**
      * Execution reviews only: this attempt's latest live test batches, and any older one holding
