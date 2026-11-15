@@ -588,8 +588,9 @@ const pickerPageCode = String.raw`(element, args) => {
  * scroll caused have ended and held quiet for `settleMs`. A list with a search box is read up to 50
  * options instead: when it may hold more, the search box narrows it and the narrowed list is read to
  * its end, so options that tie show there, unless `tie: "first"` takes one of those 50 that matches
- * as written or ignoring case and spacing. A narrowed list that lacks the value leaves a match among
- * the options first read, so a tie the search box does not show can then be missed. A list without
+ * as written or ignoring case and spacing. A narrowed list that lacks the value, or matches it only
+ * at a looser rank, leaves a match among the options first read, shown again once the search box is
+ * emptied, so a tie the search box does not show can then be missed. A list without
  * a search box that is not read to its end within two thirds of the budget fails as
  * `options_loading`, never as `option_missing`.
  * Requests count only when the action caused them: a repeat of an earlier identical request, such
@@ -990,6 +991,8 @@ const pickerCandidate = (option) =>
   option.lines?.length > 1 ? option.lines.map((line) => line.replace(/[\s,;]+$/u, "")).join(", ") : pickerText(option);
 // Ranks that match the value itself, written another way at most. A write picks no looser match.
 const pickerClean = ${JSON.stringify(cleanRanks)};
+// Every rank, the closest first.
+const pickerRankOrder = ${JSON.stringify(pickerRanks)};
 const pickerCleanly = (ranking) => ranking.status !== "missing" && pickerClean.includes(ranking.rank);
 // Options that tie, each as the caller can tell it apart: its label, else its whole text (its lines
 // joined with commas) or other name, else that and its value.
@@ -1214,13 +1217,18 @@ const pickerFind = async (s, wanted) => {
   if (!found.complete && search === null) throw pickerLoadingFailure(s, found.scan, s.markedAt, undefined, found.list.length);
   if (strong || search === null) return { ...pickerOutcome(found, wanted, s.tie, pickerReads()), field: s.control, scan: found.scan, popupKind: scan.kind };
   const queried = await pickerQuery(s, search, wanted, pickerAvailable(found.list, wanted));
-  // A search that finds nothing, or only a first result sharing a word, leaves the match the list's
-  // first read held.
-  const weak = queried.found.ranking.status === "missing" || queried.found.ranking.rank === "searched";
-  const outcome = pickerOutcome(weak && found.ranking.status !== "missing" ? found : queried.found, wanted, s.tie, pickerReads());
+  // A search that finds nothing, or only a looser match, such as a first result sharing a word,
+  // leaves the match the list's first read held, shown again once the search box is emptied.
+  const order = (ranking) => (ranking.status === "missing" ? Infinity : pickerRankOrder.indexOf(ranking.rank));
+  let chosen = queried.found;
+  if (order(found.ranking) < order(queried.found.ranking)) {
+    const emptied = await pickerQuery(s, search, wanted, [], [""], true).catch(() => null);
+    chosen = emptied && order(emptied.found.ranking) <= order(found.ranking) ? emptied.found : found;
+  }
+  const outcome = pickerOutcome(chosen, wanted, s.tie, pickerReads());
   if (outcome.status === "refused" && queried.available && outcome.refusal.reason === "option_missing")
     outcome.refusal.available = pickerClosest([...outcome.refusal.available, ...queried.available], wanted);
-  return { ...outcome, field: search, scan: queried.found.scan ?? found.scan, popupKind: scan.kind };
+  return { ...outcome, field: search, scan: chosen.scan ?? queried.found.scan ?? found.scan, popupKind: scan.kind };
 };
 // Brings the chosen option into the rendered list (a list that renders as it scrolls may have
 // dropped it) and returns its current tag.
@@ -1587,7 +1595,7 @@ const pickValues = async (control, values, options = {}) => {
             const chosen = pickerRank(s, chips.map(chipNames), wanted);
             if (chosen.status === "picked") {
               await pickerClose(s, found.field);
-              results.push({ label: chips[chosen.index].label, value: chips[chosen.index].value, added: false });
+              results.push({ label: chips[chosen.index].label, value: chips[chosen.index].value, added: false, ...(pickerClean.includes(chosen.rank) ? {} : { loose: true }) });
               done = true;
               continue;
             }

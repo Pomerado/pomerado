@@ -1407,6 +1407,20 @@ test("pickValue narrows a list longer than 50 options with its search box once t
   expect(await page.getByLabel("Find location").inputValue()).toBe("Location 20");
 });
 
+// A search that shows only a looser match than the list showed leaves the list's clean match, which
+// shows again once the search box is emptied.
+test("pickValue keeps a clean match the list showed when its search box finds only a looser one", async ({ page }) => {
+  const names = ["Union Sq", "Union Square Park", "Harbor Point", "Elm Grove"];
+  await serve(page, locations(true, 0, names.length), (params) => {
+    const query = (params.get("q") ?? "").toLowerCase();
+    return { body: Number(params.get("from")) > 0 ? [] : names.filter((name) => name.toLowerCase().includes(query)) };
+  });
+  expect(await call(page, `return await pickValue(page.getByRole("button", { name: "Location" }), "Union Square", fast);`, 20, "write")).toMatchObject({
+    result: { picked: true, label: "Union Sq", rank: "alike" },
+  });
+  await expect(page.getByRole("button", { name: "Location" })).toHaveText("Union Sq");
+});
+
 test("pickValue waits for the next page a scroll asks for a moment late before calling the list's end", async ({ page }) => {
   await serve(page, locations(false, 250, 300), locationApi);
   expect(await call(page, `return await pickValue(page.getByRole("button", { name: "Location" }), "Location 250");`)).toMatchObject({
