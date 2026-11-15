@@ -156,8 +156,8 @@ Publication refuses a tool for any of these:
   - a free-text place, name or venue that matches several of the site's options equally either
     takes the first in the site's order and returns the one it used, as the site labels it, or
     lists them for the caller to choose one, as the tool decides (core skill, the input schema);
-  - a check that refuses a past date compares with today in the site's time zone, or the
-    place's, not with today in UTC (caller-input skill) ("Past date in UTC");
+  - a check that compares a date with today uses today in the site's time zone, or the place's,
+    not in UTC (caller-input skill) ("Date in UTC");
   - in a read signed out, each declared input is used, or changed from its default, by a passing
     case, and a case whose expectation you changed because the site itself gave another answer
     for that input names the capture of that answer, such as the site's no-results page for that
