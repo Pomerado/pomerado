@@ -16,9 +16,9 @@ const rankForms = (choices: readonly PickerChoice[], ...wanted: string[]) =>
   rankChoices(choices, wanted, foldChoiceText, { spellings: spellingsOf });
 const rankLeading = (choices: readonly PickerChoice[], ...wanted: string[]) =>
   rankChoices(choices, wanted, foldChoiceText, { leading: true });
-/** As a typeahead's results are ranked: listed by how well they match. */
+/** As a typeahead's results are ranked: listed by how well they match, with the value's other forms. */
 const rankListed = (choices: readonly PickerChoice[], ...wanted: string[]) =>
-  rankChoices(choices, wanted, foldChoiceText, { leading: true, listedFirst: true });
+  rankChoices(choices, wanted, foldChoiceText, { leading: true, listedFirst: true, spellings: spellingsOf });
 /** An option as a picker reads a row of several lines: its first line and its whole text. */
 const place = (...lines: string[]): PickerChoice => ({ names: [lines[0] ?? "", lines.join(" ")], lines, value: "", disabled: false, key: lines.join("|") });
 
@@ -107,8 +107,11 @@ describe("rankChoices", () => {
     // the value is its whole text.
     const town = place("Example Square", "Exampleton, CA, US");
     expect(rankListed([hotel, town], "Example Square, Exampleton, CA")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
+    // Its parts are read from the value as written, as its other written forms lose their commas.
+    expect(rankListed([hotel, town], "Example Square, Exampleton, California")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
     expect(rankListed([hotel, town], "Example Square, Exampleton, CA, US")).toEqual({ status: "picked", index: 1, rank: "exact" });
     expect(rankListed([rows[0] ?? town, place("Example Tower", "Example City, NY, US")], "Example Tower, Example City, NY")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
+    expect(rankListed([rows[0] ?? town, place("Example Tower", "Example City, NY, US")], "Example Tower, Example City, New York")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
     // A value is an option's whole text, and so picks it, with or without a leading "The", also
     // among other spellings.
     const tower = [place("Example Tower Hotel", "1 Sample St, Example City, NY, US"), place("The Example Tower", "20 Sample Ave, Example City Metro, NY")];
@@ -118,8 +121,8 @@ describe("rankChoices", () => {
     expect(rankListed(tower, "Example Tower, Example City Metro, NY")).toEqual({ status: "picked", index: 1, rank: "place" });
     expect(rankListed([place("New York", "NY, USA"), place("York", "PA, USA")], "York, PA")).toEqual({ status: "picked", index: 1, rank: "leading" });
     const art = [place("Example Museum of Art", "15 3rd St, Example City, CA, US"), place("Example Museum", "15 Third St, Example City, CA, USA")];
-    const value = "Example Museum, 15 Third St, Example City, CA";
-    expect(rankChoices(art, [value], foldChoiceText, { leading: true, listedFirst: true, spellings: spellingsOf })).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
+    expect(rankListed(art, "Example Museum, 15 Third St, Example City, CA")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
+    expect(rankListed(art, "Example Museum, 15 Third Street, Example City, CA")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
     expect(rankListed([hotel, town], "Example Square, Exampleton, CA, US", "Example Square")).toEqual({ status: "picked", index: 1, rank: "exact" });
     // A first row that is the place keeps its clean pick.
     const museum = [place("Example Museum", "15 Third St, Example City, CA, USA"), place("Example Museum of Art", "15 3rd St, Example City, CA, US")];

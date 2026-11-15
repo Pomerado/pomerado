@@ -84,8 +84,8 @@ export type PickerRanking =
  * several `lines` makes through its first line alone, by a spelling whose text up to one of its
  * commas is that line, none being the option's whole text, is withdrawn when an enabled option
  * listed before it holds the spelling's text before its first comma as whole words in its first
- * line and each of the spelling's later comma parts, or another written form of it, as whole words
- * in its text: a search lists the place it means first, so those options and the matches are
+ * line and each of the spelling's later comma parts, or, with `options.spellings`, another written
+ * form of it, as whole words in its text: a search lists the place it means first, so those options and the matches are
  * returned ambiguous, at `words`, in the list's order. Each name and each list of spellings is read once per call.
  *
  * It is pure and self-contained: the page code of `pickerCode` embeds this same function with
@@ -383,16 +383,17 @@ export const rankChoices = (
   // order, as matching by words.
   const namedEarlier = (rank: PickerRank, list: readonly string[], matched: readonly number[]): PickerRanking | undefined => {
     if (!["exact", "normalized", "folded", "leading", "place"].includes(rank)) return undefined;
-    // Spellings name an option by its first line alone when one's text up to one of its commas is
-    // that line and none is the option's whole text.
+    // The spellings as given, whose commas their other forms drop, name an option by its first line
+    // alone when one's text up to one of its commas is that line and no spelling or form at this
+    // rank is the option's whole text.
     const alone = matched.filter((index) => {
       const lines = choices[index]?.lines ?? [];
       if (lines.length < 2) return false;
       const first = phrase(bare(lines[0] ?? ""));
       const whole = phrase(bare(lines.join(" ")));
       return (
-        !list.some((spelling) => phrase(bare(spelling)) === whole) &&
-        list.some((spelling) => {
+        ![...spellings, ...list].some((spelling) => phrase(bare(spelling)) === whole) &&
+        spellings.some((spelling) => {
           const parts = commaParts(spelling);
           return parts.some((_, end) => phrase(bare(parts.slice(0, end + 1).join(" "))) === first);
         })
@@ -400,7 +401,7 @@ export const rankChoices = (
     });
     if (alone.length === 0) return undefined;
     // Each spelling's name, and its later comma parts, each with its other written forms.
-    const asked = list
+    const asked = spellings
       .map((spelling) => {
         const [head = "", ...rest] = commaParts(spelling);
         const later = rest.map((part) => [part, ...(options.spellings?.(part) ?? [])].map((form) => phrase(bare(form))));
@@ -410,7 +411,7 @@ export const rankChoices = (
     const earlier = choices.slice(0, Math.min(...alone)).flatMap((choice, index) => {
       if (matched.includes(index) || choice.disabled) return [];
       const first = phrase(bare(choice.lines?.[0] ?? choice.names[0] ?? ""));
-      const text = phrase((choice.lines ?? choice.names).join(" "));
+      const text = phrase([...(choice.lines ?? []), ...choice.names].join(" "));
       return asked.some(({ head, later }) => first.includes(head) && later.every((forms) => forms.some((form) => text.includes(form)))) ? [index] : [];
     });
     if (earlier.length === 0) return undefined;
