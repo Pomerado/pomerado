@@ -441,11 +441,11 @@ export const shownAgain = <E>(
 /**
  * Whether a recorded screen's planned refill of `slot` holds now: the screen lists it (`planned`,
  * its recipe step's `refills`) and it went out once at most so far. A password's also needs the
- * screen to ask for a second factor this replay has not sent, as a site that wants the password
- * entered again with a one-time code does; a code's needs the screen's code boxes, as the host
- * found them (`codeScreens.shown`), to be none of the code screen's that ran before
- * (`codeScreens.earlier`, `takesAnotherCode`). A screen asking for either again any other way
- * is a rejection.
+ * screen to ask for no second factor, as a site that asks for it on each of two screens does, or
+ * for one this replay has not sent, as a site that wants the password entered again with a
+ * one-time code does; a code's needs the screen's code boxes, as the host found them
+ * (`codeScreens.shown`), to be none of the code screen's that ran before (`codeScreens.earlier`,
+ * `takesAnotherCode`). A screen asking for either again any other way is a rejection.
  */
 const plannedRefill = (
   step: AutofillStep,
@@ -459,7 +459,8 @@ const plannedRefill = (
   !refilled.has(slot) &&
   (slot === "code"
     ? codeScreens !== undefined && takesAnotherCode(codeScreens.shown, codeScreens.earlier)
-    : step.fields.some(
+    : step.fields.every((field) => !isSecondFactor(field.slot)) ||
+      step.fields.some(
         (field) => isSecondFactor(field.slot) && isSecret(field.slot) && !maySent.has(field.slot),
       ));
 

@@ -16,10 +16,12 @@ import type {
 import {
   type AutofillRecipeStep,
   isSecondFactor,
+  recipeStep,
   type RefillSlot,
 } from "../destinations/autofill-recipe.js";
 import type { ControlIdentity } from "../destinations/autofill-page-code.js";
 import type { TypedBox } from "../destinations/autofill-fill.js";
+import { recordedRejections } from "./autofill-rejection.js";
 import { report, type SignInReportContext } from "./sign-in-telemetry.js";
 
 /**
@@ -513,10 +515,11 @@ export const armStep = (
 
 /**
  * Whether a screen of the open sign-in (`open`, none for a sign-in it starts or a successor's
- * restart) asks for the password an earlier screen of it took, as its fill refills (`refills`),
+ * restart) asks for the password an earlier screen of it took, as its fill refills (`refills`):
  * beside a second factor none of its earlier screens took, as a site that wants the password
- * re-entered with a one-time code does: the recipe records the refill there, and only there a
- * run's replay makes it.
+ * re-entered with a one-time code does, or with no second factor right after the screen that took
+ * it, as a site that asks for it on each of two screens does. The recipe records the refill there,
+ * and only there a run's replay makes it.
  */
 export const reasksPassword = (
   open: AutofillSignInState | undefined,
@@ -525,13 +528,28 @@ export const reasksPassword = (
 ) => {
   const earlier = (which: (slot: AutofillSlot) => boolean) =>
     open?.steps.some((taken) => taken.fields.some((field) => which(field.slot))) === true;
-  return (
-    refills.includes("password") &&
-    step.fields.some((field) => isSecondFactor(field.slot)) &&
-    earlier((slot) => slot === "password") &&
-    !earlier(isSecondFactor)
-  );
+  if (!refills.includes("password")) return false;
+  return step.fields.some((field) => isSecondFactor(field.slot))
+    ? earlier((slot) => slot === "password") && !earlier(isSecondFactor)
+    : open?.steps.at(-1)?.fields.some((field) => field.slot === "password") === true;
 };
+
+/**
+ * Whether the recorder may mark a screen that asks for the password again (`reasksPassword`) as a
+ * refill: one with a second factor always, one without only when no error marker the open
+ * sign-in's screens recorded shows now (`recordedRejections`), so the site moved on from the
+ * screen before with no rejection. A look that fails marks nothing.
+ */
+export const passwordRefillUnrefused = (
+  open: AutofillSignInState | undefined,
+  step: AutofillStep,
+  correlation?: unknown,
+) =>
+  open === undefined || step.fields.some((field) => isSecondFactor(field.slot))
+    ? Effect.succeed(true)
+    : recordedRejections(open.hooks, open.steps.map(recipeStep), correlation).pipe(
+        Effect.map((shown) => shown !== "unavailable" && shown.length === 0),
+      );
 
 /** What named a control when the host found it: its `id` and `name` attributes. */
 type ControlNames = Pick<ControlIdentity, "id" | "name">;
