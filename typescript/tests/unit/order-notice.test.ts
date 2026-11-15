@@ -118,6 +118,8 @@ describe("an order's facts", () => {
     expect(refused(order({ quantity: 0.001, unit: "kg", price: "1.00" }))).toBe(false);
     expect(refused(order({ quantity: 2.345, unit: "fl oz", price: "1.00" }))).toBe(false);
     expect(refused(order({ quantity: 99_999, unit: "yd", price: "1.00" }))).toBe(false);
+    expect(refused(order({ quantity: 1.5, unit: "L", price: "1.00" }))).toBe(false);
+    expect(refused(order({ quantity: 1.5, unit: "l", price: "1.00" }))).toBe(true);
   });
 
   it("take a price each, a line total or both, never neither", () => {
@@ -176,6 +178,19 @@ describe("a script's purchase confirm", () => {
       `Order: 3 × "Synthetic shake" at 4.99 USD each (14.97 USD). Fees: "Service fee" 2.99 USD; "${"x".repeat(199)}…" 0.00 USD. Tip: 0.00 USD. Total: 17.96 USD.`,
     );
     expect(asksAsDeclared(request, declared)).toBe(true);
+  });
+
+  // A host that predates fees refuses the key, so an order with none leaves it out.
+  it("leaves out an empty list of fees, so the order keeps the earlier shape", () => {
+    const { request } = asked({
+      currency: "USD",
+      items: [{ name: "Synthetic shake", quantity: 3, price: "4.99" }],
+      fees: [],
+      total: "14.97",
+    });
+    if (request?.order === undefined) throw new Error("the order was not asked");
+    expect(Object.keys(request.order)).toEqual(["currency", "items", "total"]);
+    expect(request.notice).toBe('Order: 3 × "Synthetic shake" at 4.99 USD each. Total: 14.97 USD.');
   });
 
   it("refuses a measured quantity without its unit", () => {

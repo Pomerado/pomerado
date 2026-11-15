@@ -495,11 +495,13 @@ export const makeScriptInput = (
           ...line,
           name: cutTo(line.name.replace(/\s+/gu, " ").trim(), longestItemName),
         });
-        const { fees } = decoded.right;
+        const { fees, ...facts } = decoded.right;
         order = {
-          ...decoded.right,
-          items: decoded.right.items.map(named),
-          ...(fees === undefined ? {} : { fees: fees.map(named) }),
+          ...facts,
+          items: facts.items.map(named),
+          // An empty list is left out, so an order of the earlier shape still decodes on a host
+          // that predates fees.
+          ...(fees === undefined || fees.length === 0 ? {} : { fees: fees.map(named) }),
         };
       }
       const request = yield* Schema.decodeUnknown(InputRequest)(

@@ -303,15 +303,36 @@ const ItemName = Schema.String.pipe(Schema.pattern(/\S/u), Schema.maxLength(long
  */
 export const OrderItem = Schema.Struct({
   name: ItemName,
-  /** A whole number unless the item gives its `unit`; then up to three decimal places. */
+  /**
+   * A whole number unless the item gives its `unit`; then up to three decimal places (checked in
+   * OrderFacts).
+   */
   quantity: Schema.Number.pipe(
     Schema.between(0.001, 99_999),
     Schema.filter((quantity) => Number(quantity.toFixed(3)) === quantity),
   ),
   unit: Schema.optional(
-    Schema.Literal("g", "kg", "oz", "lb", "ml", "l", "fl oz", "gal", "cm", "m", "in", "ft", "yd"),
+    Schema.Literal(
+      "g",
+      "kg",
+      "mg",
+      "oz",
+      "lb",
+      "ml",
+      "L",
+      "fl oz",
+      "pt",
+      "qt",
+      "gal",
+      "mm",
+      "cm",
+      "m",
+      "in",
+      "ft",
+      "yd",
+    ),
   ),
-  /** At least one of `price` and `lineTotal`. */
+  /** At least one of `price` and `lineTotal` (checked in OrderFacts). */
   price: Schema.optional(Amount),
   lineTotal: Schema.optional(Amount),
 });

@@ -934,7 +934,7 @@ it("has a purchase confirm's order and a checkout's output give lines, fees and 
   const texts = await renderedTexts("typescript/authoring");
   const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
   expect(text("writes")).toContain(
-    "Fill `order` as the checkout shows it: each item's real quantity, its `unit` when sold by weight or measure, and its price each, its line total or both; fees, a tip and a discount go in their own fields, never in `items`.",
+    "Fill `order` as the checkout shows it: each item's real quantity, its `unit` when sold by weight or measure, and its price each, its line total or both; fees, a tip and a discount go in their own fields, never in `items`. When an item's measure is in a unit `unit` does not list, give it quantity 1 and its line total, with the measure as the checkout shows it in its name.",
   );
   expect(text("caller-input")).toContain(
     "its `items` (each `name`, `quantity`, `unit` for an item sold by weight or measure, and `price` each, `lineTotal` or both), `fees` (each `name` and `amount`), `discount`, `shipping`, `tax`, `tip` and `total`",
@@ -1412,7 +1412,7 @@ it("renders the pinned standalone authoring", async () => {
     ["a08f1ef89cc10bf11e17b8d6086b6e37649b1d5d11b78c0542cc7db32460b7e3", "testing"],
     ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
     ["b38084ecbbecd8db08c15170c700a55ba96ee1c8ca598fabc56a8aa9f30c110d", "forms"],
-    ["ec00578151f6a439ea2bc9d4d6fa0896ba9271a3491bcb54173d5a11cc0f1d12", "writes"],
+    ["f62b5ed442f5423ad92b7af37d609ac285f7631d708674e304ae6920fc789c9d", "writes"],
     ["da548410b61e93ee76efc9b87606643b1bce70ba55a95f83bda49360f69b51a2", "cart"],
     ["0d715b32ed61f324f4da915935bc5db1e0b3d87d17aa4a86e276197a79bdcd6d", "caller-input"],
     ["417fc0b27e7718af9b34ca2f822fabfc1f5122e062e8f2908b9d34472ab7e0e5", "publication"],
