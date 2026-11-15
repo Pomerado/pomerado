@@ -214,13 +214,15 @@ test("a secret the browser writes into a URL's path, with | encoded, never reach
 test("a separator hidden from assistive technology still splits the capture, so a notice stays with its own button", async () => {
   test.setTimeout(90_000);
   // A form ends with its button; a divider hidden from the accessibility tree follows it, then a
-  // group holding a notice and another button. The snapshot drops the divider and both wrappers.
+  // group holding a logo-only button, a notice and another button. The snapshot drops the divider
+  // and both wrappers.
   const site = await startSite((_request, response) =>
     html(
       response,
       `<title>Checkout</title><main><form><input aria-label="Email"><button type="button">Continue to payment</button></form>` +
         `<x-divider role="separator" aria-hidden="true" style="display:block;border-top:1px solid">or</x-divider>` +
-        `<div><div>By continuing, you agree to open a store account.</div><button type="button">Continue with wallet</button></div></main>`,
+        `<div><button type="button" aria-label="Wallet app"><svg aria-hidden="true" width="16" height="16"></svg></button>` +
+        `<div>By continuing, you agree to open a store account.</div><button type="button">Continue with wallet</button></div></main>`,
     ),
   );
   const guardian = recordingGuardian({ readPage: true });
@@ -238,7 +240,7 @@ test("a separator hidden from assistive technology still splits the capture, so 
     expect(toolResult(last, "second")).toMatchObject({ status: "completed" });
     // The second step's review reads the page the first one left.
     expect(captureOf(executions(guardian.reviews)[1])).toContain(
-      '  - button "Continue to payment"\n  - separator [aria-hidden]\n  - text: By continuing, you agree to open a store account.\n  - button "Continue with wallet"',
+      '  - button "Continue to payment"\n  - separator [aria-hidden]\n  - button "Wallet app"\n  - text: By continuing, you agree to open a store account.\n  - button "Continue with wallet"',
     );
   } finally {
     await site.close();
