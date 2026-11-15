@@ -236,7 +236,7 @@ already asked for, or to solve a CAPTCHA.
 3. Mark an option taken from the caller's own account (a saved traveler, address, card
    or account) with `accountSpecific: true` and a `maskedLabel` that keeps it
    recognizable without its numbers or email: a card's brand and last four digits, an
-   address's saved label name without its street, city or ZIP, or a numbered
+   address's saved label name without its recipient, street, city or ZIP, or a numbered
    placeholder for an address with no label name. The API and MCP show the masked label
    with a notice; only the owner's protected page shows the full label. A masked label
    that still shows five or more digits or an email address is replaced by the label's
