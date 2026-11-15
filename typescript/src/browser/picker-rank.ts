@@ -82,7 +82,7 @@ export type PickerRanking =
  * Tower. With `options.listedFirst`, for options listed by how well they match, as a search's
  * results are, a match at `exact`, `normalized`, `folded`, `leading` or `place` that an option of
  * several `lines` makes through its first line alone, by a spelling whose text up to one of its
- * commas is that line and that is not the option's whole text, is withdrawn when an enabled option
+ * commas is that line, none being the option's whole text, is withdrawn when an enabled option
  * listed before it holds the spelling's text before its first comma as whole words in its first
  * line: a search lists the place it means first, so those options and the matches are returned
  * ambiguous, at `words`, in the list's order. Each name and each list of spellings is read once per call.
@@ -381,16 +381,20 @@ export const rankChoices = (
   // order, as matching by words.
   const namedEarlier = (rank: PickerRank, list: readonly string[], matched: readonly number[]): PickerRanking | undefined => {
     if (!["exact", "normalized", "folded", "leading", "place"].includes(rank)) return undefined;
-    // A spelling names an option by its first line alone when its text up to one of its commas is
-    // that line and it is not the option's whole text.
+    // Spellings name an option by its first line alone when one's text up to one of its commas is
+    // that line and none is the option's whole text.
     const alone = matched.filter((index) => {
       const lines = choices[index]?.lines ?? [];
       if (lines.length < 2) return false;
       const first = phrase(bare(lines[0] ?? ""));
-      return list.some((spelling) => {
-        const parts = commaParts(spelling);
-        return phrase(spelling) !== phrase(lines.join(" ")) && parts.some((_, end) => phrase(bare(parts.slice(0, end + 1).join(" "))) === first);
-      });
+      const whole = phrase(bare(lines.join(" ")));
+      return (
+        !list.some((spelling) => phrase(bare(spelling)) === whole) &&
+        list.some((spelling) => {
+          const parts = commaParts(spelling);
+          return parts.some((_, end) => phrase(bare(parts.slice(0, end + 1).join(" "))) === first);
+        })
+      );
     });
     if (alone.length === 0) return undefined;
     const heads = list.map((spelling) => phrase(bare(commaParts(spelling)[0] ?? ""))).filter((head) => head.trim() !== "");

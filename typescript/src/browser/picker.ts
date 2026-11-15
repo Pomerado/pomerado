@@ -1161,16 +1161,17 @@ const pickerMore = async (s, typed, wanted, query) => {
 // first comma part alone, as an option's first line that a refusal's candidate begins with, ranking
 // that list against the whole value; with no clean match then either, both lists are the
 // candidates. Each is typed once, the second typing standing for typing the value again, and the
-// second never fails the call: when it does, the first typing's answer stands. A clean match the
-// first list withdrew, as an option listed before it names the place, is never typed for again,
-// since the site may list its results for the shorter text in another order.
+// second never fails the call: when it does, the first typing's answer stands. After the first list
+// withdrew a clean match, as an option listed before it names the place, only both lists ranked
+// together, the first list first, decide, since the site may list its results for the shorter text
+// in another order.
 const pickerTypeahead = async (s, wanted) => {
   const value = String(wanted[0] ?? "").trim();
   const head = value.split(/(?<!\p{N}),|,(?!\p{N})/u)[0].trim();
   const retry = !s.options.query && head !== "" && head !== value;
   const typed = await pickerMore(s, await pickerQuery(s, s.control, wanted, [], undefined, retry), wanted, String(s.options.query ?? value));
   if (!retry || pickerCleanly(typed.found.ranking) || s.left() <= (s.until - s.started) / 3) return typed;
-  if (pickerCleanly(pickerRank(s, pickerChoices(typed.found.list), wanted, false))) return typed;
+  const withdrew = pickerCleanly(pickerRank(s, pickerChoices(typed.found.list), wanted, false));
   let again;
   try {
     again = await pickerMore(s, await pickerQuery(s, s.control, wanted, [], [head], true), wanted, head);
@@ -1178,7 +1179,7 @@ const pickerTypeahead = async (s, wanted) => {
     if (pickerTimedOut(error, s)?.name === "PickerFailure") return typed;
     throw error;
   }
-  if (pickerCleanly(again.found.ranking)) return again;
+  if (!withdrew && pickerCleanly(again.found.ranking)) return again;
   const list = [...typed.found.list, ...again.found.list];
   return { ...again, found: { ...again.found, list, ranking: pickerRank(s, pickerChoices(list), wanted) }, available: [...(typed.available ?? []), ...(again.available ?? [])] };
 };

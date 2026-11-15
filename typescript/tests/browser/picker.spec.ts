@@ -151,6 +151,24 @@ test("pickValue keeps a first-line match an earlier row names as a candidate whe
   });
 });
 
+// A candidate the site lists only for its first line, passed back where the whole text's list
+// withdraws a same-named row below one that names it, is still picked by its whole text.
+test("pickValue picks a candidate by its whole text from the first line's list after the whole text's list withdrew another row", async ({ page }) => {
+  await serve(
+    page,
+    moreResults
+      .replace(
+        /const shown = .*;/,
+        'const shown = [["gr","Example Square Garage","1 Main St, Exampleton, CA, US"],["ud","Example Square","Main St, Union District, Exampleton, CA, US"],["sq","Example Square","Main St, Exampleton, CA, US"]];',
+      )
+      .replace('render(shown.filter(', 'render((input.value.includes(",") ? shown.slice(0, 2) : shown.slice(2)).filter('),
+  );
+  expect(await call(page, `return await pickValue(page.getByRole("combobox", { name: "Pickup" }), "Example Square, Main St, Exampleton, CA, US", fast);`)).toEqual({
+    result: { picked: true, kind: "typeahead", label: "Example Square", value: "sq", rank: "exact", refills: 0 },
+  });
+  expect(await submitted(page)).toEqual({ pickup: "sq" });
+});
+
 // In a dropdown, whose order is fixed, an option named as the value is picked though an option
 // above it holds the value among its words.
 test("pickValue picks the option named as the value in a dropdown of several-line options", async ({ page }) => {
