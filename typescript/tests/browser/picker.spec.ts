@@ -132,6 +132,25 @@ test("pickValue keeps the value's own answer when typing its first comma part al
   });
 });
 
+// A site that lists a hotel named after a square first for the whole value, and the square first
+// for its name alone: the square, named by its first line below a row that names it, stays a
+// candidate rather than being picked from the shorter text's list.
+test("pickValue keeps a first-line match an earlier row names as a candidate when the site reorders for the shorter text", async ({ page }) => {
+  await serve(
+    page,
+    moreResults
+      .replace(/const shown = .*;/, 'const shown = [["ht","The Sample Hotel - Example Square","10 Sample St, Exampleton, CA, US"],["sq","Example Square","Main St, Exampleton, CA, US"]];')
+      .replace('render(shown.filter(', 'render((input.value.includes(",") ? shown : [...shown].reverse()).filter('),
+  );
+  expect(await call(page, `return await pickValue(page.getByRole("combobox", { name: "Pickup" }), "Example Square, Exampleton, CA", fast);`)).toMatchObject({
+    result: {
+      picked: false,
+      reason: "option_unclear",
+      matches: ["The Sample Hotel - Example Square, 10 Sample St, Exampleton, CA, US", "Example Square, Main St, Exampleton, CA, US"],
+    },
+  });
+});
+
 // In a dropdown, whose order is fixed, an option named as the value is picked though an option
 // above it holds the value among its words.
 test("pickValue picks the option named as the value in a dropdown of several-line options", async ({ page }) => {
@@ -592,15 +611,21 @@ test("pickValue still refuses a place a starting-up page never offers, and its o
 // A value with a first comma part is typed once; on a page that drops that typing, as one still
 // starting up does, typing the first part is the second try, and finding nothing then is the answer.
 test("pickValue types a value's first comma part when the page ignored the value's own typing", async ({ page }) => {
+  const queries: string[] = [];
   await serve(
     page,
     startingUp.replace(/input\.addEventListener\("focus"[\s\S]*?\n\}\);/, 'input.addEventListener("input", () => { if (input.value === "") ready = true; });'),
-    (params) => ({ delayMs: 60, body: ["Tokyo, Japan", "Tokyo Bay, Japan", "Toronto, Canada"].filter((place) => place.startsWith(params.get("q") ?? "")) }),
+    (params) => {
+      queries.push(params.get("q") ?? "");
+      return { delayMs: 60, body: ["Tokyo, Japan", "Tokyo Bay, Japan", "Toronto, Canada"].filter((place) => place.startsWith(params.get("q") ?? "")) };
+    },
   );
   const field = 'page.getByLabel("Destination")';
   expect(await call(page, `return await pickValue(${field}, "Tokyo, Japan", { ...fast, option: ${notAiRow} });`)).toEqual({
     result: { picked: true, kind: "typeahead", label: "Tokyo, Japan", value: "Tokyo, Japan", rank: "exact", refills: 0 },
   });
+  // The whole value was typed once, while the page ignored it, and never again.
+  expect(queries.filter((query) => query.includes(","))).toEqual([]);
   await page.reload();
   expect(await call(page, `return await pickValue(${field}, "Qxzvw, Japan", { ...fast, option: ${notAiRow} });`)).toEqual({
     result: { picked: false, reason: "option_missing", wanted: "Qxzvw, Japan", available: [], matches: [] },

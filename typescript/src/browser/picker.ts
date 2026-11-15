@@ -536,7 +536,7 @@ const pickerPageCode = String.raw`(element, args) => {
  * `leading`: York, UK for York, or Austin, TX, USA for Austin, TX), then an option whose first line
  * is the value's text before one of its commas and whose other lines' comma parts hold each of the
  * value's later parts, in their order, any of them left out (rank `place`: Example Square,
- * Exampleton, CA for a row Example Square above Post St, Exampleton, CA, US), then a name holding the
+ * Exampleton, CA for a row Example Square above Main St, Exampleton, CA, US), then a name holding the
  * value as whole words (New York for York), then a
  * name made of the value's words, no more and no fewer, with the parts its or the value's commas or
  * spaced dashes separate in another order and the numbers in the value's order (rank `allWords`:
@@ -659,8 +659,8 @@ const pickerSpellings = ${String(spellingsOf)};
 const pickerRankByWords = ${String(rankByWords)};
 const pickerClosestFirst = ${String(closestFirst)};
 // A typeahead lists its results by how well they match, so a place it lists first is the one it means.
-const pickerRank = (s, list, wanted) =>
-  pickerRankChoices(list, wanted, pickerFold, { leading: true, stem: s.options.stem === true, extraWords: s.options.extraWords === true, listedFirst: s.kind === "typeahead", spellings: pickerSpellings });
+const pickerRank = (s, list, wanted, listedFirst = s.kind === "typeahead") =>
+  pickerRankChoices(list, wanted, pickerFold, { leading: true, stem: s.options.stem === true, extraWords: s.options.extraWords === true, listedFirst, spellings: pickerSpellings });
 const pickerPage = ${pickerPageCode};
 const pickerLimits = Object.freeze(${JSON.stringify({
   timeout: 10_000,
@@ -1161,13 +1161,16 @@ const pickerMore = async (s, typed, wanted, query) => {
 // first comma part alone, as an option's first line that a refusal's candidate begins with, ranking
 // that list against the whole value; with no clean match then either, both lists are the
 // candidates. Each is typed once, the second typing standing for typing the value again, and the
-// second never fails the call: when it does, the first typing's answer stands.
+// second never fails the call: when it does, the first typing's answer stands. A clean match the
+// first list withdrew, as an option listed before it names the place, is never typed for again,
+// since the site may list its results for the shorter text in another order.
 const pickerTypeahead = async (s, wanted) => {
   const value = String(wanted[0] ?? "").trim();
   const head = value.split(/(?<!\p{N}),|,(?!\p{N})/u)[0].trim();
   const retry = !s.options.query && head !== "" && head !== value;
   const typed = await pickerMore(s, await pickerQuery(s, s.control, wanted, [], undefined, retry), wanted, String(s.options.query ?? value));
   if (!retry || pickerCleanly(typed.found.ranking) || s.left() <= (s.until - s.started) / 3) return typed;
+  if (pickerCleanly(pickerRank(s, pickerChoices(typed.found.list), wanted, false))) return typed;
   let again;
   try {
     again = await pickerMore(s, await pickerQuery(s, s.control, wanted, [], [head], true), wanted, head);

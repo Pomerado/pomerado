@@ -67,7 +67,7 @@ describe("rankChoices", () => {
   });
 
   test("a value naming an option's first line, then some of its later lines' comma parts in order, matches as place", () => {
-    const square = place("Example Square", "Post St, Exampleton, CA, US");
+    const square = place("Example Square", "Main St, Exampleton, CA, US");
     const hotel = place("The Sample Hotel - Example Square, Sample Collection", "524 Sample St, Exampleton, CA, US");
     const monument = place("Sample Monument", "Example Square, Exampleton, CA");
     const value = "Example Square, Exampleton, CA";
@@ -100,9 +100,15 @@ describe("rankChoices", () => {
     const terminals = [place("Terminal 2 Parking", "Example Airport, Example City, CA, US"), place("Terminal 2", "Example Airport, Example City, CA, US")];
     expect(rankListed(terminals, "Terminal 2")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
     expect(rankListed(terminals, "Terminal 2, Example Airport, Example City, CA, US")).toEqual({ status: "picked", index: 1, rank: "exact" });
-    const square = place("Example Square", "Post St, Exampleton, CA, US");
+    const square = place("Example Square", "Main St, Exampleton, CA, US");
     const hotel = place("The Sample Hotel - Example Square, Sample Collection", "524 Sample St, Exampleton, CA, US");
     expect(rankListed([hotel, square], "Example Square, Exampleton, CA")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
+    // A place whose second line begins with its town is named by its first line alone too, unless
+    // the value is its whole text.
+    const town = place("Example Square", "Exampleton, CA, US");
+    expect(rankListed([hotel, town], "Example Square, Exampleton, CA")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
+    expect(rankListed([hotel, town], "Example Square, Exampleton, CA, US")).toEqual({ status: "picked", index: 1, rank: "exact" });
+    expect(rankListed([rows[0] ?? town, place("Example Tower", "Example City, NY, US")], "Example Tower, Example City, NY")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
     // A first row that is the place keeps its clean pick.
     const museum = [place("Example Museum", "15 Third St, Example City, CA, USA"), place("Example Museum of Art", "15 3rd St, Example City, CA, US")];
     expect(rankListed(museum, "Example Museum, 15 Third St, Example City, CA")).toEqual({ status: "picked", index: 0, rank: "leading" });
