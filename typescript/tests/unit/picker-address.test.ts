@@ -146,10 +146,11 @@ describe("resolveAddress", () => {
     expect(await resolveAddress(wanted, () => shown)).toMatchObject({ picked: false, reason: "option_unclear" });
     const both = ["1 Example St, Exampleton, IL 60001, USA", "1 Example St, Exampleton, IL 60000, USA"];
     expect(await resolveAddress(wanted, () => both, String, { read: true })).toMatchObject({ label: both[1] });
-    // Another house number, street or state, or no house number, still refuses.
+    // Another house number, street or state, or no house number or place, still refuses.
     for (const other of ["2 Example St, Exampleton, IL 60001, USA", "1 Other St, Exampleton, IL 60001, USA", "1 Example St, Exampleton, WI 60001, USA"])
       expect(await resolveAddress(wanted, () => [other], String, { read: true })).toMatchObject({ picked: false });
     expect(await resolveAddress("Exampleton, IL 60000", () => ["Exampleton, IL 60001, USA"], String, { read: true })).toMatchObject({ picked: false });
+    expect(await resolveAddress("1 Example St, 60000", () => ["1 Example St, Faraway, TX 75001, USA"], String, { read: true })).toMatchObject({ picked: false });
   });
 
   test("takes the suggestion that matches the typed text among those that tie, and returns the site's own item", async () => {

@@ -517,8 +517,8 @@ const pickerPageCode = String.raw`(element, args) => {
  *   caller question or an `available` list.
  * - `pickAddress(control, address, options?)` resolves an address the caller typed through the
  *   field's suggestions as `resolveAddress` does, with `read` in a read, reading each by its whole
- *   text with `pickerOptions`, then picks the one it accepted with `pickValue`, typing the text that brought
- *   it and taking the first of copies. It returns `pickValue`'s outcome with that text as `query`
+ *   text with `pickerOptions`, then picks the one it accepted with `pickValue`, typing the text that
+ *   brought it and taking the first of copies. It returns `pickValue`'s outcome with that text as `query`
  *   and the unit it split off as `unit`, for the site's own unit field, or, when it accepts none,
  *   `resolveAddress`'s refusal, `option_missing` or `option_unclear`, with every suggestion the
  *   field gave as `available` and `unit`.

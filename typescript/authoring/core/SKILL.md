@@ -254,8 +254,9 @@ exception: it is optional unless the task can't run without it (below).
   question (.agents/caller-input/SKILL.md) or `pickRefusal`, which lists them as `available`.
   Resolve a typed address through the site's suggestions with `pickAddress` from `pickerCode`, or
   `resolveAddress` from `pomerado/runtime` over the site's own suggestion request, with
-  `{ read: true }` after its `label` in a read; fill the site's unit field, or its second address line, with the `unit` it returns, return the suggestion it
-  accepted as the site's version of the address, and throw its `pickRefusal` only when it accepts
+  `{ read: true }` after its `label` in a read; fill the site's unit field, or its second address
+  line, with the `unit` it returns, return the suggestion it accepted as the site's version of the
+  address, and throw its `pickRefusal` only when it accepts
   none.
 - Match the caller's proper nouns, such as places, venues and company names, with a fuzzy
   match that accepts the usual forms of the same name, such as a name with or without its
