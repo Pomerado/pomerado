@@ -524,7 +524,7 @@ describe("rankChoices same name written another way", () => {
     for (const [name, value] of [
       ["Joe's Pizza (Downtown)", "Joe's Pizza Downtown"],
       ["(317) 555-1234", "317 555 1234"],
-      ["Suite #100", "Suite 100"],
+      ["Apt #B", "Apt B"],
       ['"The Grill"', "The Grill"],
       ["Room 1, 2", "Room 1 2"],
       ["Pizza: Downtown", "Pizza Downtown"],
