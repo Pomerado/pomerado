@@ -211,6 +211,43 @@ test("a secret the browser writes into a URL's path, with | encoded, never reach
   }
 });
 
+test("a separator hidden from assistive technology still splits the capture, so a notice stays with its own button", async () => {
+  test.setTimeout(90_000);
+  // A form, with a select inside its label, ends with its button; a divider hidden from the
+  // accessibility tree follows it, then a logo-only button, another hidden divider, a notice and
+  // another button. The snapshot drops the dividers and the wrappers.
+  const site = await startSite((_request, response) =>
+    html(
+      response,
+      `<title>Checkout</title><main><form><input aria-label="Email"><label>Country <select><option>Canada</option><option>Norway</option></select></label>` +
+        `<button type="button">Continue to payment</button></form>` +
+        `<x-divider role="separator" aria-hidden="true" style="display:block;border-top:1px solid">or</x-divider>` +
+        `<div><button type="button" aria-label="Wallet app"><svg aria-hidden="true" width="16" height="16"></svg></button><hr aria-hidden="true">` +
+        `<div>By continuing, you agree to open a store account.</div><button type="button">Continue with wallet</button></div></main>`,
+    ),
+  );
+  const guardian = recordingGuardian({ readPage: true });
+  try {
+    const { last } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      turns: [
+        () => patch({ "explore/look.mjs": probe() }),
+        () => [call("execute", execution("explore", "explore/look.mjs"), "first")],
+        () => [call("execute", execution("explore", "explore/look.mjs"), "second")],
+      ],
+    });
+    expect(toolResult(last, "second")).toMatchObject({ status: "completed" });
+    // The second step's review reads the page the first one left.
+    expect(captureOf(executions(guardian.reviews)[1])).toContain(
+      '  - button "Continue to payment"\n  - separator [aria-hidden]\n  - button "Wallet app"\n  - separator [aria-hidden]\n  - text: By continuing, you agree to open a store account.\n  - button "Continue with wallet"',
+    );
+  } finally {
+    await site.close();
+  }
+});
+
 test("a page over the element limit is not captured, and the browser keeps working", async () => {
   test.setTimeout(90_000);
   const items = Array.from(
