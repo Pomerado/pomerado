@@ -35,6 +35,22 @@ export interface HttpAnswerFailure {
 export const maximumRefusalChoices = 100;
 export const maximumRefusalChoiceLength = 200;
 
+/** The longest masked label a choice from the caller's own account may have. */
+const maximumMaskedChoiceLength = 64;
+
+/**
+ * A choice taken from the caller's own account, such as a saved address or card, marked as a
+ * question's option is: anyone but the account's owner reads `maskedLabel`, or a host's own mask.
+ */
+export interface AccountChoice {
+  readonly label: string;
+  readonly accountSpecific: true;
+  readonly maskedLabel?: string;
+}
+
+/** A choice a refusal lists: its label as shown, or one taken from the caller's own account. */
+export type RefusalChoice = string | AccountChoice;
+
 /**
  * Which input a refusal names and every choice the page offers for it, exactly as shown. A host
  * tells the caller the choices, so the caller can pick one; a host that repairs has nothing to
@@ -51,30 +67,66 @@ export interface InputRefusalDetail {
   readonly kind?: string;
 }
 
+/** The detail a script passes: a choice from the caller's own account is marked (`AccountChoice`). */
+export interface ScriptRefusalDetail extends Omit<InputRefusalDetail, "available"> {
+  readonly available?: readonly RefusalChoice[];
+}
+
 /** A refusal's kind: lowercase words joined by underscores. */
 const refusalKindPattern = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/u;
 const maximumRefusalKindLength = 40;
 
 /**
+ * A choice as a host may carry it, bounded: a true/false or finite number choice as its text, and
+ * one marked from the caller's own account with its label and masked label. None for any other.
+ */
+const boundedChoice = (choice: unknown): RefusalChoice | undefined => {
+  if (typeof choice === "boolean" || (typeof choice === "number" && Number.isFinite(choice)))
+    return String(choice);
+  if (typeof choice === "string")
+    return choice.trim() === "" ? undefined : choice.slice(0, maximumRefusalChoiceLength);
+  if (typeof choice !== "object" || choice === null) return undefined;
+  const label: unknown = Reflect.get(choice, "label");
+  const masked: unknown = Reflect.get(choice, "maskedLabel");
+  return Reflect.get(choice, "accountSpecific") !== true ||
+    typeof label !== "string" ||
+    label.trim() === ""
+    ? undefined
+    : {
+        label: label.slice(0, maximumRefusalChoiceLength),
+        accountSpecific: true,
+        ...(typeof masked === "string" && masked.trim() !== ""
+          ? { maskedLabel: masked.slice(0, maximumMaskedChoiceLength) }
+          : {}),
+      };
+};
+
+/** Up to the most choices a detail lists, each bounded (`boundedChoice`). */
+const boundedChoices = (detail: unknown) => {
+  const available: unknown =
+    typeof detail === "object" && detail !== null ? Reflect.get(detail, "available") : undefined;
+  return Array.isArray(available)
+    ? available
+        .map(boundedChoice)
+        .filter((choice) => choice !== undefined)
+        .slice(0, maximumRefusalChoices)
+    : [];
+};
+
+/** A choice as anyone but the account's owner reads it: one from the account by its masked label. */
+const publicChoice = (choice: RefusalChoice) =>
+  typeof choice === "string" ? choice : (choice.maskedLabel ?? "••••");
+
+/**
  * The detail as a host may carry it: a bounded field name and up to the most choices, each bounded,
- * a true/false or finite number choice as its text.
+ * a true/false or finite number choice as its text, and one from the caller's own account as its
+ * masked label.
  */
 export const boundedRefusalDetail = (detail: unknown): InputRefusalDetail => {
   if (typeof detail !== "object" || detail === null) return {};
   const field: unknown = Reflect.get(detail, "field");
-  const available: unknown = Reflect.get(detail, "available");
   const kind: unknown = Reflect.get(detail, "kind");
-  const choices = Array.isArray(available)
-    ? available
-        .map((choice: unknown) =>
-          typeof choice === "boolean" || (typeof choice === "number" && Number.isFinite(choice))
-            ? String(choice)
-            : choice,
-        )
-        .filter((choice): choice is string => typeof choice === "string" && choice.trim() !== "")
-        .slice(0, maximumRefusalChoices)
-        .map((choice) => choice.slice(0, maximumRefusalChoiceLength))
-    : [];
+  const choices = boundedChoices(detail).map(publicChoice);
   return {
     ...(typeof field === "string" && field.trim() !== ""
       ? { field: field.slice(0, maximumRefusalChoiceLength) }
@@ -103,7 +155,9 @@ const offersNone = (detail: unknown) => {
  * anything (`blockingRequiredFields` with `unaskable: true`). When the value is not among the
  * choices the page offers, the script names the input and lists them:
  * `new errors.InvalidInput(message, { field: "size", available: ["One Size"] })`. The caller then
- * picks one of them, so nothing asks it for a replacement. A message that starts
+ * picks one of them, so nothing asks it for a replacement. A choice taken from the caller's own
+ * account, such as a saved address or card, is marked as a question's option is
+ * (`AccountChoice`): the error keeps it so a host masks it. A message that starts
  * "Caller input error:" marks an obvious refusal: the input alone breaks a rule of the task,
  * checked before any site action, or the page refused the value in its own words, which the
  * message quotes. A host may end such a run at once, with no repair and no question. An empty
@@ -116,13 +170,14 @@ class InputRejected extends Error {
   override readonly name = "InvalidInput";
   readonly _tag = "InvalidInput";
   readonly field?: string;
-  readonly available?: readonly string[];
+  readonly available?: readonly RefusalChoice[];
   readonly kind?: string;
-  constructor(message: string, detail?: InputRefusalDetail) {
+  constructor(message: string, detail?: ScriptRefusalDetail) {
     super(message.slice(0, 4096));
     const bounded = boundedRefusalDetail(detail);
+    const choices = boundedChoices(detail);
     if (bounded.field !== undefined) this.field = bounded.field;
-    if (bounded.available !== undefined) this.available = bounded.available;
+    if (choices.length > 0) this.available = choices;
     else if (bounded.field !== undefined && offersNone(detail)) this.available = [];
     if (bounded.kind !== undefined) this.kind = bounded.kind;
   }

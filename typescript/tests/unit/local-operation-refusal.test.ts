@@ -77,6 +77,31 @@ it("keeps a true/false or number choice as its text", () => {
   expect(refusal.available).toEqual(["false", "2"]);
 });
 
+// A choice taken from the caller's own account, such as a saved address, is marked as a question's
+// option is. The refusal keeps it, bounded, for a host to mask; the local host shows its masked
+// label, as it shows a question's.
+it("keeps a choice from the caller's own account marked", () => {
+  const refusal = new operationErrors.InvalidInput("No saved address matches", {
+    field: "address",
+    available: [
+      "Pick up in store",
+      { label: "12 Example Rd, Springfield 99999", accountSpecific: true, maskedLabel: "Home" },
+    ],
+  });
+  expect(refusal.available).toEqual([
+    "Pick up in store",
+    { label: "12 Example Rd, Springfield 99999", accountSpecific: true, maskedLabel: "Home" },
+  ]);
+});
+
+it("tells a local caller a choice from the caller's own account by its masked label", async () => {
+  const failure = await outcomeOf(
+    `, { field: "size", available: ["One Size", { label: "Size 12 Example Rd", accountSpecific: true, maskedLabel: "Saved size" }] }`,
+  );
+  expect(failure.outcome.details).toMatchObject({ available: ["One Size", "Saved size"] });
+  expect(failure.message).not.toContain("Example Rd");
+});
+
 // The local host repairs nothing, so its outcome for such a refusal is unchanged: the reason and
 // the field, with no list of choices.
 it("tells a local caller the reason and field, with no choices, when a script refuses with an empty list", async () => {
