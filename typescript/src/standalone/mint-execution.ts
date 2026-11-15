@@ -696,6 +696,8 @@ const authoredExecution = (
                 mode: "run",
                 target: live ? "browser" : "pureFiles",
                 dispatchAtFirstCall: true,
+                // Every step's pickers follow the build's effect, whatever the step declares.
+                ...(context.buildEffect === undefined ? {} : { effect: context.buildEffect }),
                 ...(fenced.size === 0 ? {} : { settledCommits: [...fenced.keys()] }),
                 ask: localHandOffAsker(scriptAsk, {
                   visible: live && visibleBrowser(state.session.options.browser),

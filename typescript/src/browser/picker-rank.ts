@@ -10,8 +10,11 @@ export interface PickerChoice {
 }
 
 /** How closely the winning option matched, best first. */
-export const pickerRanks = ["exact", "normalized", "folded", "leading", "words", "allWords", "anyOrder", "stem", "extraWords"] as const;
+export const pickerRanks = ["exact", "normalized", "folded", "leading", "alike", "words", "allWords", "anyOrder", "stem", "extraWords", "searched"] as const;
 export type PickerRank = (typeof pickerRanks)[number];
+
+/** The ranks that name the value itself, written another way at most: a write picks only these. */
+export const cleanRanks: readonly PickerRank[] = ["exact", "normalized", "folded", "leading", "alike"];
 
 export type PickerRanking =
   | { readonly status: "picked"; readonly index: number; readonly rank: PickerRank }
@@ -29,7 +32,17 @@ export type PickerRanking =
  * punctuation (`fold`), then, only with `options.leading`, a name whose leading part, its text
  * before one of its commas that are not between two digits, is a spelling, folded the same way
  * (`leading`: York, UK for York, or Austin, TX, USA for Austin, TX, but not 1,000 miles for 1),
- * then a name holding a spelling as whole words (New York for York), then a name made of a
+ * then the same name written another way: a name, or with `options.leading` its leading part,
+ * whose words pair one for one, in order, with a spelling's, splitting words at spacing and
+ * punctuation (not a period, comma or colon between digits), each pair equal, a singular and its
+ * plural (a final s or es, or y for ies, the singular three or more letters), or one written
+ * short for the other either way, and at least one pair not short (`alike`: Union Square for
+ * Union Sq, Union Sq for Union Square, 29 59 for 29-59, Bananas for banana, but never Square for
+ * Sq alone). A word written short there is an abbreviation: two to four Latin letters with no
+ * vowel (a, e, i, o, u or y), at least two fewer than the other, starting with its first letter
+ * and holding the rest of its letters in order, such as Sq, Blvd or NW, so UK never pairs with
+ * Ukraine nor Oak with Oakwood, either way. Then a name holding a spelling as whole words (New
+ * York for York), then a name made of a
  * spelling's words, no more and no fewer,
  * whose parts, as its own or the spelling's commas, semicolons, colons, slashes, bars, brackets or
  * spaced dashes separate them, come in another order, each part's words in order and the numbers
@@ -55,12 +68,16 @@ export type PickerRanking =
  * digit, a name holding every word of a spelling, in any order and among words the spelling lacks,
  * each as written or in its singular or plural form, plus or minus a final s or es, or with y for
  * ies (`extraWords`: Green Seedless Grapes for green grape, but not Lemonade for lemon), as a
- * product search asks for. The value never matches by stem. A name beats the value at each rank.
+ * product search asks for. Then, only with `options.searched`, for choices that are the site's
+ * own results for the typed text in its order, the first enabled choice when a word of its names
+ * pairs, as at `alike`, with a word holding a letter of a spelling or of its other written forms
+ * that are no place (`searched`), and no other: a first result sharing no word matches nothing.
+ * The value never matches by stem. A name beats the value at each rank.
  * Options at the first rank that matches decide: one option (by key) is picked, or reported
  * disabled when every copy of it is; two or more are ambiguous, never guessed. A weaker rank never
  * overrules a stronger one, so a disabled exact match is not replaced by a looser one. Without
  * `options.leading`, no option ranks `leading`; without `options.stem`, none ranks `stem`; without
- * `options.extraWords`, none ranks `extraWords`. With
+ * `options.extraWords`, none ranks `extraWords`; without `options.searched`, none ranks `searched`. With
  * `options.spellings`, such as `spellingsOf`, each rank also tries the other written forms of a
  * spelling against option names, never values, once the spellings as given match nothing at that
  * rank: so Fifth Avenue for 5th Avenue matches as a name before any option holding the same words
@@ -81,6 +98,7 @@ export const rankChoices = (
     readonly leading?: boolean;
     readonly stem?: boolean;
     readonly extraWords?: boolean;
+    readonly searched?: boolean;
     readonly spellings?: (
       text: string,
       options?: { readonly places?: "end" | "after-words" | "never" },
@@ -169,6 +187,7 @@ export const rankChoices = (
     words: once(words),
     phrase: once(phrase),
     parted: once(parted),
+    alike: once((text: string) => alikeWords(text)),
   };
   // Two words pair when they are equal, or when both are Latin letters only and the shorter, of
   // five or more letters, is the whole start of the longer.
@@ -184,6 +203,30 @@ export const rankChoices = (
   const plural = (one: string, other: string) =>
     other === one + "s" || other === one + "es" || (one.endsWith("y") && other === one.slice(0, -1) + "ies");
   const pairsAsNoun = (want: string, have: string) => want === have || plural(want, have) || plural(have, want);
+  // A text's words for `alike`: spacing and punctuation split them, except a period, comma or
+  // colon between two digits, which is part of a number.
+  const alikeWords = (text: string) =>
+    fold(text)
+      .split(/(?:\s|(?!(?<=\p{N})[.,:]\p{N})\p{P})+/u)
+      .filter(Boolean);
+  // An abbreviation: two to four Latin letters with no vowel, written short for a longer word.
+  const abbreviates = (brief: string, full: string) => !/[aeiouy]/u.test(brief) && short(brief, full);
+  // How two words pair at `alike`: "same" as written, "noun" as a singular and its plural, "short"
+  // as an abbreviation either way, or not at all.
+  const alikePair = (want: string, have: string) =>
+    want === have
+      ? "same"
+      : /^\p{L}{3,}$/u.test(want.length < have.length ? want : have) && (plural(want, have) || plural(have, want))
+        ? "noun"
+        : abbreviates(want, have) || abbreviates(have, want)
+          ? "short"
+          : undefined;
+  // Whether two texts' words pair one for one, in order, not only through abbreviations.
+  const alikeAll = (want: readonly string[], have: readonly string[]) => {
+    if (want.length !== have.length || want.length === 0) return false;
+    const pairs = want.map((word, at) => alikePair(word, have[at] ?? ""));
+    return pairs.every((pair) => pair !== undefined) && pairs.some((pair) => pair !== "short");
+  };
   const spellings = wanted.map(squash).filter((spelling) => spelling !== "");
   // A value with a number in it, such as a size or a count, never matches with extra words.
   const numbered = spellings.some((spelling) => /\p{N}/u.test(spelling));
@@ -220,6 +263,10 @@ export const rankChoices = (
     ending: list.filter((form) => placed.has(form)).map(words).filter((each) => each.length > 0),
   }));
   const wordLists = perList((list) => list.map(words).filter((each) => each.length > 0));
+  const alikeLists = perList((list) => list.map(alikeWords).filter((each) => each.length > 0));
+  // A name's text up to each comma that is not a thousands separator, as in 1,000.
+  const leadingParts = (text: string) =>
+    [...text.matchAll(/(?<!\p{N}),|,(?!\p{N})/gu)].flatMap((comma) => ((comma.index ?? 0) > 0 ? [text.slice(0, comma.index)] : []));
   const partLists = perList((list) => list.map(parted).filter((each) => each.all.length > 1));
   type Test = (choice: PickerChoice, list: readonly string[]) => boolean;
   const tests: readonly (readonly [PickerRank, Test, boolean])[] = [
@@ -242,16 +289,24 @@ export const rankChoices = (
             "leading",
             (choice: PickerChoice, list: readonly string[]) => {
               const forms = formSets.fold(list);
-              return choice.names.some((name) => {
-                const text = String(name ?? "");
-                // The name up to each comma that is not a thousands separator, as in 1,000.
-                return [...text.matchAll(/(?<!\p{N}),|,(?!\p{N})/gu)].some((comma) => (comma.index ?? 0) > 0 && forms.has(fold(text.slice(0, comma.index))));
-              });
+              return choice.names.some((name) => leadingParts(String(name ?? "")).some((part) => forms.has(fold(part))));
             },
             true,
           ],
         ] as const)
       : []),
+    [
+      "alike",
+      (choice, list) => {
+        const wants = alikeLists(list);
+        return choice.names.some((name) => {
+          const text = String(name ?? "");
+          const texts = options.leading === true ? [text, ...leadingParts(text)] : [text];
+          return texts.some((each) => wants.some((want) => alikeAll(want, named.alike(each))));
+        });
+      },
+      true,
+    ],
     [
       "words",
       (choice, list) => {
@@ -342,6 +397,13 @@ export const rankChoices = (
         ? { status: "disabled", index: matched[0] ?? 0, rank }
         : { status: "picked", index: enabled, rank };
     }
+  }
+  // The site's first result for the typed text, when it shares a word with the value.
+  if (options.searched === true) {
+    const first = choices.findIndex((choice) => !choice.disabled);
+    const wants = [...spellings, ...plainOthers].flatMap(alikeWords).filter((word) => /\p{L}/u.test(word));
+    const shares = (name: string) => named.alike(name).some((have) => wants.some((want) => alikePair(want, have) !== undefined));
+    if (first >= 0 && (choices[first]?.names ?? []).some(shares)) return { status: "picked", index: first, rank: "searched" };
   }
   return { status: "missing" };
 };

@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
-import { type Api, call, callFailure, serve, submitted } from "./picker-fixture.js";
+import { pickChoices } from "../../src/browser/picker.js";
+import { type Api, call, callFailure, callRead, serve, submitted } from "./picker-fixture.js";
 
 // The picker helper, run as a Kernel call body runs it, on synthetic pages that each model one
 // kind of picker or one way a picker misbehaves. Chromium must generate the events: the widgets
@@ -806,6 +807,92 @@ test("pickValue returns the options by their full text when no match is clean, e
   expect(await call(page, `return await pickValue(${field}, "example square", { ...fast, tie: "first" });`)).toMatchObject({
     result: { picked: true, value: "sq", rank: "normalized", tied: ["Example Square First St, Exampleton, IL, US", "Example Square Second St, Exampleton, IL, US"] },
   });
+});
+
+// The hotel named after the place is a loose match: a write asks among the site's options, the
+// hotel first, and picks the answer passed back; a read takes it and says it was loose.
+test("pickValue in a write lists a loose match first to ask about, and in a read takes it and names it", async ({ page }) => {
+  await serve(
+    page,
+    dropdown([
+      ["sq", "Example Square<br>First St, Exampleton, IL, US"],
+      ["ht", "The Sample Hotel - Example Square, Sample Collection<br>10 Sample St, Exampleton, IL, US"],
+    ]),
+  );
+  const field = 'page.getByRole("button", { name: "Customer" })';
+  const hotel = "The Sample Hotel - Example Square, Sample Collection 10 Sample St, Exampleton, IL, US";
+  const asked = await call(page, `return await pickValue(${field}, "Example Square, Exampleton, IL", fast);`, 20, "write");
+  expect(asked).toMatchObject({ result: { picked: false, reason: "option_unclear", matches: [hotel] } });
+  const { options } = pickChoices((asked as { result: { available: string[]; matches: string[] } }).result);
+  expect(options).toEqual([
+    { value: hotel, label: hotel },
+    { value: "Example Square First St, Exampleton, IL, US", label: "Example Square First St, Exampleton, IL, US" },
+  ]);
+  expect(await submitted(page)).toEqual({ customer: "" });
+  expect(await call(page, `return await pickValue(${field}, ${JSON.stringify(options[0]?.value)}, fast);`, 20, "write")).toMatchObject({
+    result: { picked: true, value: "ht", rank: "exact" },
+  });
+  expect(await callRead(page, `return await pickValue(${field}, "Example Square, Exampleton, IL", fast);`)).toEqual({
+    result: { picked: true, kind: "dropdown", label: "The Sample Hotel - Example Square, Sample Collection", value: "ht", rank: "anyOrder", refills: 0, loose: true },
+  });
+  expect(await submitted(page)).toEqual({ customer: "ht" });
+});
+
+// The same name written another way is clean, so a write picks it without asking.
+test("pickValue in a write picks a name written short, with a hyphen for a space, or without an apostrophe", async ({ page }) => {
+  await serve(page, `<form><label>Place <select name="place">
+<option value="">Choose a place</option><option value="us">Union Square</option><option value="ut">Union Station</option>
+<option value="ex">29 59 Example Ave</option><option value="jo">Joe's on Union Square</option></select></label></form>`);
+  const place = 'page.getByLabel("Place")';
+  expect(await call(page, `return await pickValue(${place}, "Union Sq", fast);`, 20, "write")).toEqual({
+    result: { picked: true, kind: "select", label: "Union Square", value: "us", rank: "alike", refills: 0 },
+  });
+  expect(await call(page, `return await pickValue(${place}, "29-59 Example Ave", fast);`, 20, "write")).toMatchObject({
+    result: { picked: true, value: "ex", rank: "alike" },
+  });
+  expect(await call(page, `return await pickValue(${place}, "joes on union sq", fast);`, 20, "write")).toMatchObject({
+    result: { picked: true, value: "jo", rank: "alike" },
+  });
+  expect(await submitted(page)).toEqual({ place: "jo" });
+});
+
+// A read takes a name holding the value among other words, and says so; a write, or code the
+// runtime declared nothing for, lists it to ask about.
+test("pickValue in a read takes a product holding the value among other words, and a write lists it", async ({ page }) => {
+  await serve(page, `<form><label>Product <select name="product">
+<option value="">Choose a product</option><option value="ab">Apple Bag</option><option value="bb">Banana Bunch</option></select></label></form>`);
+  const product = 'page.getByLabel("Product")';
+  expect(await call(page, `return await pickValue(${product}, "banana", fast);`)).toMatchObject({
+    result: { picked: false, reason: "option_unclear", matches: ["Banana Bunch"] },
+  });
+  expect(await callRead(page, `return await pickValue(${product}, "banana", fast);`)).toEqual({
+    result: { picked: true, kind: "select", label: "Banana Bunch", value: "bb", rank: "words", refills: 0, loose: true },
+  });
+  expect(await submitted(page)).toEqual({ product: "bb" });
+});
+
+// The site's search answers the typed text: its first result is taken in a read when it shares a
+// word with the value, listed to ask about in a write, and never taken when it shares none.
+test("pickValue takes the site's first search result that shares a word only in a read, and none that shares no word", async ({ page }) => {
+  const results: Readonly<Record<string, readonly (readonly [string, string])[]>> = {
+    "push mower": [["mb", "Mower Blade 21 in"], ["gh", "Garden Hose"]],
+    "lawn mower": [["gh", "Garden Hose"], ["lb", "Leaf Blower"]],
+  };
+  await serve(page, remoteAutocomplete.replace(/Country/g, "Product"), (params) => ({
+    delayMs: 100,
+    body: (results[params.get("q") ?? ""] ?? []).map(([code, name]) => ({ code, name })),
+  }));
+  const product = 'page.getByRole("combobox", { name: "Product" })';
+  expect(await call(page, `return await pickValue(${product}, "push mower", fast);`, 20, "write")).toMatchObject({
+    result: { picked: false, reason: "option_unclear", matches: ["Mower Blade 21 in"] },
+  });
+  expect(await callRead(page, `return await pickValue(${product}, "lawn mower", fast);`)).toMatchObject({
+    result: { picked: false, reason: "option_missing", available: ["Garden Hose", "Leaf Blower"] },
+  });
+  expect(await callRead(page, `return await pickValue(${product}, "push mower", fast);`)).toEqual({
+    result: { picked: true, kind: "typeahead", label: "Mower Blade 21 in", value: "mb", rank: "searched", refills: 0, loose: true },
+  });
+  expect(await submitted(page)).toEqual({ country: "mb" });
 });
 
 test("pickValue with tie first takes the first of the options that tie, in the site's order, and names them", async ({ page }) => {
