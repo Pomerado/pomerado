@@ -1,4 +1,4 @@
-import { Data, Effect, Either, Schema } from "effect";
+import { Data, Duration, Effect, Either, Schema } from "effect";
 import { expect, it } from "vitest";
 import {
   AutofillRecipe,
@@ -46,25 +46,29 @@ it("writes a hand-off sign-in as version 15, which no older version carries", ()
 
 /**
  * A site whose sign-in page a person signs in on, and the run's page loads, asks and fills: a cold
- * browser lands on `landing`, the login page by default, and a `read` may end where it can't tell.
+ * browser lands on `landing`, the login page by default, a signed-in one on `home`, the account page
+ * by default, and a `read` may end where it can't tell. Only the account page shows the marker.
  */
 const replay = (options: {
   readonly signedIn: boolean;
   readonly handOff?: true;
   readonly recipe?: typeof recipe;
   readonly landing?: string;
+  readonly home?: string;
   readonly read?: true;
   readonly timing?: { readonly stepWaitMs: number; readonly pollMs: number };
 }) => {
   const state = { signedIn: options.signedIn, page: login };
   const trace: string[] = [];
   const prompts: string[] = [];
-  const check = () =>
-    Effect.sync(() =>
-      state.signedIn
+  // A check that names the marker's account page opens it first.
+  const check = (indicator: { readonly openPath?: string | undefined }) =>
+    Effect.sync(() => {
+      if (indicator.openPath !== undefined) state.page = `${origin}${indicator.openPath}`;
+      return state.signedIn && state.page === account
         ? ({ signedIn: true, url: state.page } as const)
-        : ({ signedIn: false, failed: "indicator_not_visible", url: state.page } as const),
-    );
+        : ({ signedIn: false, failed: "indicator_not_visible", url: state.page } as const);
+    });
   const inspection = (): AutofillInspection => ({
     page: state.page,
     siteOrigin: origin,
@@ -76,7 +80,7 @@ const replay = (options: {
     open: () =>
       Effect.sync(() => {
         trace.push("open");
-        state.page = state.signedIn ? account : (options.landing ?? login);
+        state.page = state.signedIn ? (options.home ?? account) : (options.landing ?? login);
       }),
     check,
     confirm: check,
@@ -120,7 +124,10 @@ const replay = (options: {
         unanswered: () => new TestFailure({ code: "Unanswered" }),
         unavailable: () => new TestFailure({ code: "Unavailable" }),
       },
-      timing: options.timing ?? { stepWaitMs: 60, pollMs: 2 },
+      timing: {
+        ...(options.timing ?? { stepWaitMs: 60, pollMs: 2 }),
+        markerSettle: { within: Duration.millis(20), interval: Duration.millis(5) },
+      },
       sent: { current: false },
     }).pipe(Effect.scoped),
   ).then((outcome) => ({ outcome, trace, prompts }));
@@ -177,3 +184,23 @@ it("hands off on the page a cold run settles on, though the recorded page moved"
   });
   expect(handedOff.trace).toEqual(["open", "ask:browser_handoff"]);
 }, 15_000);
+
+// A saved session whose landing page shows no marker: the recipe checks its account page, which the
+// check opens. Nothing is asked, with or without a hand-off.
+it("signs a saved session in through the marker's account page, asking nothing", async () => {
+  const opened = signInRecipe([{ page: login, fields: [], approval: "handoff" }], {
+    selector: "#account",
+    openPath: "/account",
+  });
+  for (const handOff of [undefined, true] as const) {
+    const warm = await replay({
+      signedIn: true,
+      recipe: opened,
+      home: `${origin}/home`,
+      timing: { stepWaitMs: 3_000, pollMs: 20 },
+      ...(handOff === undefined ? {} : { handOff }),
+    });
+    expect(warm.outcome).toEqual({ outcome: "signed_in", alreadySignedIn: true });
+    expect(warm.trace).toEqual(["open"]);
+  }
+}, 20_000);
