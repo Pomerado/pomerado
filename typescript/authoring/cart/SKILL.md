@@ -102,8 +102,8 @@ An example item that is out of stock doesn't end the build. The tool returns tha
 refusal for the item, and the build publishes on it as the writes skill says.
 
 An "earliest" pickup or delivery time moves with the clock: pick it in the step that places the
-order. When the site says that time is gone and offers the next one, the next one is still the
-earliest.
+order, or right before the card fill when picking it reloads the checkout. When the site says
+that time is gone and offers the next one, the next one is still the earliest.
 
 ## A checkout's inputs and output
 
