@@ -105,6 +105,38 @@ describe("executeKernelOperation", () => {
     ).toEqual({ exit: Exit.succeed("saved"), websiteEffect: "not_started" });
   });
 
+  it("declares the run's effect ahead of each call's code, from the host or the write declaration", async () => {
+    const codes: string[] = [];
+    const recording: KernelExecuteClient = {
+      browsers: {
+        playwright: {
+          execute: async (_session, body) => {
+            codes.push(body.code);
+            return { success: true, result: null };
+          },
+        },
+      },
+    };
+    const script = async ({ kernel, sessionId }: { kernel: KernelExecuteClient; sessionId: string }) => {
+      await kernel.browsers.playwright.execute(sessionId, { code: "return 1;" });
+      return "done";
+    };
+    const read = defineOperation({ input: Schema.Struct({}), output: Schema.String }, script);
+    const write = defineOperation(
+      { input: Schema.Struct({}), output: Schema.String, write: { confirmation: "readback", commits: ["save"] } },
+      script,
+    );
+    await run(executeKernelOperation(read, {}, { kernel: recording, sessionId: "s" }));
+    await run(executeKernelOperation(write, {}, { kernel: recording, sessionId: "s" }));
+    // A build's step follows the build's effect, whatever it declares.
+    await run(executeKernelOperation(read, {}, { kernel: recording, sessionId: "s", effect: "write" }));
+    expect(codes.map((code) => /try \{const __pomeradoEffect = "(read|write)";return 1;/u.exec(code)?.[1])).toEqual([
+      "read",
+      "write",
+      "write",
+    ]);
+  });
+
   it("runs an offline script without a browser, and a call it makes fails unsent", async () => {
     const parser = defineOperation(
       { input: Schema.Struct({ text: Schema.String }), output: Schema.Number },

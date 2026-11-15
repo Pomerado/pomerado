@@ -65,6 +65,11 @@ export interface LocalOperationOptions {
   readonly dispatchAtFirstCall?: boolean;
   /** Commit steps the run may not enter: entering one fails with `CommitAlreadySent`. */
   readonly settledCommits?: readonly string[];
+  /**
+   * Whether the run reads or writes, for its pickers (`ScriptBrowser.effect`): a mint step passes
+   * its build's effect. Absent, a script that declares `write` writes and any other reads.
+   */
+  readonly effect?: "read" | "write";
   readonly ask?: InputAsker;
   /**
    * The questions the host read itself: a build step's literal declarations, or the ones
@@ -575,6 +580,7 @@ export const runLocalOperation = (
           ? { offline: true }
           : {}),
         ...(options.dispatchAtFirstCall === true ? { dispatchAtFirstCall: true } : {}),
+        ...(options.effect === undefined ? {} : { effect: options.effect }),
         ...(options.settledCommits === undefined || options.settledCommits.length === 0
           ? {}
           : { settledCommits: options.settledCommits }),

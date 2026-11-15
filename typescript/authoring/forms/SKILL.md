@@ -111,13 +111,14 @@ datalist, an autocomplete or typeahead, an ARIA combobox, a dropdown built from 
 lookup dialog with a search box and a results table. `wanted` is the input's value or a list of
 its spellings (`["CA", "California"]`). `pickValues` adds or replaces chips and tags in a
 multi-select, and `pickerOptions` returns the options a picker lists, for a caller question.
-They wait for suggestions to settle, scroll lists that render as they scroll, pick only a clean
-match (core skill), never pick an "Add" or "Create" row, and confirm the field kept the choice,
-picking again when the page reverts it. A value the picker lacks, one it matches only loosely
-(`option_unclear`), or several options that tie,
+They wait for suggestions to settle, scroll lists that render as they scroll, pick the best
+match, in a write only a clean one (core skill), never pick an "Add" or "Create" row, and confirm the field kept the choice,
+picking again when the page reverts it. A read of a category or term passes `stem: true`, so a
+caller's word also matches an option word it begins or that begins it. A value the picker
+lacks, one a write matches only loosely (`option_unclear`), or several options that tie,
 comes back as `{ picked: false, reason, available, matches }`: decode it with `PickOutcome` and
 throw `pickRefusal(outcome, field)`, which lists options that tie as `available`, or ask the
-caller to choose among `matches`. In a tool that takes the first of options that tie cleanly instead (each tool decides,
+caller to choose among `matches`, as the core skill says for `option_unclear`. In a tool that takes the first of options that tie instead (each tool decides,
 core skill), pass `tie: "first"`, so the picker takes the first of them in the site's order and
 returns the one it used, and return that option's label in the tool's output. In a read whose
 typed field is the site's own search, when `pickValue` returns `option_missing` with an empty

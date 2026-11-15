@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { call, serve, submitted } from "./picker-fixture.js";
+import { call, callRead, serve, submitted } from "./picker-fixture.js";
 
 // The picker helper on synthetic pages that reproduce the markup and event handling common UI
 // libraries use for pickers: a hidden select with a search dropdown, a results list that commits
@@ -437,6 +437,26 @@ test("pickValue lists a native select's option by stem only when asked, never pi
     result: { picked: false, reason: "option_unclear", matches: ["Dentistry"] },
   });
   expect(await submitted(page)).toEqual({ specialty: "" });
+});
+
+// A read takes the stem matches and says each was loose; Pediatrics is Pediatric's plural, so clean.
+test("pickValues in a read picks a native multiple select's options by stem when asked, naming the loose ones", async ({ page }) => {
+  await serve(page, `<form><label>Specialties <select name="specialties" multiple size="4">
+<option value="cd">Example Dentistry</option><option value="d">Dentistry</option><option value="p">Pediatrics</option>
+<option value="po">Podiatry</option></select></label></form>`);
+  const specialties = 'page.getByLabel("Specialties")';
+  expect(await callRead(page, `return await pickValues(${specialties}, ["Dentist", "Pediatric"], { ...fast, stem: true });`)).toEqual({
+    result: {
+      picked: true,
+      kind: "select",
+      values: [
+        { label: "Dentistry", value: "d", added: true, loose: true },
+        { label: "Pediatrics", value: "p", added: true },
+      ],
+      removed: [],
+    },
+  });
+  expect(await submitted(page)).toEqual({ specialties: "d,p" });
 });
 
 test("pickValues lists a native multiple select's options by stem only when asked, never picking them", async ({ page }) => {
