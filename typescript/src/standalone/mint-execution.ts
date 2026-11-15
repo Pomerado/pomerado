@@ -584,6 +584,7 @@ const authoredExecution = (
           purpose: execution.purpose,
           target: execution.target,
           ...(mark === undefined ? {} : { input: mark }),
+          ...("callerKeys" in selected ? { callerKeys: selected.callerKeys } : {}),
         },
         startsOnFreshPage: start.resets(execution),
         ...(execution.agentNote === undefined ? {} : { agentNote: execution.agentNote }),

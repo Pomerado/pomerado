@@ -64,11 +64,13 @@ the source files, never captures.
   input from the request and the owner's answers, with dates normalized (10/4 is the next
   October 4, as `2026-10-04`), and pass it as `exampleInput` (JSON text) on
   a read's example, or on each write act step that needs it (the first act step that passes it
-  fixes it, and later steps repeat it or omit it and run it); each of its keys must be a schema
-  input, required where the request needs it, and publication decodes that input and returns a
-  key the schema lacks as an `example_input` input feedback. An optional input plus a declared
-  question is only for a value the request leaves open. A read's example also passes it in place
-  of the caller's own input once the tool refused that input with `InvalidInput` ("Reads, writes
+  fixes it, and later steps repeat it or omit it and run it). When a write's host-bound input
+  leaves out values the request states, its `exampleInput` is that input with them added, every
+  value it holds kept as sent. Each key of an `exampleInput` must be a schema input, required
+  where the request needs it, and publication decodes that input and returns a key the schema
+  lacks as an `example_input` input feedback. An optional input plus a declared question is only
+  for a value the request leaves open. A read's example also passes it in place of the caller's
+  own input once the tool refused that input with `InvalidInput` ("Reads, writes
   and examples").
 - `live_tests` runs a read's live tests when the host offers it: the combined cases you
   design in `test/cases.json` from what you saw on the site, and every result, run in batches on
@@ -598,7 +600,7 @@ lists, or, only when you find none on the site, one the caller gives through `re
 Keep a live test case on the caller's input that expects
 `invalid_input`, and publish against the example that passed. When neither the site nor the
 caller gives a working record, end with `report_blocked` reason `caller_input`, naming the field
-and the site's answer. A write runs the caller's input as it is.
+and the site's answer. A write keeps every value of the caller's input as sent.
 
 If you changed something on the site by mistake, put it back to its earlier value before going
 on. When the owner asks you to undo a change you made, do it.

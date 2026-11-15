@@ -46,7 +46,8 @@ pomerado:section publication.metadata-readers:end -->:
   agents in tool listings. When the site's content is in another language, say so in English
   where a caller needs it, such as "Returns the site's articles in Spanish", and keep the site's
   own labels and values as it shows them, in quotes.
-- **Name.** A 2–5 word verb phrase naming what the tool does: "Search flights", "Get claim
+- **Name.** A 2–5 word verb phrase naming the action the tool does, never a choice its inputs
+  make: "Search flights", "Get claim
   status", "Cancel reservation". Leave out the site's name<!-- pomerado:section publication.integration-name --> and words
   like "tool".<!-- pomerado:section publication.unique-name -->
 - **Description.** 1–3 sentences for an agent deciding whether to call this tool: what it does,

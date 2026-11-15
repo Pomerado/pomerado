@@ -81,7 +81,7 @@ describe("allowedEffectsFor", () => {
     const derived = allowedEffectsFor({ ...live("act"), input: "intent_derived" })[0];
     expect(derived).toMatch(/^The caller's requested task, done once across this session's steps/u);
     expect(derived).toContain(
-      "Every value in that input must be stated by the trusted intent or an answered question",
+      "Every value the caller sent stays as sent; every other value in that input must be stated by the trusted intent or an answered question",
     );
     // What the page supplies stays under the general policy, and add-ons need the owner's word.
     expect(derived).toContain(
