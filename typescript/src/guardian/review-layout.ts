@@ -79,10 +79,10 @@ const reviewFields: Record<ReviewKind, readonly string[]> = {
 };
 
 /**
- * One strict output format for every kind: the union of their outcomes and fields. A field a
+ * The strict output format with every kind's fields and `outcomes` as its outcome enum. A field a
  * kind does not use is null; the host drops it and checks the outcome against the kind.
  */
-export const guardianDecisionFormat: AgentOutputType = {
+export const decisionFormatOf = (outcomes: readonly GuardianOutcome[]): AgentOutputType => ({
   type: "json_schema",
   name: "guardian_decision",
   strict: true,
@@ -91,7 +91,7 @@ export const guardianDecisionFormat: AgentOutputType = {
     properties: {
       outcome: {
         type: "string",
-        enum: [...guardianOutcomes],
+        enum: [...outcomes],
       },
       rationale: { type: "string" },
       reason: {
@@ -190,7 +190,14 @@ export const guardianDecisionFormat: AgentOutputType = {
     ],
     additionalProperties: false,
   },
-};
+});
+
+/**
+ * One strict output format for every kind: the union of their outcomes and fields. The follow-up
+ * to an outcome its kind does not return offers only the kind's own instead, at the cost of that
+ * one call's cached prefix.
+ */
+export const guardianDecisionFormat = decisionFormatOf(guardianOutcomes);
 
 /**
  * The kind's own decision from the shared format: other kinds' fields and null placeholders

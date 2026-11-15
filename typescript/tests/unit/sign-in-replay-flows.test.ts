@@ -637,6 +637,67 @@ const lateCodeSite = (codeScreen: readonly string[] = ["#password", "#code", "#s
     },
   });
 
+// A site whose next screen asks for the password again on its own, which the recipe records as a
+// refill (`refills`): the replay enters it once there, and never a third time.
+const againRefill = {
+  page: `${origin}/again`,
+  fields: [{ selector: "#password-again", slot: "password" as const }],
+  refills: ["password" as const],
+  rejectedMarkers: [{ slot: "password" as const, selector: "#password-error" }],
+  submit: "#again",
+};
+const againSite = (accepted: boolean) =>
+  scriptedSite({
+    entry: "login",
+    screens: { login: loginScreen, again: ["#password-again", "#again"], account: [] },
+    fill: (page, values) =>
+      page === "login"
+        ? signedLogin(values)
+          ? { next: "again" }
+          : {}
+        : accepted && values[0] === login.password
+          ? { next: "account", signIn: true }
+          : { markers: ["#password-error"] },
+  });
+
+it("enters the password again on a later screen the recipe records as asking for it again", async () => {
+  const fake = againSite(true);
+  const { result } = await signIn(lateCodeRecipe(loginStep, againRefill), fake);
+  expect(result).toEqual(Either.right({ alreadySignedIn: false }));
+  expect(fake.filled("again")).toEqual([[login.password]]);
+});
+
+it("takes the site's error after a recorded refill of the password as its rejection, never sending it a third time", async () => {
+  const fake = againSite(false);
+  const { result } = await signIn(lateCodeRecipe(loginStep, againRefill), fake);
+  expect(result).toEqual(
+    Either.left(new SignInRunFailed({ code: "CredentialsRejected", reason: "password" })),
+  );
+  const passwords = fake.fills.flatMap(({ values }) =>
+    values.filter((value) => value === login.password),
+  );
+  expect(passwords).toHaveLength(2);
+});
+
+it("takes the site's error on a login screen still showing as a rejection before a recorded refill of the password in its box", async () => {
+  const fake = scriptedSite({
+    entry: "login",
+    screens: { login: loginScreen, account: [] },
+    fill: () => ({ markers: ["#password-error"] }),
+  });
+  const sameBox = {
+    ...againRefill,
+    page: `${origin}/login`,
+    fields: [{ selector: "#password", slot: "password" as const }],
+    submit: "#sign-in",
+  };
+  const { result } = await signIn(lateCodeRecipe(loginStep, sameBox), fake);
+  expect(result).toEqual(
+    Either.left(new SignInRunFailed({ code: "CredentialsRejected", reason: "password" })),
+  );
+  expect(fake.fills.map(({ page }) => page)).toEqual(["login"]);
+});
+
 it("enters the password again with the code on a screen the recipe records as asking for both", async () => {
   const fake = lateCodeSite();
   const { result } = await signIn(lateCodeRecipe(loginStep, lateCodeStep), fake);

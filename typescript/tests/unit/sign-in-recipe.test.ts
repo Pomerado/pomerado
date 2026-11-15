@@ -127,6 +127,10 @@ describe("decodeSignInRecipe", () => {
       },
     ],
     [
+      "version 5 with a screen that asks for the password again right after the screen that took it",
+      { version: 5, steps: [...steps, { ...steps[1], refills: ["password"] }], signedIn },
+    ],
+    [
       "version 5 with a code step its key submits",
       {
         version: 5,
@@ -284,14 +288,6 @@ describe("decodeSignInRecipe", () => {
             refills: ["password"],
           },
         ],
-        signedIn,
-      }),
-    ],
-    [
-      "a version 5 step that refills the password with no second factor",
-      JSON.stringify({
-        version: 5,
-        steps: [...steps, { ...steps[1], refills: ["password"] }],
         signedIn,
       }),
     ],

@@ -221,15 +221,32 @@ exception: it is optional unless the task can't run without it (below).
   query, as in a search box, autocomplete, typeahead or searchable combobox, look the value
   up the way a person would, with `pickValue` from `pickerCode` (forms skill), or with
   `rankChoices` and `spellingsOf` on options read as data, as in an HTTP version, never with
-  matching of your own. `pickValue` types the caller's value into the site's own search,
+  matching of your own. A tool that narrows a search's result rows to the caller's text ranks
+  them with `rankChoices` and `spellingsOf` too, never with matching of its own: it returns the
+  best matches, and with none, the site's rows in the site's order as candidates, saying so.
+  With `rankChoices` on options or rows read as data, as in an HTTP version, take the clean
+  ranks from `cleanRanks` in `pomerado/runtime` and follow `pickValue`'s rule: a read takes the
+  best match at any rank and returns the option it used, and a write asks the caller about a
+  looser one.
+  `pickValue` types the caller's value into the site's own search,
   reads every suggestion, tries the usual other forms of the value's words, such as 5th
-  and Fifth, St and Street or Saint, or a state's code and name, and picks only a clean match:
-  a name that is the value as written or differs only in case, spacing, accents or
-  punctuation, or an option's name before its comma. With `rankChoices` and `leading: true`,
-  that is rank `exact`, `normalized`, `folded` or `leading`. Any looser match, such as a name
-  with words the value lacks, is a candidate, never a pick: `pickValue` returns it as
-  `option_unclear`, with the site's options, each by its full text. A value it lacks lists the
-  site's closest options first. With no clean match, throw its `pickRefusal`, an
+  and Fifth, St and Street or Saint, or a state's code and name, and picks the best match. A
+  clean match is a name that is the value as written or differs only in case, spacing, accents,
+  punctuation, a leading "the", a word written short or a singular or plural, an option's name
+  before its comma, or an option's first line followed by parts of its other lines, in their
+  order. With `rankChoices` and `leading: true`, that is a rank in `cleanRanks`, and rank
+  `place` needs options read with their `lines`. A match on an option's
+  first line alone is a candidate, never a pick, when an option a typeahead lists before it
+  holds the value's text before its first comma, as whole words, in its first line, and the
+  value's later comma parts in its text. In a read, a looser best match, such as a name with
+  words the value lacks, or the site's first result that shares a word with the value, is
+  picked with `loose: true`: return the option it used, as the site labels it. In a write,
+  `pickValue` returns it as `option_unclear`, with the site's options, each by its full text:
+  before the first commit mark, ask the caller with a declared choice question with
+  `allowOther`, offering `pickChoices(outcome)`, then pick the answer with `query` set to the
+  caller's value. An answer of their own, or an ask that fails as `Unavailable`, throws its
+  `pickRefusal`. A value it lacks lists the site's closest options first. With no match, throw
+  its `pickRefusal`, an
   `InvalidInput` with `field` and `available`, the entries the site showed, even when the site
   offered only one. With one, use it. With several, decide per tool: take the first in the site's own
   order and return the one it used, as the site labels it, or list those matches as the site
@@ -243,20 +260,21 @@ exception: it is optional unless the task can't run without it (below).
 - Match the caller's proper nouns, such as places, venues and company names, with a fuzzy
   match that accepts the usual forms of the same name, such as a name with or without its
   accents (Abaca for Abacá), or a city alone or with its state and country after a comma.
-  Never require an exact match, but return a name with words added or dropped as a candidate,
-  never as the pick. `sameText` from `pomerado/runtime`
+  Never require an exact match. A name with words added or dropped is a looser match, which a
+  read picks and a write asks about, as above. `sameText` from `pomerado/runtime`
   matches a name that differs only in case, accents, spacing, apostrophes, periods, commas or
   hyphens, or in a word the site writes short, such as St-Jean for Saint-Jean, but not one
   with a word added or dropped. Prefer it for confirming the pick, so the read-back agrees with
   the choice, but not for choosing from a list, where a short label can match a longer name it
   isn't, such as UK for Ukraine.
-  When more than one option matches equally and cleanly, decide per tool: take the first in the site's
+  When more than one option matches equally, decide per tool: take the first in the site's
   order and return the one it used, as the site labels it, or list them for the caller to
   choose one, each selecting exactly one.
 - In a product or catalog search, a result whose name has every word of the caller's value
-  among words the value lacks is a candidate, never a pick: with no clean match, throw
-  `InvalidInput` with `field` and `available`, the closest names first. `pickValue` with
-  `extraWords: true` returns such names as its `option_unclear` matches.
+  among words the value lacks is a looser match, which a read picks and a write asks about, as
+  above: with no match, throw
+  `InvalidInput` with `field` and `available`, the closest names first. `pickValue` finds
+  such names with `extraWords: true`.
 - Look up anything the caller names that the site can search, such as a place, business,
   product, provider or record, through the site's own search, typeahead or picker, rather than
   matching only the options the page already shows, such as a menu of popular choices or the
@@ -376,9 +394,10 @@ exception: it is optional unless the task can't run without it (below).
   string", is no description. Annotate the field's own schema, inside `Schema.optional(...)`
   for an optional one. Callers see each beside its name.
 - Shape inputs and outputs like Pomerado's own API, so every tool reads alike. A notation the
-  request states, such as amounts as decimal strings or signed amounts, always wins; follow it
-  and say so in the field's description. Otherwise: field names in snake_case; dates as
-  `YYYY-MM-DD` and timestamps as ISO 8601 with an offset; money as an integer in minor units
+  request states, such as amounts as decimal strings or signed amounts, always wins, but a time
+  always keeps its zone; follow it and say so in the field's description. Otherwise: field names
+  in snake_case; dates as `YYYY-MM-DD` and every time as an ISO 8601 timestamp with its zone's
+  offset; money as an integer in minor units
   with the ISO 4217 `currency` the page shows beside it, such as `total_minor` 12999 and
   `currency` `"EUR"` read from "€129.99", and an amount that can go either way, such as a
   ledger entry, unsigned with a field that says its direction, such as `direction` `"debit"`
@@ -557,8 +576,11 @@ Then, for every field:
 - One field per fact, as the page states it, and variants as the dimensions and values the page
   lists.
 - Prefer numbers for amounts and counts, ISO 8601 for dates and times and minutes for durations;
-  type a date-only value as the runtime's `CalendarDate` (forms skill). A value that does not
-  parse cleanly may be the site's own text.
+  type a date-only value as the runtime's `CalendarDate` (forms skill) and name its zone in its
+  description. A value that does not parse cleanly may be the site's own text; return each time
+  it holds as a timestamp too. Compare a site's date or time with today or now only in the
+  site's or the place's zone, never UTC's: `todayIn` and `zonedTime` from `pomerado/runtime`
+  give both.
 
 **Configure, then read.** Many pages show values that depend on choices made on the page: a
 record's options or variants, a plan or tier, dates, a party size or quantity, units, a

@@ -11,7 +11,14 @@ import {
   sourceReadsOf,
 } from "./openai-input.js";
 import type { SourceRead } from "./openai-input.js";
-import { guardianDecisionFormat, reviewKindOf, withholdPrivateReviews } from "./review-layout.js";
+import {
+  decisionFormatOf,
+  guardianDecisionFormat,
+  outcomeAccepted,
+  reviewKindOf,
+  reviewOutcomesOf,
+  withholdPrivateReviews,
+} from "./review-layout.js";
 import type { ReviewKind } from "./review-layout.js";
 import { guardianContinuityPolicy } from "./session.js";
 import { guardianPublicationPolicy } from "./publication.js";
@@ -857,14 +864,10 @@ const reviewerWithPolicy = (
                 try: async (computationSignal) => {
                   reviewSignal = computationSignal;
                   const usage = new Usage();
-                  // A review that uses its turn limit gets one more turn, which offers no read
-                  // and so must decide. One that still does not ends as TurnLimitExceeded.
-                  const finalAgent = agent.clone({
-                    modelSettings: { ...agent.modelSettings, toolChoice: "none" },
-                  });
+                  let reviewAgent = agent;
                   const run = async () => {
                     try {
-                      const outcome = await runner.run(agent, activeState, {
+                      const outcome = await runner.run(reviewAgent, activeState, {
                         signal: computationSignal,
                         maxTurns,
                       });
@@ -879,6 +882,11 @@ const reviewerWithPolicy = (
                         await Effect.runPromise(turn.session.observe(history), {
                           signal: computationSignal,
                         });
+                      // A review that uses its turn limit gets one more turn, which offers no read
+                      // and so must decide. One that still does not ends as TurnLimitExceeded.
+                      const finalAgent = reviewAgent.clone({
+                        modelSettings: { ...reviewAgent.modelSettings, toolChoice: "none" },
+                      });
                       activeState = await Effect.runPromise(
                         guardianFollowUpState(turn, history, finalTurnNote, finalAgent, 1),
                         { signal: computationSignal },
@@ -897,12 +905,18 @@ const reviewerWithPolicy = (
                   for (let round = 0; round < reviewFollowUpRounds; round++) {
                     const followUp = turn.followUp?.(outcome.finalOutput);
                     if (followUp === undefined) break;
+                    // After an outcome its kind does not return, the rest of the review offers
+                    // only the kind's own outcomes, so the reviewer cannot return it again.
+                    if (!outcomeAccepted(turn.pending, outcome.finalOutput))
+                      reviewAgent = agent.clone({
+                        outputType: decisionFormatOf(reviewOutcomesOf(turn.pending)),
+                      });
                     if (turn.session)
                       await Effect.runPromise(turn.session.observe(outcome.history), {
                         signal: computationSignal,
                       });
                     activeState = await Effect.runPromise(
-                      guardianFollowUpState(turn, outcome.history, followUp, agent, maxTurns),
+                      guardianFollowUpState(turn, outcome.history, followUp, reviewAgent, maxTurns),
                       { signal: computationSignal },
                     );
                     if (turn.session) leadingPrivate = turn.session.leadingPrivate();

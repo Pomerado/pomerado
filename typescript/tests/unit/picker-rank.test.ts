@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 import { describe, expect, test } from "vitest";
-import { PickOutcome, pickRefusal } from "../../src/browser/picker.js";
+import { PickOutcome, pickChoices, pickRefusal } from "../../src/browser/picker.js";
 import { closestFirst, rankChoices, type PickerChoice } from "../../src/browser/picker-rank.js";
 import { foldChoiceText, rankByWords, spellingsOf } from "../../src/runtime/text.js";
 
@@ -16,6 +16,11 @@ const rankForms = (choices: readonly PickerChoice[], ...wanted: string[]) =>
   rankChoices(choices, wanted, foldChoiceText, { spellings: spellingsOf });
 const rankLeading = (choices: readonly PickerChoice[], ...wanted: string[]) =>
   rankChoices(choices, wanted, foldChoiceText, { leading: true });
+/** As a typeahead's results are ranked: listed by how well they match, with the value's other forms. */
+const rankListed = (choices: readonly PickerChoice[], ...wanted: string[]) =>
+  rankChoices(choices, wanted, foldChoiceText, { leading: true, listedFirst: true, spellings: spellingsOf });
+/** An option as a picker reads a row of several lines: its first line and its whole text. */
+const place = (...lines: string[]): PickerChoice => ({ names: [lines[0] ?? "", lines.join(" ")], lines, value: "", disabled: false, key: lines.join("|") });
 
 describe("rankChoices", () => {
   test("a name as written beats one that matches only once case and spacing are ignored", () => {
@@ -59,6 +64,78 @@ describe("rankChoices", () => {
     expect(rankLeading([choice("Yorktown, VA")], "York")).toEqual({ status: "missing" });
     // The value may run to a later comma of the name.
     expect(rankLeading([choice("South Austin, TX"), choice("Austin, TX, USA")], "Austin, TX")).toEqual({ status: "picked", index: 1, rank: "leading" });
+  });
+
+  test("a value naming an option's first line, then some of its later lines' comma parts in order, matches as place", () => {
+    const square = place("Example Square", "Main St, Exampleton, CA, US");
+    const hotel = place("The Sample Hotel - Example Square, Sample Collection", "524 Sample St, Exampleton, CA, US");
+    const monument = place("Sample Monument", "Example Square, Exampleton, CA");
+    const value = "Example Square, Exampleton, CA";
+    expect(rankLeading([square, hotel, monument], value)).toEqual({ status: "picked", index: 0, rank: "place" });
+    // Rows that only hold the place's name elsewhere stay loose, and two such places tie.
+    expect(rankLeading([hotel, monument], value)).toEqual({ status: "picked", index: 1, rank: "words" });
+    expect(rankLeading([square, place("Example Square", "Second St, Exampleton, CA, US")], value)).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "place" });
+    // Its later parts must be the option's, in the option's order.
+    expect(rankLeading([square], "Example Square, CA, Exampleton")).not.toMatchObject({ rank: "place" });
+    expect(rankLeading([square], "Example Square, Otherton, CA")).not.toMatchObject({ rank: "place" });
+    // A leading "The" makes no other name in the later parts either.
+    expect(rankLeading([place("Example Hall", "The Strand, Exampleton, UK")], "Example Hall, The Strand, UK")).toEqual({ status: "picked", index: 0, rank: "place" });
+  });
+
+  test("in a list ranked by match, a clean match on an option's first line alone is withdrawn when an enabled row listed before it names the place", () => {
+    // A landmark the site lists first, and a business of the same name further down.
+    const rows = [
+      place("The Example Tower", "20 Sample Ave, Example City Metro, NY"),
+      place("Sample Cafe Example Tower Store", "35 Sample Ave, Example City, NY"),
+      place("The Sample Hotel", "4 Main St, Example City, NY"),
+      place("Example Tower Co.", "60 Sample St, Example City, NY"),
+      place("Example Tower", "350 Sample Rd #14a, Example City, NY"),
+    ];
+    expect(rankListed(rows, "Example Tower, Example City, NY")).toEqual({ status: "ambiguous", indexes: [0, 1, 3, 4], rank: "words" });
+    expect(rankListed(rows, "Example Tower")).toEqual({ status: "ambiguous", indexes: [0, 1, 3, 4], rank: "words" });
+    // A row's text as a refusal lists it, its lines joined with commas, picks it as written, and a
+    // leading "The" makes no other name.
+    expect(rankListed(rows, "Example Tower, 350 Sample Rd #14a, Example City, NY")).toEqual({ status: "picked", index: 4, rank: "exact" });
+    expect(rankListed(rows.slice(0, 1), "Example Tower")).toEqual({ status: "picked", index: 0, rank: "folded" });
+    const terminals = [place("Terminal 2 Parking", "Example Airport, Example City, CA, US"), place("Terminal 2", "Example Airport, Example City, CA, US")];
+    expect(rankListed(terminals, "Terminal 2")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
+    expect(rankListed(terminals, "Terminal 2, Example Airport, Example City, CA, US")).toEqual({ status: "picked", index: 1, rank: "exact" });
+    const square = place("Example Square", "Main St, Exampleton, CA, US");
+    const hotel = place("The Sample Hotel - Example Square, Sample Collection", "524 Sample St, Exampleton, CA, US");
+    expect(rankListed([hotel, square], "Example Square, Exampleton, CA")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
+    // The same name written another way is withdrawn alike, and a first row that is the place keeps it.
+    expect(rankListed([hotel, square], "Example Sq")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
+    expect(rankListed([square, hotel], "Example Sq")).toEqual({ status: "picked", index: 0, rank: "alike" });
+    // A place whose second line begins with its town is named by its first line alone too, unless
+    // the value is its whole text.
+    const town = place("Example Square", "Exampleton, CA, US");
+    expect(rankListed([hotel, town], "Example Square, Exampleton, CA")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
+    expect(rankListed([hotel, town], "Example Sq, Exampleton, CA")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
+    // Its parts are read from the value as written, as its other written forms lose their commas.
+    expect(rankListed([hotel, town], "Example Square, Exampleton, California")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
+    expect(rankListed([hotel, town], "Example Square, Exampleton, CA, US")).toEqual({ status: "picked", index: 1, rank: "exact" });
+    expect(rankListed([rows[0] ?? town, place("Example Tower", "Example City, NY, US")], "Example Tower, Example City, NY")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
+    expect(rankListed([rows[0] ?? town, place("Example Tower", "Example City, NY, US")], "Example Tower, Example City, New York")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
+    // A value is an option's whole text, and so picks it, with or without a leading "The", also
+    // among other spellings.
+    const tower = [place("Example Tower Hotel", "1 Sample St, Example City, NY, US"), place("The Example Tower", "20 Sample Ave, Example City Metro, NY")];
+    expect(rankListed(tower, "Example Tower, 20 Sample Ave, Example City Metro, NY")).toEqual({ status: "picked", index: 1, rank: "folded" });
+    expect(rankListed(tower, "Example Tower, NY")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
+    // An earlier row withdraws it only when it also holds the value's later parts, in any written form.
+    expect(rankListed(tower, "Example Tower, Example City Metro, NY")).toEqual({ status: "picked", index: 1, rank: "place" });
+    expect(rankListed([place("New York", "NY, USA"), place("York", "PA, USA")], "York, PA")).toEqual({ status: "picked", index: 1, rank: "leading" });
+    const art = [place("Example Museum of Art", "15 3rd St, Example City, CA, US"), place("Example Museum", "15 Third St, Example City, CA, USA")];
+    expect(rankListed(art, "Example Museum, 15 Third St, Example City, CA")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
+    expect(rankListed(art, "Example Museum, 15 Third Street, Example City, CA")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
+    expect(rankListed([hotel, town], "Example Square, Exampleton, CA, US", "Example Square")).toEqual({ status: "picked", index: 1, rank: "exact" });
+    // A first row that is the place keeps its clean pick.
+    const museum = [place("Example Museum", "15 Third St, Example City, CA, USA"), place("Example Museum of Art", "15 3rd St, Example City, CA, US")];
+    expect(rankListed(museum, "Example Museum, 15 Third St, Example City, CA")).toEqual({ status: "picked", index: 0, rank: "leading" });
+    // Rows of one line, a greyed-out earlier row, or a list in a fixed order, as a dropdown's, withdraw nothing.
+    expect(rankListed([place("Example Tower Co."), place("Example Tower")], "Example Tower")).toEqual({ status: "picked", index: 1, rank: "exact" });
+    const greyed = { ...place("Example Tower Co.", "60 Sample St, Example City, NY"), disabled: true };
+    expect(rankListed([greyed, place("Example Tower", "350 Sample Rd #14a, Example City, NY")], "Example Tower")).toEqual({ status: "picked", index: 1, rank: "exact" });
+    expect(rankLeading([place("X-Small", "Out of stock"), place("Small", "In stock")], "Small")).toEqual({ status: "picked", index: 1, rank: "exact" });
   });
 
   test("without leading, options that hold the value as a word or before a comma tie as before", () => {
@@ -340,8 +417,9 @@ describe("rankChoices word stems", () => {
 
   test("a word picks the one option whose word it begins, or that begins it", () => {
     expect(stemRank(dentistry, "Dentist")).toEqual({ status: "picked", index: 0, rank: "stem" });
-    expect(stemRank([choice("Dentist"), choice("Dental")], "Dentists")).toEqual({ status: "picked", index: 0, rank: "stem" });
-    expect(stemRank([choice("Podiatry"), choice("Pediatrics")], "Pediatric")).toEqual({ status: "picked", index: 1, rank: "stem" });
+    expect(stemRank([choice("Podiatry"), choice("Pediatrician")], "Pediatric")).toEqual({ status: "picked", index: 1, rank: "stem" });
+    // A singular and its plural are the same name, before any stem.
+    expect(stemRank([choice("Dentist"), choice("Dental")], "Dentists")).toEqual({ status: "picked", index: 0, rank: "alike" });
   });
 
   test("every word of the name must pair, in order", () => {
@@ -351,7 +429,7 @@ describe("rankChoices word stems", () => {
   });
 
   test("two options that pair equally tie", () => {
-    expect(stemRank([choice("Dentistry"), choice("Dentists"), choice("Example Dentistry")], "Dentist")).toEqual({
+    expect(stemRank([choice("Dentistry"), choice("Dentistries"), choice("Example Dentistry")], "Dentist")).toEqual({
       status: "ambiguous",
       indexes: [0, 1],
       rank: "stem",
@@ -377,7 +455,7 @@ describe("rankChoices word stems", () => {
     expect(stemRank([choice("Generic")], "General")).toEqual({ status: "missing" });
     expect(stemRank([choice("Cardiology")], "Cardiologist")).toEqual({ status: "missing" });
     expect(stemRank([choice("Christy")], "Christian")).toEqual({ status: "missing" });
-    expect(stemRank([choice("Adams")], "Adam")).toEqual({ status: "missing" });
+    expect(stemRank([choice("Adamson")], "Adam")).toEqual({ status: "missing" });
     expect(stemRank([choice("Ukraine"), choice("United Kingdom")], "UK")).toEqual({ status: "missing" });
     expect(stemRank([choice("Dental Hygienist")], "Dentist")).toEqual({ status: "missing" });
     expect(stemRank([choice("Dental")], "Dentist")).toEqual({ status: "missing" });
@@ -399,6 +477,133 @@ describe("rankChoices word stems", () => {
 
   test("a disabled stem match is reported, not replaced", () => {
     expect(stemRank([choice("Dentistry", "", true)], "Dentist")).toEqual({ status: "disabled", index: 0, rank: "stem" });
+  });
+});
+
+describe("rankChoices same name written another way", () => {
+  const rankAll = (choices: readonly PickerChoice[], ...wanted: string[]) =>
+    rankChoices(choices, wanted, foldChoiceText, { leading: true, spellings: spellingsOf });
+
+  test("a word written short either way, a singular or plural, or a hyphen or slash for a space is the same name", () => {
+    expect(rankAll([choice("Union Square")], "Union Sq")).toEqual({ status: "picked", index: 0, rank: "alike" });
+    expect(rankAll([choice("Union Sq")], "Union Square")).toEqual({ status: "picked", index: 0, rank: "alike" });
+    expect(rankAll([choice("Example Blvd")], "Example Boulevard")).toEqual({ status: "picked", index: 0, rank: "alike" });
+    expect(rankAll([choice("Union Square, Exampleton, IL, US")], "Union Sq")).toEqual({ status: "picked", index: 0, rank: "alike" });
+    expect(rankAll([choice("29 59 Example Ave")], "29-59 Example Ave")).toEqual({ status: "picked", index: 0, rank: "alike" });
+    expect(rankAll([choice("29/59 Example Ave")], "29 59 Example Ave")).toEqual({ status: "picked", index: 0, rank: "alike" });
+    expect(rankAll([choice("Banana Bread"), choice("Bananas")], "banana")).toEqual({ status: "picked", index: 1, rank: "alike" });
+    expect(rankAll([choice("Example Berries")], "example berry")).toEqual({ status: "picked", index: 0, rank: "alike" });
+    // A dropped apostrophe already folds away.
+    expect(rankAll([choice("Joe's Pizza")], "joes pizza")).toEqual({ status: "picked", index: 0, rank: "folded" });
+    // A stronger rank still wins.
+    expect(rankAll([choice("Union Square, Exampleton"), choice("Union Sq")], "Union Sq")).toEqual({ status: "picked", index: 1, rank: "exact" });
+  });
+
+  test("a plural adds es only after s, x, z, ch, sh or o, and a mark that ends a word stays part of it", () => {
+    expect(rankAll([choice("Example Buses")], "example bus")).toEqual({ status: "picked", index: 0, rank: "alike" });
+    expect(rankAll([choice("Example Boxes")], "example box")).toEqual({ status: "picked", index: 0, rank: "alike" });
+    expect(rankAll([choice("Blue Green")], "Blue/Green")).toEqual({ status: "picked", index: 0, rank: "alike" });
+    // A name plus s reads as its plural, so Adam is Adams written another way.
+    expect(rankAll([choice("Adams")], "Adam")).toEqual({ status: "picked", index: 0, rank: "alike" });
+    for (const [name, value] of [
+      ["Planes", "Plan"],
+      ["Times Square", "Tim Square"],
+      ["Jones", "Jon"],
+      ["Rates", "Rat"],
+    ] as const)
+      expect(rankAll([choice(name)], value)).toEqual({ status: "missing" });
+    // A mark that ends a word is part of it, so such a word holds the value only as a looser match.
+    for (const [name, value] of [
+      ["C#", "C"],
+      ["1%", "1"],
+      ["(C#)", "C"],
+      ["Milk (1%)", "Milk 1"],
+    ] as const)
+      expect(rankAll([choice(name)], value)).toEqual({ status: "picked", index: 0, rank: "words" });
+    // Brackets, quotes, a mark before a word, a standalone mark, and a comma or colon before a space split words.
+    for (const [name, value] of [
+      ["Joe's Pizza (Downtown)", "Joe's Pizza Downtown"],
+      ["(317) 555-1234", "317 555 1234"],
+      ["Apt #B", "Apt B"],
+      ['"The Grill"', "The Grill"],
+      ["Room 1, 2", "Room 1 2"],
+      ["Pizza: Downtown", "Pizza Downtown"],
+      ["Rock & Roll", "Rock Roll"],
+    ] as const)
+      expect(rankAll([choice(name)], value)).toEqual({ status: "picked", index: 0, rank: "alike" });
+  });
+
+  test("a short word with known other forms stands only for them", () => {
+    for (const [names, value] of [
+      [["Jackson, Missouri", "Jackson, Tennessee"], "Jackson, MS"],
+      [["Columbia, MS", "Columbia, SC"], "Columbia, Missouri"],
+      [["Fargo, Nevada"], "Fargo, ND"],
+      [["Union Station"], "Union St"],
+    ] as const)
+      expect(rankAll(names.map((name) => choice(name)), value)).toEqual({ status: "missing" });
+    expect(rankAll([choice("Example Boulevard")], "Example Blvd")).toEqual({ status: "picked", index: 0, rank: "alike" });
+  });
+
+  test("a word with a vowel is never a short form, and a name that pairs only through short forms never matches", () => {
+    for (const [name, value] of [
+      ["Ukraine", "UK"],
+      ["UK", "Ukraine"],
+      ["Exampleville Ukraine", "Exampleville UK"],
+      ["123 Oakwood St, Example City", "123 Oak St"],
+      ["Starbucks Market", "Star Market"],
+      ["Square", "Sq"],
+      ["Example Bananabread", "Example Banana"],
+    ] as const)
+      expect(rankAll([choice(name)], value)).toEqual({ status: "missing" });
+    // A site's word with a vowel written short stays the looser match it was.
+    expect(rankAll([choice("123 Oak St")], "123 Oakwood St")).toEqual({ status: "picked", index: 0, rank: "anyOrder" });
+    // A number's own decimal mark is no separator, so 1.5 is not the same name as 1 5.
+    expect(rankAll([choice("Example 1 5")], "Example 1.5")).toEqual({ status: "picked", index: 0, rank: "words" });
+    // Two names written alike tie.
+    expect(rankAll([choice("Union Square"), choice("Union Squares")], "Union Sq")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "alike" });
+    expect(rankAll([choice("Example Square"), choice("Example Sq, Exampleton")], "Example Sq")).toEqual({
+      status: "picked",
+      index: 1,
+      rank: "leading",
+    });
+  });
+});
+
+describe("rankChoices searched results", () => {
+  const searched = (choices: readonly PickerChoice[], ...wanted: string[]) =>
+    rankChoices(choices, wanted, foldChoiceText, { leading: true, spellings: spellingsOf, searched: true });
+
+  test("with searched, the site's first result that shares a word with the value ranks searched once no rank matches", () => {
+    expect(searched([choice("Organic Bananas"), choice("Example Bread")], "banana")).toEqual({ status: "picked", index: 0, rank: "searched" });
+    expect(searched([choice("Mower Blade 21 in"), choice("Garden Hose")], "lawn mower")).toEqual({ status: "picked", index: 0, rank: "searched" });
+    // The first enabled result, and only it: one sharing no word is never taken.
+    expect(searched([choice("Mower Blade", "", true), choice("Example Mower")], "lawn mower")).toEqual({ status: "picked", index: 1, rank: "searched" });
+    expect(searched([choice("Garden Hose"), choice("Lawn Edger")], "lawn mower")).toEqual({ status: "missing" });
+    expect(searched([choice("21 Piece Tool Set")], "21 in mower")).toEqual({ status: "missing" });
+    // A word shared only as written short is no shared word.
+    expect(searched([choice("Stanford Deli")], "123 Main St")).toEqual({ status: "missing" });
+    expect(searched([choice("Durham Clinic")], "Dr Lee")).toEqual({ status: "missing" });
+    // Without the option nothing ranks searched, and any other rank comes first.
+    expect(rankChoices([choice("Organic Bananas")], ["banana"], foldChoiceText)).toEqual({ status: "missing" });
+    expect(searched([choice("Organic Bananas"), choice("Banana Bread")], "bread")).toEqual({ status: "picked", index: 1, rank: "words" });
+  });
+});
+
+describe("pickChoices", () => {
+  test("offers a loose refusal's matches first, then the rest, each by its text, at most 50", () => {
+    const refusal = {
+      picked: false,
+      reason: "option_unclear",
+      wanted: "Example Square",
+      available: ["Example Square Market", "The Sample Hotel - Example Square", ...Array.from({ length: 60 }, (_, at) => `Place ${at}`)],
+      matches: ["The Sample Hotel - Example Square"],
+    } as const;
+    const { options } = pickChoices(refusal);
+    expect(options.slice(0, 2)).toEqual([
+      { value: "The Sample Hotel - Example Square", label: "The Sample Hotel - Example Square" },
+      { value: "Example Square Market", label: "Example Square Market" },
+    ]);
+    expect(options).toHaveLength(50);
   });
 });
 

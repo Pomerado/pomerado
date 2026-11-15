@@ -130,7 +130,7 @@ test("a failed act step that posted tells the minter to verify before any furthe
     expect(observationsOf(receipt)?.writeSession?.verifyFirst).toBe(true);
     expect(notice).toContain(verifyFirst("Guardian labelled it a write"));
     expect(notice).toContain(
-      "When this step's stateChangingRequests shows its commit request to the site returned 2xx or 3xx, that step may read back the write's own result, the record it just created or changed: on the page as it stands, or looked up on another page such as a list.",
+      "When this step's stateChangingRequests shows its commit request to the site returned 2xx or 3xx, with a body you can read showing no error, that step may read back the write's own result, the record it just created or changed: on the page as it stands, or looked up on another page such as a list.",
     );
     expect(notice).toContain("The host never resubmits a write for you.");
     // The notice names the field a host that records requests adds; this host adds none.

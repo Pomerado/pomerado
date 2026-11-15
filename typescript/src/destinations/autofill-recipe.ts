@@ -222,21 +222,22 @@ export const WorkspaceAutofillRecipe = workspacePages(
   }).annotations({ parseOptions: { onExcessProperty: "error" } }),
 );
 /**
- * The secret a later screen may ask for again: the password, beside a second factor, or a code, on
- * a second code screen whose code field is not the earlier one's, as a sign-in that asks for two
- * different one-time codes in a row does.
+ * The secret a later screen may ask for again: the password, beside a second factor or right after
+ * the screen that took it, or a code, on a second code screen whose code field is not the earlier
+ * one's, as a sign-in that asks for two different one-time codes in a row does.
  */
 export const RefillSlot = Schema.Literal("password", "code");
 export type RefillSlot = typeof RefillSlot.Type;
-/** A second factor: the one-time values a screen that asks for the password again also takes. */
+/** A second factor: the one-time values a screen that asks for the password again may also take. */
 export const isSecondFactor = (slot: string) => slot === "code" || slot === "recovery_code";
 /**
  * A version 5 step: a version 4 step that may submit with a key (`submitKey`): Enter pressed in
  * its last field submits that field's form, on a screen whose form has no submit control. Such a
  * step fills a field and names no submit or method choice. It may also list `refills`, the
  * secrets an earlier screen of the sign-in took that this screen asks for again, as a site that
- * wants the password re-entered with a one-time code does, or one that asks for a second, different
- * code after the first: only a screen that takes the refilled field and a second factor may list one.
+ * wants the password re-entered with a one-time code or on the screen after the one that took it
+ * does, or one that asks for a second, different code after the first: only a screen that takes the
+ * refilled field may list one.
  */
 const keyStepFields = {
   ...WorkspaceRecipeStep.fields,
@@ -266,11 +267,10 @@ const keyStepRules = <
     Schema.filter(
       (step) =>
         step.refills === undefined ||
-        (step.fields.some((field) => "slot" in field && isSecondFactor(field.slot)) &&
-          step.refills.every((slot) =>
-            step.fields.some((field) => "slot" in field && field.slot === slot),
-          )) ||
-        "a step's refills name a field it takes, and it takes a code or recovery code",
+        step.refills.every((slot) =>
+          step.fields.some((field) => "slot" in field && field.slot === slot),
+        ) ||
+        "a step's refills name a field it takes",
     ),
   );
 const KeyRecipeStep = keyStepRules(Schema.Struct(keyStepFields));
@@ -278,8 +278,9 @@ const KeyRecipeStep = keyStepRules(Schema.Struct(keyStepFields));
  * Version 5: version 4 whose steps may submit with a key (`submitKey`) or refill a secret
  * (`refills`). A host that does not know version 5 refuses it, so it never replays such a step
  * without submitting it or without the refill; a version 5 recipe with a key this host does not
- * know is refused too, as a version 5 host that predates `refills` refuses one that has it, and
- * one that knows only a password refill refuses a code refill.
+ * know is refused too, as a version 5 host that predates `refills` refuses one that has it, one
+ * that knows only a password refill refuses a code refill, and one that refills the password only
+ * beside a second factor refuses a password refill without one.
  */
 export const KeySubmitAutofillRecipe = workspacePages(
   Schema.Struct({

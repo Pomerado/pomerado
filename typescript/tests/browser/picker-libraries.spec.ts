@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { call, serve, submitted } from "./picker-fixture.js";
+import { call, callRead, serve, submitted } from "./picker-fixture.js";
 
 // The picker helper on synthetic pages that reproduce the markup and event handling common UI
 // libraries use for pickers: a hidden select with a search dropdown, a results list that commits
@@ -439,6 +439,26 @@ test("pickValue lists a native select's option by stem only when asked, never pi
   expect(await submitted(page)).toEqual({ specialty: "" });
 });
 
+// A read takes the stem matches and says each was loose; Pediatrics is Pediatric's plural, so clean.
+test("pickValues in a read picks a native multiple select's options by stem when asked, naming the loose ones", async ({ page }) => {
+  await serve(page, `<form><label>Specialties <select name="specialties" multiple size="4">
+<option value="cd">Example Dentistry</option><option value="d">Dentistry</option><option value="p">Pediatrics</option>
+<option value="po">Podiatry</option></select></label></form>`);
+  const specialties = 'page.getByLabel("Specialties")';
+  expect(await callRead(page, `return await pickValues(${specialties}, ["Dentist", "Pediatric"], { ...fast, stem: true });`)).toEqual({
+    result: {
+      picked: true,
+      kind: "select",
+      values: [
+        { label: "Dentistry", value: "d", added: true, loose: true },
+        { label: "Pediatrics", value: "p", added: true },
+      ],
+      removed: [],
+    },
+  });
+  expect(await submitted(page)).toEqual({ specialties: "d,p" });
+});
+
 test("pickValues lists a native multiple select's options by stem only when asked, never picking them", async ({ page }) => {
   await serve(page, `<form><label>Specialties <select name="specialties" multiple size="4">
 <option value="cd">Example Dentistry</option><option value="d">Dentistry</option><option value="p">Pediatrics</option>
@@ -512,6 +532,19 @@ button.addEventListener("keydown", (event) => { if (event.key === "Escape") { li
   expect(options).toHaveLength(60);
   expect(options[59]).toEqual({ label: "Seat 59", text: "Seat 59", value: "s59", disabled: true });
   await expect(page.getByRole("listbox")).toBeHidden();
+});
+
+// A read takes Blue Grey for Grey loosely; once the site stops suggesting the chosen chip, it finds
+// the chip again and still says the match was loose.
+test("pickValues in a read finds a chip it picked loosely again, still naming it loose", async ({ page }) => {
+  await serve(page, chips);
+  const colors = 'page.getByRole("combobox", { name: "Colors" })';
+  expect(await callRead(page, `return await pickValues(${colors}, ["Grey"], fast);`)).toMatchObject({
+    result: { picked: true, values: [{ label: "Blue Grey", added: true, loose: true }] },
+  });
+  expect(await callRead(page, `return await pickValues(${colors}, ["Grey"], fast);`)).toMatchObject({
+    result: { picked: true, values: [{ label: "Blue Grey", added: false, loose: true }] },
+  });
 });
 
 test("pickValues adds a value even when a chip already holds it as a word", async ({ page }) => {

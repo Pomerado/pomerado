@@ -34,9 +34,12 @@ Take the product as the identifier and option values the site's own pages use, s
 product number and a size, so a caller can pass a search or details tool's output straight in.
 When `reference/site-tools.json` lists such a tool, use its identifier, field names and option
 values (the core skill). Quantity, each option the product offers and, when the site lets a
-visitor set one, the location or store are inputs. Set the options as "Configure, then read" in
-the core skill says before adding the product: a value the product does not offer throws
-`InvalidInput` with `field` and `available`.
+visitor set one, the location or store are inputs. When the store, stock or prices follow the
+delivery address, an add-to-cart tool takes it as an optional input, one of the account's saved
+addresses, and keeps the address the account has selected when it is left out: an add places no
+order, and a checkout still chooses its address as below. Set the options as "Configure, then
+read" in the core skill says before adding the product: a value the product does not offer
+throws `InvalidInput` with `field` and `available`.
 
 ## Quantity
 
@@ -112,14 +115,20 @@ request's. The inputs and outputs below are good practice, not a must for every 
 differ, so take and return what this one offers.
 
 Prefer taking as inputs what the site lets a caller choose, such as the items with their options
-and quantities, pickup or delivery with its place and time, a tip, and a limit such as a maximum
-total, checked as "Minimums and refusals" says.
+and quantities, with the unit for an item sold by weight or measure, pickup or delivery with its
+place and time, a tip, and a limit such as a maximum total, checked as "Minimums and refusals" says.
 
 Prefer returning what the site shows for the order placed, such as the order or confirmation
 number and its status, the lines bought, the subtotal, fees, tax, tip and total charged, the
 payment method as the page labels it, the pickup or delivery time and place, and any link to the
 order's status: only fields the session's confirming step read filled for its own order, named and
 typed as the core skill says.
+
+Prefer returning each line bought with its quantity, its unit when the site sells it by weight or
+measure, its price each and its line total (the core skill's output fields), and each fee as its
+own entry, by its name on the site and its amount, with the tip and any discount in their own
+fields. This output is a suggestion, separate from the `order` a
+purchase's final confirm passes (the caller-input skill), which has its own fixed fields.
 
 Prefer avoiding these, which fit the tool to the build's one order:
 

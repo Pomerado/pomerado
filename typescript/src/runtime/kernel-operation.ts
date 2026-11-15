@@ -458,6 +458,12 @@ interface ScriptBrowser {
    * refuses any cursor that would continue a runtime list.
    */
   readonly list?: ListHost;
+  /**
+   * Whether the run reads or writes, which `pickerCode` follows: a read takes a picker's best match
+   * at any rank, a write only a clean one. A build's or repair's step passes the build's effect.
+   * Absent, a script that declares `write` writes and any other reads.
+   */
+  readonly effect?: "read" | "write";
 }
 
 /** The default wait for a download to finish after its trigger. */
@@ -855,6 +861,13 @@ const clickNavigationWait = String.raw`(until) => {
   return () => restores.forEach((restore) => restore());
 }`.replace(/\n\s*/gu, " ");
 
+/**
+ * A call's code with the run's effect declared ahead of it, on the same line, as `pickerCode`
+ * reads it (`__pomeradoEffect`).
+ */
+export const withRunEffect = (code: string, effect: "read" | "write") =>
+  `const __pomeradoEffect = ${JSON.stringify(effect)};${code}`;
+
 /** A call's code inside `clickNavigationWait`, which ends a second before its `timeout_sec`. */
 const withClickNavigationWait = (code: string, timeoutSec = 60) =>
   `const __pomeradoClickNavigation = (${clickNavigationWait})(Date.now() + ${timeoutSec * 1000 - 1000}); try {${code}
@@ -876,6 +889,7 @@ export const runKernelScript = <Input, EncodedInput, Output, EncodedOutput>(
   Effect.suspend(() => {
     let actionTimeout: string | undefined;
     let calls = 0;
+    const effect = browser.effect ?? (operation.write === undefined ? "read" : "write");
     // The host's sign-in under way. Every browser call the script starts meanwhile, from a timer
     // or an un-awaited promise too, waits for it and is only then sent, in order, so its own
     // timeout starts then. A failed sign-in releases them as well.
@@ -898,7 +912,10 @@ export const runKernelScript = <Input, EncodedInput, Output, EncodedOutput>(
                       try: () =>
                         browser.kernel.browsers.playwright.execute(
                           sessionId,
-                          { ...body, code: withClickNavigationWait(body.code, body.timeout_sec) },
+                          {
+                            ...body,
+                            code: withClickNavigationWait(withRunEffect(body.code, effect), body.timeout_sec),
+                          },
                           options,
                         ),
                       catch: (error) =>

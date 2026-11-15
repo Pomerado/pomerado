@@ -205,8 +205,8 @@ During the session:
   offered exactly one suggestion for it that matches it cleanly or that `pickAddress` accepted,
   take the site's version, as you would a picked
   option: later read-backs, such as a review page, summary or confirmation, compare against
-  it, and the output returns it for that field. Any other lone suggestion is a candidate:
-  throw its `pickRefusal`. The one suggestion counts only for a
+  it, and the output returns it for that field. Ask about any other lone suggestion as about a
+  looser match (core skill). The one suggestion counts only for a
   free-text value the caller typed, such as an address or a name in a text box the site
   completes, never for a picker that selects a record, such as a person, assignee, customer,
   linked record, store or account, which keeps the reference rules in "Check the read-back"
@@ -482,10 +482,10 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   state-changing request or opened a socket, after it entered a commit mark, or
   without returning a result at all (its page was lost), the write may already be
   committed; its receipt says so under `writeSession` (`verifyFirst`). Before any
-  further write, run an `act` step that only reads the page or the account. When
-  `stateChangingRequests` shows the failed step's commit request went through, that
-  step starts from the page as it stands: check it for an error or validation
-  message, read what the output needs, and call `verified()` there. When that page
+  further write, run an `act` step that only reads the page, or the account only when the
+  page can't tell. When `stateChangingRequests` shows the failed step's commit request went
+  through, with a body you can read showing no error, that step starts from the page as it
+  stands: check it for an error or validation message, read what the output needs, and call `verified()` there. When that page
   lacks something the output needs, such as the new record's ID, the same step may
   read it elsewhere on the site without changing anything, such as by finding the
   record in the site's list or search, then call `verified()`. If the
@@ -656,7 +656,13 @@ An out-of-scope paid upsell is declined, as above. A safety default
 (core skill) is neither: never ask about it, and the script turns it off. An
 account-specific value, such as a passenger, loyalty number, saved card, address or
 account ID, is a free-form input, never an enum member, example or default in the
-public schema (core's input schema rules).
+public schema (core's input schema rules). The last choice or confirm asked before a commit that
+buys or pays, once the page shows that commit's items and total, passes `order` (the caller-input
+skill). When you change a script whose last such question passes none, add it, whatever the change
+is for. Fill `order` as the checkout shows it: each item's real quantity, its `unit` when sold by
+weight or measure, and its price each, its line total or both; fees, a tip and a discount go in
+their own fields. When an item's measure is in a unit `unit` does not list, give
+it quantity 1 and its line total, with the measure as the checkout shows it in its name.
 
 The composed script publishes without ever running end to end, so it ends with a check that
 tells whether its action succeeded: its commit response checked as above, the site's

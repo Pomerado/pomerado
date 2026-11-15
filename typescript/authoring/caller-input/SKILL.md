@@ -123,8 +123,9 @@ separately are both applied as given, even when they're far apart.
      holds for signed-in tools and writes too.
 
    Never pick another value for the caller, such as a near match, the page's default or the
-   first option, except a value that matches several site entries equally and cleanly, where the tool may
-   take the first and return the one it used (core skill), and never report a refused or
+   first option, except a value that matches several site entries equally, where the tool may
+   take the first and return the one it used, or a read's looser match, returning the option it
+   used (core skill), and never report a refused or
    unapplied value in the output instead of throwing, such as a `sort_applied: false` flag or a
    "best-effort" or "lookup-only" description. The cases above that return results with what
    applied, and a declared refusal, are the only exceptions.
@@ -239,9 +240,10 @@ already asked for, or to solve a CAPTCHA.
    the full label. A masked label that still shows five or more digits or an email
    address is replaced by the label's last four digits or a numbered placeholder.
    A purchase's final confirm, a choice or a confirm, also passes `order` with the
-   checkout's `currency`, its `items` (each `name`, `quantity` and `price`), `shipping`,
-   `tax` and `total`, amounts as decimal text, which everyone sees unmasked, so never the
-   address or card.
+   checkout's `currency`, its `items` (each `name`, `quantity`, `unit` for an item sold by
+   weight or measure, and `price` each, `lineTotal` or both), `fees` (each `name` and
+   `amount`), `discount`, `shipping`, `tax`, `tip` and `total`, amounts as decimal text,
+   which everyone sees unmasked, so never the address or card.
 4. Ask once for everything the step needs, between two execute calls:
    - `await ask("code")` returns that question's answer;
    - `await ask(["seat", "note"])` returns one answer per id;

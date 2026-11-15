@@ -111,13 +111,14 @@ datalist, an autocomplete or typeahead, an ARIA combobox, a dropdown built from 
 lookup dialog with a search box and a results table. `wanted` is the input's value or a list of
 its spellings (`["CA", "California"]`). `pickValues` adds or replaces chips and tags in a
 multi-select, and `pickerOptions` returns the options a picker lists, for a caller question.
-They wait for suggestions to settle, scroll lists that render as they scroll, pick only a clean
-match (core skill), never pick an "Add" or "Create" row, and confirm the field kept the choice,
-picking again when the page reverts it. A value the picker lacks, one it matches only loosely
-(`option_unclear`), or several options that tie,
+They wait for suggestions to settle, scroll lists that render as they scroll, pick the best
+match, in a write only a clean one (core skill), never pick an "Add" or "Create" row, and confirm the field kept the choice,
+picking again when the page reverts it. A read of a category or term passes `stem: true`, so a
+caller's word also matches an option word it begins or that begins it. A value the picker
+lacks, one a write matches only loosely (`option_unclear`), or several options that tie,
 comes back as `{ picked: false, reason, available, matches }`: decode it with `PickOutcome` and
 throw `pickRefusal(outcome, field)`, which lists options that tie as `available`, or ask the
-caller to choose among `matches`. In a tool that takes the first of options that tie cleanly instead (each tool decides,
+caller to choose among `matches`, as the core skill says for `option_unclear`. In a tool that takes the first of options that tie instead (each tool decides,
 core skill), pass `tie: "first"`, so the picker takes the first of them in the site's order and
 returns the one it used, and return that option's label in the tool's output. In a read whose
 typed field is the site's own search, when `pickValue` returns `option_missing` with an empty
@@ -126,6 +127,9 @@ run the search as after a pick, with the site's Search button or Enter, and read
 page as any search's. Prefer refusing on the site's own words that it found nothing for that text
 over `pickRefusal`. Never use this fallback in a write. Handle a site's quirk with the helper's options, such as `query`,
 `answered`, `committed`, `commit: "keyboard"` or `blur: "tab"`, never with a picker of your own.
+Pass a control that lists more results, or a function that opens them, as `more`, never click it
+in `type`: the picker opens them only when the list the site shows for the typed text has no clean
+match.
 Publication review sends one back ("Own picker").
 When a picker's options depend on another field, such as times on a date or a party size, models
 on a make or regions on a country, set that field first, whatever order the page shows them in,

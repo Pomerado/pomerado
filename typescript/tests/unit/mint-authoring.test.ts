@@ -221,7 +221,7 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   ["core", "- The code works for every value the schema accepts."],
   [
     "core",
-    "- Match the caller's proper nouns, such as places, venues and company names, with a fuzzy match that accepts the usual forms of the same name, such as a name with or without its accents (Abaca for Abacá), or a city alone or with its state and country after a comma. Never require an exact match, but return a name with words added or dropped as a candidate, never as the pick. `sameText` from `pomerado/runtime` matches a name that differs only in case, accents, spacing, apostrophes, periods, commas or hyphens, or in a word the site writes short, such as St-Jean for Saint-Jean, but not one with a word added or dropped. Prefer it for confirming the pick, so the read-back agrees with the choice, but not for choosing from a list, where a short label can match a longer name it isn't, such as UK for Ukraine. When more than one option matches equally and cleanly, decide per tool: take the first in the site's order and return the one it used, as the site labels it, or list them for the caller to choose one, each selecting exactly one.",
+    "- Match the caller's proper nouns, such as places, venues and company names, with a fuzzy match that accepts the usual forms of the same name, such as a name with or without its accents (Abaca for Abacá), or a city alone or with its state and country after a comma. Never require an exact match. A name with words added or dropped is a looser match, which a read picks and a write asks about, as above. `sameText` from `pomerado/runtime` matches a name that differs only in case, accents, spacing, apostrophes, periods, commas or hyphens, or in a word the site writes short, such as St-Jean for Saint-Jean, but not one with a word added or dropped. Prefer it for confirming the pick, so the read-back agrees with the choice, but not for choosing from a list, where a short label can match a longer name it isn't, such as UK for Ukraine. When more than one option matches equally, decide per tool: take the first in the site's order and return the one it used, as the site labels it, or list them for the caller to choose one, each selecting exactly one.",
   ],
   // A value the caller names goes through the site's own search, not only a menu the page shows.
   [
@@ -396,7 +396,7 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   // Every field is read from the page on every run and typed as the page states it.
   [
     "core",
-    "Then, for every field: - Prefer parsing what the page shows into typed fields over returning a result row, card or itinerary as one text blob or summary, and keep every result row of the main list the page shows, up to the call's `limit` (pagination skill). - Read every output from the page or response on every run, so every returned field has observable support: never a literal, a default you invented, or a constant `null`, `[]`, `false`, `0` or fixed label where the page can show the value. - Return `null` for a field that is not a needed value only when this record's page lacks it, and an empty list only when the page shows none; never throw for either. When the code cannot read a value the request needs, throw `OperationFailure` naming it; never return a placeholder, a label or another record's value in its place. - One field per fact, as the page states it, and variants as the dimensions and values the page lists. - Prefer numbers for amounts and counts, ISO 8601 for dates and times and minutes for durations; type a date-only value as the runtime's `CalendarDate` (forms skill). A value that does not parse cleanly may be the site's own text.",
+    "Then, for every field: - Prefer parsing what the page shows into typed fields over returning a result row, card or itinerary as one text blob or summary, and keep every result row of the main list the page shows, up to the call's `limit` (pagination skill). - Read every output from the page or response on every run, so every returned field has observable support: never a literal, a default you invented, or a constant `null`, `[]`, `false`, `0` or fixed label where the page can show the value. - Return `null` for a field that is not a needed value only when this record's page lacks it, and an empty list only when the page shows none; never throw for either. When the code cannot read a value the request needs, throw `OperationFailure` naming it; never return a placeholder, a label or another record's value in its place. - One field per fact, as the page states it, and variants as the dimensions and values the page lists. - Prefer numbers for amounts and counts, ISO 8601 for dates and times and minutes for durations; type a date-only value as the runtime's `CalendarDate` (forms skill) and name its zone in its description. A value that does not parse cleanly may be the site's own text; return each time it holds as a timestamp too. Compare a site's date or time with today or now only in the site's or the place's zone, never UTC's: `todayIn` and `zonedTime` from `pomerado/runtime` give both.",
   ],
   // Output a caller can filter and compare on is parsed into typed fields.
   [
@@ -863,10 +863,10 @@ it("has a write take the site's rewrite of a typed value and note whether it cha
   const text = (name: string) =>
     (contents(skills)[skills.findIndex((skill) => skill.name === name)] ?? "").replace(/\s+/g, " ");
   expect(text("writes")).toContain(
-    "- Read each typed value back once its field settles, before the step's commit. When the site rewrote it as it was typed or on leaving the field, such as an address it standardized, or offered exactly one suggestion for it that matches it cleanly or that `pickAddress` accepted, take the site's version, as you would a picked option: later read-backs, such as a review page, summary or confirmation, compare against it, and the output returns it for that field. Any other lone suggestion is a candidate: throw its `pickRefusal`. The one suggestion counts only for a free-text value the caller typed, such as an address or a name in a text box the site completes, never for a picker that selects a record, such as a person, assignee, customer, linked record, store or account, which keeps the reference rules in \"Check the read-back\" and the caller-input skill's. Add an optional output field `<input>_note`, such as `address_note`, that reports the rewrite with what the caller sent and what the site kept. Check it once with `sameText(shown, typed, { rewrite: true })`, which only decides what the note says: when it holds, the site only reformatted the value, and the note says so; when it fails, the site dropped or changed part of what the caller gave, and the note says it changed. The write goes on either way: never throw `InputNotApplied` for such a rewrite. A value cut short by the field's length limit, digits an input mask dropped, or a field that cleared is a failed fill, not a rewrite: fill it again in the field's format, or refuse as today. A value the site replaces only when a step saves follows the read-back before committing, above.",
+    "- Read each typed value back once its field settles, before the step's commit. When the site rewrote it as it was typed or on leaving the field, such as an address it standardized, or offered exactly one suggestion for it that matches it cleanly or that `pickAddress` accepted, take the site's version, as you would a picked option: later read-backs, such as a review page, summary or confirmation, compare against it, and the output returns it for that field. Ask about any other lone suggestion as about a looser match (core skill). The one suggestion counts only for a free-text value the caller typed, such as an address or a name in a text box the site completes, never for a picker that selects a record, such as a person, assignee, customer, linked record, store or account, which keeps the reference rules in \"Check the read-back\" and the caller-input skill's. Add an optional output field `<input>_note`, such as `address_note`, that reports the rewrite with what the caller sent and what the site kept. Check it once with `sameText(shown, typed, { rewrite: true })`, which only decides what the note says: when it holds, the site only reformatted the value, and the note says so; when it fails, the site dropped or changed part of what the caller gave, and the note says it changed. The write goes on either way: never throw `InputNotApplied` for such a rewrite. A value cut short by the field's length limit, digits an input mask dropped, or a field that cleared is a failed fill, not a rewrite: fill it again in the field's format, or refuse as today. A value the site replaces only when a step saves follows the read-back before committing, above.",
   );
   expect(text("core")).toContain(
-    "With no clean match, throw its `pickRefusal`, an `InvalidInput` with `field` and `available`, the entries the site showed, even when the site offered only one.",
+    "With no match, throw its `pickRefusal`, an `InvalidInput` with `field` and `available`, the entries the site showed, even when the site offered only one.",
   );
   expect(text("core")).toContain(
     "`wanted` being the option the tool picked from the site's list when it picked one, the site's version of a value a write typed and the site rewrote (writes skill), and the caller's value otherwise. It ignores case, accents, spacing, apostrophes, periods, commas and hyphens between letters, reads a space, hyphen, slash or parentheses between digits as one separator while the groups still count, so 29 59 matches 29-59 but never 2959 or 2 959, and accepts a word the page shortened, such as St for Saint.",
@@ -906,6 +906,42 @@ it("has a search step wait for the site's results or its own no-match state", as
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+/*
+ * A repair of a purchase tool built before `order` existed fixed something else and kept its final
+ * confirm with no items or total. The writes skill, which every write build and repair reads, has
+ * the last choice or confirm before a paying commit, once its total shows, pass `order`, and a
+ * changed script gain one.
+ */
+it("has a write's last question before a commit that pays pass order, in any change too", async () => {
+  const writes = ((await renderedTexts("typescript/authoring")).get("writes") ?? "").replace(
+    /\s+/g,
+    " ",
+  );
+  expect(writes).toContain(
+    "public schema (core's input schema rules). The last choice or confirm asked before a commit that buys or pays, once the page shows that commit's items and total, passes `order` (the caller-input skill). When you change a script whose last such question passes none, add it, whatever the change is for.",
+  );
+});
+
+/*
+ * A checkout's final confirm folded each line's quantity into its name, passed the line total as
+ * the price each, and listed its fees and tip as items. The writes and caller-input skills name
+ * the order's own fields for those, and the cart skill suggests the same parts for a checkout's
+ * output, apart from the confirm's fixed fields.
+ */
+it("has a purchase confirm's order and a checkout's output give lines, fees and tip their own fields", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
+  expect(text("writes")).toContain(
+    "Fill `order` as the checkout shows it: each item's real quantity, its `unit` when sold by weight or measure, and its price each, its line total or both; fees, a tip and a discount go in their own fields. When an item's measure is in a unit `unit` does not list, give it quantity 1 and its line total, with the measure as the checkout shows it in its name.",
+  );
+  expect(text("caller-input")).toContain(
+    "its `items` (each `name`, `quantity`, `unit` for an item sold by weight or measure, and `price` each, `lineTotal` or both), `fees` (each `name` and `amount`), `discount`, `shipping`, `tax`, `tip` and `total`",
+  );
+  expect(text("cart")).toContain(
+    "Prefer returning each line bought with its quantity, its unit when the site sells it by weight or measure, its price each and its line total (the core skill's output fields), and each fee as its own entry, by its name on the site and its amount, with the tip and any discount in their own fields. This output is a suggestion, separate from the `order` a purchase's final confirm passes (the caller-input skill), which has its own fixed fields.",
+  );
 });
 
 /*
@@ -1046,7 +1082,7 @@ it("has a write confirm from its own commit request, and read back only when tha
     "- Read the site's own proof instead only when the commit request can't confirm the write: no such request went out; it failed, got no answer or returned an error status; its body shows an error, or can't be read on an endpoint that reports errors with a 200, such as GraphQL or a batch call; the page shows an error; the commit went over a websocket or a GET link; or a later stage the site can still refuse, such as sending what an earlier click saved, sent no request of its own. Then prefer the confirmation the page shows after the click: an order, booking or reference number, or a success message or toast that appears after the click with no error on the page. Open the saved state, such as the orders page, the booking list or the updated profile, only when the page shows no confirmation. Match it to the caller's values, return the number or record in the output, and call `verified()` as above. A 200 from any other request is not a confirmation.",
   );
   expect(text("writes")).toContain(
-    "Before any further write, run an `act` step that only reads the page or the account. When `stateChangingRequests` shows the failed step's commit request went through, that step starts from the page as it stands: check it for an error or validation message, read what the output needs, and call `verified()` there.",
+    "Before any further write, run an `act` step that only reads the page, or the account only when the page can't tell. When `stateChangingRequests` shows the failed step's commit request went through, with a body you can read showing no error, that step starts from the page as it stands: check it for an error or validation message, read what the output needs, and call `verified()` there.",
   );
   expect(text("writes")).not.toContain("a 200 response is not a confirmation");
   expect(text("forms")).toContain(
@@ -1062,6 +1098,24 @@ it("has a write confirm from its own commit request, and read back only when tha
   expect(text("core")).toContain(
     "For a write session, the list shows the commit your step caused and any autosave, with the status the site answered: a 2xx or 3xx on the commit's route, with no error after it, is what the writes skill confirms from. A 200 whose body reports an error, as GraphQL can, did not go through.",
   );
+});
+
+/*
+ * A purchase whose order request answered 200 with a body nobody could read, on a page that
+ * showed no outcome, went first to the account's order history. An unclear write reads the page
+ * it landed on first and the account only when the page can't tell, and only a commit reply it
+ * can read counts as having gone through.
+ */
+it("reads an unclear write back from the page first, and the account only when the page can't tell", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const writes = (texts.get("writes") ?? "").replace(/\s+/g, " ");
+  expect(writes).toContain(
+    "Before any further write, run an `act` step that only reads the page, or the account only when the page can't tell.",
+  );
+  expect(writes).toContain(
+    "When `stateChangingRequests` shows the failed step's commit request went through, with a body you can read showing no error, that step starts from the page as it stands",
+  );
+  expect(writes).not.toContain("reads the page or the account");
 });
 
 /*
@@ -1352,16 +1406,16 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["df1f3a93d36a49ebed79f0f8dc5c484797fc1180e743d3c9e14c2f1f1e2c645b", "core"],
+    ["c0b21e377df9e9d742168230f61c1744ee3f4444b76910c1990d374e5eb7b302", "core"],
     ["e854aa6b9fe22ea741598abcf0643c529211b643d6b9b400281948a117156224", "search"],
-    ["b56a046a1342ea36f392bf0652a0f37ef3bb8295a71329b86bf32a655c9438cd", "auth"],
+    ["27a4751a2fc31694fccc641a8e2e67d80a28f0b58e1a132e10b84669054eb804", "auth"],
     ["a08f1ef89cc10bf11e17b8d6086b6e37649b1d5d11b78c0542cc7db32460b7e3", "testing"],
     ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
-    ["b38084ecbbecd8db08c15170c700a55ba96ee1c8ca598fabc56a8aa9f30c110d", "forms"],
-    ["9a5184e35e7ef6bcdd20562c6680d254e8ad6c61340205ac2195fd51df1b5211", "writes"],
-    ["ec18eb55ff00bdd4eb4dc9bc4cc7e0adbeaa0f1e004c0b4e37ab92cd0c3b775c", "cart"],
-    ["1a9849b499346afcc9ff8ff2621ee6b308f5fdab0ced671c0919d5cd469c7dc3", "caller-input"],
-    ["417fc0b27e7718af9b34ca2f822fabfc1f5122e062e8f2908b9d34472ab7e0e5", "publication"],
+    ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
+    ["d793aa2dd32bb712709cc7d02d8d7427ed0da602aa1c30adbc5f06a64cb6ada7", "writes"],
+    ["d63c047cee34fdeacebb02ab1c73ad23aa77e739936658ee8a0d52c874ca09bd", "cart"],
+    ["9758de389c8bb39faa3008311f9d1b0d7696063f4bf279a3bbe780a1884cf133", "caller-input"],
+    ["47cba18121554c05c379f6ac754de07e8bfa7515250055585e631a2eb88b7468", "publication"],
     ["2dc797e8ced82dc914d311a8b42739e9234e806b14213fa1bdf2cfbaf5a4474f", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);
