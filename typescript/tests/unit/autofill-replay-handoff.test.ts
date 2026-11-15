@@ -44,8 +44,18 @@ it("writes a hand-off sign-in as version 15, which no older version carries", ()
     expect(decodeSignInRecipe(JSON.stringify({ ...recipe, version }))).toBe("invalid");
 });
 
-/** A site whose sign-in page a person signs in on, and the run's page loads, asks and fills. */
-const replay = (options: { readonly signedIn: boolean; readonly handOff?: true }) => {
+/**
+ * A site whose sign-in page a person signs in on, and the run's page loads, asks and fills: a cold
+ * browser lands on `landing`, the login page by default, and a `read` may end where it can't tell.
+ */
+const replay = (options: {
+  readonly signedIn: boolean;
+  readonly handOff?: true;
+  readonly recipe?: typeof recipe;
+  readonly landing?: string;
+  readonly read?: true;
+  readonly timing?: { readonly stepWaitMs: number; readonly pollMs: number };
+}) => {
   const state = { signedIn: options.signedIn, page: login };
   const trace: string[] = [];
   const prompts: string[] = [];
@@ -66,7 +76,7 @@ const replay = (options: { readonly signedIn: boolean; readonly handOff?: true }
     open: () =>
       Effect.sync(() => {
         trace.push("open");
-        state.page = state.signedIn ? account : login;
+        state.page = state.signedIn ? account : (options.landing ?? login);
       }),
     check,
     confirm: check,
@@ -78,7 +88,7 @@ const replay = (options: { readonly signedIn: boolean; readonly handOff?: true }
           : ({ outcome: "refused", reason: "not_found" } as const),
       ),
     fill: () => Effect.dieMessage("A hand-off types nothing"),
-    startedEmpty: true,
+    ...(options.read === undefined ? { startedEmpty: true } : { confirmCantTell: () => Effect.void }),
   };
   const ask = makeInputAsker((request) =>
     Effect.sync(() =>
@@ -96,7 +106,7 @@ const replay = (options: { readonly signedIn: boolean; readonly handOff?: true }
   );
   return Effect.runPromise(
     replayAutofillRecipe({
-      recipe,
+      recipe: options.recipe ?? recipe,
       hooks,
       entryUrl: login,
       credentials: undefined,
@@ -110,7 +120,7 @@ const replay = (options: { readonly signedIn: boolean; readonly handOff?: true }
         unanswered: () => new TestFailure({ code: "Unanswered" }),
         unavailable: () => new TestFailure({ code: "Unavailable" }),
       },
-      timing: { stepWaitMs: 60, pollMs: 2 },
+      timing: options.timing ?? { stepWaitMs: 60, pollMs: 2 },
       sent: { current: false },
     }).pipe(Effect.scoped),
   ).then((outcome) => ({ outcome, trace, prompts }));
@@ -138,3 +148,32 @@ it("stops the check without values at a hand-off, then hands off once and checks
     expect(warm.trace).toEqual(["open"]);
   }
 });
+
+// A site that sends a signed-out browser straight on to an identity provider, whose page changes
+// from one sign-in to the next: a cold run hands off on whatever page settles without the marker,
+// and never reads that page as signed in, even for a read in a reused profile.
+it("hands off on the page a cold run settles on, though the recorded page moved", async () => {
+  const provider = "https://id.example.test";
+  const moved = signInRecipe(
+    [{ page: `${provider}/signin/identify`, fields: [], approval: "handoff" }],
+    { selector: "#account" },
+  );
+  const cold = {
+    signedIn: false,
+    recipe: moved,
+    landing: `${provider}/signin/resume/x7Kq?step=2`,
+    read: true,
+    timing: { stepWaitMs: 3_000, pollMs: 20 },
+  } as const;
+  const check = await replay(cold);
+  expect(check.outcome).toEqual({ outcome: "unsent", reason: "values_needed" });
+  expect(check.trace).toEqual(["open"]);
+  const handedOff = await replay({ ...cold, handOff: true });
+  expect(handedOff.outcome).toEqual({
+    outcome: "signed_in",
+    alreadySignedIn: false,
+    loginProved: false,
+    handedOff: true,
+  });
+  expect(handedOff.trace).toEqual(["open", "ask:browser_handoff"]);
+}, 15_000);
