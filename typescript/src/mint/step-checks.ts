@@ -202,8 +202,8 @@ export const exampleInputRefusal = (
  * reading of an empty caller input is `intent_derived`, and an act step that omits it runs the
  * one its session fixed, if an earlier step fixed one; a read's example on an `exampleInput` in
  * place of the caller's own input is `substitute`; every other step runs the caller's input
- * unmarked. An `intent_derived` act step that adds to the caller's own input names the keys the
- * caller sent (`callerKeys`). Preflight already refused a misplaced input.
+ * unmarked. An `intent_derived` act step names the keys whose values it holds as the caller's
+ * input has them (`callerKeys`). Preflight already refused a misplaced input.
  */
 export const stepInput = (
   submitted: ExecutionRequest,
@@ -238,9 +238,14 @@ export const stepInput = (
       : submitted.purpose === "act"
         ? (scope.sessionInput ?? intentDerivedInput(submitted))
         : undefined;
+  const { callerInput } = scope;
+  // Only a key whose value is the caller's current one, so a value the agent added, or one an
+  // update since changed, is never named as the caller's.
   const callerKeys =
-    submitted.purpose === "act" && inputObject(scope.callerInput)
-      ? Object.keys(scope.callerInput)
+    submitted.purpose === "act" && derived !== undefined && inputObject(callerInput)
+      ? Object.keys(callerInput).filter(
+          (key) => Object.hasOwn(derived, key) && isDeepStrictEqual(derived[key], callerInput[key]),
+        )
       : [];
   return Effect.succeed(
     derived === undefined

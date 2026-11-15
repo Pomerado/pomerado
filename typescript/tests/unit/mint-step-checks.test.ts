@@ -281,6 +281,36 @@ describe("stepInput", () => {
     });
   });
 
+  it("names as the caller's only the keys whose values the act step's input holds as the caller's input has them", async () => {
+    const act = (extra: Partial<ExecutionRequest> = {}) =>
+      request({ purpose: "act", target: "liveBrowser", ...extra });
+    const select = (
+      submitted: ExecutionRequest,
+      callerInput: unknown,
+      sessionInput?: Readonly<Record<string, unknown>>,
+    ) => Effect.runPromise(stepInput(submitted, { callerInput, sessionInput }));
+    const session = { store: "Main St", item: "Tea" };
+    expect(
+      await select(act({ exampleInput: JSON.stringify(session) }), { store: "Main St" }),
+    ).toStrictEqual({ input: session, mark: "intent_derived", callerKeys: ["store"] });
+    // An update changed the caller's input after the session fixed its own: only a value both hold
+    // is the caller's, never the one the update replaced.
+    expect(await select(act(), { store: "Elm St", item: "Tea" }, session)).toStrictEqual({
+      input: session,
+      mark: "intent_derived",
+      callerKeys: ["item"],
+    });
+    expect(await select(act(), { store: "Elm St" }, session)).toStrictEqual({
+      input: session,
+      mark: "intent_derived",
+    });
+    // With no caller input, nothing in the session's input is the caller's.
+    expect(await select(act({ exampleInput: JSON.stringify(session) }), {})).toStrictEqual({
+      input: session,
+      mark: "intent_derived",
+    });
+  });
+
   it("runs an agent-chosen test input, marked agent_chosen, and otherwise the caller's input", async () => {
     expect(await run(agentTest({ amountMinor: 12 }), { amountMinor: 3700 })).toMatchObject({
       _tag: "Right",

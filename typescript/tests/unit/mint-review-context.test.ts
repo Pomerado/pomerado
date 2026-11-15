@@ -88,7 +88,7 @@ describe("allowedEffectsFor", () => {
       "Values the page supplies, such as a site option the request selects, a default, a form token or a suggestion, follow the general policy as before.",
     );
     expect(derived).toContain(
-      "An add-on, optional purchase, pre-selected paid option, saved payment or private detail is enabled, accepted or declined only as the trusted intent or an answered question says, never as that input alone says",
+      "An add-on, optional purchase, pre-selected paid option, saved payment or private detail is enabled, accepted or declined only as a value the caller sent, the trusted intent or an answered question says, never as a value the agent added alone says",
     );
     expect(derived).not.toContain("every value a step types, chooses or submits");
     for (const purpose of ["explore", "test", "example"] as const)

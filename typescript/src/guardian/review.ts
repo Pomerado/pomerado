@@ -495,8 +495,8 @@ export interface PendingExecution {
        */
       readonly input?: "agent_chosen" | "intent_derived" | "substitute" | "agent_chosen_batch";
       /**
-       * An intent_derived act step's input keys whose values the caller sent, which the host
-       * checked the step keeps as sent. Absent when the caller sent none.
+       * An intent_derived act step's input keys whose values are the caller's own, as its current
+       * input has them. Absent when none is.
        */
       readonly callerKeys?: readonly string[];
       /**
