@@ -8,6 +8,7 @@ import type {
   AutofillSignedInCheck,
   AutofillStep,
 } from "../destinations/autofill-step.js";
+import { handOffPrompt } from "../destinations/autofill-contracts.js";
 import { refusalEvidence } from "../destinations/autofill-refusal-evidence.js";
 import { isIdentifier, screenSubmit, submittedLoginProof } from "./autofill-state.js";
 import type { AutofillLogin } from "./autofill-values.js";
@@ -37,6 +38,7 @@ import {
 import {
   cantTell,
   cantTellInPlace,
+  leftSignInScreens,
   offScreens,
   landingSettleMs,
   stillOff,
@@ -290,6 +292,74 @@ const submitGoneAfterTyping = <E extends YieldableError, V extends string, L ext
     return shownScreen(keyed, inspection);
   });
 
+/**
+ * Waits for a recorded hand-off screen within the screen's own wait. A step with no fields shows on
+ * any page, so the wait reads the page itself: `signed_in` once it shows the marker, as a saved
+ * session's does, or once it stays `landingSettleMs` on a page that is neither a recorded screen
+ * nor the entry, for the sign-in's check to decide; the recorded page once it stays shown that
+ * long without the marker, or until the deadline, as a saved session's sign-in page may send the
+ * browser on a moment after it loads; else `not_found`.
+ */
+const handOffShown = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  input: AutofillReplayInput<E, V, L>,
+  replay: Replay<E, V, L>,
+  recorded: SignInRecipeStep,
+  until: number,
+) =>
+  Effect.gen(function* () {
+    let shown: OffScreens | undefined;
+    let off: OffScreens | undefined;
+    while (true) {
+      const here = yield* replay.checkHere;
+      if (here.signedIn) return "signed_in" as const;
+      const now = yield* Clock.currentTimeMillis;
+      const onPage = here.url !== undefined && replay.matchesRecorded(here.url, recorded);
+      shown = stillOff(shown, onPage ? here.url : undefined, now);
+      const left = leftSignInScreens(replay.onScreens, input.entryUrl, here.url);
+      off = stillOff(off, left ? here.url : undefined, now);
+      if (shown !== undefined && (now - shown.since >= landingSettleMs || now >= until))
+        return { page: shown.url };
+      if (off !== undefined && now - off.since >= landingSettleMs) return "signed_in" as const;
+      if (now >= until) return "not_found" as const;
+      yield* Effect.sleep(Duration.millis(replay.timing.pollMs));
+    }
+  });
+
+/**
+ * A recorded hand-off screen (`approval: "handoff"`), which needs no identifier first. Once it
+ * shows, a replay that may not hand off stops there unsent (`valuesNeeded`), as at any approval;
+ * one that may (`handOff`) asks the person one `browser_handoff` question there, with no values.
+ * The person signs in in the browser and marks it done; nothing is typed, and the check after the
+ * screens decides (`signedInByHandOff`).
+ */
+const handOffScreen = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  input: AutofillReplayInput<E, V, L>,
+  replay: Replay<E, V, L>,
+  recorded: SignInRecipeStep,
+  until: number,
+) =>
+  Effect.gen(function* () {
+    const shown = yield* handOffShown(input, replay, recorded, until);
+    if (shown === "signed_in") {
+      yield* input.emit({ stage: "skipped", reason: "signed_in_indicator" });
+      return shown;
+    }
+    if (shown === "not_found")
+      return yield* refusedScreen(input, replay, { outcome: "refused", reason: shown });
+    const refused = yield* admitScreen(input, replay, recorded, shown.page);
+    if (refused !== undefined) return replay.outcome(refused);
+    if (input.handOff !== true) return replay.outcome(valuesNeeded);
+    const done = yield* askOne(input, {
+      id: "signed_in",
+      type: "browser_handoff",
+      prompt: handOffPrompt(input.site),
+      show_inputs: [],
+    });
+    if (done?.type !== "browser_handoff") return replay.outcome("approval_declined");
+    replay.state.steps.push({ page: shown.page, fields: [], approval: "handoff" });
+    return "continue" as const;
+  });
+
 /** Fill only a recorded screen whose live controls and origin passed inspection. */
 const runScreen = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   input: AutofillReplayInput<E, V, L>,
@@ -299,6 +369,7 @@ const runScreen = <E extends YieldableError, V extends string, L extends Autofil
   later: readonly AutofillRecipeStep[],
 ) =>
   Effect.gen(function* () {
+    if (recorded.approval === "handoff") return yield* handOffScreen(input, replay, recorded, until);
     const inspected = yield* inspectRecordedScreen(input, replay, recorded, until, later);
     if (typeof inspected === "string" || "outcome" in inspected || "codeScreenMissing" in inspected)
       return inspected;
@@ -567,6 +638,27 @@ const unrecordedCode = <E extends YieldableError, V extends string, L extends Au
     return "none" as const;
   });
 
+/**
+ * The check after a person signed in on the recipe's hand-off screen: the recipe's marker signs
+ * the run in with nothing typed (`handedOff`), and no page that can't tell does; else the sign-in
+ * ends `handoff_not_signed_in`.
+ */
+const signedInByHandOff = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  input: AutofillReplayInput<E, V, L>,
+  replay: Replay<E, V, L>,
+) =>
+  Effect.gen(function* () {
+    if (yield* replay.verify(input.recipe.signedIn))
+      return {
+        outcome: "signed_in",
+        alreadySignedIn: false,
+        loginProved: false,
+        handedOff: true,
+        ...workspaceOf(replay),
+      } as const;
+    return replay.outcome("handoff_not_signed_in");
+  });
+
 /** The indicator verified a sign-in this replay sent, and whether it submitted the login proof. */
 const signedInBySending = <E extends YieldableError, V extends string, L extends AutofillLogin>(replay: Replay<E, V, L>) =>
   ({
@@ -621,7 +713,9 @@ const settle = <E extends YieldableError, V extends string, L extends AutofillLo
       settleCarried(replay);
       const waited = yield* awaitIndicator(input, replay);
       if (!replay.progress.anythingSent)
-        return yield* alreadySignedIn(input, replay, waited.cantTellHere);
+        return replay.state.steps.some((step) => step.approval === "handoff")
+          ? yield* signedInByHandOff(input, replay)
+          : yield* alreadySignedIn(input, replay, waited.cantTellHere);
       if (waited.shown && (yield* replay.verify(replay.onPage))) return signedInBySending(replay);
       const code = yield* retryCode(input, replay);
       if (code === "retried" || code === "extra_retried") continue;

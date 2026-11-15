@@ -2,6 +2,7 @@ import { Data, Effect } from "effect";
 import type { AutofillPopup } from "../destinations/autofill-contracts.js";
 import type { AutofillSignedInCheck } from "../destinations/autofill-step.js";
 import { type MarkerSettle, settledMarkerCheck } from "../destinations/marker-settle.js";
+import { handsOffSignIn } from "../destinations/autofill-recipe.js";
 import {
   decodeSignInRecipe,
   type SignInBrowser,
@@ -16,10 +17,11 @@ import {
   resetAutofillRetryState,
 } from "./autofill-correction.js";
 import { replayAutofillRecipe } from "./autofill-replay.js";
-import type {
-  AutofillReplayOutcome,
-  AutofillReplayTiming,
-  AutofillRetryState,
+import {
+  type AutofillReplayOutcome,
+  type AutofillReplayTiming,
+  type AutofillRetryState,
+  valuesNeeded,
 } from "./autofill-replay-steps.js";
 import type { ReplayWorkspace } from "./autofill-replay-workspace.js";
 import type { AutofillHooks, SecretBroker } from "./autofill-state.js";
@@ -52,6 +54,10 @@ const reasonMessages = new Map([
   [
     "entry_page_unavailable",
     "The sign-in page didn't load, so the run stopped before the tool ran. Check that the website is reachable, then run the tool again.",
+  ],
+  [
+    "handoff_unavailable",
+    "The tool signs in by handing the browser to a person, which this host doesn't do, so the run stopped before the tool ran.",
   ],
   [
     "sign_in_choice_not_allowed",
@@ -443,8 +449,14 @@ export const signInForRun = <E>(input: {
         continue;
       }
       // The value-free check did not find the session signed in: the login is read once, and the
-      // sign-in replays again from the entry page.
+      // sign-in replays again from the entry page. A sign-in by hand-off has no login, and this
+      // host hands no sign-in to a person, so the run stops there.
       if (held === undefined) {
+        if (handsOffSignIn(recipe))
+          return yield* new SignInRunFailed({
+            code: "RecipeFailed",
+            reason: replayed.reason === valuesNeeded ? "handoff_unavailable" : replayed.reason,
+          });
         held = yield* runLogin.values;
         continue;
       }

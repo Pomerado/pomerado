@@ -866,6 +866,8 @@ export const SignInStep = Schema.Union(
       },
     ),
   ),
+  // An off-page approval, or a hand-off (`handoff`): the host hands the browser to a person on
+  // the sign-in page, who signs in there. A hand-off needs no identifier screen first.
   Schema.Struct({
     approval: AutofillApproval,
     popup: Schema.optional(AutofillPopup),
@@ -875,7 +877,14 @@ export const SignInStep = Schema.Union(
           "On a device approval screen that shows a number the owner must pick on their device, the visible element that shows it; the host shows that number in the owner's confirmation",
       }),
     ),
-  }),
+  }).pipe(
+    Schema.filter(
+      (step) =>
+        step.approval !== "handoff" ||
+        (step.popup === undefined && step.matchSelector === undefined),
+      { message: () => "a hand-off names no popup or matchSelector" },
+    ),
+  ),
   // The site showed that the login's password or code was wrong: the host asks the owner
   // for a correction in place and never sends the rejected value again. Or, once the login was
   // sent, it showed the account itself locked or suspended (`account`), at the visible element

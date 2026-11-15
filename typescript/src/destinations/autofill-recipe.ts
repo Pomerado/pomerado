@@ -44,6 +44,13 @@ const Selector = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(1_000)
 const TwoFactorMethod = RecipeMethodChoice.pipe(
   Schema.filter((method) => !isWayMethod(method) || "only a version 14 recipe names a way in"),
 );
+/**
+ * A recorded approval before version 15: an email link or a device, never a hand-off, so a version
+ * 2 to 14 recipe that hands off is refused, as a host that predates version 15 refuses it.
+ */
+const OffPageApproval = AutofillApproval.pipe(
+  Schema.filter((approval) => approval !== "handoff" || "only a version 15 recipe hands off"),
+);
 const SecretRecipeField = Schema.Struct({
   selector: Selector,
   slot: SecretSlots,
@@ -55,9 +62,9 @@ const SecretRecipeField = Schema.Struct({
 /**
  * An identifier field by every kind it accepts, which each run resolves against its own login. A
  * `private_identifier`, accepted alone with the site's own `label` for its field, rides only in a
- * version 9 to 14 recipe (`PrivateIdentifierAutofillRecipe`, `NationalPhoneAutofillRecipe`,
+ * version 9 to 15 recipe (`PrivateIdentifierAutofillRecipe`, `NationalPhoneAutofillRecipe`,
  * `ClickLayerAutofillRecipe`, `MethodOptionAutofillRecipe`, `SignInChoiceAutofillRecipe`,
- * `SignInWayAutofillRecipe`).
+ * `SignInWayAutofillRecipe`, `HandOffAutofillRecipe`).
  */
 const IdentifierRecipeField = Schema.Struct({
   selector: Selector,
@@ -146,7 +153,7 @@ export const LegacyAutofillRecipe = Schema.Struct({
 const PopupRecipeStep = Schema.Struct({
   ...RecipeStep.fields,
   popup: Schema.optional(AutofillPopup),
-  approval: Schema.optional(AutofillApproval),
+  approval: Schema.optional(OffPageApproval),
   matchSelector: Schema.optional(Selector),
   delivery: Schema.optional(AutofillApprovalDelivery),
 });
@@ -733,6 +740,73 @@ export const SignInWayAutofillRecipe = workspacePages(
       recipe.steps[0]?.anySegments === undefined || "the first step lists no anySegments",
   ),
 );
+/** What a hand-off step names: its page, with that page's origin and listed segments. */
+const handOffKeys: readonly string[] = ["origin", "page", "anySegments", "approval", "fields"];
+const isHandOff = (step: object) => "approval" in step && step.approval === "handoff";
+/** Whether a recipe signs in by hand-off (`approval: "handoff"`), which takes no login. */
+export const handsOffSignIn = (recipe: { readonly steps: readonly object[] }) =>
+  recipe.steps.some(isHandOff);
+/**
+ * A version 15 step: a version 14 step whose `approval` may say `handoff`, the screen where the
+ * host hands the browser to a person, who signs in there and marks it done. Such a step fills no
+ * field and names only its page.
+ */
+const HandOffRecipeStep = choiceRule(
+  keyboardRule(
+    wildcardRule(
+      dismissRule(
+        keyStepRules(
+          Schema.Struct({
+            ...optionStepFields,
+            methods: optionMethods(RecipeMethodChoice),
+            choice: Schema.optional(SignInChoice),
+            approval: Schema.optional(AutofillApproval),
+          }),
+        ),
+      ),
+    ),
+    true,
+  ),
+).pipe(
+  Schema.filter(
+    (step) =>
+      !isHandOff(step) ||
+      (step.fields.length === 0 && Object.keys(step).every((key) => handOffKeys.includes(key))) ||
+      "a hand-off step fills no field and names only its page",
+  ),
+);
+/**
+ * Version 15: version 14 whose steps may hand off (`approval: "handoff"`). A recipe that hands off
+ * does so on one screen and types nothing: no step fills a field, chooses a method or asks for
+ * another approval, so a run never needs a login for it. A host that does not know version 15
+ * refuses it; a recipe with no hand-off is written as before, in the lowest version it needs.
+ */
+export const HandOffAutofillRecipe = workspacePages(
+  Schema.Struct({
+    ...LegacyAutofillRecipe.fields,
+    version: Schema.Literal(15),
+    workspace: Schema.optional(Schema.Struct({ parent: HostName })),
+    steps: Schema.Array(HandOffRecipeStep).pipe(Schema.minItems(1), Schema.maxItems(12)),
+    signedIn: WildcardSignedIn,
+  }).annotations({ parseOptions: { onExcessProperty: "error" } }),
+).pipe(
+  Schema.filter(
+    (recipe) =>
+      recipe.steps[0]?.anySegments === undefined || "the first step lists no anySegments",
+  ),
+  Schema.filter(
+    (recipe) =>
+      !recipe.steps.some(isHandOff) ||
+      (recipe.steps.filter(isHandOff).length === 1 &&
+        recipe.steps.every(
+          (step) =>
+            step.fields.length === 0 &&
+            step.methods === undefined &&
+            (step.approval === undefined || isHandOff(step)),
+        )) ||
+      "a recipe that hands off does so once and types nothing",
+  ),
+);
 export const AutofillRecipe = Schema.Union(
   LegacyAutofillRecipe,
   PopupAutofillRecipe,
@@ -747,9 +821,10 @@ export const AutofillRecipe = Schema.Union(
   MethodOptionAutofillRecipe,
   SignInChoiceAutofillRecipe,
   SignInWayAutofillRecipe,
+  HandOffAutofillRecipe,
 );
 export type AutofillRecipe = typeof AutofillRecipe.Type;
-export type AutofillRecipeStep = typeof WayRecipeStep.Type;
+export type AutofillRecipeStep = typeof HandOffRecipeStep.Type;
 
 /**
  * Whether a live path is a recorded screen's: as many segments, each the same, except that each
@@ -902,7 +977,8 @@ const namesNational = (step: RecordedRecipeStep) =>
   step.fields.some((field) => isIdentifierKind(field.slot) && field.format === "national");
 
 /**
- * A verified sign-in's recipe: version 14 only when a method choice names a way in (`password` or
+ * A verified sign-in's recipe: version 15 only when a step hands off (`approval: "handoff"`), else
+ * version 14 only when a method choice names a way in (`password` or
  * an `identifier_` kind), else version 13 only when a step names a `choice`, else version 12 only
  * when a step's method names an `option`, else version 11 only when a step says `submitVia:
  * "click_layer"`, else version 10 only when an identifier field says `format: "national"`, else
@@ -912,7 +988,7 @@ const namesNational = (step: RecordedRecipeStep) =>
  * version 5 only when a step submits with a key or refills a secret (`refills`), else version 4
  * only when its sign-in may move to a workspace host (`origins.workspace`, or a workspace step),
  * else version 2 only with a popup or an approval, else version 1. A security answer's question
- * selector rides in any of them. Versions 4 to 14 write `workspace` before `steps`.
+ * selector rides in any of them. Versions 4 to 15 write `workspace` before `steps`.
  */
 export const autofillRecipe = <SignedIn>(
   steps: readonly RecordedRecipeStep[],
@@ -930,19 +1006,30 @@ export const autofillRecipe = <SignedIn>(
   const ways = steps.some((step) =>
     (step.methods ?? []).some((method) => isWayMethod(method.method)),
   );
-  if (ways || chosen || options || layered || national || steps.some(namesPrivateIdentifier))
+  const handsOff = steps.some(isHandOff);
+  if (
+    handsOff ||
+    ways ||
+    chosen ||
+    options ||
+    layered ||
+    national ||
+    steps.some(namesPrivateIdentifier)
+  )
     return {
-      version: ways
-        ? (14 as const)
-        : chosen
-          ? (13 as const)
-          : options
-            ? (12 as const)
-            : layered
-              ? (11 as const)
-              : national
-                ? (10 as const)
-                : (9 as const),
+      version: handsOff
+        ? (15 as const)
+        : ways
+          ? (14 as const)
+          : chosen
+            ? (13 as const)
+            : options
+              ? (12 as const)
+              : layered
+                ? (11 as const)
+                : national
+                  ? (10 as const)
+                  : (9 as const),
       ...(origins.workspace === undefined
         ? {}
         : { workspace: { parent: origins.workspace.parent } }),

@@ -377,6 +377,12 @@ number in the owner's confirmation. The host asks the caller through a protected
 after the identifier was submitted. Never ask an ordinary question for this approval or request
 the link, code or device contents. After confirmation, explore the account page and submit its
 signed-in indicator; confirmation alone does not verify the session.
+When the request asks a person to sign in, prefer a hand-off sign-in: send
+`signInStep: { approval: "handoff" }` on the site's sign-in page, even when that page also shows a
+password form. Prefer it too when the request asks for a hand-off and the sign-in goes through an
+identity provider, such as a company's single sign-on page. The host hands the browser to a person
+there, who signs in and marks it done. Nothing is typed or saved, and no identifier screen comes
+first. Then explore the account page and submit its signed-in indicator, as after an approval.
 
 Never accept optional setup the site offers during or right after sign-in, such as creating a
 passkey, adding a phone number or turning on two-factor. Record its decline control ("Not now",
