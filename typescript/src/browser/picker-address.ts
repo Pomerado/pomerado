@@ -38,6 +38,7 @@ export const resolveAddressWith = async <T>(
     readonly spellings: (text: string) => readonly string[];
     readonly rank: typeof rankChoices;
   },
+  options: { readonly read?: boolean } = {},
 ): Promise<AddressOutcome<T>> => {
   const squash = (text: unknown) => String(text ?? "").replace(/\s+/gu, " ").trim();
   const words = (text: string) => match.fold(text).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
@@ -193,7 +194,8 @@ export const resolveAddressWith = async <T>(
   // word, not counting a unit-shaped part, and it shows no other ZIP. It is clean when it keeps the
   // address field by field: its street keeps a word of the caller's street, or of its name, its
   // text holds every place word anywhere, as a suggestion whose lines were joined may hold its town
-  // in its street's part, and it shows no other ZIP; or it shows the caller's ZIP on a street that
+  // in its street's part, and it shows no other ZIP, unless `read` is set and the caller gave a
+  // house number; or it shows the caller's ZIP on a street that
   // keeps more than half the caller's street words, or the caller's ZIP when that is all they gave.
   // A clean one ranks above any other.
   const score = (text: string) => {
@@ -213,7 +215,7 @@ export const resolveAddressWith = async <T>(
     const kept = keeps(places, after);
     const zipped = zip !== "" && shown === zip;
     const clean =
-      ((share > 0 || named) && keeps(places, phrase(text)) === total && !other) ||
+      ((share > 0 || named) && keeps(places, phrase(text)) === total && (!other || (options.read === true && house.length > 0))) ||
       (zipped && (share > 0.5 || words(query.replace(zipGroups, "")).length === 0));
     return {
       value: [clean ? 1 : 0, zipped && share > 0.5 ? 1 : 0, kept + keeps(unitPlace, after), Math.round(share * 1000), other ? 0 : 1],
@@ -309,7 +311,8 @@ export const resolveAddressWith = async <T>(
  * stray punctuation dropped. It accepts the best suggestion either text brought when it keeps the
  * address field by field, so the tool reports the site's version as it does any rewrite: its
  * street keeps a word of the caller's street or of its name, its text holds every place word and
- * it shows no other ZIP; or it shows the caller's ZIP on a street that keeps more than half the
+ * it shows no other ZIP, unless `read` is set for a read and the caller gave a house number; or it
+ * shows the caller's ZIP on a street that keeps more than half the
  * caller's street words, or shows the caller's ZIP when that is all the caller gave. Otherwise it refuses, with
  * `picked: false` and every suggestion the site gave as `available`, for `pickRefusal`: as
  * `option_missing` when neither text brought a usable one, else as `option_unclear`, with the
@@ -319,5 +322,6 @@ export const resolveAddress = <T = string>(
   address: string,
   suggest: (text: string) => Promise<readonly T[]> | readonly T[],
   label: (item: T) => string = String,
+  options: { readonly read?: boolean } = {},
 ): Promise<AddressOutcome<T>> =>
-  resolveAddressWith(address, suggest, label, { fold: foldChoiceText, spellings: spellingsOf, rank: rankChoices });
+  resolveAddressWith(address, suggest, label, { fold: foldChoiceText, spellings: spellingsOf, rank: rankChoices }, options);

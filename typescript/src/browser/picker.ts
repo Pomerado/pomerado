@@ -516,8 +516,8 @@ const pickerPageCode = String.raw`(element, args) => {
  *   through when the list renders as it scrolls, then closes it: the page's live options for a
  *   caller question or an `available` list.
  * - `pickAddress(control, address, options?)` resolves an address the caller typed through the
- *   field's suggestions as `resolveAddress` does, reading each by its whole text with
- *   `pickerOptions`, then picks the one it accepted with `pickValue`, typing the text that brought
+ *   field's suggestions as `resolveAddress` does, with `read` in a read, reading each by its whole
+ *   text with `pickerOptions`, then picks the one it accepted with `pickValue`, typing the text that brought
  *   it and taking the first of copies. It returns `pickValue`'s outcome with that text as `query`
  *   and the unit it split off as `unit`, for the site's own unit field, or, when it accepts none,
  *   `resolveAddress`'s refusal, `option_missing` or `option_unclear`, with every suggestion the
@@ -1695,7 +1695,7 @@ const pickerResolveAddress = ${String(resolveAddressWith)};
 const pickAddress = async (control, address, options = {}) => {
   const suggest = async (query) => (await pickerOptions(control, { ...options, query })).options.filter((option) => !option.disabled);
   const match = { fold: pickerFold, spellings: pickerSpellings, rank: pickerRankChoices };
-  const found = await pickerResolveAddress(String(address ?? ""), suggest, (option) => option.text, match);
+  const found = await pickerResolveAddress(String(address ?? ""), suggest, (option) => option.text, match, { read: pickerReads() });
   if (!found.picked) return found;
   const picked = await pickValue(control, found.label, { ...options, query: found.query, tie: "first" });
   return picked.picked ? { ...picked, query: found.query, unit: found.unit } : { ...picked, wanted: String(address ?? "").replace(/\s+/g, " ").trim(), unit: found.unit };
