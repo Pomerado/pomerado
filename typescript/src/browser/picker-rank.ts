@@ -242,7 +242,7 @@ export const rankChoices = (
   // word, as in C# or 1%, which is part of the word; brackets, quotes and . , : ; ! ? never are.
   const alikeWords = (text: string) => {
     const each = fold(text)
-      .split(/(?:\s|(?!(?<=[\p{L}\p{N}])(?:(?![.,:;!?'"\u00a1\u00bf])\p{Po})+(?=\s|$))(?!(?<=\p{N})[.,:]\p{N})\p{P})+/u)
+      .split(/(?:\s|(?!(?<=[\p{L}\p{N}])(?:(?![.,:;!?'"\u00a1\u00bf])\p{Po})+(?=[^\p{L}\p{N}]|$))(?!(?<=\p{N})[.,:]\p{N})\p{P})+/u)
       .filter(Boolean);
     return each[0] === "the" && each.length > 1 ? each.slice(1) : each;
   };
