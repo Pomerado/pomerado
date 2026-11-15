@@ -223,19 +223,19 @@ exception: it is optional unless the task can't run without it (below).
   `rankChoices` and `spellingsOf` on options read as data, as in an HTTP version, never with
   matching of your own. A tool that narrows a search's result rows to the caller's text ranks
   them with `rankChoices` and `spellingsOf` too, never with matching of its own: it returns the
-  best matches, in a write only clean ones, and with none, the site's rows in the site's order
-  as candidates, saying so. With `rankChoices` on options or rows read as data, as in an HTTP
-  version, take the clean ranks from `cleanRanks` in `pomerado/runtime` and follow `pickValue`'s
-  rule: a read takes the best match at any rank and returns the option it used, and a write asks
-  the caller about a looser one.
+  best matches, and with none, the site's rows in the site's order as candidates, saying so.
+  With `rankChoices` on options or rows read as data, as in an HTTP version, take the clean
+  ranks from `cleanRanks` in `pomerado/runtime` and follow `pickValue`'s rule: a read takes the
+  best match at any rank and returns the option it used, and a write asks the caller about a
+  looser one.
   `pickValue` types the caller's value into the site's own search,
   reads every suggestion, tries the usual other forms of the value's words, such as 5th
   and Fifth, St and Street or Saint, or a state's code and name, and picks the best match. A
   clean match is a name that is the value as written or differs only in case, spacing, accents,
   punctuation, a leading "the", a word written short or a singular or plural, an option's name
   before its comma, or an option's first line followed by parts of its other lines, in their
-  order. With `rankChoices` and `leading: true`, that is a rank in `cleanRanks`, and `place`
-  needs options read with their `lines`. A match on an option's
+  order. With `rankChoices` and `leading: true`, that is a rank in `cleanRanks`, and rank
+  `place` needs options read with their `lines`. A match on an option's
   first line alone is a candidate, never a pick, when an option a typeahead lists before it
   holds the value's text before its first comma, as whole words, in its first line, and the
   value's later comma parts in its text. In a read, a looser best match, such as a name with
