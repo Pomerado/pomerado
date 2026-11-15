@@ -1259,7 +1259,7 @@ describe("the publication policy", () => {
         publicationOutputPolicy.indexOf(next),
       );
     expect(rule("Own picker:", "Unapplied supplied input:")).toContain(
-      "So is source that narrows a search's result rows to the caller's text with matching of its own instead of `rankChoices` with `spellingsOf`, or that returns none of those rows when none matches cleanly instead of the site's rows, in its order, as candidates.",
+      "It is also this finding when source drops rows of a search's results from the list it returns because they fail matching of its own against the caller's text, instead of ranking them with `rankChoices` with `spellingsOf`, or returns an empty list when none matches cleanly instead of the site's rows, in the site's order, as candidates.",
     );
     expect(rule("Wrong failure:", "Strict name check:")).toContain(
       "So is an InvalidInput whose `available` lists values its `field`'s own input schema refuses.",

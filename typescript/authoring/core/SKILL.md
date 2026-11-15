@@ -222,9 +222,9 @@ exception: it is optional unless the task can't run without it (below).
   up the way a person would, with `pickValue` from `pickerCode` (forms skill), or with
   `rankChoices` and `spellingsOf` on options read as data, as in an HTTP version, never with
   matching of your own. A tool that narrows a search's result rows to the caller's text ranks
-  them the same way, never with matching of its own: it returns the clean matches, and with
-  none, the site's rows in the site's order as candidates, saying so. `pickValue` types the
-  caller's value into the site's own search,
+  them with `rankChoices` and `spellingsOf` too, never with matching of its own: it returns the
+  clean matches, and with none, the site's rows in the site's order as candidates, saying so.
+  `pickValue` types the caller's value into the site's own search,
   reads every suggestion, tries the usual other forms of the value's words, such as 5th
   and Fifth, St and Street or Saint, or a state's code and name, and picks only a clean match:
   a name that is the value as written or differs only in case, spacing, accents or
