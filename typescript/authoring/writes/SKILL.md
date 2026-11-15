@@ -482,10 +482,10 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   state-changing request or opened a socket, after it entered a commit mark, or
   without returning a result at all (its page was lost), the write may already be
   committed; its receipt says so under `writeSession` (`verifyFirst`). Before any
-  further write, run an `act` step that only reads the page or the account. When
-  `stateChangingRequests` shows the failed step's commit request went through, that
-  step starts from the page as it stands: check it for an error or validation
-  message, read what the output needs, and call `verified()` there. When that page
+  further write, run an `act` step that only reads the page, or the account only when the
+  page can't tell. When `stateChangingRequests` shows the failed step's commit request went
+  through, with a body you can read showing no error, that step starts from the page as it
+  stands: check it for an error or validation message, read what the output needs, and call `verified()` there. When that page
   lacks something the output needs, such as the new record's ID, the same step may
   read it elsewhere on the site without changing anything, such as by finding the
   record in the site's list or search, then call `verified()`. If the
