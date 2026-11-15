@@ -598,8 +598,9 @@ describe("rankChoices same name written another way", () => {
       ["Exampleton, Floor 33101", "Exampleton, FL 33101"],
     ] as const)
       expect(rankAll([choice(name)], value), `${name} | ${value}`).toEqual({ status: "missing" });
-    // A vowel inside the short word keeps it a looser match, even before a number.
+    // A vowel inside the short word, or in a two-letter one, keeps it a looser match, even before a number.
     for (const [name, value] of [
+      ["100 NE 3rd Ave", "100 Northwest 3rd Ave"],
       ["Room 5", "Restroom 5"],
       ["Main 3", "Mountain 3"],
       ["Sat 10", "Saint 10"],
@@ -607,6 +608,7 @@ describe("rankChoices same name written another way", () => {
       ["Rue 3", "Route 3"],
     ] as const)
       expect(rankAll([choice(name)], value), `${name} | ${value}`).toEqual({ status: "picked", index: 0, rank: "anyOrder" });
+    expect(rankAll([choice("100 NE 3rd Ave"), choice("100 NW 3rd Ave")], "100 Northwest 3rd Ave")).toEqual({ status: "picked", index: 1, rank: "alike" });
   });
 });
 
