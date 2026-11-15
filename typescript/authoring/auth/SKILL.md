@@ -377,11 +377,11 @@ number in the owner's confirmation. The host asks the caller through a protected
 after the identifier was submitted. Never ask an ordinary question for this approval or request
 the link, code or device contents. After confirmation, explore the account page and submit its
 signed-in indicator; confirmation alone does not verify the session.
-When the request asks a person to sign in, prefer a hand-off sign-in: send
-`signInStep: { approval: "handoff" }` on the site's sign-in page, even when that page also shows a
-password form. The host hands the browser to a person there, who signs in and marks it done. No
-login is typed or saved, and no identifier screen comes first. Then explore the account page and
-submit its signed-in indicator, as after an approval.
+When the request asks for a person to sign in, prefer a hand-off sign-in: send
+`signInStep: { approval: "handoff" }`, with no popup or `matchSelector`, on the site's sign-in
+page, even when that page also shows a password form. The host hands the browser to a person
+there, who signs in and marks it done. No login is typed or saved, and no identifier screen comes
+first. Then explore the account page and submit its signed-in indicator, as after an approval.
 
 Never accept optional setup the site offers during or right after sign-in, such as creating a
 passkey, adding a phone number or turning on two-factor. Record its decline control ("Not now",
@@ -419,8 +419,9 @@ checks there; never guess a protected route.
 pomerado:section auth.signed-in-page:end --> The host checks that the submitted
 sign-in's recorded controls/form no longer show a password entry awaiting sign-in; unrelated
 password controls on the account page do not fail this check. It also checks that this sign-in
-submitted the login's identifier with its password, code or protected approval, then marks it
-verified; a Personal login locks to this site then. The marker is part of the published tool.
+submitted the login's identifier with its password, code or protected approval (after a hand-off,
+that the person marked it done), then marks it verified; a Personal login locks to this site then.
+The marker is part of the published tool.
 Business work waits for a verified sign-in.
 
 # Popup sign-in
