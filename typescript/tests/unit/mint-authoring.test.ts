@@ -396,7 +396,7 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   // Every field is read from the page on every run and typed as the page states it.
   [
     "core",
-    "Then, for every field: - Prefer parsing what the page shows into typed fields over returning a result row, card or itinerary as one text blob or summary, and keep every result row of the main list the page shows, up to the call's `limit` (pagination skill). - Read every output from the page or response on every run, so every returned field has observable support: never a literal, a default you invented, or a constant `null`, `[]`, `false`, `0` or fixed label where the page can show the value. - Return `null` for a field that is not a needed value only when this record's page lacks it, and an empty list only when the page shows none; never throw for either. When the code cannot read a value the request needs, throw `OperationFailure` naming it; never return a placeholder, a label or another record's value in its place. - One field per fact, as the page states it, and variants as the dimensions and values the page lists. - Prefer numbers for amounts and counts, ISO 8601 for dates and times and minutes for durations; type a date-only value as the runtime's `CalendarDate` (forms skill). A value that does not parse cleanly may be the site's own text.",
+    "Then, for every field: - Prefer parsing what the page shows into typed fields over returning a result row, card or itinerary as one text blob or summary, and keep every result row of the main list the page shows, up to the call's `limit` (pagination skill). - Read every output from the page or response on every run, so every returned field has observable support: never a literal, a default you invented, or a constant `null`, `[]`, `false`, `0` or fixed label where the page can show the value. - Return `null` for a field that is not a needed value only when this record's page lacks it, and an empty list only when the page shows none; never throw for either. When the code cannot read a value the request needs, throw `OperationFailure` naming it; never return a placeholder, a label or another record's value in its place. - One field per fact, as the page states it, and variants as the dimensions and values the page lists. - Prefer numbers for amounts and counts, ISO 8601 for dates and times and minutes for durations; type a date-only value as the runtime's `CalendarDate` (forms skill) and name its zone in its description. A value that does not parse cleanly may be the site's own text; return each time it holds as a timestamp too. Compare a site's date or time with today or now only in the site's or the place's zone, never UTC's: `todayIn` and `zonedTime` from `pomerado/runtime` give both.",
   ],
   // Output a caller can filter and compare on is parsed into typed fields.
   [
@@ -925,6 +925,26 @@ it("has a write's last question before a commit that pays pass order, in any cha
 });
 
 /*
+ * A checkout's final confirm folded each line's quantity into its name, passed the line total as
+ * the price each, and listed its fees and tip as items. The writes and caller-input skills name
+ * the order's own fields for those, and the cart skill suggests the same parts for a checkout's
+ * output, apart from the confirm's fixed fields.
+ */
+it("has a purchase confirm's order and a checkout's output give lines, fees and tip their own fields", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
+  expect(text("writes")).toContain(
+    "Fill `order` as the checkout shows it: each item's real quantity, its `unit` when sold by weight or measure, and its price each, its line total or both; fees, a tip and a discount go in their own fields. When an item's measure is in a unit `unit` does not list, give it quantity 1 and its line total, with the measure as the checkout shows it in its name.",
+  );
+  expect(text("caller-input")).toContain(
+    "its `items` (each `name`, `quantity`, `unit` for an item sold by weight or measure, and `price` each, `lineTotal` or both), `fees` (each `name` and `amount`), `discount`, `shipping`, `tax`, `tip` and `total`",
+  );
+  expect(text("cart")).toContain(
+    "Prefer returning each line bought with its quantity, its unit when the site sells it by weight or measure, its price each and its line total (the core skill's output fields), and each fee as its own entry, by its name on the site and its amount, with the tip and any discount in their own fields. This output is a suggestion, separate from the `order` a purchase's final confirm passes (the caller-input skill), which has its own fixed fields.",
+  );
+});
+
+/*
  * An accounting app's invoice list already showed the sent invoice, and the minter kept reading
  * other pages for minutes, some of them refused for not proving the record or for reading without
  * bound. The first bounded read-back that matches confirms the write, and nothing from before the
@@ -1386,16 +1406,16 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["c4038ed9fb31fb308d9a5e62adbedce6219f114f35b1ae831eee6c6d566ac68d", "core"],
+    ["510608abb426348d7db9664a5adfc7b8e0175f116649a81f3231a6914c6550e6", "core"],
     ["e854aa6b9fe22ea741598abcf0643c529211b643d6b9b400281948a117156224", "search"],
     ["cc2b214a88e1378b0b5c58b54ab5e1ab40e782816a931f4bda74a7f47a02777a", "auth"],
     ["a08f1ef89cc10bf11e17b8d6086b6e37649b1d5d11b78c0542cc7db32460b7e3", "testing"],
     ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
     ["d294b49ab7291a12e4d42de685e623305980e31e5078c1eb93be7a643c55324d", "forms"],
-    ["bcdd6b33117fa7d05ad002e87eac2976ab9203e2d37e4c10f4bd97a44f77ab21", "writes"],
-    ["ec18eb55ff00bdd4eb4dc9bc4cc7e0adbeaa0f1e004c0b4e37ab92cd0c3b775c", "cart"],
-    ["1a9849b499346afcc9ff8ff2621ee6b308f5fdab0ced671c0919d5cd469c7dc3", "caller-input"],
-    ["417fc0b27e7718af9b34ca2f822fabfc1f5122e062e8f2908b9d34472ab7e0e5", "publication"],
+    ["826a65fc4a984dd79675123f76388a0c12ea0e4fe1e2ae80b7c87140d743d28a", "writes"],
+    ["e2921d7f83706385e627dbf0d123aaaa08fe61af31e04f779bc890aea93361da", "cart"],
+    ["0d715b32ed61f324f4da915935bc5db1e0b3d87d17aa4a86e276197a79bdcd6d", "caller-input"],
+    ["47cba18121554c05c379f6ac754de07e8bfa7515250055585e631a2eb88b7468", "publication"],
     ["2dc797e8ced82dc914d311a8b42739e9234e806b14213fa1bdf2cfbaf5a4474f", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);

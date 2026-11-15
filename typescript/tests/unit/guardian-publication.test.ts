@@ -1248,6 +1248,41 @@ describe("the publication policy", () => {
       "So is an empty result that other evidence on the same page contradicts for the same inputs, even beside the site's no-results message: its fix throws OperationFailure naming what that evidence shows.",
     );
   });
+
+  // A search tool's own matching of the site's result rows drops the site's real matches, a
+  // refusal listing choices its field refuses offers nothing a caller could send back, and a money
+  // field the site shows meaning something else misleads a caller who acts on it.
+  it("finds own matching of result rows, refused choices and a misread amount", () => {
+    const rule = (name: string, next: string) =>
+      publicationOutputPolicy.slice(
+        publicationOutputPolicy.indexOf(name),
+        publicationOutputPolicy.indexOf(next),
+      );
+    expect(rule("Own picker:", "Unapplied supplied input:")).toContain(
+      "It is also this finding when source drops rows of a search's results from the list it returns because they fail matching of its own against the caller's text, instead of ranking them with `rankChoices` with `spellingsOf`, or returns an empty list when none matches cleanly instead of the site's rows, in the site's order, as candidates.",
+    );
+    expect(rule("Wrong failure:", "Strict name check:")).toContain(
+      "So is an InvalidInput whose `available` lists values its `field`'s own input schema refuses.",
+    );
+    expect(rule("Unchecked amount:", "Unapplied input:")).toBe(
+      "Unchecked amount: a money field filled from a site value that the site's own display, in the captures, shows to mean something other than what the field's name and description say. ",
+    );
+  });
+
+  // Matching a record by today's date, or turning the site's "Tomorrow" into a date, picks the
+  // wrong day as surely as refusing a past date does when today is UTC's. A time with no offset
+  // names no moment, but a repair or change is judged only on the times it adds or changes, so
+  // the many tools that return one today still repair.
+  it("finds a comparison with today in UTC, and an output time with no offset that a build adds", () => {
+    expect(publicationOutputPolicy).toContain(
+      "Date in UTC: source that compares a site's date or time with today's date or the time in UTC, such as new Date().toISOString().slice(0, 10), rather than with today in the site's time zone or in that of the place the date is at,",
+    );
+    expect(publicationOutputPolicy).toContain(
+      "Zone-less time: an output time with no UTC offset, unless the output also returns that time with one. In a repair or change, only for an output time it adds or changes.",
+    );
+    expect(guardianPublicationPolicy).not.toContain("Past date in UTC");
+    expect(guardianPublicationPolicy).toContain(publicationOutputPolicy);
+  });
 });
 
 const message = (value: unknown): ModelResponse["output"][number] => ({

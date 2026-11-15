@@ -831,7 +831,7 @@ describe("output notation checks", () => {
   });
 
   it("leaves values in the notation their description names, and the site's own wording beside them, alone", () => {
-    for (const departs_at of ["2026-11-16T07:00:00-08:00", "07:00", "2026-11-16"])
+    for (const departs_at of ["2026-11-16T07:00:00-08:00", "07:00-08:00", "2026-11-16"])
       expect(
         checksOf(
           {
@@ -848,6 +848,29 @@ describe("output notation checks", () => {
           { outputSchema: described },
         ),
       ).toEqual([]);
+  });
+
+  // A time with no offset names no moment: a caller cannot tell which zone it is in.
+  it("flags a timestamp with no offset in any field, and a time of day with no offset where ISO 8601 is promised", () => {
+    expect(checksOf({ departs: "2026-12-15T07:15:00", arrives: "2026-12-15T13:40" })).toEqual([
+      "departs format_mismatch",
+      "arrives format_mismatch",
+    ]);
+    const flight = {
+      departure_date: "2026-11-16",
+      departure_date_label: "Mon, Nov 16",
+      departs_at: "07:00",
+      fare_currency: "USD",
+      currency: "EUR",
+    };
+    expect(checksOf({ flights: [flight] }, { outputSchema: described })).toEqual([
+      "flights[].departs_at format_mismatch",
+    ]);
+  });
+
+  it("leaves a timestamp with its offset, and a date alone, in a field that declares no format", () => {
+    for (const departs of ["2026-12-15T07:15:00-08:00", "2026-12-15T15:15:00Z", "2026-12-15T07:15+05:30", "2026-12-15"])
+      expect(checksOf({ departs })).toEqual([]);
   });
 
   it("flags a list field whose values differ only by letter case", () => {

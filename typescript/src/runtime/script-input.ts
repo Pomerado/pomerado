@@ -8,6 +8,7 @@ import {
   longestItemName,
   longestPrompt,
   OrderFacts,
+  OrderFee,
   OrderItem,
   orderNotice,
   QuestionId,
@@ -122,15 +123,15 @@ export const ScriptOption = Schema.Struct({
 });
 export type ScriptOption = typeof ScriptOption.Type;
 
+const NameLine = Schema.String.pipe(Schema.pattern(/\S/u));
 /**
- * A purchase confirm's order as the checkout shows it (`OrderFacts`): an item name reaches the
- * caller on one line, and a long one shortened (`cutTo`).
+ * A purchase confirm's order as the checkout shows it (`OrderFacts`): an item or fee name reaches
+ * the caller on one line, and a long one shortened (`cutTo`).
  */
 const ScriptOrder = Schema.Struct({
   ...OrderFacts.fields,
-  items: Schema.Array(
-    Schema.Struct({ ...OrderItem.fields, name: Schema.String.pipe(Schema.pattern(/\S/u)) }),
-  ),
+  items: Schema.Array(Schema.Struct({ ...OrderItem.fields, name: NameLine })),
+  fees: Schema.optional(Schema.Array(Schema.Struct({ ...OrderFee.fields, name: NameLine }))),
 });
 export type ScriptOrder = typeof ScriptOrder.Encoded;
 
@@ -490,12 +491,17 @@ export const makeScriptInput = (
           given,
         );
         if (Either.isLeft(decoded)) return yield* invalidOptions();
+        const named = <Line extends { readonly name: string }>(line: Line) => ({
+          ...line,
+          name: cutTo(line.name.replace(/\s+/gu, " ").trim(), longestItemName),
+        });
+        const { fees, ...facts } = decoded.right;
         order = {
-          ...decoded.right,
-          items: decoded.right.items.map((item) => ({
-            ...item,
-            name: cutTo(item.name.replace(/\s+/gu, " ").trim(), longestItemName),
-          })),
+          ...facts,
+          items: facts.items.map(named),
+          // An empty list is left out, so an order of the earlier shape still decodes on a host
+          // that predates fees.
+          ...(fees === undefined || fees.length === 0 ? {} : { fees: fees.map(named) }),
         };
       }
       const request = yield* Schema.decodeUnknown(InputRequest)(
