@@ -758,13 +758,37 @@ describe("OpenAI reviewer policy and trusted authority", () => {
       makeGuardian(reviewer(markedUpstreamPolicy)).review(pending, readEntrypoint),
     );
     const sentence =
-      "When that write's step shows its commit request went through, with a 2xx or 3xx status and no error after it, reading the page as it stands is enough for the read-back, but it is never the only read-back allowed. Only a write the review found not_done may be done again.";
+      "When that write's step shows its commit request went through, with a 2xx or 3xx status and no error after it in a body it can read, reading the page as it stands is enough for the read-back, but it is never the only read-back allowed. Only a write the review found not_done may be done again.";
     for (const policy of [
       instructionsOf(requests[0]),
       guardianExecutionPolicy(otherHost),
       guardianExecutionPolicy(nativeExecutionEnvironment),
     ])
       expect(policy).toContain(sentence);
+  });
+
+  // A purchase build whose order click got a 200 it could not read and a page with no outcome
+  // was advised, on its read-only steps, to read the account's orders first. The write's own
+  // reply and the page it landed on come first; the account is the backstop when they can't tell.
+  it("reconciles an unclear write from its own reply and the page it landed on before the account", async () => {
+    const requests = readThenDecide({
+      outcome: "allow",
+      rationale: "Controlled source was read.",
+      action: "read",
+    });
+    await Effect.runPromise(
+      makeGuardian(reviewer(markedUpstreamPolicy)).review(pending, readEntrypoint),
+    );
+    for (const policy of [
+      instructionsOf(requests[0]),
+      guardianExecutionPolicy(otherHost),
+      guardianExecutionPolicy(nativeExecutionEnvironment),
+    ]) {
+      expect(policy).toContain(
+        "After a possible prior write or unresolved consequential effect, require current-state reconciliation from the write's own reply and the page it landed on, or the account only when they can't tell, and only justified residual work.",
+      );
+      expect(policy).not.toContain("require current-state reconciliation and only");
+    }
   });
 
   // Turning off a preselected partner comparison box read as an invented search choice, so an edit

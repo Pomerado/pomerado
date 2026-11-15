@@ -1059,6 +1059,19 @@ describe("the publication policy", () => {
     expect(publicationFindingCategories).toContain("confirmation");
   });
 
+  // A request may give values for one run, such as which item or a price range, or describe another
+  // tool. The review reads the values as an input's example, as the minter's skills do, and the
+  // description as context, never as a rule the general tool must enforce, right after the rule
+  // that compares the tool with the requested outcome.
+  it("reads a request's values for one run as an input's example, not a rule", () => {
+    const rule =
+      "A value or choice the request gives for one run is the example of an input, not a rule the tool must enforce, unless the request states it for every run. A request's description of another tool is context, not a rule.";
+    expect(guardianPublicationPolicy.split(rule)).toHaveLength(2);
+    expect(guardianPublicationPolicy).toContain(
+      `Source edits since the prior example are permitted without source attestation. ${rule}\n`,
+    );
+  });
+
   // A repair is judged on what it changed: an unchanged line is denied only when a failing run or
   // example shows it broken. Hosts with their own publication policy get it with the live tests.
   it("judges a repair on the lines it changed, beside the maintenance rule for live tests", () => {
