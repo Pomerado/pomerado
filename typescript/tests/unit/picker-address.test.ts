@@ -125,6 +125,15 @@ describe("resolveAddress", () => {
     expect(await resolveAddress("1 Example St, Exampleton, IL 60000", () => others)).toMatchObject({ picked: false, reason: "option_unclear", available: others });
     const misspelled = ["1 Example St, Exampleton, NY, USA", "1 Example St, Exampleton, IL, USA"];
     expect(await resolveAddress("1 Example St, Exampletn IL", () => misspelled)).toMatchObject({ picked: false, reason: "option_unclear", available: misspelled });
+    // A suggestion that keeps the address is taken over one ranked higher that does not, even one
+    // whose town, joined to its street from another line, sits in its street's part.
+    const joined = ["12 Example St Otherton, IL, USA", "12 Example St Exampleton, IL, USA"];
+    expect(await resolveAddress("12 Example St, Exampleton, IL 60000", () => joined)).toMatchObject({ picked: true, label: joined[1] });
+    const zipped = ["12 Example St Exampleton, IL, USA", "12 Example St, Exampleton, IL 60999, USA"];
+    expect(await resolveAddress("12 Example St, Exampleton, IL 60000", () => zipped)).toMatchObject({ picked: true, label: zipped[0] });
+    expect(await resolveAddress("60000-1234", () => ["Exampleton, IL 60000, USA"])).toMatchObject({ picked: true });
+    // A street only close to the caller's, with no word of it, is usable but not kept.
+    expect(await resolveAddress("12 Example Street, Exampleton, IL", () => ["12 Exampel Rd, Exampleton, IL, USA"])).toMatchObject({ picked: false, reason: "option_unclear" });
     // A place word in a suggestion's street never counts, so only the other state's is usable.
     const streets = ["1 Exampleton Rd, Sampleton, IL, USA", "1 Example St, Exampleton, NY, USA"];
     expect(await resolveAddress("1 Example St, Exampleton, IL", () => streets)).toMatchObject({ picked: false, reason: "option_unclear", matches: [streets[1]] });

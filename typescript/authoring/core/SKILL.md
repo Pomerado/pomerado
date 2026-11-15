@@ -225,7 +225,7 @@ exception: it is optional unless the task can't run without it (below).
   reads every suggestion, tries the usual other forms of the value's words, such as 5th
   and Fifth, St and Street or Saint, or a state's code and name, and picks only a clean match:
   a name that is the value as written or differs only in case, spacing, accents or
-  punctuation, or, with `tie: "first"`, an option's name before its comma. With `rankChoices`,
+  punctuation, or an option's name before its comma. With `rankChoices` and `leading: true`,
   that is rank `exact`, `normalized`, `folded` or `leading`. Any looser match, such as a name
   with words the value lacks, is a candidate, never a pick: `pickValue` returns it as
   `option_unclear`, with the site's options, each by its full text. A value it lacks lists the

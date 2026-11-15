@@ -191,11 +191,11 @@ export const resolveAddressWith = async <T>(
   // own street; by the share of the caller's street words its street keeps; and by showing no other
   // ZIP. It is whole when its street keeps any of the caller's street words, it keeps every place
   // word, not counting a unit-shaped part, and it shows no other ZIP. It is clean when it keeps the
-  // address field by field: its street keeps the caller's street name or any of its street words,
-  // its text holds every place word anywhere, as a suggestion whose lines were joined may hold its
-  // town in its street's part, and it shows no other ZIP; or it shows the caller's ZIP on a street
-  // that keeps more than half the caller's street words, or the caller's ZIP when that is all they
-  // gave.
+  // address field by field: its street keeps a word of the caller's street, or of its name, its
+  // text holds every place word anywhere, as a suggestion whose lines were joined may hold its town
+  // in its street's part, and it shows no other ZIP; or it shows the caller's ZIP on a street that
+  // keeps more than half the caller's street words, or the caller's ZIP when that is all they gave.
+  // A clean one ranks above any other.
   const score = (text: string) => {
     const theirs = houseOf(text);
     const shown = zipOf(text);
@@ -204,24 +204,21 @@ export const resolveAddressWith = async <T>(
     const { after, street: own } = sides(text);
     const ownWords = words(own);
     const other = zip !== "" && shown !== "" && shown !== zip;
-    if (
-      house.length > 0 &&
-      names.length > 0 &&
-      !names.some((forms) => forms.some((form) => ownWords.some((word) => !houseWords.includes(word) && numeral(word) === form))) &&
-      (other || !close(callerWords, streetWords(own)))
-    )
-      return undefined;
+    const named = names.some((forms) => forms.some((form) => ownWords.some((word) => !houseWords.includes(word) && numeral(word) === form)));
+    if (house.length > 0 && names.length > 0 && !named && (other || !close(callerWords, streetWords(own)))) return undefined;
     const share = Math.max(
       0,
       ...streetForms.map((list) => (list.length === 0 ? 0 : list.filter((forms) => forms.some((form) => ownWords.includes(form))).length / list.length)),
     );
     const kept = keeps(places, after);
-    // Its street kept the caller's street name, as checked above, or keeps any of its street words.
-    const named = share > 0 || (house.length > 0 && names.length > 0);
+    const zipped = zip !== "" && shown === zip;
+    const clean =
+      ((share > 0 || named) && keeps(places, phrase(text)) === total && !other) ||
+      (zipped && (share > 0.5 || words(query.replace(zipGroups, "")).length === 0));
     return {
-      value: [zip !== "" && shown === zip && share > 0.5 ? 1 : 0, kept + keeps(unitPlace, after), Math.round(share * 1000), other ? 0 : 1],
+      value: [clean ? 1 : 0, zipped && share > 0.5 ? 1 : 0, kept + keeps(unitPlace, after), Math.round(share * 1000), other ? 0 : 1],
       whole: share > 0 && kept === total && !other,
-      clean: (named && keeps(places, phrase(text)) === total && !other) || (zip !== "" && shown === zip && (share > 0.5 || words(query).join(" ") === zip)),
+      clean,
     };
   };
   // Which of two scores ranks higher: above zero for the first, below for the second.
@@ -299,7 +296,8 @@ export const resolveAddressWith = async <T>(
  * or Mian for Example or Main, LaSalle for La Salle), or a word of three letters or more of one is
  * among the first letters of the other's words but the last (MLK for Dr Martin Luther King Jr Blvd).
  * So St or Ave ending a street with a longer name word, or a direction letter, alone keeps none. So is one that reads a caller's ZIP as its house
- * number. Of the rest, it prefers the one that shows the caller's ZIP while its own street keeps
+ * number. Of the rest, it prefers one that keeps the address field by field (below), then the one
+ * that shows the caller's ZIP while its own street keeps
  * more than half the caller's street words of two letters or more, as typed or tidied, each in any
  * of its usual forms from `spellingsOf`; then the one whose parts after its street keep the most
  * words of the caller's place, the words after the street in any of their usual forms; then the one whose
@@ -310,9 +308,9 @@ export const resolveAddressWith = async <T>(
  * no other ZIP, it asks once more with a tidied text: joined words split, the ZIP and a unit asked for as typed left out, and
  * stray punctuation dropped. It accepts the best suggestion either text brought when it keeps the
  * address field by field, so the tool reports the site's version as it does any rewrite: its
- * street keeps the caller's street name, as above, or any of the caller's street words, it keeps
- * every place word and shows no other ZIP; or it shows the caller's ZIP on a street that keeps more
- * than half the caller's street words, or shows the caller's ZIP when that is all the caller gave. Otherwise it refuses, with
+ * street keeps a word of the caller's street or of its name, its text holds every place word and
+ * it shows no other ZIP; or it shows the caller's ZIP on a street that keeps more than half the
+ * caller's street words, or shows the caller's ZIP when that is all the caller gave. Otherwise it refuses, with
  * `picked: false` and every suggestion the site gave as `available`, for `pickRefusal`: as
  * `option_missing` when neither text brought a usable one, else as `option_unclear`, with the
  * usable ones as `matches`. It keeps no list of words or addresses of its own.

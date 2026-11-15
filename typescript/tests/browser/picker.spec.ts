@@ -779,32 +779,32 @@ test("pickValue returns the options by their full text when no match is clean, e
   await serve(
     page,
     dropdown([
-      ["sq", "Example Square<br>Post St, Exampleton, CA, US"],
-      ["mk", "Example Square<br>Market St, Exampleton, CA, US"],
-      ["ht", "The Sample Hotel - Example Square, Premier Collection<br>524 Sample St, Exampleton, CA, US"],
+      ["sq", "Example Square<br>First St, Exampleton, IL, US"],
+      ["mk", "Example Square<br>Second St, Exampleton, IL, US"],
+      ["ht", "The Sample Hotel - Example Square, Sample Collection<br>10 Sample St, Exampleton, IL, US"],
     ]),
   );
   const field = 'page.getByRole("button", { name: "Customer" })';
-  expect(await call(page, `return await pickValue(${field}, "Example Square, Exampleton, CA", { ...fast, tie: "first" });`)).toEqual({
+  expect(await call(page, `return await pickValue(${field}, "Example Square, Exampleton, IL", { ...fast, tie: "first" });`)).toEqual({
     result: {
       picked: false,
       reason: "option_unclear",
-      wanted: "Example Square, Exampleton, CA",
+      wanted: "Example Square, Exampleton, IL",
       available: [
-        "Example Square Post St, Exampleton, CA, US",
-        "Example Square Market St, Exampleton, CA, US",
-        "The Sample Hotel - Example Square, Premier Collection 524 Sample St, Exampleton, CA, US",
+        "Example Square First St, Exampleton, IL, US",
+        "Example Square Second St, Exampleton, IL, US",
+        "The Sample Hotel - Example Square, Sample Collection 10 Sample St, Exampleton, IL, US",
       ],
-      matches: ["The Sample Hotel - Example Square, Premier Collection 524 Sample St, Exampleton, CA, US"],
+      matches: ["The Sample Hotel - Example Square, Sample Collection 10 Sample St, Exampleton, IL, US"],
     },
   });
   expect(await submitted(page)).toEqual({ customer: "" });
-  expect(await call(page, `return await pickValue(${field}, "Example Square Market St, Exampleton, CA, US", fast);`)).toMatchObject({
+  expect(await call(page, `return await pickValue(${field}, "Example Square Second St, Exampleton, IL, US", fast);`)).toMatchObject({
     result: { picked: true, value: "mk", rank: "exact" },
   });
   // Options that tie cleanly still take the first with tie first.
   expect(await call(page, `return await pickValue(${field}, "example square", { ...fast, tie: "first" });`)).toMatchObject({
-    result: { picked: true, value: "sq", rank: "normalized", tied: ["Example Square Post St, Exampleton, CA, US", "Example Square Market St, Exampleton, CA, US"] },
+    result: { picked: true, value: "sq", rank: "normalized", tied: ["Example Square First St, Exampleton, IL, US", "Example Square Second St, Exampleton, IL, US"] },
   });
 });
 
@@ -813,11 +813,11 @@ test("pickValue with tie first takes the first of the options that tie, in the s
 <option value="">Choose a city</option><option value="spf-il">Springfield, Illinois</option>
 <option value="spf-mo">Springfield, Missouri</option><option value="shb">Shelbyville</option></select></label></form>`);
   const city = 'page.getByLabel("City")';
-  // Without the option both only hold the value as a word, so neither is picked.
+  // Without the option a tie is refused, as before.
   expect(await call(page, `return await pickValue(${city}, "Springfield", fast);`)).toEqual({
     result: {
       picked: false,
-      reason: "option_unclear",
+      reason: "option_ambiguous",
       wanted: "Springfield",
       available: ["Springfield, Illinois", "Springfield, Missouri", "Shelbyville"],
       matches: ["Springfield, Illinois", "Springfield, Missouri"],
@@ -873,24 +873,19 @@ test("pickValue takes the first of an option listed twice, and still refuses opt
   expect(await submitted(page)).toEqual({ country: "US", branch: "" });
 });
 
-test("pickValue with tie first takes a city whose name before its comma is the value over one holding it as a word", async ({ page }) => {
+test("pickValue takes a city whose name before its comma is the value over one holding it as a word, with or without tie first", async ({ page }) => {
   await serve(page, `<form><label>City <select name="city">
 <option value="">Choose a city</option><option value="nyc">New York</option>
-<option value="yrk">York, UK</option><option value="ykt">Yorktown</option></select></label></form>`);
+<option value="yrk">York, UK</option><option value="ykt">Yorktown</option><option value="spf">Springfield, IL, USA</option></select></label></form>`);
   const city = 'page.getByLabel("City")';
-  // Without tie first, both only hold York as a word, so neither is picked.
+  // York, UK is York before its comma, while New York only holds York as a word, so nothing ties.
   expect(await call(page, `return await pickValue(${city}, "York", fast);`)).toEqual({
-    result: {
-      picked: false,
-      reason: "option_unclear",
-      wanted: "York",
-      available: ["New York", "York, UK", "Yorktown"],
-      matches: ["New York", "York, UK"],
-    },
+    result: { picked: true, kind: "select", label: "York, UK", value: "yrk", rank: "leading", refills: 0 },
   });
-  expect(await submitted(page)).toEqual({ city: "" });
-  // With it, York, UK is York before its comma, while New York only holds York as a word, so
-  // nothing ties.
+  expect(await call(page, `return await pickValue(${city}, "Springfield", fast);`)).toEqual({
+    result: { picked: true, kind: "select", label: "Springfield, IL, USA", value: "spf", rank: "leading", refills: 0 },
+  });
+  expect(await submitted(page)).toEqual({ city: "spf" });
   expect(await call(page, `return await pickValue(${city}, "York", { ...fast, tie: "first" });`)).toEqual({
     result: { picked: true, kind: "select", label: "York, UK", value: "yrk", rank: "leading", refills: 0 },
   });

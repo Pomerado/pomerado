@@ -530,7 +530,7 @@ const pickerPageCode = String.raw`(element, args) => {
  * leaves the dialog open).
  *
  * Matching (see `rankChoices`): a name or value as written, then ignoring case and spacing, then
- * accents and punctuation, then, only for `pickValue` with `tie: "first"`, a name whose text
+ * accents and punctuation, then a name whose text
  * before its first comma (not one between digits) is the value, ignoring the same (rank `leading`:
  * York, UK for York), then a name holding the value as whole words (New York for York), then a
  * name made of the value's words, no more and no fewer, with the parts its or the value's commas or
@@ -538,7 +538,7 @@ const pickerPageCode = String.raw`(element, args) => {
  * Harbor Street Station, Example City for Example City Harbor Street Station), then a name some of
  * whose whole parts, each keeping its words' order, hold the value's words one for one, each
  * equal or written short in the name, such as Plz for Plaza (rank `anyOrder`: Transit - Lakeside
- * Station, 12 Main St for Lakeside Transit Station), then, only with `options.stem` set to true (as a read sets it; `pickValues` takes it too), a name with
+ * Station, 12 Main St for Lakeside Transit Station), then, only with `options.stem` set to true (`pickValues` takes it too), a name with
  * as many words as the value whose words each equal the value's in order or, for words of Latin
  * letters only, begin the value's or begin with them, the shorter of five or more letters, such as
  * Dentistry for Dentist (rank `stem`), then, only with `options.extraWords` set to true and a
@@ -640,7 +640,7 @@ const pickerRankChoices = ${String(rankChoices)};
 const pickerSpellings = ${String(spellingsOf)};
 const pickerRankByWords = ${String(rankByWords)};
 const pickerClosestFirst = ${String(closestFirst)};
-const pickerRank = (s, list, wanted) => pickerRankChoices(list, wanted, pickerFold, { leading: s.tie === true, stem: s.options.stem === true, extraWords: s.options.extraWords === true, spellings: pickerSpellings });
+const pickerRank = (s, list, wanted) => pickerRankChoices(list, wanted, pickerFold, { leading: true, stem: s.options.stem === true, extraWords: s.options.extraWords === true, spellings: pickerSpellings });
 const pickerPage = ${pickerPageCode};
 const pickerLimits = Object.freeze(${JSON.stringify({
   timeout: 10_000,
@@ -956,7 +956,7 @@ const pickerAvailable = (list, wanted, name = (option) => option.label) =>
 // An option's whole text, every line of it, so a caller who passes it back matches it as written.
 const pickerText = (option) => option.text || option.label;
 // Ranks that match the value itself: as written, ignoring case, spacing, accents or punctuation, or
-// as an option's name before its comma (with tie "first"). Any looser match is no pick.
+// as an option's name before its comma. Any looser match is no pick.
 const pickerClean = ["exact", "normalized", "folded", "leading"];
 // Options that tie, each as the caller can tell it apart: its label, else its whole text, else
 // that and its value.
@@ -979,7 +979,7 @@ const pickerOutcome = (found, wanted, tie = false) => {
     const loose = ranking.status === "ambiguous" ? ranking.indexes.map((index) => list[index]) : [list[ranking.index]];
     return {
       status: "refused",
-      refusal: { picked: false, reason: "option_unclear", wanted: wanted[0], available: pickerAvailable(list, wanted, pickerText), matches: [...new Set(loose.map(pickerText))] },
+      refusal: { picked: false, reason: "option_unclear", wanted: wanted[0], available: pickerAvailable(list, wanted, pickerText), matches: [...new Set(loose.filter((option) => !option.disabled).map(pickerText))] },
     };
   }
   if (ranking.status === "picked") return { status: "picked", option: list[ranking.index], rank: ranking.rank };
@@ -1484,9 +1484,9 @@ const pickValues = async (control, values, options = {}) => {
       for (let attempt = 0; attempt <= s.refills && !done; attempt++) {
         const { method } = pickerTry(options, attempt, attempt);
         let found = await pickerFind(s, wanted);
-        // A free-entry value is created rather than replaced by a suggestion that only holds it
-        // or shares its stem.
-        if (options.create && found.status === "refused" && found.refusal.reason === "option_unclear")
+        // A free-entry value is created rather than replaced by a suggestion that only holds it,
+        // shares its stem or names it before a comma.
+        if (options.create && (found.status === "refused" ? found.refusal.reason === "option_unclear" : found.rank === "leading"))
           found = { status: "refused", field: found.field, refusal: { picked: false, reason: "option_missing", wanted: wanted[0], available: [], matches: [] } };
         const since = pickerMark(s);
         const showsChip = (label) => async () => {
