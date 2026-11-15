@@ -534,6 +534,19 @@ button.addEventListener("keydown", (event) => { if (event.key === "Escape") { li
   await expect(page.getByRole("listbox")).toBeHidden();
 });
 
+// A read takes Blue Grey for Grey loosely; once the site stops suggesting the chosen chip, it finds
+// the chip again and still says the match was loose.
+test("pickValues in a read finds a chip it picked loosely again, still naming it loose", async ({ page }) => {
+  await serve(page, chips);
+  const colors = 'page.getByRole("combobox", { name: "Colors" })';
+  expect(await callRead(page, `return await pickValues(${colors}, ["Grey"], fast);`)).toMatchObject({
+    result: { picked: true, values: [{ label: "Blue Grey", added: true, loose: true }] },
+  });
+  expect(await callRead(page, `return await pickValues(${colors}, ["Grey"], fast);`)).toMatchObject({
+    result: { picked: true, values: [{ label: "Blue Grey", added: false, loose: true }] },
+  });
+});
+
 test("pickValues adds a value even when a chip already holds it as a word", async ({ page }) => {
   await serve(page, chips);
   const colors = 'page.getByRole("combobox", { name: "Colors" })';
