@@ -909,6 +909,22 @@ it("has a search step wait for the site's results or its own no-match state", as
 });
 
 /*
+ * A repair of a purchase tool built before `order` existed fixed something else and kept its final
+ * confirm with no items or total. The writes skill, which every write build and repair reads, has
+ * the last choice or confirm before a paying commit, once its total shows, pass `order`, and a
+ * changed script gain one.
+ */
+it("has a write's last question before a commit that pays pass order, in any change too", async () => {
+  const writes = ((await renderedTexts("typescript/authoring")).get("writes") ?? "").replace(
+    /\s+/g,
+    " ",
+  );
+  expect(writes).toContain(
+    "public schema (core's input schema rules). The last choice or confirm asked before a commit that buys or pays, once the page shows that commit's items and total, passes `order` (the caller-input skill). When you change a script whose last such question passes none, add it, whatever the change is for.",
+  );
+});
+
+/*
  * An accounting app's invoice list already showed the sent invoice, and the minter kept reading
  * other pages for minutes, some of them refused for not proving the record or for reading without
  * bound. The first bounded read-back that matches confirms the write, and nothing from before the
@@ -1358,7 +1374,7 @@ it("renders the pinned standalone authoring", async () => {
     ["a08f1ef89cc10bf11e17b8d6086b6e37649b1d5d11b78c0542cc7db32460b7e3", "testing"],
     ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
     ["b38084ecbbecd8db08c15170c700a55ba96ee1c8ca598fabc56a8aa9f30c110d", "forms"],
-    ["9a5184e35e7ef6bcdd20562c6680d254e8ad6c61340205ac2195fd51df1b5211", "writes"],
+    ["9b22141ee84ce439c70b521ba845be38c3a1aeb9f209bfe4e0169482ca2b8ed2", "writes"],
     ["ec18eb55ff00bdd4eb4dc9bc4cc7e0adbeaa0f1e004c0b4e37ab92cd0c3b775c", "cart"],
     ["1a9849b499346afcc9ff8ff2621ee6b308f5fdab0ced671c0919d5cd469c7dc3", "caller-input"],
     ["417fc0b27e7718af9b34ca2f822fabfc1f5122e062e8f2908b9d34472ab7e0e5", "publication"],
