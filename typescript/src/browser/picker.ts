@@ -293,15 +293,17 @@ const pickerPageCode = String.raw`(element, args) => {
       }
       return null;
     }
-    // A list read as it already shows, with no snapshot from before it opened, is the one closest
-    // to the control.
-    const reach = (node) => {
-      let steps = 0;
-      for (let at = element; at && !holds(at, node); at = up(at)) steps++;
-      return steps;
-    };
+    // A list read as it already shows, with no snapshot from before it opened: a popup by its role
+    // first, then the list closest to the control.
+    const reach = new Map();
+    if (args.opened)
+      for (const node of pool) {
+        let steps = 0;
+        for (let at = element; at && !holds(at, node); at = up(at)) steps++;
+        reach.set(node, steps);
+      }
     pool.sort((a, b) => {
-      const closer = args.opened ? reach(a) - reach(b) : 0;
+      const closer = args.opened ? Math.min(rankOf(a), 3) - Math.min(rankOf(b), 3) || reach.get(a) - reach.get(b) : 0;
       if (closer !== 0) return closer;
       const order = rankOf(a) - rankOf(b);
       if (order !== 0) return order;
@@ -536,11 +538,12 @@ const pickerPageCode = String.raw`(element, args) => {
  *   `resolveAddress` first asks for it, key by key as `pickValue` types, and returns that text as
  *   `query`. It reads and picks nothing.
  * - `pickerMatchAddress(control, address, options?)` reads the options the field's list shows now
- *   (the list the field names, else the one closest to it, or `listbox`), without typing, scrolling
- *   or opening more, and resolves the address against them as `resolveAddress` does for that text,
- *   with no tidied retry. It returns `{ picked: true, row, label, unit }`, `row` the element of the
- *   option it accepted, for the tool to click in the same call, and `label` that option as a refusal
- *   lists it, or `pickAddress`'s refusal.
+ *   (the list the field names, else an ARIA popup, else the list closest to the field, unless
+ *   `listbox` names it), without typing, scrolling or opening more, and resolves the address
+ *   against them as `resolveAddress` does for that text, with no tidied retry. It returns
+ *   `{ picked: true, row, label, unit }`, `row` the element of the option it accepted, for the tool
+ *   to click in the same call, and `label` that option as a refusal lists it, or `pickAddress`'s
+ *   refusal.
  *
  * The kind is detected from the control, or set as `options.kind`: `select`, `datalist`,
  * `typeahead` (an editable field: type, then choose a suggestion), `dropdown` (a button or div

@@ -408,34 +408,38 @@ return { typed, short, whole };`,
   expect(await submitted(page)).toEqual({ pickup: "w1" });
 });
 
-// A field that names no list, its suggestions in a plain list beside it and the page's menu in a
-// longer one: the list closest to the field is read.
-test("pickerMatchAddress reads the list closest to a field that names none", async ({ page }) => {
-  await serve(
-    page,
-    `<nav><ul><li>Home</li><li>Rides</li><li>Drive</li><li>Business</li><li>Help</li><li>Sign in</li></ul></nav>
-<form><div><label>Pickup <input id="pickup" autocomplete="off"></label><ul class="suggestions"></ul></div><input type="hidden" name="pickup"></form>
+// A field that names no list, with the page's other lists about: suggestions in a plain list beside
+// it are read over the page's longer menu, and suggestions in a listbox added to the page's end over
+// a plain list beside it.
+test("pickerMatchAddress reads the popup, else the list closest to a field that names none", async ({ page }) => {
+  const field = (list: string) => `<nav><ul><li>Home</li><li>Rides</li><li>Drive</li><li>Business</li><li>Help</li><li>Sign in</li></ul></nav>
+<form><div><label>Pickup <input id="pickup" autocomplete="off"></label>${list}</div><input type="hidden" name="pickup"></form>
 <script>
-const input = document.getElementById("pickup"), list = document.querySelector(".suggestions");
+const input = document.getElementById("pickup");
 input.addEventListener("input", () => {
+  let list = document.querySelector(".suggestions");
+  if (!list) {
+    list = document.body.appendChild(document.createElement("div"));
+    list.className = "suggestions";
+    list.setAttribute("role", "listbox");
+  }
   list.innerHTML = '<li data-value="w1"><div>Example Building</div><div>1 Example Bldg, Example City, CA 94000, US</div></li>';
+  list.onclick = (event) => (document.querySelector("[name=pickup]").value = event.target.closest("li").dataset.value);
 });
-list.addEventListener("click", (event) => (document.querySelector("[name=pickup]").value = event.target.closest("li").dataset.value));
-</script>`,
-  );
+</script>`;
   const address = JSON.stringify("1 Example Building, Example City, CA 94000");
-  expect(
-    await call(
-      page,
-      `const field = page.getByLabel("Pickup");
+  const match = `const field = page.getByLabel("Pickup");
 await pickerTypeAddress(field, ${address}, fast);
 await page.locator(".suggestions li").waitFor();
 const { row, ...match } = await pickerMatchAddress(field, ${address}, fast);
 await row.click();
-return match;`,
-    ),
-  ).toEqual({ result: { picked: true, label: "Example Building, 1 Example Bldg, Example City, CA 94000, US", unit: "" } });
-  expect(await submitted(page)).toEqual({ pickup: "w1" });
+return match;`;
+  const picked = { result: { picked: true, label: "Example Building, 1 Example Bldg, Example City, CA 94000, US", unit: "" } };
+  for (const list of ['<ul class="suggestions"></ul>', '<ul class="rides"><li>Standard</li><li>Comfort</li><li>XL</li></ul>']) {
+    await serve(page, field(list));
+    expect(await call(page, match)).toEqual(picked);
+    expect(await submitted(page)).toEqual({ pickup: "w1" });
+  }
 });
 
 test("pickValue picks a native select's option by label, value or another spelling", async ({ page }) => {
