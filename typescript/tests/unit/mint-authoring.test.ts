@@ -947,6 +947,22 @@ it("has a purchase confirm's order and a checkout's output give lines, fees and 
 });
 
 /*
+ * A cart tool given an item ID found the card by the item's name. On a menu where the same name
+ * appears under several IDs, it opened a copy with another ID, and its ID check stopped the add.
+ * The cart skill has the tool open each card with that name until one proves the ID, and refuse
+ * before the add when each shows another ID.
+ */
+it("has a cart tool find an item by its ID among cards that show only names", async () => {
+  const cart = ((await renderedTexts("typescript/authoring")).get("cart") ?? "").replace(
+    /\s+/g,
+    " ",
+  );
+  expect(cart).toContain(
+    "Where the page carries no item ID, open each card with the requested name in turn and keep the one whose own details prove the requested ID; when each card's details show another ID, refuse with `InvalidInput` before the add's commit mark, naming those IDs.",
+  );
+});
+
+/*
  * An accounting app's invoice list already showed the sent invoice, and the minter kept reading
  * other pages for minutes, some of them refused for not proving the record or for reading without
  * bound. The first bounded read-back that matches confirms the write, and nothing from before the
@@ -1278,8 +1294,8 @@ it("has the marked call re-read only what its page shows", async () => {
 // A check for something neither the caller asked for nor the tool changes, or one that needs the
 // page to show something a correct run may not show, stops correct runs of every kind of tool. So
 // each check guards the caller's request or the tool's own change, a repair narrows one that
-// stopped a right page, a write stops only on a paid option its page shows, and the publication
-// skill says the review finds such a check in every tool.
+// stopped a right page, a write's pre-commit option check stops only on a paid option the page
+// shows selected, and the publication skill says the review finds such a check in every tool.
 it("has every tool's checks guard only what the caller asked for or the tool changes", async () => {
   const texts = await renderedTexts("typescript/authoring");
   const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
@@ -1289,11 +1305,14 @@ it("has every tool's checks guard only what the caller asked for or the tool cha
   expect(text("writes")).toContain(
     "A paid add-on toggle, a pre-selected paid option or a lone saved payment method or address is still a choice to ask about.",
   );
+  expect(text("forms")).toContain(
+    "never keep or clear a paid add-on, pre-selected paid option or saved payment unasked",
+  );
   expect(text("writes")).toContain(
     "check the total against any limit the input sets, stop when the page shows a paid option selected that neither the input nor an answer settles, and check the items, address and payment.",
   );
   expect(text("publication")).toContain(
-    "- a tool's checks reject no correct run and guard only what the caller asked for or what the tool itself changes;",
+    "- a tool's checks reject no correct run, and one guarding what neither the caller asked for nor the tool itself changes stops only for a problem the page shows;",
   );
   expect(text("publication")).toContain(
     "- a composed write reproduces the session's flow and returns the confirmation or read-back it declares, without committing twice; among its checks, a before-and-after comparison",
@@ -1465,11 +1484,11 @@ it("renders the pinned standalone authoring", async () => {
     ["d6f0ed8446759ce44874a2cb7c7ee7251f92249673379b69439aaac2b5b7afb5", "auth"],
     ["a08f1ef89cc10bf11e17b8d6086b6e37649b1d5d11b78c0542cc7db32460b7e3", "testing"],
     ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
-    ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
+    ["929659d0cfaaa86b6b0bc2b1f8f80bc0fd8379f311d7d6e0d2e922ade65609a3", "forms"],
     ["9618ba9ae430a2ba893516dbca1093930b35fb0e64e59fa8c642c3545a7293ee", "writes"],
-    ["821e833093e962ecd1561648fdd2ca287ecc9fed9fe43278f783df6d51e9e46d", "cart"],
+    ["e6b00d1a392c8aed60f42037df804b3b83474b3384eaefd271f8132d6b0edcf4", "cart"],
     ["82709b7a834848416464604938c1932b65d1048bdd6f53dbe751a545187be8b0", "caller-input"],
-    ["baeddb1ebdb7d7dda563024631172081ba7dddc764a9569690b4b1f6b5089705", "publication"],
+    ["a52d97647b4961e2c2b401929af170c60809ddab50d85ab17d98cb973af2a344", "publication"],
     ["ba31a90dc5bf4b1f7e8be5e5145e99f6b4e2379e279be210c8537d9b93882d98", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);
