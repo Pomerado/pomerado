@@ -186,6 +186,26 @@ test("visible matches of the winning outcome stay ambiguous when they are form c
   }
 });
 
+test("a copy from before the action beside a new one that reads the same stays ambiguous", async ({ page }) => {
+  // A confirmation from an earlier booking stays on the page, and the click adds one that reads the same.
+  await page.setContent(`
+    <button type="button">Book</button>
+    <section id="answer"><p class="notice">Booking confirmed</p></section>
+    <script>
+      document.querySelector("button").onclick = () => setTimeout(() =>
+        document.querySelector("#answer").insertAdjacentHTML("beforeend", '<p class="notice">Booking confirmed</p>'), 100);
+    </script>`);
+  expect(
+    await call(
+      page,
+      `return await waitForOutcome({ confirmed: page.locator(".notice") }, {
+        action: () => page.getByRole("button", { name: "Book" }).click(),
+        timeout: 5000,
+      });`,
+    ),
+  ).toEqual({ error: "outcome_ambiguous: confirmed 2 visible of 2" });
+});
+
 test("an ambiguous outcome below the winner does not block it", async ({ page }) => {
   await searchPage(page, `<p>No rooms match your dates</p>${rooms}${rooms}`);
   expect(await call(page, waitBody(5000))).toEqual({ result: "empty" });
