@@ -194,7 +194,11 @@ exception: it is optional unless the task can't run without it (below).
   never just the example's value. The example's values are one case, never limits.
 - Prefer keying only on what the caller asked for. A detail that changes from one listing to
   the next, such as a seating label or a room name, shouldn't decide whether the tool books or
-  refuses unless the caller chose it.
+  refuses unless the caller chose it. A tool's check guards what the caller asked for or what the
+  tool itself changes: it proves the caller's request before the step it guards and the tool's
+  own change after it, stops on anything else only for a problem the page shows, not for
+  something it can't find, and passes on every page where the task went right. A repair narrows
+  a check that stopped a run where the task went right, or removes it when it guards neither.
 - Read results for every option the schema lists. When an option leads to a page with a
   different structure (other fields or sections), handle that layout too, and on a read signed
   out run it live as a test case (testing skill); an option that only reorders or filters the
