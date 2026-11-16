@@ -231,18 +231,27 @@ export const resolveAddressWith = async <T>(
       .flatMap(words)
       .map(numeral),
   );
-  // A suggestion street's words that the caller's street words but the house number's, each in its
-  // usual forms and taken once, leave over.
+  // A word written short for another: one to four letters with no vowel (a, e, i, o, u or y), at
+  // least two fewer, starting with its first letter and holding the rest of its letters in order.
+  const short = (brief: string, full: string) => {
+    if (!/^[b-df-hj-np-tv-xz]{1,4}$/u.test(brief) || full.length < brief.length + 2 || full[0] !== brief[0]) return false;
+    let at = 0;
+    return [...brief].every((letter) => (at = full.indexOf(letter, at) + 1) > 0);
+  };
+  // A suggestion street's words that the caller's street words but the house number's leave over,
+  // each caller's word taken once: first as written or in its usual forms, then written short for
+  // the other either way.
   const streetTokens = words(lines[lineStreet] ?? "")
     .filter((word) => !houseWords.includes(word))
-    .map((word) => new Set([word, ...match.spellings(word).flatMap(words)].map(numeral)));
+    .map((word) => [...new Set([word, ...match.spellings(word).flatMap(words)].map(numeral))]);
   const spare = (list: readonly string[]) => {
     const unused = [...streetTokens];
-    return list.filter((word) => {
-      const at = unused.findIndex((forms) => forms.has(numeral(word)));
+    const take = (fits: (word: string, form: string) => boolean) => (word: string) => {
+      const at = unused.findIndex((forms) => forms.some((form) => fits(numeral(word), form)));
       if (at >= 0) unused.splice(at, 1);
       return at < 0;
-    });
+    };
+    return list.filter(take((word, form) => word === form)).filter(take((word, form) => short(word, form) || short(form, word)));
   };
   const holds = (forms: readonly string[], within: string) => forms.some((form) => form.trim() !== "" && within.includes(form));
   const keeps = (list: readonly ReturnType<typeof toPlace>[], within: string) =>
@@ -267,7 +276,8 @@ export const resolveAddressWith = async <T>(
   // ZIP, unless `read` is set and the caller gave a house number and a place. Or it is on the
   // caller's street and shows the caller's ZIP on a street that keeps more than half the caller's
   // street words, or the caller's ZIP when that is all they gave. It is loose when it leaves out a
-  // place field and shows no caller's ZIP, and then counts as clean only when no other ties with it.
+  // place field and shows no caller's ZIP, and then counts as clean only when no other ties with it
+  // or holds every field it holds.
   // A clean one ranks above any other.
   const score = (text: string) => {
     const theirs = houseOf(text);
@@ -305,8 +315,15 @@ export const resolveAddressWith = async <T>(
       whole: same && share > 0 && kept === total && !other,
       clean,
       loose: left > 0 && !zipped,
+      held,
     };
   };
+  // Whether another usable suggestion holds every field the one at `pick` holds.
+  const rival = (scores: readonly (ReturnType<typeof score> | undefined)[], pick: number) =>
+    scores.some(
+      (each, index) =>
+        index !== pick && each !== undefined && (scores[pick]?.held ?? []).every((count, at) => count === 0 || each.held[at] === count),
+    );
   // Which of two scores ranks higher: above zero for the first, below for the second.
   const compare = (one: readonly number[], two: readonly number[]) =>
     one.map((each, index) => each - (two[index] ?? 0)).find((difference) => difference !== 0) ?? 0;
@@ -346,7 +363,7 @@ export const resolveAddressWith = async <T>(
         label: labels[pick] ?? "",
         query: text,
         value: top,
-        clean: scores[pick]?.clean === true && (tied.length === 1 || scores[pick]?.loose !== true),
+        clean: scores[pick]?.clean === true && (scores[pick]?.loose !== true || (tied.length === 1 && !rival(scores, pick))),
       };
     if (scores[pick]?.whole === true) break;
   }
@@ -410,18 +427,18 @@ export const resolveAddressWith = async <T>(
  * version as it does any rewrite: its street keeps a word of the caller's street or of its name; of
  * the fields the caller gave after the street, the ZIP, each part between commas and a part's last
  * word that has other usual forms, it leaves out at most one, showing none of it, and holds every
- * word of the others, each read outside the words of its street that match the caller's street; and
- * it shows no other ZIP, unless `read` is set for a read and the caller gave a house number and a
- * town or state; or it shows the caller's ZIP on a street that keeps more than half the caller's
- * street words, or shows the caller's ZIP when that is all the caller gave. It accepts a field
- * other than the ZIP left out only when each word of two letters or more the suggestion shows after
- * its house number, but a ZIP and one for each of the caller's street words, is one the caller gave
- * after the street, and, unless it shows the caller's ZIP, no other suggestion ranks the same. The
- * unit is not such a field, since it is returned for the site's own unit field. Otherwise it
- * refuses, with `picked: false` and every suggestion the site gave as `available`, for
- * `pickRefusal`: as `option_missing` when neither text brought a usable one, else as
- * `option_unclear`, with the usable ones as `matches`. It keeps no list of words or addresses of
- * its own but the compass directions.
+ * word of the others, each read outside the words of its street that match the caller's street,
+ * also written short; and it shows no other ZIP, unless `read` is set for a read and the caller
+ * gave a house number and a town or state; or it shows the caller's ZIP on a street that keeps more
+ * than half the caller's street words, or shows the caller's ZIP when that is all the caller gave.
+ * It accepts a field other than the ZIP left out only when each word of two letters or more the
+ * suggestion shows after its house number, but a ZIP and one for each of the caller's street words,
+ * is one the caller gave after the street, and, unless it shows the caller's ZIP, no other
+ * suggestion ranks the same or holds every field it holds. The unit is not such a field, since it
+ * is returned for the site's own unit field. Otherwise it refuses, with `picked: false` and every
+ * suggestion the site gave as `available`, for `pickRefusal`: as `option_missing` when neither text
+ * brought a usable one, else as `option_unclear`, with the usable ones as `matches`. It keeps no
+ * list of words or addresses of its own but the compass directions.
  */
 export const resolveAddress = <T = string>(
   address: string,

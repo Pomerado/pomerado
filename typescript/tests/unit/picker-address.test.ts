@@ -150,13 +150,17 @@ describe("resolveAddress", () => {
   });
 
   test("takes a suggestion that leaves out one of the caller's ZIP, town and state, and none that shows another", async () => {
-    // A state after the town in one part is its own field too.
+    // A state after the town in one part is its own field too, and a street word written short
+    // either way still keeps the street.
     for (const [wanted, shown] of [
       ["1 Example St, Exampleton, IL", "1 Example St, Exampleton"],
       ["1 Example St, Exampleton, IL", "1 Example St, IL"],
       ["1 Example St, Exampleton, IL", "1 Example St Exampleton"],
       ["1 Example St, Exampleton IL", "1 Example St, Exampleton"],
       ["1 Example St, Exampleton IL", "1 Example St, IL"],
+      ["1 Example Building, Exampleton, IL", "1 Example Bldg, IL 60000"],
+      ["1 Example Road, Exampleton, IL", "1 Example Rd, Exampleton"],
+      ["1 N Example St, Exampleton, IL", "1 North Example St, Exampleton"],
     ])
       expect(await resolveAddress(wanted ?? "", () => [shown ?? ""])).toMatchObject({ picked: true, label: shown });
     expect(await resolveAddress("1 Example Building, Exampleton, IL 60000", () => ["1 Example Bldg, Exampleton, IL"])).toMatchObject({ picked: true });
@@ -172,6 +176,7 @@ describe("resolveAddress", () => {
       ["1 Example St, North Exampleton, IL", "1 Example St, Exampleton"],
       ["1 Example Building, Exampleton, IL 60000", "1 Example Bldg, Exampleton, IL 60001"],
       ["1 Example Building, Exampleton, IL 60000", "1 Example Bldg, Sampleton, IL"],
+      ["1 Example Building, Exampleton, IL", "1 Example Bldg Sampleton, IL"],
       ["1 West St, Exampleton, IL", "1 West St, West Exampleton"],
       ["1 Example St, Exampleton, MT", "1 Example St, St Exampleton"],
       ["1 Example St, Exampleton, MT", "1 Example St St Exampleton"],
@@ -182,7 +187,7 @@ describe("resolveAddress", () => {
       expect(await resolveAddress(wanted ?? "", () => [shown ?? ""])).toMatchObject({ picked: false, reason: "option_unclear" });
   });
 
-  test("lists suggestions that tie when each leaves out the caller's town or state and shows no caller's ZIP", async () => {
+  test("lists a suggestion that leaves out the caller's town or state and shows no caller's ZIP when another ties or holds as much", async () => {
     const items = [
       { text: "1 Example St, Exampleton", id: "a" },
       { text: "1 Example St, Exampleton", id: "b" },
@@ -195,6 +200,9 @@ describe("resolveAddress", () => {
     });
     const zips = ["1 Example St, Exampleton 60000", "1 Example St, Exampleton 70000"];
     expect(await resolveAddress("1 Example St, Exampleton, IL", () => zips)).toMatchObject({ picked: false, reason: "option_unclear", matches: zips });
+    // The same street and town in another state, a same-named town, is listed too.
+    const states = ["1 Example St, Exampleton, WI", "1 Example St, Exampleton"];
+    expect(await resolveAddress("1 Example St, Exampleton, IL", () => states)).toMatchObject({ picked: false, reason: "option_unclear", matches: states });
   });
 
   test("returns as a candidate a suggestion whose street shows another direction or street number", async () => {
