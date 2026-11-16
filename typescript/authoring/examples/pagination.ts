@@ -57,14 +57,15 @@ const shown = await waitForOutcome({ empty: page.locator("#no-results"), results
 const query = (await page.locator("#q").inputValue({ timeout: waitLimits.action })).trim();
 if (shown === "empty")
   return { href: page.url(), query, rows: [], more: false, next: null, totalResults: null };
-const { rows, more } = await waitForRows(page.locator("#results > li"), {
+const shownResults = results.filter({ visible: true }).first();
+const { rows, more } = await waitForRows(shownResults.locator(":scope > li"), {
   title: ".title",
   // The badge's presence is the mark, so read its class rather than text it may not have.
   sponsored: { selector: ".sponsored", attribute: "class", optional: true },
-}, { count: ${count}, key: { attribute: "data-id" }, region: results, ...site });
+}, { count: ${count}, key: { attribute: "data-id" }, region: shownResults, ...site });
 const counted = /of (\\d+)/.exec((await visibleTexts(page.locator("#count")))[0] ?? "");
 const next = page.locator("a[rel=next]");
-const nextHref = (await next.count()) === 1 ? await next.getAttribute("href", { timeout: waitLimits.action }) : null;
+const nextHref = (await next.count()) > 0 ? await next.getAttribute("href", { timeout: waitLimits.action }) : null;
 return {
   href: page.url(),
   query,
@@ -221,14 +222,15 @@ export const readRooms = defineOperation(
         // The site's own requests, on every host of its domain, count as progress.
         const site = ${JSON.stringify(siteDomain === undefined ? {} : { siteDomain })};
         const list = page.getByRole("list", { name: "Rooms", exact: true });
-        const rows = list.getByRole("listitem");
+        const shownList = list.filter({ visible: true }).first();
+        const rows = shownList.getByRole("listitem");
         const more = page.getByRole("button", { name: "Show more", exact: true });
-        const offered = async () => (await more.count()) === 1 && (await more.isEnabled());
+        const offered = async () => (await more.count()) > 0 && (await more.isEnabled());
         const read = (count, action) =>
           waitForRows(rows, { name: ".name" }, {
             count,
             key: { attribute: "data-room-id" },
-            region: list,
+            region: shownList,
             ...site,
             ...(action === undefined ? {} : { action }),
           });
@@ -354,10 +356,11 @@ ${code}`,
 const list = page.getByRole("list", { name: "Items", exact: true });
 const shown = await waitForOutcome({ empty: page.getByRole("status").filter({ hasText: /^No items$/ }), list }, site);
 if (shown === "empty") return { rows: [], more: false };
-const { rows, more } = await waitForRows(list.getByRole("listitem"), {
+const shownList = list.filter({ visible: true }).first();
+const { rows, more } = await waitForRows(shownList.getByRole("listitem"), {
   name: ".name",
   href: { selector: "a", attribute: "href" },
-}, { count: ${count}, key: { attribute: "data-item-id" }, region: list, ...site });
+}, { count: ${count}, key: { attribute: "data-item-id" }, region: shownList, ...site });
 return { rows: rows.map((row) => ({ id: row.key, name: row.name, href: new URL(row.href, page.url()).href })), more };`),
       );
       return { ...read, hasNext: false };

@@ -279,7 +279,7 @@ const clickPlace = async ({ kernel, sessionId, errors }: Context, checkedTotal: 
         if (blocked === null) return { failure: "not_confirmed" };
         return blocked.unaskable === true ? { unaskable: blocked.labels } : { blocked: blocked.fields };
       }
-      const number = /^Order (ORD-[0-9]+)/.exec(await confirmation.innerText())?.[1];
+      const number = /^Order (ORD-[0-9]+)/.exec(await confirmation.filter({ visible: true }).first().innerText())?.[1];
       return number === undefined ? { failure: "not_confirmed" } : { order_number: number };
     `,
   });
