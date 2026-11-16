@@ -161,7 +161,7 @@ During the session:
   until the final commit and cannot place, buy, book, send or charge anything by itself. An
   `InvalidInput` or a declared refusal after only such steps, the caller's no included, ends with
   nothing applied. On the caller's no to the tool's own confirm, return a declared refusal
-  (below).
+  where one completes the run (below).
 - When one of those checks rules the task out, such as a total over the caller's limit, an
   item out of stock or a variant the page does not offer, the script refuses before the mark
   with `InvalidInput` (the caller-input skill, "Throw the error that matches what happened"),
