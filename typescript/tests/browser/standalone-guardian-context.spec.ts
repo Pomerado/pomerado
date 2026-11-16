@@ -489,14 +489,20 @@ test("a later step reuses the owner's answer even after an earlier step entered 
 const orderAsk =
   "await ask({ approve: { order: { currency: 'USD', items: [{ name: 'Synthetic drink', quantity: 1, price: '6.00' }], total: '6.00' } } })";
 
-test("a later step reuses the owner's yes to the same order once, while no step may have placed it", async () => {
-  test.setTimeout(270_000);
+test("a later step reuses the owner's yes to the same order only while no step may have placed it", async () => {
+  test.setTimeout(360_000);
   // The later step's first confirm reuses the yes; its second, once it entered its commit, asks.
   const reused = await laterAsk({
     first: `${orderAsk}; throw new Error('Failed before its commit.');`,
     later: `const first = ${orderAsk}; enteringCommit('submit'); return { first, second: ${orderAsk} };`,
   });
   expect(reused.scriptAsks).toHaveLength(2);
+  // A step that entered its commit before its first confirm may have placed the order already.
+  const entered = await laterAsk({
+    first: `${orderAsk}; throw new Error('Failed before its commit.');`,
+    later: `enteringCommit('submit'); const r = ${orderAsk}; enteringCommit('submit'); return { r };`,
+  });
+  expect(entered.scriptAsks).toHaveLength(2);
   const placed = await laterAsk({
     first: `${orderAsk}; enteringCommit('submit'); throw new Error('Failed after it.');`,
     later: `return { approve: ${orderAsk} };`,

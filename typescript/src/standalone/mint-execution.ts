@@ -203,20 +203,22 @@ const scriptQuestions = (
   const { projection } = state.session;
   let scriptQuestion: ScriptQuestionOutcome | undefined;
   let unanswered = false;
-  let orderAsked = false;
   const scriptAsk: InputAsker = (candidate, bounds) =>
     Effect.gen(function* () {
       // The same question asked again reuses the owner's answer before Guardian reviews it, which
       // would refuse it as a repeat of an answer it already trusts, however long ago the owner
-      // gave it and whether or not a step entered a commit since; a purchase confirm reuses only
-      // a yes to the same order, for the step's first purchase confirm alone, since the step may
-      // have placed the order after it, and only while every act step since proved it placed
-      // nothing. The reused answer reaches later reviews as a fresh one does. It is always the
-      // owner's latest answer to its prompt (`forgetScriptAnswers`), so it never replaces a newer
-      // one in Guardian's list.
+      // gave it and whether or not a step entered a commit since. A purchase confirm reuses only
+      // the owner's yes to the same order, and only while no act step since that yes may have
+      // placed it: each made no browser call or left every commit step it declares unsent, by its
+      // own report once it ended (`forgetOrderAnswers` below) and, for the asking step, by its
+      // journal when it asked (`commitsUnsent`). The reused answer reaches later reviews as a
+      // fresh one does. It is always the owner's latest answer to its prompt
+      // (`forgetScriptAnswers`), so it never replaces a newer one in Guardian's list.
       const keys = yield* scriptQuestionKeys(candidate, (text) => projection.text(text));
-      const kept = orderAsked ? forgetOrderAnswers(scriptAnswers.kept) : scriptAnswers.kept;
-      if (candidate.order !== undefined) orderAsked = true;
+      const kept =
+        bounds?.commitsUnsent === true
+          ? scriptAnswers.kept
+          : forgetOrderAnswers(scriptAnswers.kept);
       const answers =
         reusedScriptAnswers(candidate, keys, kept) ??
         (yield* Effect.gen(function* () {

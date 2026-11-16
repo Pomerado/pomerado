@@ -806,6 +806,12 @@ export interface AskBounds {
     readonly expiresAt: string;
     readonly rejoined: boolean;
   }) => Effect.Effect<void>;
+  /**
+   * A script's step had, by its journal when it asked, made no browser call or left every commit
+   * step it declares unsent, so it can't have placed an order yet. Absent when it may have, or the
+   * source can't tell; an owner's yes to an order then answers no purchase confirm it asks.
+   */
+  readonly commitsUnsent?: true;
 }
 
 export class InputSuperseded extends Data.TaggedError("InputSuperseded")<{}> {}

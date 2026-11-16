@@ -8,6 +8,7 @@ import type { InputAsker } from "../runtime/input-request.js";
 import type { DialogDecider } from "../runtime/kernel-operation.js";
 import type { WriteDeclaration } from "../runtime/operation.js";
 import type { CommitMark } from "../runtime/context.js";
+import { commitEvidenceOf } from "../runtime/run-outcome.js";
 import type { InputIssue } from "../runtime/errors.js";
 import type {
   InputRefusalDetail,
@@ -227,6 +228,8 @@ const handleRequest = (
   deadline: Deadline,
   message: Exclude<LocalOperationMessage, { kind: "result" | "error" | "cancel" | "journal" }>,
   cardHandles: RunCardHandles,
+  /** The child's journal as it last streamed it, which it does before each request. */
+  journal: LocalOperationJournal,
   /** Tells the child that its request opened to the caller, as the asker says (`AskBounds`). */
   opened: Effect.Effect<void> = Effect.void,
 ): Effect.Effect<unknown, Error> =>
@@ -308,7 +311,15 @@ const handleRequest = (
           }),
         );
       // The child marks a browser hand-off's commit steps sent once the asker opens it.
-      return suspended(deadline, options.ask(message.request, { opened: () => opened })).pipe(
+      const commitsUnsent =
+        journal.effect === "not_sent" || commitEvidenceOf(journal.commits) === "not_entered";
+      return suspended(
+        deadline,
+        options.ask(message.request, {
+          opened: () => opened,
+          ...(commitsUnsent ? { commitsUnsent } : {}),
+        }),
+      ).pipe(
         // ScriptInput validates raw answers in the child; the host has already typed them.
         Effect.map((answers) => scriptAnswers(message.request, answers, cardHandles)),
       );
@@ -427,6 +438,7 @@ const receiveOperation = (
         deadline,
         message,
         cardHandles,
+        current,
         Effect.ignore(sendToChild(process, { kind: "opened", id: message.id })),
       ).pipe(
         Effect.exit,
