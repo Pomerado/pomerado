@@ -1253,7 +1253,7 @@ it("has a write retry an expired quote once, which Guardian's reviews accept", a
 // time that stays fixed, with its price checked against the caller's limits, in the commit step's
 // fresh quote and every other re-check before a commit, and Guardian's publication review says
 // the same.
-it("has a re-check before a commit match the approved choice by its kind or name and price", async () => {
+it("has a re-check before a commit match the approved choice by its kind or name and fixed time", async () => {
   const texts = await renderedTexts("typescript/authoring");
   const writes = (texts.get("writes") ?? "").replace(/\s+/g, " ");
   expect(writes).toContain(
