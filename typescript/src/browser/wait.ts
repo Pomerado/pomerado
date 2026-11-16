@@ -876,7 +876,7 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
         // A locator with more than one match decides only when it shows more than once and its
         // visible matches all read the same.
         if (shown.kind === "locator" && observation.count > 1 && !(observation.visible > 1 &&
-            (await waitBounded(outcomeWaitSameText(shown.locator).catch(() => false), Math.min(1000, beforeStop()), false)))) {
+            (await waitBounded(outcomeWaitSameText(shown.locator).catch(() => false), Math.max(250, Math.min(1000, beforeStop())), false)))) {
           const failure = outcomeWaitFailure("outcome_ambiguous", ": " + outcomeWaitSeen(observations), observations, {
             outcome: shown.name,
           });

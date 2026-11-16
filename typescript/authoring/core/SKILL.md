@@ -926,7 +926,7 @@ click it or to wait for readiness: collapsed menus often hold an earlier hidden
 match. Scope a role locator to its evidenced container and to visible elements,
 for example `nav.getByRole("link", { name: /log in/i }).filter({ visible: true })`,
 then check that exactly one element matches; `waitForOutcome` checks it for the outcome it
-returns. When several candidates remain, inspect them and choose by evidence such as
+returns unless its visible matches all read the same text. When several candidates remain, inspect them and choose by evidence such as
 section, accessible name and destination before clicking or waiting. A readiness wait targets one specific
 evidenced element or page state.
 

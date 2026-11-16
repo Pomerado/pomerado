@@ -140,6 +140,8 @@ test("visible matches of the winning outcome that all read the same decide it, w
 }) => {
   await searchPage(page, `${rooms}${rooms}`);
   expect(await call(page, waitBody(5000))).toEqual({ result: "results" });
+  await searchPage(page, `<p>No rooms match your dates</p>`.repeat(20));
+  expect(await call(page, waitBody(5000))).toEqual({ result: "empty" });
   // Two visible copies of the empty state, spaced differently, after a copy hidden by
   // visibility that reads otherwise and does not count.
   await searchPage(
@@ -164,7 +166,7 @@ test("visible matches of the winning outcome that all read the same decide it, w
   });
 });
 
-test("visible matches of the winning outcome stay ambiguous when their values differ, they have no text, or more than 20 show", async ({
+test("visible matches of the winning outcome stay ambiguous when they are form controls, have no text, or more than 20 show", async ({
   page,
 }) => {
   const body = `const answer = page.locator("#answer");
@@ -172,6 +174,8 @@ test("visible matches of the winning outcome stay ambiguous when their values di
   const box = `class="notice" style="display: inline-block; width: 20px; height: 20px"`;
   for (const [html, shown] of [
     [`<input class="notice" value="1"><input class="notice" value="3">`, 2],
+    [`<input class="notice" value="5"><input class="notice" value="5">`, 2],
+    [`<input type="checkbox" class="notice" checked><input type="checkbox" class="notice">`, 2],
     [`<span ${box} aria-label="Sold out"></span><span ${box} aria-label="In stock"></span>`, 2],
     [`<p class="notice">No rooms match your dates</p>`.repeat(21), 21],
   ] as const) {

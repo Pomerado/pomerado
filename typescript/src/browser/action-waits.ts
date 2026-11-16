@@ -441,13 +441,14 @@ const outcomeWaitShows = (candidate, observation, state, stale, now) => {
 const outcomeWaitShowsAny = (candidate, observation) =>
   observation !== undefined &&
   (candidate.kind === "locator" ? observation.visible > 0 : candidate.kind !== "url" && candidate.kind !== "check" && observation.matched);
-// Whether a locator's visible matches, two to 20, all read the same text, spacing aside: a form
-// control's value, any other element's text. Matches with no text never read the same.
+// Whether a locator's visible matches, two to 20, all read the same text, spacing aside. A form
+// control has no text here, and matches with no text never read the same.
 const outcomeWaitSameText = (locator) =>
   locator.filter({ visible: true }).evaluateAll((elements) => {
+    if (elements.length < 2 || elements.length > 20) return false;
     const texts = new Set(elements.map((element) =>
-      String((element.matches("input, textarea, select") ? element.value : element.innerText) ?? "").replace(/\s+/g, " ").trim()));
-    return elements.length > 1 && elements.length <= 20 && texts.size === 1 && !texts.has("");
+      element.matches("input, textarea, select") ? "" : String(element.innerText ?? "").replace(/\s+/g, " ").trim()));
+    return texts.size === 1 && !texts.has("");
   });
 const outcomeWaitEvidence = async (candidate, observation, state, events, now) => {
   const { kind, name } = candidate;
