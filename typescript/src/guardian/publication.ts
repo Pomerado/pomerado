@@ -501,7 +501,8 @@ export const publicationWriteLaterStatePolicy =
  * tailoring input's limited use that neither the caller's answer to its design question nor the
  * published revision's inputs back, a throw
  * where empty or null was right (and the reverse), an empty result other evidence on the same
- * page contradicts, a throw in a read on a number limit a stepped scale
+ * page contradicts, a check that can stop a run where the task went right or that guards what
+ * neither the caller asked for nor the tool changes, a throw in a read on a number limit a stepped scale
  * can apply, URLs built outside the site's own pattern, a
  * value the caller names matched only against the options a page shows or a hard-coded list
  * instead of the site's own search, code that submits caller details in a step

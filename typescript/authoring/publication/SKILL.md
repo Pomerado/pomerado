@@ -228,13 +228,13 @@ pomerado:section publication.saved-files:end -->.
      schema declares before its first mark, never in an undeclared output shape;
 pomerado:section publication.declared-refusal:end -->
    - a composed write reproduces the session's flow and returns the confirmation or read-back it
-     declares, without committing twice; a before-and-after comparison that compares whole
-     objects or serialized text, reads through another query after the commit than before it,
-     or counts a field the site maintains as a change, a branch the session did not run that
-     confirms through its own code (its own commit call is fine), a throw after a confirmed final
-     commit once the read-back found the written record, and a stop before it on free text a
-     save rewrote, are findings too, as is a coverage claim that a check passed offline over a
-     body that was not saved whole.
+     declares, without committing twice; among its checks, a before-and-after comparison that
+     compares whole objects or serialized text, reads through another query after the commit
+     than before it, or counts a field the site maintains as a change, a branch the session did
+     not run that confirms through its own code (its own commit call is fine), a throw after a
+     confirmed final commit once the read-back found the written record, and a stop before it on
+     free text a save rewrote, are findings too, as is a coverage claim that a check passed
+     offline over a body that was not saved whole.
 
 ## Never put these in published files
 
