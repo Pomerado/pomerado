@@ -456,22 +456,23 @@ export const resolveAddressWith = async <T>(
  * it is on the caller's street and keeps the address field by field, so the tool reports the site's
  * version as it does any rewrite: its street keeps a word of the caller's street or of its name; of
  * the fields the caller gave after the street, the ZIP, each part between commas, and a place's
- * code or name of two words ending the last part that ends in a place after other words, it leaves
- * out at most one, showing none of it, and shows each of the others whole, in one of its usual
- * forms, only the last of them read as a place, its words side by side in one part, each word used
- * once, read in its parts after its street and in its street's words that the caller's street, in
- * their usual forms or written short, leaves over; and it shows no other ZIP, unless `read` is set
- * for a read and the caller gave a house number and a town or state; or it shows the caller's ZIP
- * on a street that keeps more than half the caller's street words, or shows the caller's ZIP when
- * that is all the caller gave. It accepts a field other than the ZIP left out only when each word
- * of two letters or more the suggestion shows after its house number, but a ZIP and one for each of
- * the caller's street words, belongs to a field it shows or to the caller's unit, and, unless it
- * shows the caller's ZIP, no other suggestion ranks the same, nor holds every field it holds on the
- * caller's street with no word of its street left over. The unit is not such a field, since it is
- * returned for the site's own unit field. Otherwise it refuses, with `picked: false` and every
- * suggestion the site gave as `available`, for `pickRefusal`: as `option_missing` when neither text
- * brought a usable one, else as `option_unclear`, with the usable ones as `matches`. It keeps no
- * list of words or addresses of its own but the compass directions.
+ * code or name of two words that ends the state's part, the last part that ends in a place, after
+ * other words, it leaves out at most one, showing none of it, and shows each of the others whole,
+ * in one of its usual forms, a place's other forms only for the state's, its words side by side in
+ * one part, each word used once, read in its parts after its street and in its street's words that
+ * the caller's street, in their usual forms or written short, leaves over; and it shows no other
+ * ZIP, unless `read` is set for a read and the caller gave a house number and a town or state; or
+ * it shows the caller's ZIP on a street that keeps more than half the caller's street words, or
+ * shows the caller's ZIP when that is all the caller gave. It accepts a field other than the ZIP
+ * left out only when each word of two letters or more the suggestion shows after its house number,
+ * but a ZIP and one for each of the caller's street words, belongs to a field it shows or to the
+ * caller's unit, and, unless it shows the caller's ZIP, no other suggestion ranks the same, nor
+ * holds every field it holds on the caller's street with no word of its street left over. The unit
+ * is not such a field, since it is returned for the site's own unit field. Otherwise it refuses,
+ * with `picked: false` and every suggestion the site gave as `available`, for `pickRefusal`: as
+ * `option_missing` when neither text brought a usable one, else as `option_unclear`, with the
+ * usable ones as `matches`. It keeps no list of words or addresses of its own but the compass
+ * directions.
  */
 export const resolveAddress = <T = string>(
   address: string,
