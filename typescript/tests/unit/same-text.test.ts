@@ -445,6 +445,42 @@ it("keeps text of punctuation alone as it is, never blank", () => {
   expectEach([["-", "  "]], false);
 });
 
+// A choice's time can move with the clock, such as a delivery window or an arrival estimate, while
+// its kind and price stay. With ignoreClockTimes each time of day and each count of minutes or
+// hours leaves both texts, and every other word and number still counts.
+it("leaves out times that move with the clock only when asked", () => {
+  const moved: Pairs = [
+    ["Express 7:21pm–8:51pm", "Express 7:23pm–8:53pm"],
+    ["Priority 7:21 PM - 8:51 PM $3.99", "Priority 7:40 PM - 9:10 PM $3.99"],
+    ["Standard ride, 6 min away, pickup 7:21pm, $23.10", "Standard ride, 3 mins away, pickup 7:24pm, $23.10"],
+    ["Arrives 19:21", "Arrives 19:40:05"],
+    ["Delivery 7–8pm", "Delivery 8–9 p.m."],
+    ["Ready in 25–40 min", "Ready in 30-45 minutes"],
+    ["Ready in 1 hr", "Ready in 2 hours"],
+    ["Arrives 7:21\u202fPM", "Arrives 7:40\u202fPM"],
+  ];
+  for (const [shown, wanted] of moved) {
+    expect(sameText(shown, wanted, { ignoreClockTimes: true }), `${shown} | ${wanted}`).toBe(true);
+    expect(sameText(wanted, shown, { ignoreClockTimes: true }), `${wanted} | ${shown}`).toBe(true);
+    expect(sameText(shown, wanted), `${shown} | ${wanted}`).toBe(false);
+  }
+  for (const [shown, wanted] of [
+    ["Express 7:21pm–8:51pm", "Standard 7:23pm–8:53pm"],
+    ["Priority 7:21pm $3.99", "Priority 7:40pm $4.99"],
+    ["Nov 21 7pm", "Nov 22 7pm"],
+    ["Nov 21-22 Amber Room", "Nov 20-22 Amber Room"],
+    ["$10 min order", "$15 min order"],
+    ["$ 10 min order", "$ 15 min order"],
+    ["Nov 21 - 7:00 PM", "Nov 22 - 7:00 PM"],
+    ["Nov 5 - 7 PM", "Nov 6 - 7 PM"],
+    ["Gate 12", "Gate 12 pm"],
+  ] as const)
+    expect(sameText(shown, wanted, { ignoreClockTimes: true }), `${shown} | ${wanted}`).toBe(false);
+  // A price or a decimal stays, and so does a word that only starts like am or pm.
+  expect(sameText("Total $3.99", "Total $3.59", { ignoreClockTimes: true })).toBe(false);
+  expect(sameText("7 amps", "8 amps", { ignoreClockTimes: true })).toBe(false);
+});
+
 it("embeds as self-contained source, so page code can use it", () => {
   const embedded = new Function(`return ${String(sameText)};`)() as typeof sameText;
   expect(embedded("St-Jean", "Saint Jean")).toBe(true);
@@ -455,4 +491,5 @@ it("embeds as self-contained source, so page code can use it", () => {
   expect(embedded("13 ELM PKWY", "12 Elm Parkway", { rewrite: true })).toBe(false);
   expect(embedded("+1 (555) 123-4567", "555.123.4567", { rewrite: true })).toBe(true);
   expect(embedded("1420 Lark Rd Apt 2", "1420 Larkspur Road", { rewrite: true })).toBe(false);
+  expect(embedded("Express 7:21pm–8:51pm", "Express 7:23pm–8:53pm", { ignoreClockTimes: true })).toBe(true);
 });
