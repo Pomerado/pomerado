@@ -325,6 +325,9 @@ describe("resolveAddress", () => {
       ["5 Sample Blvd, Suite 5, Example City, IL", "5 Sample Bar, 5 Sample Blvd, Example City, IL, USA", "Suite 5"],
       ["100 Example St, Suite 24, Exampleton, IL", "24 Hour Sample, 100 Example St, Exampleton, IL, USA", "Suite 24"],
       ["12 Example St, Apt 2, Exampleton, IL", "Sample Cafe, 12 Example St, Exampleton, IL, USA, 2 mi", "Apt 2"],
+      ["12 Example St, Apt 2, Exampleton, IL", "Sample Cafe, 12 Example St, Exampleton, IL, USA, 1.2 mi", "Apt 2"],
+      ["12 Example St, Apt 2, Exampleton, IL", "0.2 mi, Sample Cafe, 12 Example St, Exampleton, IL, USA", "Apt 2"],
+      ["12 Example St, Suite 39, Exampleton, IL", "Pier 39, 12 Example St, Exampleton, IL, USA", "Suite 39"],
     ])
       expect(await resolveAddress(address ?? "", () => [shown ?? ""])).toMatchObject({ picked: true, label: shown, unit });
   });
