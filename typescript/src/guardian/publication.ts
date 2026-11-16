@@ -573,7 +573,7 @@ export const publicationPurchaseOrderPolicy =
  * it once the time moves, though the site still offers it, so the review sends that check back.
  */
 export const publicationApprovedChoicePolicy =
-  "A re-check before a commit that refuses the choice the caller approved, or asks the caller again, when only a time it shows that moves with the clock changed, instead of matching it by its kind or name and its price, is a confirmation finding at that check.";
+  "A re-check before a commit that stops the write or asks the caller again when the choice the caller approved changed only in a time it shows that moves with the clock, instead of matching it by its kind or name, its price and any time it shows that stays fixed, is a confirmation finding at that check.";
 
 /** What Guardian reads about the output notes file, beside the example output's own rule. */
 export const publicationOutputNotesPolicy =

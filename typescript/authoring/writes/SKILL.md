@@ -365,8 +365,8 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   choices against the caller's limits, such as the cap and the same item or route, before the
   mark as above, all in that one step, or right before the card fill when the host fills the card.
   There, and in any other re-check before a commit, match the choice the caller approved by its
-  kind or name and its price, not by a time it shows that moves with the clock, and ask the caller
-  again only when its kind or price changed. When the site
+  kind or name, its price and any time it shows that stays fixed, not by a time that moves with
+  the clock, and keep it as approved when only that time changed. When the site
   answers the click by saying the quote expired or the price changed, with
   that proof that it created nothing, call `notCommitted` for the step with `{ siteRefused: true }`, refresh the quote the same way and check it again,
   then call `enteringCommit` again and click once more. A fresh quote that breaks a limit refuses
