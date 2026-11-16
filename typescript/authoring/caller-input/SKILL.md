@@ -235,10 +235,15 @@ already asked for, or to solve a CAPTCHA.
    the caller sees only the label.
 3. Mark an option taken from the caller's own account (a saved traveler, address, card
    or account) with `accountSpecific: true` and a `maskedLabel` that keeps it
-   recognizable without its numbers or email, such as `"Jane D. •••• 7890"`. The API
-   and MCP show the masked label with a notice; only the owner's protected page shows
-   the full label. A masked label that still shows five or more digits or an email
-   address is replaced by the label's last four digits or a numbered placeholder.
+   recognizable without its numbers or email: a card's brand and last four digits, an
+   address's saved label name without its recipient, street, city or ZIP, or a numbered
+   placeholder for an address with no label name. The API and MCP show the masked label
+   with a notice; only the owner's protected page shows the full label. A masked label
+   that still shows five or more digits or an email address is replaced by the label's
+   last four digits or a numbered placeholder. Prefer taking the saved entry the caller
+   can name as an optional input, matching each entry whose full label contains it as
+   whole words, and ask only when the input is empty or matches no entry or several,
+   offering only the matches when several match.
    A purchase's final confirm, a choice or a confirm, also passes `order` with the
    checkout's `currency`, its `items` (each `name`, `quantity`, `unit` for an item sold by
    weight or measure, and `price` each, `lineTotal` or both), `fees` (each `name` and

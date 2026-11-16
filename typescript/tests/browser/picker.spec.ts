@@ -238,6 +238,17 @@ test("pickAddress splits off the unit and picks the suggestion a tidied street b
   expect(await submitted(page)).toEqual({ person: "a1" });
 });
 
+// A suggestion that keeps the house number, street and place under another ZIP is a candidate in a
+// write, and taken in a read.
+test("pickAddress takes the site's address under another ZIP only in a read", async ({ page }) => {
+  const addresses = '[["a1","1 Example St, Exampleton, IL 60001, USA"]]';
+  await serve(page, combobox.replace("Assignee", "Address").replace(/const people = \[.*\];/, `const people = ${addresses};`));
+  const body = `return await pickAddress(page.getByRole("combobox", { name: "Address" }), "1 Example St, Exampleton, IL 60000", fast);`;
+  expect(await call(page, body)).toMatchObject({ result: { picked: false, reason: "option_unclear" } });
+  expect(await callRead(page, body)).toMatchObject({ result: { picked: true, value: "a1" } });
+  expect(await submitted(page)).toEqual({ person: "a1" });
+});
+
 // Suggestions with the street on one line and the town on the next are read whole, so the town
 // counts; one that keeps the address only in part comes back as a candidate.
 test("pickAddress reads two-line suggestions whole, and lists them when none keeps the address", async ({ page }) => {

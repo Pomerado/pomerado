@@ -58,6 +58,8 @@ export interface OutcomeKindObservation {
 export interface OutcomeResult {
   readonly outcome: string;
   readonly kind: OutcomeKind;
+  /** The outcome is one `pending` named, still showing when the wait's hold ended. */
+  readonly pending?: true;
   readonly afterMs: number;
   readonly looks: number;
   readonly evidence: OutcomeEvidence;

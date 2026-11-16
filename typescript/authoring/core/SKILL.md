@@ -253,9 +253,10 @@ exception: it is optional unless the task can't run without it (below).
   labels them for the caller to choose one, each selecting exactly one, with a declared choice
   question (.agents/caller-input/SKILL.md) or `pickRefusal`, which lists them as `available`.
   Resolve a typed address through the site's suggestions with `pickAddress` from `pickerCode`, or
-  `resolveAddress` from `pomerado/runtime` over the site's own suggestion request; fill the site's
-  unit field, or its second address line, with the `unit` it returns, return the suggestion it
-  accepted as the site's version of the address, and throw its `pickRefusal` only when it accepts
+  `resolveAddress` from `pomerado/runtime` over the site's own suggestion request, with
+  `{ read: true }` after its `label` in a read; fill the site's unit field, or its second address
+  line, with the `unit` it returns, return the suggestion it accepted as the site's version of the
+  address, and throw its `pickRefusal` only when it accepts
   none.
 - Match the caller's proper nouns, such as places, venues and company names, with a fuzzy
   match that accepts the usual forms of the same name, such as a name with or without its
@@ -566,6 +567,9 @@ Then, for every field:
 - Prefer parsing what the page shows into typed fields over returning a result row, card or
   itinerary as one text blob or summary, and keep every result row of the main list the page
   shows, up to the call's `limit` (pagination skill).
+- A new tool's build sees only some of a list's rows, so type each row field that is neither the
+  row's key nor a needed value as `Schema.NullOr(...)` and pass it to `waitForRows` as
+  `optional`; a row that lacks one stays in the list with that field null.
 - Read every output from the page or response on every run, so every returned field has
   observable support: never a literal, a default you invented, or a constant `null`, `[]`,
   `false`, `0` or fixed label where the page can show the value.
@@ -775,7 +779,7 @@ and reading the same twice (`waitForRows`); keeping every result row means every
 page size. A slot that is present but empty, a skeleton, `aria-busy` or reading "Loading…" is
 still loading, never absent; a slot with no identifier is not a result. A value still loading
 when the page stops progressing fails the run, optional or not: null is only for a field this
-record's markup lacks altogether, as the build saw on records without it, never for a slow one.
+record's markup lacks altogether, never for a slow one.
 When a list row shows the site's own plain "unavailable" state for a value, such as a price,
 prefer treating that row as settled in the readiness wait and returning that state in an output
 that can carry it, over waiting for a value the site will not show.
@@ -866,8 +870,9 @@ Prefer the wait helpers' own settling over loops of your own that poll until val
 the same on two looks.
 `waitForChange(fields, { before, action, loading })` returns `{ values, changed }` after a choice:
 changed, or the same with no progress sign for `unchangedMs`. They throw a `ValueWaitFailure`:
-`values_loading` when a value is still loading as progress stops, `change_unknown` when the
-fields are missing, `values_timeout` at the cap. A host may retry a read once after
+`values_loading` when a value is still loading as progress stops, `page_mismatch` when a needed
+field is missing then, `change_unknown` when the fields are missing, `values_timeout` at the
+cap. A host may retry a read once after
 `outcome_timeout`, `outcome_unknown`, `values_loading`, `values_timeout` or `change_unknown`,
 so let them throw. `waitReport()` returns a one-line summary of how each wait in the call ended.
 A field is a Playwright locator, or `{ locator, attribute, optional, all }`, where `all` reads
