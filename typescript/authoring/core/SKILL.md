@@ -134,14 +134,15 @@ pomerado:section core.execute-calls:end -->
   with its own page in place of the site's, sometimes with status 200: a few KB where the site's
   page is far larger, answered faster, with little visible text and none of the site's layout.
   Before you treat the data as missing, compare the answer's status, size and title with the
-  example's, and tell which kind of check it is:
-  - A check that clears by itself, such as an interstitial titled "Just a moment" that reloads
-    into the site, or a captcha: on a page, name it as one answer of the same wait and call
-    `waitPastChallenge`.
-  - A refusal, such as an "Access Denied" or "Security Check" page, or a short 403 or 200 that
-    only says the visitor was refused: it never clears, so never wait on it. Fail the call at once
-    as the block above, with `new errors.OperationFailure(message)` whose message names the answer's status, size
-    and title.
+  example's, and tell which kind of check it is by what the page holds, not by its title, since
+  sites give both kinds the same titles, such as "Security Check":
+  - A check that clears by itself, one that holds a captcha frame or a script that reloads into
+    the site, such as an interstitial titled "Just a moment": on a page, name it as one answer of
+    the same wait and call `waitPastChallenge`.
+  - A refusal, a page with only static text that says the visitor was refused, such as "Access
+    Denied", or a short 403 or 200 that only refuses: it never clears, so never wait on it. Fail
+    the call at once as the block above, with `new errors.OperationFailure(message)` whose
+    message names the answer's status, size and title.
   For a request the tool sent, both kinds fail the call that way, never as missing data. A site
   that changed lacks the data on a new browser too; test that before you change a parser.
 - Never repeat a call that may have run.
