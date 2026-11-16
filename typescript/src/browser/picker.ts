@@ -3,7 +3,7 @@ import { timeoutDefaults } from "../runtime/deadline.js";
 import { operationErrors } from "../runtime/operation-failure.js";
 import { foldChoiceText, rankByWords, spellingsOf } from "../runtime/text.js";
 import { typeKeys, typingPauses } from "../runtime/typing-pace.js";
-import { resolveAddressWith } from "./picker-address.js";
+import { addressRequest } from "./picker-address.js";
 import { cleanRanks, closestFirst, pickerRanks, rankChoices } from "./picker-rank.js";
 
 /**
@@ -424,6 +424,10 @@ const pickerPageCode = String.raw`(element, args) => {
       const actions = [...node.querySelectorAll("a[href], button, [role=button], [role=link]")].filter(shown);
       if (actions.length === 1) actions[0].setAttribute("data-pomerado-pick-hit", tag);
     }
+    // A category the site shows the row with, such as a venue type, as args.category finds it: the
+    // row itself, or an element in it, whose own text is no part of the row's place.
+    const badge = typeof args.category === "string" && args.category !== "" ? (node.matches(args.category) ? node : node.querySelector(args.category)) : null;
+    const category = badge && badge !== node ? clean(badge.innerText ?? badge.textContent ?? "") : "";
     const base = names.join("\u0001") + "\u0000" + value;
     const seen = counts.get(base) ?? 0;
     counts.set(base, seen + 1);
@@ -437,6 +441,8 @@ const pickerPageCode = String.raw`(element, args) => {
       value,
       disabled,
       creation: creation(node, text),
+      categorized: Boolean(badge),
+      category,
       selected: node.getAttribute("aria-selected") === "true" || node.getAttribute("aria-checked") === "true",
       top: scroller ? scroller.scrollTop : 0,
     };
@@ -526,24 +532,22 @@ const pickerPageCode = String.raw`(element, args) => {
  *   every line of it), every option it lists, scrolled
  *   through when the list renders as it scrolls, then closes it: the page's live options for a
  *   caller question or an `available` list.
- * - `pickAddress(control, address, options?)` resolves an address the caller typed through the
- *   field's suggestions as `resolveAddress` does, with `read` in a read, reading each by its whole
- *   text with `pickerOptions`, its lines as comma parts, as a refusal lists it, then picks the one
- *   it accepted with `pickValue`, typing the text that brought it and taking the first of copies.
- *   It returns `pickValue`'s outcome with that text as `query`
- *   and the unit it split off as `unit`, for the site's own unit field, or, when it accepts none,
- *   `resolveAddress`'s refusal, `option_missing` or `option_unclear`, with every suggestion the
- *   field gave as `available` and `unit`.
  * - `pickerTypeAddress(control, address, options?)` types the address into the field as
- *   `resolveAddress` first asks for it, key by key as `pickValue` types, and returns that text as
- *   `query`. It reads and picks nothing.
- * - `pickerMatchAddress(control, address, options?)` reads the options the field's list shows now
- *   (the list the field names, else an ARIA popup, else the list closest to the field, unless
- *   `listbox` names it), without typing, scrolling or opening more, and resolves the address
- *   against them as `resolveAddress` does for that text, with no tidied retry. It returns
- *   `{ picked: true, row, label, unit }`, `row` the element of the option it accepted, for the tool
- *   to click in the same call, and `label` that option as a refusal lists it, or `pickAddress`'s
- *   refusal.
+ *   `matchAddress` asks for it, its unit split off (`addressRequest`), key by key as `pickValue`
+ *   types, and returns that text as `query`. It reads and picks nothing.
+ * - `pickerAddressRows(control, options?)` reads the rows the field's list shows now (the list the
+ *   field names, else an ARIA popup, else the list closest to the field, unless `listbox` names
+ *   it), without typing, scrolling or opening more, and returns `{ rows: [{ text, categorized }],
+ *   read }`: each row's whole text, its lines joined by commas, and whether it shows a category of
+ *   its own, which `options.category` finds, a CSS selector matching the row or an element in it,
+ *   such as a venue type a map pin lacks; that element's text is left out of the row's. `read` is
+ *   the run's effect. Return it from the call and pass it to `matchAddress` from
+ *   `pomerado/runtime` in the script, which matches with PlaceMatch there, never on the page.
+ * - `pickerMatchAddress(control, match, options?)` takes `matchAddress`'s answer in the next call,
+ *   with the options `pickerAddressRows` had: it finds the row it took in the list open now, at its
+ *   place with its text, else the first with its text, and returns `{ picked: true, row, label, unit }`, `row` that row's element, for the
+ *   tool to click in the same call, and `unit` for the site's own unit field; or the refusal as it
+ *   is, or `option_missing` when the list no longer shows the row.
  *
  * The kind is detected from the control, or set as `options.kind`: `select`, `datalist`,
  * `typeahead` (an editable field: type, then choose a suggestion), `dropdown` (a button or div
@@ -843,6 +847,7 @@ const pickerEval = async (s, phase, extra = {}) => {
     phase,
     popup,
     option: s.options.option ?? null,
+    category: s.options.category ?? null,
     valueAttributes: s.options.valueAttributes ?? [],
     ...extra,
   };
@@ -1674,7 +1679,7 @@ const pickValues = async (control, values, options = {}) => {
     await s.handle?.dispose().catch(() => undefined);
   }
 };
-// The options a picker lists, each with its lines, for pickerOptions and pickAddress.
+// The options a picker lists, each with its lines, for pickerOptions.
 const pickerList = async (control, options = {}) => {
   const s = await pickerStart(control, options);
   try {
@@ -1718,25 +1723,10 @@ const pickerOptions = async (control, options = {}) => {
   const { kind, list } = await pickerList(control, options);
   return { kind, options: list.map((option) => ({ label: option.label, text: pickerText(option), value: option.value, disabled: option.disabled })) };
 };
-const pickerResolveAddress = ${String(resolveAddressWith)};
-const pickerAddressRules = { fold: pickerFold, spellings: pickerSpellings, rank: pickerRankChoices };
-// Each suggestion is read with its lines as comma parts, as a refusal lists it, so a place's name on
-// the line above its address stays out of its street.
-const pickAddress = async (control, address, options = {}) => {
-  const suggest = async (query) => (await pickerList(control, { ...options, query })).list.filter((option) => !option.disabled);
-  const found = await pickerResolveAddress(String(address ?? ""), suggest, pickerCandidate, pickerAddressRules, { read: pickerReads() });
-  if (!found.picked) return found;
-  const picked = await pickValue(control, pickerText(found.choice), { ...options, query: found.query, tie: "first" });
-  return picked.picked ? { ...picked, query: found.query, unit: found.unit } : { ...picked, wanted: String(address ?? "").replace(/\s+/g, " ").trim(), unit: found.unit };
-};
-// Types the text the resolver asks the site for first, which it hands to suggest before any other.
+const pickerAddressRequest = ${String(addressRequest)};
+// Types the text matchAddress asks the site for first: the address with its unit split off.
 const pickerTypeAddress = async (control, address, options = {}) => {
-  let query = "";
-  const first = (text) => {
-    query ||= text;
-    return [];
-  };
-  await pickerResolveAddress(String(address ?? ""), first, String, pickerAddressRules);
+  const { query } = pickerAddressRequest(String(address ?? ""), pickerFold);
   const s = await pickerStart(control, options);
   try {
     await pickerType(s, s.control, query, 0);
@@ -1747,22 +1737,47 @@ const pickerTypeAddress = async (control, address, options = {}) => {
     s.net.stop();
   }
 };
-// Resolves the address against the list open now, read once as it shows, as the only suggestions,
-// and returns the element of the one it accepted (its one link or button when it has one).
-const pickerMatchAddress = async (control, address, options = {}) => {
+// An address row as matchAddress reads it: its lines as comma parts, so a place's name on the line
+// above its address stays out of its street, without the category the site shows it with.
+const pickerAddressRow = (option) => {
+  const lines = option.category ? (option.lines ?? []).filter((line) => line !== option.category) : option.lines;
+  const text = pickerCandidate({ ...option, lines, text: lines?.length === 1 ? lines[0] : option.text }).replace(/\s+/g, " ").trim();
+  return { text, categorized: option.categorized === true };
+};
+// The usable rows of the list open now, read once as it shows, in the site's order.
+const pickerAddressScan = async (s) =>
+  (await pickerEval(s, "scan", { opened: true })).options.filter((option) => !option.disabled && !option.creation);
+// The rows the field's list shows now, for matchAddress in the script, with the run's effect.
+const pickerAddressRows = async (control, options = {}) => {
   const s = await pickerStart(control, options);
   try {
-    let rows = (await pickerEval(s, "scan", { opened: true })).options.filter((option) => !option.disabled && !option.creation);
-    const once = () => {
-      const read = rows;
-      rows = [];
-      return read;
-    };
-    const found = await pickerResolveAddress(String(address ?? ""), once, pickerCandidate, pickerAddressRules, { read: pickerReads() });
-    if (!found.picked) return found;
-    const hit = pickerTag(s, "data-pomerado-pick-hit", found.choice.tag);
-    const row = await ((await hit.count()) > 0 ? hit : pickerTag(s, "data-pomerado-pick", found.choice.tag)).elementHandle(s.act());
-    return { picked: true, row, label: found.label, unit: found.unit };
+    const rows = (await pickerAddressScan(s)).map(pickerAddressRow);
+    return { rows, read: pickerReads() };
+  } catch (error) {
+    throw pickerTimedOut(error, s);
+  } finally {
+    s.net.stop();
+    await pickerEval(s, "cleanup").catch(() => undefined);
+    await s.handle?.dispose().catch(() => undefined);
+  }
+};
+// The element of the row matchAddress took, found again in the list open now at its place with its
+// text (else the first with its text), for the tool to click in the same call; its refusal as it is.
+const pickerMatchAddress = async (control, match, options = {}) => {
+  if (match === null || typeof match !== "object" || typeof match.picked !== "boolean")
+    throw new TypeError("pickerMatchAddress takes matchAddress's answer: read the list with pickerAddressRows in one call, match it with matchAddress in the script, then pass its answer here in the next call");
+  if (!match.picked) return match;
+  const s = await pickerStart(control, options);
+  try {
+    const rows = await pickerAddressScan(s);
+    const texts = rows.map((option) => pickerAddressRow(option).text);
+    const at = texts[match.index] === match.label ? match.index : texts.indexOf(match.label);
+    if (at < 0)
+      return { picked: false, reason: "option_missing", wanted: match.label, available: [...new Set(texts)].slice(0, 100), matches: [], unit: match.unit };
+    const tag = rows[at].tag;
+    const hit = pickerTag(s, "data-pomerado-pick-hit", tag);
+    const row = await ((await hit.count()) > 0 ? hit : pickerTag(s, "data-pomerado-pick", tag)).elementHandle(s.act());
+    return { picked: true, row, label: match.label, unit: match.unit };
   } catch (error) {
     throw pickerTimedOut(error, s);
   } finally {
@@ -1790,7 +1805,7 @@ const PickedValue = Schema.Struct({
 });
 
 /**
- * What `pickValue` and `pickAddress` return, for decoding a call's result: the option it
+ * What `pickValue` returns, for decoding a call's result: the option it
  * committed, or why the caller's value is not among the options (`pickRefusal` turns that into
  * `InvalidInput`).
  */
@@ -1806,11 +1821,8 @@ export const PickOutcome = Schema.Union(
     tied: Schema.optional(Schema.Array(Schema.String)),
     // Only when a read took a match looser than `cleanRanks`: the option is not the value itself.
     loose: Schema.optional(Schema.Literal(true)),
-    // Only from `pickAddress`: the text that brought the suggestion, and the unit split off.
-    query: Schema.optional(Schema.String),
-    unit: Schema.optional(Schema.String),
   }),
-  Schema.extend(NotPicked, Schema.Struct({ unit: Schema.optional(Schema.String) })),
+  NotPicked,
 );
 export type PickOutcome = typeof PickOutcome.Type;
 
