@@ -166,6 +166,9 @@ describe("resolveAddress", () => {
       ["455 E 500 S, Exampleton, UT", "455 S 500 E Exampleton, UT, USA"],
       ["1 Example St, Exampleton, NE", "1 Example St NE, Exampleton, NE 68000, USA"],
       ["1 Example St NE, Exampleton, NE", "1 Example St, Exampleton, NE 68000, USA"],
+      ["1 Example St, Exampleton, NE", "1 Example St NE, Exampleton, Nebraska 68000, USA"],
+      ["1 Example St NE, Exampleton, Nebraska", "1 Example St, Exampleton, NE 68000, USA"],
+      ["1 Example St, West Sampleton, FL", "1 Example St West, Sampleton, FL, USA"],
     ])
       expect(await resolveAddress(address ?? "", () => [shown ?? ""])).toMatchObject({ picked: false, reason: "option_unclear", matches: [shown] });
     // So in a read under another ZIP too.
@@ -192,6 +195,7 @@ describe("resolveAddress", () => {
       // A unit on the street's line keeps its street's own number.
       ["350 5th Ave Apt 3, Exampleton, NY", "350 5th Ave, Exampleton, NY, USA"],
       ["350 5th Ave, Apt 3, Exampleton, NY", "350 5th Ave Apt 3, Exampleton, NY, USA"],
+      ["350 Fifth Ave Apt 3, Exampleton, NY", "350 5th Ave, Exampleton, NY, USA"],
     ])
       expect(await resolveAddress(address ?? "", () => [shown ?? ""])).toMatchObject({ picked: true, label: shown });
   });
