@@ -130,6 +130,21 @@ pomerado:section core.execute-calls:end -->
   challenge, or `waitPastChallenge` throws there, prefer letting the call fail over retrying or
   looping inside the tool, or over returning the rows read so far: a host may give a blocked
   read another browser or one rerun, and only a failed call reaches it.
+- An answer that lacks the data you read is not always a changed page. A bot check often answers
+  with its own page in place of the site's, sometimes with status 200: a few KB where the site's
+  page is far larger, answered faster, with little visible text and none of the site's layout.
+  Before you treat the data as missing, compare the answer's status, size and title with the
+  example's, and tell which kind of check it is by what the page holds, not by its title, since
+  sites give both kinds the same titles, such as "Security Check":
+  - A check that clears by itself, one that holds a captcha frame or a script that reloads into
+    the site, such as an interstitial titled "Just a moment": on a page, name it as one answer of
+    the same wait and call `waitPastChallenge`.
+  - A refusal, a page with only static text that says the visitor was refused, such as "Access
+    Denied", or a short 403 or 200 that only refuses: it never clears, so never wait on it. Fail
+    the call at once as the block above, with `new errors.OperationFailure(message)` whose
+    message names the answer's status, size and title.
+  For a request the tool sent, both kinds fail the call that way, never as missing data. A site
+  that changed lacks the data on a new browser too; test that before you change a parser.
 - Never repeat a call that may have run.
 - When the site itself refuses a caller's value, such as a past date, an unknown airport code
   or a party size over its limit, throw `new errors.InvalidInput(message, { field })` saying why,
@@ -146,6 +161,12 @@ pomerado:section core.execute-calls:end -->
   page does not offer the caller's value, the repair makes the code throw with `available`,
   shows it with the caller's own input, and the run ends with those choices. A write that throws it before entering a commit mark reports that it changed nothing. A page,
   control or response that changed is still `OperationFailure`.
+- Give every error you throw a message that says what failed: the step, the record and field,
+  what the code expected and what it found, such as `item 4521: the detail answer has no price`
+  rather than `fields did not match`, naming IDs, fields and statuses, never a personal value.
+  The caller and a repair see only that message. Check an answer's shape before reading into it,
+  so a changed answer fails with your message, not a `TypeError` such as `Cannot read properties
+  of undefined`.
 - Check every rule the input alone breaks before any site action, such as a check-out on or
   before its check-in, a count below one or a past date, and throw `InvalidInput` at once. Hold
   in the input schema every rule it can express. The caller-input skill, "Validate it, and
@@ -262,6 +283,18 @@ exception: it is optional unless the task can't run without it (below).
   own suggestion request, with `{ read: true }` after its `label` in a read. Fill the site's unit
   field, or its second address line, with the `unit` it returns, return the suggestion it accepted
   as the site's version of the address, and throw its `pickRefusal` only when it accepts none.
+  Never write address normalization or matching of your own, in the tool or in a file beside it:
+  no word lists, street-type or city tables, house-number, unit or postal-code comparisons,
+  regular expressions that split an address, similarity scores or "contains" tests. When the
+  helper's answer looks wrong for a site, refuse with its `available`; the fix belongs in the
+  helper, not in the tool. A site that takes the address as typed, such as a search or form that
+  goes on with the caller's text without a pick from its list, needs no match: type the caller's
+  text and read back what the site kept. Compare an address read back, there or before and after
+  a commit as the writes skill asks, with `readBackMatches(shown, wanted)` or `sameText` from
+  `pomerado/runtime` (Confirm, below), and an address the site rewrote as it was typed with
+  `sameText(shown, typed, { rewrite: true })` as the writes skill says, never with normalization
+  of your own. When a hosted
+  build's workspace guide names its own address helper, use that one instead of these.
 - Match the caller's proper nouns, such as places, venues and company names, with a fuzzy
   match that accepts the usual forms of the same name, such as a name with or without its
   accents (Abaca for Abacá), or a city alone or with its state and country after a comma.
@@ -717,7 +750,9 @@ element. Prefer values the list page already holds, in its rows or its embedded 
 site's own data request<!-- pomerado:section core.data-request-reference -->, to opening each record's page. When the tool must open
 each record's detail page, keep each to a few calls (open, wait, one read), and consider whether
 the request is better served as two tools, a search and a details read by identifier; say so in
-`coverage`. Prefer opening those detail pages only for the rows the call returns, after
+`coverage`. A details read takes a list of identifiers, up to a bound its schema states, such as
+20, and reads them together in one run, not one identifier per run: a caller who needs ten items
+then waits for one run's start, not ten. Prefer opening those detail pages only for the rows the call returns, after
 `readList`, not inside the list reader (pagination skill). When a read opens item pages, pop-ups
 or new tabs to collect details, prefer the list data the page already loads, and close each page
 before opening the next. A browser whose memory fills stops answering, and the run fails. When a
