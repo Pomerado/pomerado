@@ -249,14 +249,13 @@ test("pickAddress takes the site's address under another ZIP only in a read", as
   expect(await submitted(page)).toEqual({ person: "a1" });
 });
 
-// Suggestions with the street on one line and the town on the next are read whole, so the town
-// counts; one that keeps the address only in part comes back as a candidate.
-test("pickAddress reads two-line suggestions whole, and lists them when none keeps the address", async ({ page }) => {
-  await serve(page, `<form><label>Address <input id="address" role="combobox" aria-controls="places" autocomplete="off"></label>
+// An address field whose suggestions, every one for any text, show the street on one line and the
+// town on the next.
+const twoLines = (places: string) => `<form><label>Address <input id="address" role="combobox" aria-controls="places" autocomplete="off"></label>
 <ul id="places" role="listbox" hidden></ul><input type="hidden" name="address"></form>
 <script>
 const input = document.getElementById("address"), list = document.getElementById("places");
-const places = [["a1", "12 Example St", "Sampleton, NY, USA"], ["a2", "12 Example St", "Exampleton, IL, USA"]];
+const places = ${places};
 input.addEventListener("input", () => {
   list.innerHTML = places.map(([value, street, town]) => '<li role="option" data-value="' + value + '"><div>' + street + "</div><div>" + town + "</div></li>").join("");
   list.hidden = false;
@@ -268,7 +267,12 @@ list.addEventListener("click", (event) => {
   input.value = option.innerText.replace(/\\n/g, " ");
   list.hidden = true;
 });
-</script>`);
+</script>`;
+
+// Suggestions with the street on one line and the town on the next are read whole, so the town
+// counts; one that keeps the address only in part comes back as a candidate.
+test("pickAddress reads two-line suggestions whole, and lists them when none keeps the address", async ({ page }) => {
+  await serve(page, twoLines(`[["a1", "12 Example St", "Sampleton, NY, USA"], ["a2", "12 Example St", "Exampleton, IL, USA"]]`));
   const field = 'page.getByRole("combobox", { name: "Address" })';
   expect(await call(page, `return await pickAddress(${field}, "12 Example St, Exampleton, IL", fast);`)).toMatchObject({
     result: { picked: true, value: "a2", rank: "exact" },
@@ -283,6 +287,20 @@ list.addEventListener("click", (event) => {
       matches: ["12 Example St Sampleton, NY, USA", "12 Example St Exampleton, IL, USA"],
       unit: "",
     },
+  });
+});
+
+// Of the same street on either side of town, the one with the caller's direction is taken whatever
+// the site's order; with no direction given, both come back as candidates.
+test("pickAddress takes only the suggestion with the caller's street direction", async ({ page }) => {
+  await serve(page, twoLines(`[["a1", "1 S Example St", "Exampleton, IL, USA"], ["a2", "1 N Example St", "Exampleton, IL, USA"]]`));
+  const field = 'page.getByRole("combobox", { name: "Address" })';
+  expect(await call(page, `return await pickAddress(${field}, "1 N Example St, Exampleton, IL 60000", fast);`)).toMatchObject({
+    result: { picked: true, value: "a2" },
+  });
+  expect(await submitted(page)).toEqual({ address: "a2" });
+  expect(await call(page, `return await pickAddress(${field}, "1 Example St, Exampleton, IL", fast);`)).toMatchObject({
+    result: { picked: false, reason: "option_unclear", matches: ["1 S Example St Exampleton, IL, USA", "1 N Example St Exampleton, IL, USA"] },
   });
 });
 
