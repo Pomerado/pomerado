@@ -285,13 +285,13 @@ export const resolveAddressWith = async <T>(
   // the caller's street, or of its name; its parts after its street and its street's words that the
   // caller's street leaves over, as a suggestion whose lines were joined may hold its town in its
   // street's part, keep each field, or leave out one, only when each of those words of two letters
-  // or more, but a ZIP, is taken by a field or is the unit's; it holds no field in part; what the
-  // fields it leaves out add, and a ZIP it shows none of, comes to at most one; and it shows no
-  // other ZIP, unless `read` is set and the caller gave a house number and a place. Or it is on the
-  // caller's street and shows the caller's ZIP on a street that keeps more than half the caller's
-  // street words, or the caller's ZIP when that is all they gave. It is loose when it leaves out a
-  // place field and shows no caller's ZIP, and then counts as clean only when no other ties with it,
-  // nor holds every field it holds on the caller's street with no word of its street left over.
+  // or more, but a ZIP, is taken by a field or is the unit's; it holds no field in part; the fields
+  // it leaves out and a ZIP it shows none of come to at most one; and it shows no other ZIP, unless
+  // `read` is set and the caller gave a house number and a place. Or it is on the caller's street
+  // and shows the caller's ZIP on a street that keeps more than half the caller's street words, or
+  // the caller's ZIP when that is all they gave. It is loose when it leaves out a place field and
+  // shows no caller's ZIP, and then counts as clean only when no other ties with it, nor holds every
+  // field it holds on the caller's street with no word of its street left over.
   // A clean one ranks above any other.
   const score = (text: string) => {
     const theirs = houseOf(text);
@@ -303,39 +303,53 @@ export const resolveAddressWith = async <T>(
     const other = zip !== "" && shown !== "" && shown !== zip;
     // Its street's words but its house number's and those the caller's street keeps, then the words
     // of each part after its street, each with its part. A field is kept when one of its forms sits
-    // there whole, its words side by side in one part at places no field before it took; held in part
-    // when only some of its words sit there; else left out, adding its count.
+    // there whole, its words side by side in one part at places no field placed before it took; held
+    // in part when only some of its words sit there; else left out.
     const extra = spare(words(own.replace(zipGroups, " ")).filter((word) => !theirs.flatMap(words).includes(word)));
     const onward = [extra, ...rest].flatMap((list, part) => list.map((word) => ({ word, part })));
-    // The state's field is placed first, at its latest place; the others in order, at their first.
-    const taken = new Set<number>();
-    const find = (form: string, latest = false) => {
-      const list = words(form);
-      const starts = onward.flatMap((first, start) =>
-        list.length > 0 &&
-        list.every((word, offset) => !taken.has(start + offset) && onward[start + offset]?.word === word && onward[start + offset]?.part === first.part)
-          ? [start]
-          : [],
-      );
-      const at = latest ? starts.at(-1) : starts[0];
-      return at === undefined ? [] : list.map((_, offset) => at + offset);
-    };
-    const held = fields.map((): "kept" | "part" | "none" => "none");
-    for (const index of fields.map((_, at) => at).sort((one, two) => Number(fields[two]?.state) - Number(fields[one]?.state))) {
-      const field = fields[index];
-      if (field === undefined) continue;
-      const spots = field.forms.map((form) => find(form, field.state)).filter((each) => each.length > 0);
-      const best = field.state ? spots.sort((one, two) => (two[0] ?? 0) - (one[0] ?? 0))[0] : spots[0];
-      if (best === undefined) held[index] = field.words.some((forms) => forms.some((form) => find(form).length > 0)) ? "part" : "none";
-      else {
-        for (const spot of best) taken.add(spot);
-        held[index] = "kept";
+    // The fields placed with the state's first, at its latest place, and the others in order at their
+    // first; or all in order at their first. A paired town and state are held in part when only one
+    // of them is kept.
+    const lay = (stateFirst: boolean) => {
+      const taken = new Set<number>();
+      const find = (form: string, latest = false) => {
+        const list = words(form);
+        const starts = onward.flatMap((first, start) =>
+          list.length > 0 &&
+          list.every((word, offset) => !taken.has(start + offset) && onward[start + offset]?.word === word && onward[start + offset]?.part === first.part)
+            ? [start]
+            : [],
+        );
+        const at = latest ? starts.at(-1) : starts[0];
+        return at === undefined ? [] : list.map((_, offset) => at + offset);
+      };
+      const held = fields.map((): "kept" | "part" | "none" => "none");
+      const order = fields.map((_, at) => at);
+      if (stateFirst) order.sort((one, two) => Number(fields[two]?.state) - Number(fields[one]?.state));
+      for (const index of order) {
+        const field = fields[index];
+        if (field === undefined) continue;
+        const latest = stateFirst && field.state;
+        const spots = field.forms.map((form) => find(form, latest)).filter((each) => each.length > 0);
+        const best = latest ? spots.sort((one, two) => (two[0] ?? 0) - (one[0] ?? 0))[0] : spots[0];
+        if (best === undefined) held[index] = field.words.some((forms) => forms.some((form) => find(form).length > 0)) ? "part" : "none";
+        else {
+          for (const spot of best) taken.add(spot);
+          held[index] = "kept";
+        }
       }
-    }
-    // A paired town and state are held in part when only one of them is kept.
-    fields.forEach((field, index) => {
-      if (field.pair && (held[index] === "none") !== (held[index + 1] === "none")) held[index] = held[index + 1] = "part";
-    });
+      fields.forEach((field, index) => {
+        if (field.pair && (held[index] === "none") !== (held[index + 1] === "none")) held[index] = held[index + 1] = "part";
+      });
+      return { held, taken };
+    };
+    // Of the two, the one holding fewer fields in part, then leaving fewer out, the first on a tie.
+    const [first, second] = [lay(true), lay(false)];
+    const count = (each: typeof first, kind: string) => each.held.filter((one) => one === kind).length;
+    const { held, taken } =
+      count(second, "part") < count(first, "part") || (count(second, "part") === count(first, "part") && count(second, "none") < count(first, "none"))
+        ? second
+        : first;
     const left = held.filter((kind) => kind === "none").length;
     const fit = !held.includes("part") && left + (zip !== "" && shown === "" ? 1 : 0) <= 1;
     const named = names.some((forms) => forms.some((form) => ownWords.some((word) => !houseWords.includes(word) && numeral(word) === form)));

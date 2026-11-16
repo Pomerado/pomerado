@@ -171,6 +171,7 @@ describe("resolveAddress", () => {
       ["1 Example St, Exampleton IL, USA", "1 Example St, Exampleton, IL"],
       ["1 Example St, Exampleton Illinois", "1 Example St, Exampleton, IL"],
       ["1 Example St, Illinois Exampleton, Illinois", "1 Example St, Illinois Exampleton, IL"],
+      ["1 Example St, Illinois Exampleton, IL", "1 Example St, Illinois Exampleton"],
     ])
       expect(await resolveAddress(wanted ?? "", () => [shown ?? ""])).toMatchObject({ picked: true, label: shown });
     expect(await resolveAddress("1 Example Building, Exampleton, IL 60000", () => ["1 Example Bldg, Exampleton, IL"])).toMatchObject({ picked: true });
