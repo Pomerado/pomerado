@@ -656,7 +656,7 @@ asks with a declared question before the commit mark (the caller-input skill), o
 saved payment or address as an account-specific choice. The same holds for any choice that
 changes what the caller buys or pays, or whether the action can be cancelled or refunded, such
 as a rate, fare or plan tier, a refundable option, shipping speed or how much of a balance to pay.
-When the site requires choosing one of a service's tiers of speed, class or service level, that
+When the write must take one of a service's tiers of speed, class or service level, that
 choice's optional input defaults to the tier the site presents as standard, and the script asks
 only when the site shows no standard tier. An owner's answer may make only declining such an
 option, turning it off or the option that adds no cost and keeps the action cancellable the

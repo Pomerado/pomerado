@@ -1428,8 +1428,8 @@ it("renders the pinned standalone authoring", async () => {
     ["a08f1ef89cc10bf11e17b8d6086b6e37649b1d5d11b78c0542cc7db32460b7e3", "testing"],
     ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
     ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
-    ["e776642a8b090684bdadf1409e936bc295d6759483a73984091a2fbda84f964c", "writes"],
-    ["45b4cddd648e2967371be6d042c62a691c2727d3f4e26567d3e85b643b18622b", "cart"],
+    ["d2e40e8714e3b238b3b51268f324eace16fc1ad35a3134c436f0a0c4fdcd55f0", "writes"],
+    ["d617c143c7f39ce9889ec7eccd79a0a447b90412ece5c940ff51b7d03b936530", "cart"],
     ["a956eaf7879b5f89ca80d96e6549c17203dab21423e92e31cec0027f12a13a05", "caller-input"],
     ["aa8e0fc85d0f126797e91cc7e990fd928d8b1f2abd223119f94b228fc3cafced", "publication"],
     ["909d9eeaa4cb5d177f60e5e559c0a59cc965f2be71444a998104609c94d84ef0", "workspace/AGENTS.md"],
@@ -1628,10 +1628,10 @@ it("renders the pinned standalone input-feedback instructions", () => {
       ]),
     ),
   ).toStrictEqual([
-    ["f779f48d775231e36ca645bc0fd210369261aaf3cd414fb076fa3524581caa1a", "read, 1 left"],
-    ["439962e93ace65cde9e0ee164492173e4d940e86e2928809b11260596b821471", "read, 0 left"],
-    ["a1c1b3bd98e3dfc0c662ddd79fa99f6ab0e64978b613be10972e02a30260b04a", "write, 1 left"],
-    ["148d8cf9607f67e7e2823eb22914e63d7c5873e78e1556c517a3e4e6ccb350e1", "write, 0 left"],
+    ["2c1dcf22008215d524a1661ed17b3d199501d9405284e8f9476fc5e155f8ab1b", "read, 1 left"],
+    ["1f15fe5b5c10971fe7d6c74f307e980124fbcd38783dba834c0475aa9000edf7", "read, 0 left"],
+    ["69251e38f92d913fa76481a0b64b8e1e7fdcc432343f7aee27f05d5c75854e61", "write, 1 left"],
+    ["aa9c3a9e371b8e866c38261effae2900476899a5f63d8bea12da3c15775c30f5", "write, 0 left"],
   ]);
 });
 
