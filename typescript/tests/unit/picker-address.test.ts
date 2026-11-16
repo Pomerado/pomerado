@@ -225,6 +225,16 @@ describe("resolveAddress", () => {
       expect(await resolveAddress(asked, () => [row])).toMatchObject({ picked: false, reason: "option_unclear", matches: [row] });
     const asked = "Example Park, Exampleton, CA";
     expect(await resolveAddress(asked, () => ["See 12 more results for " + asked], String, { read: true })).toMatchObject({ picked: false, available: [] });
+    expect(await resolveAddress(asked, () => ["See all results for " + asked + " (12)"], String, { read: true })).toMatchObject({ picked: false, available: [] });
+    // A read takes no first suggestion that shows the caller's whole text after words of its own, as
+    // a control the rule above leaves listed may, and no place taken for one either.
+    for (const row of ['Search "' + asked + '"', "The Example Park, Exampleton, CA, USA"])
+      expect(await resolveAddress(asked, () => [row], String, { read: true })).toMatchObject({ picked: false, matches: [row] });
+    // A town given alone after the place's name is its town, so a read takes a first suggestion there.
+    expect(await resolveAddress("Example Park, Exampleton", () => ["Example Gardens, Exampleton, CA"], String, { read: true })).toMatchObject({
+      picked: true,
+      label: "Example Gardens, Exampleton, CA",
+    });
     // The place's own row that leaves out the state, with its street after its name, is taken.
     const place = "Example Park, 12 Sample Plaza, Exampleton";
     expect(await resolveAddress(asked, () => [place])).toMatchObject({ picked: true, label: place });
