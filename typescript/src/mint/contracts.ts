@@ -2132,8 +2132,9 @@ export interface MintTurn {
   readonly hostToolDescriptions?: HostToolDescriptions;
   /**
    * The host's own wording of the note the minter gets after a compaction, given the skills it
-   * read with `read_source` before it, in catalog order, never none. Absent, the minter's default
-   * note.
+   * read with `read_source` before it, in catalog order, none when it read none, so the note may
+   * carry the host's own standing instructions too. Absent, the minter's default note, sent only
+   * once some skill was read.
    */
   readonly compactionSkillsNote?: (skills: readonly string[]) => string;
   /**
@@ -3240,8 +3241,9 @@ export interface MintDependencies {
   readonly hostToolDescriptions?: HostToolDescriptions;
   /**
    * The host's own wording of the note the minter gets after a compaction, given the skills it
-   * read with `read_source` before it, in catalog order, never none. Absent, the minter's default
-   * note.
+   * read with `read_source` before it, in catalog order, none when it read none, so the note may
+   * carry the host's own standing instructions too. Absent, the minter's default note, sent only
+   * once some skill was read.
    */
   readonly compactionSkillsNote?: (skills: readonly string[]) => string;
   readonly projection: MintProjection;
