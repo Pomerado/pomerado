@@ -50,7 +50,8 @@ the unit, and refuse when more than one entry still matches, never take the firs
 
 When the tool takes an item's or store's page link as its identity, compare the identifiers in
 it, such as the store and item ids, after decoding both links, never the raw text of a name in
-the path, which the site may encode in more than one way.
+the path, which the site may encode in more than one way, and ignore tracking parameters and a
+trailing slash.
 
 ## Quantity
 
@@ -92,20 +93,25 @@ by the cart or store identifier the site shows, taken as an input when the calle
 and leave every other cart as it is. When the site asks to clear another cart before adding,
 that is a question for the caller (the writes skill). The switcher and the other carts are the
 caller's other records: in every step's output, while building and in the tool, return only the
-target cart's entry. To show the others stayed the same, compare them inside the step and return
-only the result, such as each cart's identifier, its line count and whether it changed, never
-their items.
+target cart's entry, with one exception. To show the others stayed the same, compare them inside
+the step and return for each other cart only its identifier, its line count and whether it
+changed, never its items, store name or totals.
 
 ## The delivery address
 
 When the site sets the delivery address on the account or the session rather than inside
 checkout, read the address the cart will use first. When it already matches the input, street
-and unit, change nothing and ask nothing. Set it only when it differs, after every check that
-can refuse, such as finding the item and its options and that it can be ordered now, so a
-refusal leaves the account as it was. Prefer the site's control that picks an address for this
-order over editing a saved one. When saving the address-book entry is the only way to apply a
-detail such as the unit, that save is a write with its own commit mark (the writes skill), and
-any question about it is asked only on a run that needs the save.
+and unit, change nothing and ask nothing. Setting it changes the account or session, so choosing
+it is a step with its own commit mark, and saving an address-book entry is another, separate one
+(the writes skill). Set it only when it differs, after every check that can refuse, such as
+finding the item and its options and that it can be ordered now, so a refusal leaves the account
+as it was. When the store, stock or whether the item can be ordered follow the address, read them
+for the input's address without saving it where the site allows, such as through an address
+preview or a store page that takes the address in its link, and refuse before the marked step.
+Otherwise set the address with the site's control that picks one for this order, then check, and
+when one refuses, say in the refusal that the account's address changed. Prefer that control
+over editing a saved address. When saving the address-book entry is the only way to apply a
+detail such as the unit, ask any question about it only on a run that needs the save.
 
 ## Values the account lacks
 
