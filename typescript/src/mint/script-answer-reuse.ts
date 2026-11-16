@@ -1,6 +1,8 @@
 import { Effect, Either, Schema } from "effect";
 import {
   InvalidAnswer,
+  OrderFacts,
+  orderNotice,
   validateAnswer,
   type InputRequest,
   type ValidAnswers,
@@ -32,11 +34,13 @@ type KeptQuestion = typeof KeptQuestion.Type;
 
 /**
  * One answer the owner gave a script's question in this build, which a later step may reuse:
- * the screened question and the answer as the asker returned it.
+ * the screened question and the answer as the asker returned it, and the order of a purchase
+ * confirm when the host that asked it in this build kept it (`keptScriptAnswers`).
  */
 export const KeptScriptAnswer = Schema.Struct({
   question: KeptQuestion,
   answer: Schema.Struct({ type: Schema.String, value: Schema.Unknown }),
+  order: Schema.optional(OrderFacts),
 });
 export type KeptScriptAnswer = typeof KeptScriptAnswer.Type;
 
@@ -94,31 +98,51 @@ export const scriptQuestionKeys = <E>(
 const sameQuestion = (left: KeptQuestion, right: KeptQuestion) =>
   JSON.stringify(left) === JSON.stringify(right);
 
+/** Whether two requests carry the same order, as its notice shows it, or both none. */
+const sameOrder = (left: OrderFacts | undefined, right: OrderFacts | undefined) =>
+  (left && orderNotice(left)) === (right && orderNotice(right));
+
 /**
  * The kept answers a script's ask may reuse, as a fresh answer's shape, or undefined to ask the
  * owner. Every question needs a kept answer to the same question, still valid for the question as
  * asked now. Any step may reuse it, the one that got it included, as often as the question comes
- * back and however long ago the owner gave it. A purchase confirm, which carries its order, is
- * always asked again.
+ * back and however long ago the owner gave it. A purchase confirm, which carries its order, reuses
+ * only an answer kept with the same order, and only when each confirm it asks was answered yes; a
+ * kept answer with an order answers no request without one.
  */
 export const reusedScriptAnswers = (
   asked: InputRequest,
   keys: readonly (KeptQuestion | undefined)[],
   kept: readonly KeptScriptAnswer[],
 ): ValidAnswers | undefined => {
-  if (asked.order !== undefined) return undefined;
   const found: Record<string, KeptScriptAnswer["answer"]> = {};
   for (const key of keys) {
     const entry =
       key === undefined
         ? undefined
-        : kept.find((candidate) => sameQuestion(candidate.question, key));
+        : kept.find(
+            (candidate) =>
+              sameQuestion(candidate.question, key) && sameOrder(candidate.order, asked.order),
+          );
     if (key === undefined || entry === undefined) return undefined;
     found[key.id] = entry.answer;
   }
   const valid = validateKeptAnswers(asked, found);
-  return Either.isLeft(valid) ? undefined : valid.right;
+  if (Either.isLeft(valid)) return undefined;
+  const confirms = asked.questions.filter((question) => question.type === "confirm");
+  const confirmed = confirms.every((question) => {
+    const answer = valid.right[question.id];
+    return answer?.type === "confirm" && answer.value.confirmed;
+  });
+  return asked.order === undefined || (confirms.length > 0 && confirmed) ? valid.right : undefined;
 };
+
+/**
+ * The kept answers once a step entered a commit step: the order a purchase confirm's yes answered
+ * may have been placed, so no kept answer with an order answers again.
+ */
+export const forgetOrderAnswers = (kept: readonly KeptScriptAnswer[]) =>
+  kept.filter((entry) => entry.order === undefined);
 
 /**
  * The kept answers without any to these screened prompts. Only the owner's latest answer to a
@@ -132,16 +156,21 @@ export const forgetScriptAnswers = (
 
 /**
  * The kept answers once the owner answered a script's question afresh: its reusable answers
- * replace any kept for the same prompt.
+ * replace any kept for the same prompt. Only the host that asked a purchase confirm in this build
+ * passes its `order`, so a later ask of the same order there may reuse the yes; an answer kept
+ * without it, such as another job's, never answers a purchase confirm.
  */
 export const keptScriptAnswers = (
   kept: readonly KeptScriptAnswer[],
   keys: readonly (KeptQuestion | undefined)[],
   answers: ValidAnswers,
+  order?: OrderFacts,
 ): readonly KeptScriptAnswer[] => {
   const latest = keys.flatMap((key): KeptScriptAnswer[] => {
     const answer = key === undefined ? undefined : answers[key.id];
-    return key === undefined || answer === undefined ? [] : [{ question: key, answer }];
+    return key === undefined || answer === undefined
+      ? []
+      : [{ question: key, answer, ...(order === undefined ? {} : { order }) }];
   });
   return [
     ...forgetScriptAnswers(

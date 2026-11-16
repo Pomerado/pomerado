@@ -68,6 +68,7 @@ import type { DownloadCap } from "../runtime/files.js";
 import { trustedUrl } from "../runtime/sign-in-origins.js";
 import type { MintState } from "./mint-state.js";
 import {
+  forgetOrderAnswers,
   keptScriptAnswers,
   reusedScriptAnswers,
   scriptQuestionKeys,
@@ -204,39 +205,38 @@ const scriptQuestions = (
   let unanswered = false;
   const scriptAsk: InputAsker = (candidate, bounds) =>
     Effect.gen(function* () {
-      const question = yield* questionForReview(
-        candidate,
-        { credentialsAvailable: false, scriptAsk: true },
-        projection.text,
-      );
-      const review = yield* context.reviewQuestion(
-        { entrypoint: `operation/${entrypoint}`, sources: sourceMap, input },
-        question,
-      );
-      if (review.decision.outcome !== "allow_business") {
-        scriptQuestion = {
-          requestId: candidate.id,
-          outcome: review.decision.outcome,
-          rationale: review.decision.rationale,
-          reviewId: review.reviewId,
-        };
-        return yield* Effect.fail(new InputRequestFailure({ code: "Unauthorized" }));
-      }
-      // The same question asked again reuses the owner's answer, however long ago they gave it
-      // and whether or not a step entered a commit since. Guardian reviewed this ask all the same,
-      // and the reused answer reaches later reviews as a fresh one does. It is always the owner's
-      // latest answer to its prompt (`forgetScriptAnswers`), so it never replaces a newer one in
-      // Guardian's list.
+      // The same question asked again reuses the owner's answer before Guardian reviews it, which
+      // would refuse it as a repeat of an answer it already trusts, however long ago the owner
+      // gave it and whether or not a step entered a commit since; a purchase confirm reuses only
+      // a yes to the same order, until an act step entered a commit step. The reused answer
+      // reaches later reviews as a fresh one does. It is always the owner's latest answer to its
+      // prompt (`forgetScriptAnswers`), so it never replaces a newer one in Guardian's list.
       const keys = yield* scriptQuestionKeys(candidate, (text) => projection.text(text));
       const answers =
         reusedScriptAnswers(candidate, keys, scriptAnswers.kept) ??
-        (yield* mintAsk(candidate, bounds).pipe(
-          Effect.tap((fresh) =>
-            Effect.sync(() => {
-              scriptAnswers.kept = keptScriptAnswers(scriptAnswers.kept, keys, fresh);
-            }),
-          ),
-        ));
+        (yield* Effect.gen(function* () {
+          const question = yield* questionForReview(
+            candidate,
+            { credentialsAvailable: false, scriptAsk: true },
+            projection.text,
+          );
+          const review = yield* context.reviewQuestion(
+            { entrypoint: `operation/${entrypoint}`, sources: sourceMap, input },
+            question,
+          );
+          if (review.decision.outcome !== "allow_business") {
+            scriptQuestion = {
+              requestId: candidate.id,
+              outcome: review.decision.outcome,
+              rationale: review.decision.rationale,
+              reviewId: review.reviewId,
+            };
+            return yield* Effect.fail(new InputRequestFailure({ code: "Unauthorized" }));
+          }
+          const fresh = yield* mintAsk(candidate, bounds);
+          scriptAnswers.kept = keptScriptAnswers(scriptAnswers.kept, keys, fresh, candidate.order);
+          return fresh;
+        }));
       yield* context.answered(candidate, answers);
       return answers;
     }).pipe(
@@ -752,7 +752,13 @@ const authoredExecution = (
             writeSession,
             yield* acceptedConfirmsKept({ write: true, accepted, screen: secrets.assertAbsent }),
           );
-        if (act !== undefined) writeSession.steps.push({ executionId: id, ...act.marks });
+        if (act !== undefined) {
+          writeSession.steps.push({ executionId: id, ...act.marks });
+          // Once a step entered or streamed a commit mark, the order its owner said yes to may
+          // have been placed, so that yes answers no later purchase confirm.
+          if (act.marks.enteredMarks.length > 0 || (act.marks.streamedMarks ?? []).length > 0)
+            state.scriptAnswers.kept = forgetOrderAnswers(state.scriptAnswers.kept);
+        }
         // The marks of the session's recorded path not yet settled: until none is left, a
         // confirmation does not close the session. A declared refusal that ends the session
         // leaves none, since no step runs after it.

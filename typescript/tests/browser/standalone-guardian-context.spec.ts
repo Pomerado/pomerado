@@ -466,8 +466,8 @@ test("a later step reuses the owner's answer to its script's question", async ()
     later: "return { approve: await ask('approve') };",
   });
   expect(scriptAsks).toHaveLength(1);
-  // Guardian reviewed the later step's ask, and later reviews hold the owner's answer it reused.
-  expect(guardian.reviews.filter((review) => review.kind === "question")).toHaveLength(2);
+  // Guardian reviewed only the first ask, and later reviews hold the owner's answer reused.
+  expect(guardian.reviews.filter((review) => review.kind === "question")).toHaveLength(1);
   expect(authorityOf(executions(guardian.reviews).at(-1)!)["answeredQuestions"]).toEqual([
     { id: "approve", question: approvalPrompt, answer: { confirmed: true } },
   ]);
@@ -482,6 +482,23 @@ test("a later step reuses the owner's answer even after an earlier step entered 
   expect(scriptAsks).toHaveLength(1);
 });
 
+const orderAsk =
+  "await ask({ approve: { order: { currency: 'USD', items: [{ name: 'Synthetic drink', quantity: 1, price: '6.00' }], total: '6.00' } } })";
+
+test("a later step reuses the owner's yes to the same order until a step entered its commit", async () => {
+  test.setTimeout(180_000);
+  const reused = await laterAsk({
+    first: `${orderAsk}; throw new Error('Failed before its commit.');`,
+    later: `return { approve: ${orderAsk} };`,
+  });
+  expect(reused.scriptAsks).toHaveLength(1);
+  const placed = await laterAsk({
+    first: `${orderAsk}; enteringCommit('submit'); throw new Error('Failed after it.');`,
+    later: `return { approve: ${orderAsk} };`,
+  });
+  expect(placed.scriptAsks).toHaveLength(2);
+});
+
 test("a step reuses the owner's answer each time its script asks the same question", async () => {
   test.setTimeout(90_000);
   const { scriptAsks, guardian, last } = await laterAsk({
@@ -490,8 +507,8 @@ test("a step reuses the owner's answer each time its script asks the same questi
       "const first = await ask('approve'); enteringCommit('submit'); return { first, second: await ask('approve') };",
   });
   expect(scriptAsks).toHaveLength(1);
-  // Guardian reviewed each of the three asks.
-  expect(guardian.reviews.filter((review) => review.kind === "question")).toHaveLength(3);
+  // Guardian reviewed only the first of the three asks.
+  expect(guardian.reviews.filter((review) => review.kind === "question")).toHaveLength(1);
   // Both asks got the owner's yes.
   const observed: unknown = JSON.parse(String(toolResult(last, "later")?.["observations"]));
   expect(observed).toMatchObject({

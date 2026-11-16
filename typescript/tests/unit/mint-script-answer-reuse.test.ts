@@ -3,10 +3,13 @@
 // question, no longer valid for the question as asked, or after the owner answered its prompt
 // anew; the same question asked again, or long after the owner answered, asks the owner again; a
 // reuse changes the answer's shape; a host reading kept answers back decodes one it cannot read,
-// or refuses one an earlier release kept with more fields.
+// or refuses one an earlier release kept with more fields; a purchase confirm asks again for the
+// same order its owner said yes to, or reuses a yes to another order, a no, another job's yes or
+// a yes after a commit step ran.
 import { Effect, Either, Option, Schema } from "effect";
 import { describe, expect, it } from "vitest";
 import {
+  forgetOrderAnswers,
   forgetScriptAnswers,
   KeptScriptAnswer,
   keptScriptAnswers,
@@ -154,6 +157,31 @@ describe("a later step's script question", () => {
     const newer = keptScriptAnswers(entries, keys(wider), bronze);
     expect(reuse(plan, newer)).toBeUndefined();
     expect(reuse(wider, newer)).toEqual(bronze);
+  });
+
+  it("reuses a purchase confirm's yes only for the same order the asking host kept it with", () => {
+    const order = {
+      currency: "USD",
+      items: [{ name: "Synthetic drink", quantity: 1, price: "6.00" }],
+      tax: "0.52",
+      total: "6.82",
+    };
+    const place = {
+      ...request([{ id: "place", type: "confirm", prompt: "Place this order?" }]),
+      order,
+    };
+    const yes: ValidAnswers = { place: { type: "confirm", value: { confirmed: true } } };
+    const no: ValidAnswers = { place: { type: "confirm", value: { confirmed: false } } };
+    const keptWith = (answers: ValidAnswers) =>
+      keptScriptAnswers([], keys(place), answers, order);
+    expect(reuse(place, keptWith(yes))).toEqual(yes);
+    // Another total, the owner's no, or a yes kept without its order, such as another job's.
+    expect(reuse({ ...place, order: { ...order, total: "7.10" } }, keptWith(yes))).toBeUndefined();
+    expect(reuse(place, keptWith(no))).toBeUndefined();
+    expect(reuse(place, kept(place, yes))).toBeUndefined();
+    // A yes to an order never answers the same question without one, nor once a commit step ran.
+    expect(reuse(request(place.questions), keptWith(yes))).toBeUndefined();
+    expect(reuse(place, forgetOrderAnswers(keptWith(yes)))).toBeUndefined();
   });
 
   it("checks kept answers by the rules of a fresh answer, for a host that keeps them itself", () => {
