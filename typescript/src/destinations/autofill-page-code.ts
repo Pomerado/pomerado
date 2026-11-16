@@ -32,6 +32,12 @@ import { pageControlsCode } from "./page-controls.js";
  * its name, else its `aria-label`. A row with a box none of those name alone, or with more than
  * `maximumCodeBoxes` boxes, has none.
  */
+/**
+ * The slots whose field must hold nothing at all before the host types into it: a secret that may
+ * hold symbols alone, so any remnant may be part of one.
+ */
+const strictSlots: ReadonlySet<string> = new Set(["password", "private_answer"]);
+
 const codeBoxesCode = `const codeBoxes = [];
 const codeFields = codeSlots.filter(Boolean).length;
 for (const [index, field] of fields.entries()) {
@@ -802,10 +808,19 @@ ${
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(element, "");
       element.dispatchEvent(new Event("input", { bubbles: true }));
     }, undefined, { timeout: ${elementReadMs} }, true);
-  // Emptied only when it holds something: Playwright clears with a Delete key a page sees.
-  if (await field.evaluate((element) => typeof element.value === "string" && element.value.length > 0, undefined, { timeout: ${elementReadMs} }))
+  // Emptied only when it holds something: Playwright clears with a Delete key a page sees. A field
+  // that still holds something then, or once it took the focus, as one whose page puts back what it
+  // held (a remembered username, a refused password or code), takes no typing: the host never types
+  // a value after what a field holds (\`emptiedFields\`). Whether it holds something, never a value.
+  const holding = (rule) => field.evaluate((element, rule) => typeof element.value === "string" && (rule === "mask" ? /[\\p{L}\\p{N}]/u.test(element.value) : element.value.length > 0), rule, { timeout: ${elementReadMs} });
+  const emptied = emptiedFields[${call.index}];
+  const notEmptied = { focused: false, unfocused: { emptied: false }, located: fieldLocated, url: primary.url() };
+  if (await holding("any")) {
     await field.fill("", { timeout: 5000 });
+    if (emptied !== null && (await holding(emptied))) return notEmptied;
+  }
   ${call.row === undefined ? "await field.focus({ timeout: 5000 });" : "await field.click({ timeout: 5000 });"}
+  if (emptied !== null && (await holding(emptied))) return notEmptied;
   // Keep this original-node binding in Patchright's isolated world, inaccessible to page code.
   // The tag of the element that holds the focus instead, if another does: the deepest one, read
   // through open shadow roots; a closed root shows only its host.
@@ -1257,6 +1272,13 @@ const observed = ${JSON.stringify(observed)};
 const selectors = ${JSON.stringify(step.fields.map((field) => field.selector))};
 const questionSelectors = ${JSON.stringify(step.fields.map((field) => questionRead(field, fill === undefined)))};
 const codeSlots = ${JSON.stringify(step.fields.map((field) => field.slot === "code"))};
+// What a field may hold once emptied and focused, before the host types into it: a phone field
+// its own mask, such as a calling code, which its typing allows for (null); a password or private
+// answer nothing ("any"); every other field, whose value is letters and digits, a mask with no
+// letter or digit, such as "______" for a code or "__ / __" for a card expiry, which a mask script
+// may write once the field takes the focus and which holds no earlier value ("mask"). A mask with
+// letters, such as "mm/yy", counts as a value.
+const emptiedFields = ${JSON.stringify(step.fields.map((field) => (field.slot === "phone" ? null : strictSlots.has(field.slot ?? "") ? "any" : "mask")))};
 const submitSelector = ${JSON.stringify(step.submit ?? null)};
 const submitKey = ${JSON.stringify(step.submitKey ?? null)};
 const submitVia = ${JSON.stringify(step.submitVia ?? null)};
