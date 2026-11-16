@@ -108,6 +108,21 @@ describe("a script question's options", () => {
     expect(result).toEqual(Either.right({ pick: "second" }));
   });
 
+  it("tells the host which option is the caller's no to the write", () => {
+    const { result, offered } = ask(
+      [
+        { value: "place", label: "Place order" },
+        { value: "stop", label: "Stop", declines: true },
+      ],
+      picked("o2"),
+    );
+    expect(offered).toEqual([
+      { id: "o1", label: "Place order" },
+      { id: "o2", label: "Stop", declines: true },
+    ]);
+    expect(result).toEqual(Either.right({ pick: "stop" }));
+  });
+
   it("still refuses an empty value or label, a repeated value, and a field options don't take", () => {
     const refused = Either.left(expect.objectContaining({ code: "InvalidOptions" }));
     const long = "z".repeat(300);

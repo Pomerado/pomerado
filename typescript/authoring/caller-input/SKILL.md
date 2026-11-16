@@ -237,7 +237,8 @@ already asked for, or to solve a CAPTCHA.
    plain JSON. Each option has a `value` the script acts on and a `label` the caller
    reads. Values are unique within a question. Offer only options the page will accept:
    skip taken seats, disabled slots and sold-out items. The value never leaves the run;
-   the caller sees only the label.
+   the caller sees only the label. Mark an option that stops the write with
+   `declines: true`. Picking it is the caller's no, as a confirm's no is.
 3. Mark an option taken from the caller's own account (a saved traveler, address, card
    or account) with `accountSpecific: true` and a `maskedLabel` that keeps it
    recognizable without its numbers or email: a card's brand and last four digits, an
