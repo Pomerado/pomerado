@@ -223,7 +223,9 @@ const recordsSite = async (page: Page, origin: string) => {
         });
       const found = records.filter((id) => id.includes(query));
       const listed =
-        found.map((id) => `<a href="/records/${id}">${id}</a>`).join("") ||
+        query === "record_twice"
+          ? `<a href="/records/record_twice">record_twice</a><a href="/records/record_42">record_twice</a>`
+          : found.map((id) => `<a href="/records/${id}">${id}</a>`).join("") ||
         `<p role="status">No matching records</p>`;
       if (query === "record_8")
         return html(`<section role="region" aria-label="Search results" aria-busy="true"><p>Loading results</p></section>
@@ -286,6 +288,11 @@ test("detail example searches the site for the record, follows its link and chec
     _tag: "OperationFailure",
     message: "results_unavailable",
   });
+  // Two links that read the same still lead to two records.
+  expect(failure(await read("record_twice"))).toMatchObject({
+    _tag: "OperationFailure",
+    message: "result_ambiguous",
+  });
   expect(site.searches).toEqual([
     "record_42",
     "record_7",
@@ -293,6 +300,7 @@ test("detail example searches the site for the record, follows its link and chec
     "record_9",
     "record_8",
     "record_down",
+    "record_twice",
   ]);
 });
 
@@ -1520,14 +1528,31 @@ const checkoutSite = async (
             `<label>Promo code<input name="promo" value="SPRING" aria-invalid="true"></label>`,
           ),
         });
+      const confirmation = `<p role="status" aria-label="Order confirmation">Order ORD-${1000 + orders.length} is placed.</p>`;
       return route.fulfill({
         contentType: "text/html",
-        body: `<p role="status" aria-label="Order confirmation">Order ORD-${1000 + orders.length} is placed.</p>`,
+        // A mug's confirmation shows twice, as a banner and in the page.
+        body: posted.get("item") === "mug" ? confirmation.repeat(2) : confirmation,
       });
     }
     return route.fulfill({ status: 404, body: "Not found" });
   });
 };
+
+test("write-session example reads its order number from a confirmation the site shows twice", async ({ page }) => {
+  const origin = "https://shop.example.invalid";
+  const orders: string[] = [];
+  const input = { item: "mug", quantity: 1, gift_wrap: false, max_total_minor: 2500 };
+  await checkoutSite(page, origin, orders);
+  await page.goto("about:blank");
+  expect((await runExample(page, fillStep, input, { siteOrigin: origin })).result).toEqual(
+    Either.right({ review_shown: true }),
+  );
+  expect((await runExample(page, placeStep, input, { siteOrigin: origin })).result).toEqual(
+    Either.right({ order_number: "ORD-1001" }),
+  );
+  expect(orders).toEqual(["mug"]);
+});
 
 test("write-session example commits once across its act steps and reads the site's confirmation back", async ({
   page,
