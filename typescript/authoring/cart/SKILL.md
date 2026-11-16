@@ -53,7 +53,8 @@ or its text; read it there, and change it with its own buttons.
 ## Read the cart before and after
 
 Read the cart's lines before the write, in the session and in the composed script; never
-assume the cart starts empty. Afterwards, confirm from the cart itself that the line reached
+assume the cart starts empty, except as the last paragraph of this section says. Afterwards,
+confirm from the cart itself that the line reached
 the expected quantity (the earlier quantity plus the input, or the input), then call
 `verified()`, compare every other line with the before read and return the lines as read.
 Prefer needing only each line's identity, chosen options and quantity in that read, with every
@@ -66,6 +67,12 @@ After the tool's final commit, a line that changed to another quantity than expe
 one the site capped, is still the written line: call `verified()` and list it in
 `saved_differences` (writes skill). A checkout reads the lines it is about to buy before its
 commit and returns them with the confirmation.
+
+In a tool that places the order, when the page shows no cart control and no empty-cart label,
+take the cart as empty. Then read back every line of the checkout's order summary with the other
+reads before the card fill, or before pressing pay when there is none, and confirm it holds only
+the requested items, each at its requested options and quantity; when it holds anything else,
+throw `OperationFailure` before the order's commit mark.
 
 ## Values the account lacks
 
