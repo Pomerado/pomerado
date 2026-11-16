@@ -142,25 +142,32 @@ export const resolveAddressWith = async <T>(
   const streetWords = (text: string) => words(text).filter((word) => !houseWords.includes(word)).map(numeral);
   const callerWords = streetWords(lines[lineStreet] ?? "");
   // A street's direction words in order, each as its letters (N for North, NW for N.W. or
-  // Northwest), and its own number, its first but the house number's, once its ZIP is left out and,
-  // from its end, the other side's places after its street, last first, each in any of its usual
-  // forms, unless its own side shows that place after its street (`shown`), as a street may run on
-  // into its town.
+  // Northwest), and its own number, its first but the house number's, read in its usual forms (5 for
+  // Fifth), once its ZIP is left out and, from its end, the other side's places after its street,
+  // last first, each in any of its usual forms, unless its own side shows that place, in any of its
+  // forms, after its street (`shown`), as a street may run on into its town.
   const compass = /^(?:[nsew]|[ns][ew]|north|south|east|west|(?:north|south)(?:east|west))$/u;
   const bearing = (street: string, after: readonly (readonly string[])[], shown: string) => {
     let rest = phrase(street.replace(zipGroups, "").replace(/(?<![\p{L}\p{N}])([ns])\.\s*([ew])\./giu, "$1$2"));
     for (const forms of [...after].reverse()) {
-      const end = forms.find((form) => form.trim() !== "" && rest.endsWith(form) && !shown.includes(form));
+      if (forms.some((form) => form.trim() !== "" && shown.includes(form))) continue;
+      const end = forms.find((form) => form.trim() !== "" && rest.endsWith(form));
       if (end !== undefined) rest = rest.slice(0, -end.length) + " ";
     }
     const each = streetWords(rest);
     return {
       way: each.filter((word) => compass.test(word)).map((word) => word.replace(/north|south|east|west/gu, (part) => part[0] ?? "")).join(" "),
-      number: each.find((word) => /\d/u.test(word)) ?? "",
+      number: each.map((word) => match.spellings(word).map(numeral).find((form) => /\d/u.test(form)) ?? "").find((form) => form !== "") ?? "",
     };
   };
-  // The caller's places after their street, each whole and each word alone, and the text after it.
-  const placeForms = places.flatMap((part) => [part.forms, ...part.words]);
+  // The caller's places after their street, each whole, and without its last word when that word is
+  // written another way, as a state's code is, so a town and state in one part are read as two; and
+  // the text after their street.
+  const placeForms = places.flatMap((part) =>
+    part.words.length > 1 && (part.words.at(-1)?.length ?? 0) > 1
+      ? [part.forms, match.spellings(part.words.slice(0, -1).map((forms) => (forms[0] ?? "").trim()).join(" ")).map(phrase)]
+      : [part.forms],
+  );
   const callerAfter = phrase(lines.slice(lineStreet + 1).join(" "));
   // Two streets' names are close when the numbers both show agree and, with their words of two
   // letters or more joined, the last left out when there is another, fewer edits than a third of
@@ -216,9 +223,9 @@ export const resolveAddressWith = async <T>(
   // own street; by the share of the caller's street words its street keeps; and by showing no other
   // ZIP. It is on the caller's street when the caller gave no house number, or when its street's
   // directions are the caller's street's, in order, and its own number is the caller's street's when
-  // both show one, each read past the other side's places that run on from its street. It is whole when it is on the caller's street, its street
-  // keeps any of the caller's street words, it keeps every place word, not counting a unit-shaped
-  // part, and it shows no other ZIP. It is clean when it is on the caller's street and keeps the
+  // both show one, each read past the other side's places that run on from its street. It is whole
+  // when it is on the caller's street, its street keeps any of the caller's street words, it keeps
+  // every place word, not counting a unit-shaped part, and it shows no other ZIP. It is clean when it is on the caller's street and keeps the
   // address field by field: its street keeps a word of the caller's street, or of its name, its text
   // holds every place word anywhere, as a suggestion whose lines were joined may hold its town in its
   // street's part, and it shows no other ZIP, unless `read` is set and the caller gave a house number
@@ -339,10 +346,11 @@ export const resolveAddressWith = async <T>(
  * whose street opens with its house number, a suggestion's street is the caller's street only when
  * it shows the same compass directions in the same order, N, S, E, W, NE, NW, SE and SW, dotted or
  * spelled out, before or after the name, none more and none fewer, and, when both show a number
- * other than the house number, the same first one; each street is read with its ZIP left out and,
- * from its end, the other side's places after its street, whole or word by word, in any of their
- * usual forms, unless its own side shows that place after its street, as a site may run a street
- * on into its town. When the text brings no usable suggestion, or none on the caller's street that
+ * other than the house number, the same first one, in any of its usual forms; each street is read
+ * with its ZIP left out and, from its end, the other side's places after its street, each whole or,
+ * for the caller's, without a last word written another way, as a state's code is, in any of their
+ * usual forms, unless its own side shows that place after its street in any of them, as a site may
+ * run a street on into its town. When the text brings no usable suggestion, or none on the caller's street that
  * keeps any of the caller's street words and every place word and shows no other ZIP, it asks once
  * more with a tidied text: joined words split, the ZIP and a unit asked for as typed left out, and
  * stray punctuation dropped. It accepts the best suggestion either text brought when it is on the
