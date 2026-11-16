@@ -802,9 +802,16 @@ ${
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(element, "");
       element.dispatchEvent(new Event("input", { bubbles: true }));
     }, undefined, { timeout: ${elementReadMs} }, true);
-  // Emptied only when it holds something: Playwright clears with a Delete key a page sees.
-  if (await field.evaluate((element) => typeof element.value === "string" && element.value.length > 0, undefined, { timeout: ${elementReadMs} }))
+  // Emptied only when it holds something: Playwright clears with a Delete key a page sees. A field
+  // that still holds something then, as one whose page puts back what it held (a remembered
+  // username, a refused password or code), takes no typing: the host never types a value after
+  // what a field holds. Lengths only, never a value.
+  const holding = () => field.evaluate((element) => typeof element.value === "string" && element.value.length > 0, undefined, { timeout: ${elementReadMs} });
+  if (await holding()) {
     await field.fill("", { timeout: 5000 });
+    if (emptiedFields[${call.index}] && (await holding()))
+      return { focused: false, unfocused: { focusError: "FieldNotEmptied" }, located: fieldLocated, url: primary.url() };
+  }
   ${call.row === undefined ? "await field.focus({ timeout: 5000 });" : "await field.click({ timeout: 5000 });"}
   // Keep this original-node binding in Patchright's isolated world, inaccessible to page code.
   // The tag of the element that holds the focus instead, if another does: the deepest one, read
@@ -1257,6 +1264,9 @@ const observed = ${JSON.stringify(observed)};
 const selectors = ${JSON.stringify(step.fields.map((field) => field.selector))};
 const questionSelectors = ${JSON.stringify(step.fields.map((field) => questionRead(field, fill === undefined)))};
 const codeSlots = ${JSON.stringify(step.fields.map((field) => field.slot === "code"))};
+// A phone field may put its own mask back once emptied, such as a calling code, which its typing
+// allows for; every other field must hold nothing before the host types into it.
+const emptiedFields = ${JSON.stringify(step.fields.map((field) => field.slot !== "phone"))};
 const submitSelector = ${JSON.stringify(step.submit ?? null)};
 const submitKey = ${JSON.stringify(step.submitKey ?? null)};
 const submitVia = ${JSON.stringify(step.submitVia ?? null)};

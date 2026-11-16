@@ -646,6 +646,75 @@ test("a field that hands its focus to another element is refused, naming that el
   expect(received).toEqual([]);
 });
 
+/** Fills `step` with `values` by trusted keys on the page as served. */
+const fillWithKeys = async (page: Page, step: AutofillStep, values: readonly string[]) => {
+  const host = await hostPage(page);
+  const inspection = await Effect.runPromise(
+    inspectAutofillStep({ step, page: host, siteOrigin: site, authenticationOrigins: [] }),
+  );
+  if ("outcome" in inspection) throw new Error(`Fixture inspection refused: ${inspection.reason}`);
+  const { keyboard } = await hostKeyboard(page);
+  return Effect.runPromise(
+    fillAutofillStep({
+      step,
+      values,
+      inspection,
+      page: host,
+      keyboard,
+      typing: "keyboard",
+      settleMs: 500,
+    }),
+  );
+};
+
+// A sign-in screen the site shows again keeps what it held: a remembered username, a refused
+// password or code. The host types each value into an emptied field, never after what it held.
+test("a username, password and code a screen still holds are replaced, never typed after", async ({
+  page,
+}) => {
+  const received = await serve(
+    page,
+    `<label>Username<input name="username" autocomplete="username" value="remembered.user"></label>
+<label>Password<input name="password" type="password" autocomplete="current-password" value="refused-pass"></label>
+<label>Code<input name="code" inputmode="numeric" autocomplete="one-time-code" value="135791"></label>`,
+  );
+  const step: AutofillStep = {
+    fields: [...loginStep.fields, { selector: "input[name=code]", slot: "code" }],
+    submit: loginStep.submit,
+  };
+  const report = await fillWithKeys(page, step, [username, password, "246802"]);
+  expect(report).toMatchObject({ outcome: "filled", submit: "clicked" });
+  expect(received.map((form) => Object.fromEntries(form))).toEqual([
+    { username, password, code: "246802" },
+  ]);
+});
+
+test("a field whose page puts back what it held is refused, with nothing typed after it", async ({
+  page,
+}) => {
+  const received = await serve(
+    page,
+    `${loginScreen.replace('autocomplete="current-password"', 'autocomplete="current-password" value="refused-pass"')}
+<script>
+const held = document.querySelector("input[name=password]");
+held.addEventListener("input", () => {
+  if (held.value === "") held.value = "refused-pass";
+});
+</script>`,
+  );
+  const report = await fillWithKeys(page, loginStep, [username, password]);
+  expect(report).toMatchObject({
+    outcome: "filled",
+    fields: [
+      { slot: "username", status: "filled" },
+      { slot: "password", status: "failed" },
+    ],
+    submit: "not_attempted",
+  });
+  expect(await page.locator("input[name=password]").inputValue()).toBe("refused-pass");
+  expect(received).toEqual([]);
+});
+
 // Six one-digit boxes that still hold the digits of a code the site refused. The widget takes
 // digits in order: a box that takes the focus hands it to the first empty box, or to the last box
 // when every box holds one, and Delete empties a box and moves back one.
