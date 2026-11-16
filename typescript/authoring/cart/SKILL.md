@@ -40,7 +40,9 @@ addresses, and keeps the address the account has selected when it is left out: a
 order, and a checkout still chooses its address as below. Set the options as "Configure, then
 read" in the core skill says before adding the product: a value the product does not offer
 throws `InvalidInput` with `field` and `available`. Opening an item's details or options from
-its own card, name or picture, not a control labelled add or plus, is a read.
+its own card, name or picture, not a control labelled add or plus, is a read. Prefer finding
+the item's row or card by the site's own item ID where the page carries one, over its picture or
+position, since a site's pages can differ in layout.
 
 ## Quantity
 
@@ -68,6 +70,12 @@ one the site capped, is still the written line: call `verified()` and list it in
 `saved_differences` (writes skill). A checkout reads the lines it is about to buy before its
 commit and returns them with the confirmation.
 
+An account can hold several carts at once, such as one per store or a separate section for some
+items, each with its own lines and totals, and a page may show one at a time. Find the cart the
+call is about by the store or section its input or item names, open it through the site's own
+control for that cart, and read its lines, count and subtotal inside that cart's own container.
+Lines in another cart stay out of that read and out of the comparison of other lines.
+
 In a tool that places the order, when the page shows no cart control and no empty-cart label,
 take the cart as empty. Then read back every line of the checkout's order summary with the other
 reads before the card fill, or before pressing pay when there is none, and confirm it holds only
@@ -87,11 +95,16 @@ the page's default.
 Choosing the delivery address and payment method is part of a checkout's job, even when the
 account has saved ones the page pre-selects: take each from the input, such as which saved
 address or a new one, or ask before the commit mark which to use (the writes skill). Never use
-the page's selection silently. A paid add-on within the tool's purpose, such as a protection
-plan for the item bought, is an input or a question too. A paid membership, subscription or
-trial the checkout offers is outside its purpose: decline it without asking, never accept it
-without an input the caller set, and handle its pop-up as conditional (the forms skill), since
-it shows only to some accounts.
+the page's selection silently. Offer each saved address and payment method as an
+account-specific option with its masked label (the caller-input skill), and say in the labels
+which one the page pre-selects. Take a saved address or payment method the caller names as the
+caller-input skill says, asking rather than refusing when it matches none or several. Choose it
+for this order only, leaving the saved entries and the account's defaults as they are, and when
+the page shows that the choice changed a default, report it in its own output field (writes
+skill). A paid add-on within the tool's purpose, such as a protection plan for the item bought,
+is an input or a question too. A paid membership, subscription or trial the checkout offers is
+outside its purpose: decline it without asking, never accept it without an input the caller set,
+and handle its pop-up as conditional (the forms skill), since it shows only to some accounts.
 
 ## Minimums and refusals
 
@@ -109,17 +122,30 @@ delivery method to meet a limit. While building, ask the caller to revise or sto
 `report_blocked` and explain the site's limit: a build that only reached the limit never
 completed the write, so it never publishes.
 
+An account's state can change the add or buy flow, so that its controls would change an open
+order or a line already in the cart instead. Read that state before the commit mark. When the
+tool's inputs cover that change, as its quantity does for a line already in the cart (Quantity,
+above), continue; otherwise refuse with `InvalidInput` naming the site's state before the commit
+mark, as the caller-input skill says for a page's state that rules the task out.
+
 An example item that is out of stock doesn't end the build. The tool returns that as the site's
 refusal for the item, and the build publishes on it as the writes skill says.
 
-When the site offers delivery speeds or pickup times, take the caller's choice from an optional
-input and keep it as given. Without one, choose the standard option that adds no extra cost; when
-only options that cost extra remain, ask the caller which to use.
+When the site requires choosing one of a service's tiers of speed, class or service level, take
+the caller's choice from an optional input and keep it as given. Without one, choose the tier
+the site presents as standard, not one sold as faster, larger or premium; when the site shows no
+standard tier, ask the caller which to use.
 
 An "earliest" pickup or delivery time moves with the clock: pick it in the step that places the
 order, or right before the card fill when the host fills the card or picking it reloads the
 checkout. When the site says that time is gone and offers the next one, the next one is still
 the earliest.
+
+In the step that places the order, name the site's reply to that order request and the order's
+ID shown on the page as that wait's answers, beside the site's refusal and error messages, as the
+writes skill says for a commit, and read the ID from the reply or the page it leaves. Prefer
+passing a sign of progress that can show before them as that wait's `loading`, or naming it in
+`pending` as the writes skill says, over an answer that ends the wait.
 
 ## A checkout's inputs and output
 
