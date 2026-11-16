@@ -884,6 +884,18 @@ it("has a write take the site's rewrite of a typed value and note whether it cha
 });
 
 /*
+ * A search whose spelling the site fixed returned the site's rows for the fixed query as
+ * candidates, since the tool ranked them against the caller's text alone. A site that drops words
+ * from the query is left out, as the shorter query would match rows the caller did not ask for.
+ */
+it("has a search rank its results against the query the site applied as well as the caller's", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  expect((texts.get("search") ?? "").replace(/\s+/g, " ")).toContain(
+    "with that query as `applied_query` and a `query_corrected` boolean; when the site only fixed its spelling, a tool that ranks the results ranks them against that query as well as the caller's.",
+  );
+});
+
+/*
  * A read's search step waited only for the site's results, so a value the site did not recognise
  * timed out instead of returning the site's own no-match answer. Both hosts read the line once,
  * right after the core skill's bullet on waiting for every answer a step can give.
@@ -1325,6 +1337,17 @@ it("has the marked call re-read only what its page shows", async () => {
   );
 });
 
+// After an action, a page state can show for a moment and be gone before the tool reads it, while
+// the site's own reply to the action's request already settled the outcome. The tool prefers that
+// reply over what the page shows, apart from an error the page shows.
+it("has the site's reply to an action's request count over what the page shows", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const core = (texts.get("core") ?? "").replace(/\s+/g, " ");
+  expect(core).toContain(
+    "After navigation or any action, wait for a unique operation control or page state before testing absence or choosing a branch or fallback; after an action, prefer the site's own reply to the request the action sent over what the page shows, apart from an error the page shows.",
+  );
+});
+
 // A check for something neither the caller asked for nor the tool changes, or one that needs the
 // page to show something a correct run may not show, stops correct runs of every kind of tool. So
 // each check guards the caller's request or the tool's own change, a repair narrows one that
@@ -1510,15 +1533,15 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["7817aaebb108d7184b9c595e009e8a024a8ad780b19400d8143ae2a46d0353ab", "core"],
-    ["e854aa6b9fe22ea741598abcf0643c529211b643d6b9b400281948a117156224", "search"],
+    ["3636f13d8dffe45c3b794fac94ab0d328689eed37c1bc6f28ee075c2cce95b12", "core"],
+    ["7c3be765ee7c1c62b13a4876cc5453bbeb8acc7948b51511574f36f2aed09c4a", "search"],
     ["d6f0ed8446759ce44874a2cb7c7ee7251f92249673379b69439aaac2b5b7afb5", "auth"],
     ["a08f1ef89cc10bf11e17b8d6086b6e37649b1d5d11b78c0542cc7db32460b7e3", "testing"],
-    ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
+    ["d524204c6ed2dc0fa773d6e5cf0aef993e2b48ee9db3fcbf291e40ebe8c9913d", "pagination"],
     ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
-    ["75917651d3d386db5dbc9e2ee74190b1892453f7c0e1f2a6de3900e7d062e744", "writes"],
+    ["83da0f9ded9c0fd0d758a0aaa3956560cde22254244c10236acb0331a0ebb56b", "writes"],
     ["f3a7c6e7422fc926f5b662acfa57199de1e70826b215958ddf2a2353d1d62937", "cart"],
-    ["106b256a4aa08ac546c0f3e6ee9bb68dd9ea25b412d3378ba573882d0b157ede", "caller-input"],
+    ["4b1a24956cd8ebebcf8b9eaa3c755c80971c7b29c72446fdae5e03480b19580a", "caller-input"],
     ["5e831bd1ba21d5ec4b1da3a96152f9d905144cbef58b9bd26381933f27faa97c", "publication"],
     ["ba31a90dc5bf4b1f7e8be5e5145e99f6b4e2379e279be210c8537d9b93882d98", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
@@ -1640,7 +1663,7 @@ it("renders the search URL fast path only when a host turns it on", async () => 
     ...on.digests.filter(([, name]) => name === "search"),
     [sha256(on.agents), "workspace/AGENTS.md"],
   ]).toStrictEqual([
-    ["052712afaba095b3ef925f265b1b1a49e4cc3838eee0f7318dad4f82663a8da8", "search"],
+    ["e3c82530af60da937a450bd94be81e1fefea6ef2324d9cd54379a52fc1d7c930", "search"],
     ["e7b57d9c1988e57c4e08485bcd795f2c0c0ab05a30a81504ce1f13dd5f47b193", "workspace/AGENTS.md"],
   ]);
   expect(on.digests.filter(([, name]) => name !== "search")).toStrictEqual(

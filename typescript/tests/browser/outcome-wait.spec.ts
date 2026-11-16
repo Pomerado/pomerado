@@ -2,16 +2,17 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "playwright";
 import { Schema } from "effect";
 import { outcomeWaitCode } from "../../src/browser/outcome-wait.js";
+import { waitCode } from "../../src/browser/wait.js";
 import { defineOperation } from "../../src/runtime/operation.js";
 import { makeLocalKernel } from "../../src/testing/local-kernel.js";
 import { failure, runExample } from "./authoring-fixture.js";
 
 // The authoring library's outcome wait, run as a Kernel call body runs it (`page` in scope) on
 // local search pages. Chromium must render them: an outcome counts only when it is visible.
-const call = async (page: Page, body: string) => {
+const call = async (page: Page, body: string, prefix = outcomeWaitCode) => {
   const answer = await makeLocalKernel(page).browsers.playwright.execute("session-1", {
     timeout_sec: 10,
-    code: `${outcomeWaitCode}\n${body}`,
+    code: `${prefix}\n${body}`,
   });
   return answer.success ? { result: answer.result } : { error: answer.error };
 };
@@ -109,10 +110,10 @@ test("a hidden copy makes the winning outcome ambiguous until its locator is sco
   expect(scoped).toEqual({ result: "empty" });
 });
 
-test("two visible matches of the winning outcome fail as ambiguous without picking one", async ({
+test("two visible matches of the winning outcome that read differently fail as ambiguous without picking one", async ({
   page,
 }) => {
-  await searchPage(page, `${rooms}${rooms}`);
+  await searchPage(page, `${rooms}<ul aria-label="Rooms"><li>Loft room</li></ul>`);
   expect(
     await call(
       page,
@@ -132,6 +133,79 @@ test("two visible matches of the winning outcome fail as ambiguous without picki
       },
     },
   });
+});
+
+test("visible matches of the winning outcome that all read the same decide it, with the first one's text as evidence", async ({
+  page,
+}) => {
+  await searchPage(page, `${rooms}${rooms}`);
+  expect(await call(page, waitBody(5000))).toEqual({ result: "results" });
+  await searchPage(page, `<p>No rooms match your dates</p>`.repeat(20));
+  expect(await call(page, waitBody(5000))).toEqual({ result: "empty" });
+  // Two visible copies of the empty state, spaced differently, after a copy hidden by
+  // visibility that reads otherwise and does not count.
+  await searchPage(
+    page,
+    `<p class="notice" style="visibility: hidden">Rooms are available</p>` +
+      `<p class="notice">No rooms match your dates</p><div><p class="notice" style="white-space: pre">No rooms\n  match your dates </p></div>`,
+  );
+  expect(
+    await call(
+      page,
+      `const answer = page.locator("#answer");
+      const { outcome, evidence } = await waitForOutcomeResult({
+        failed: answer.getByRole("alert"),
+        empty: answer.locator(".notice"),
+        results: answer.getByRole("list", { name: "Rooms", exact: true }),
+      }, { timeout: 5000 });
+      return { outcome, evidence };`,
+      waitCode,
+    ),
+  ).toEqual({
+    result: { outcome: "empty", evidence: { count: 3, visible: 2, text: "No rooms match your dates" } },
+  });
+});
+
+test("visible matches of the winning outcome stay ambiguous when they are form controls, have no text, or more than 20 show", async ({
+  page,
+}) => {
+  const body = `const answer = page.locator("#answer");
+    return await waitForOutcome({ failed: answer.getByRole("alert"), empty: answer.locator(".notice") }, { timeout: 5000 });`;
+  const box = `class="notice" style="display: inline-block; width: 20px; height: 20px"`;
+  for (const [html, shown] of [
+    [`<input class="notice" value="1"><input class="notice" value="3">`, 2],
+    [`<input class="notice" value="5"><input class="notice" value="5">`, 2],
+    [`<input type="checkbox" class="notice" checked><input type="checkbox" class="notice">`, 2],
+    [`<select class="notice"><option>One</option><option selected>Two</option></select>` +
+      `<select class="notice"><option selected>One</option><option>Two</option></select>`, 2],
+    [`<span ${box} aria-label="Sold out"></span><span ${box} aria-label="In stock"></span>`, 2],
+    [`<p class="notice">No rooms match your dates</p>`.repeat(21), 21],
+  ] as const) {
+    await searchPage(page, html);
+    expect(await call(page, body)).toEqual({
+      error: `outcome_ambiguous: failed 0 visible of 0, empty ${shown} visible of ${shown}`,
+    });
+  }
+});
+
+test("a copy from before the action beside a new one that reads the same stays ambiguous", async ({ page }) => {
+  // A confirmation from an earlier booking stays on the page, and the click adds one that reads the same.
+  await page.setContent(`
+    <button type="button">Book</button>
+    <section id="answer"><p class="notice">Booking confirmed</p></section>
+    <script>
+      document.querySelector("button").onclick = () => setTimeout(() =>
+        document.querySelector("#answer").insertAdjacentHTML("beforeend", '<p class="notice">Booking confirmed</p>'), 100);
+    </script>`);
+  expect(
+    await call(
+      page,
+      `return await waitForOutcome({ confirmed: page.locator(".notice") }, {
+        action: () => page.getByRole("button", { name: "Book" }).click(),
+        timeout: 5000,
+      });`,
+    ),
+  ).toEqual({ error: "outcome_ambiguous: confirmed 2 visible of 2" });
 });
 
 test("an ambiguous outcome below the winner does not block it", async ({ page }) => {
@@ -345,7 +419,8 @@ test("a filter whose slow answer ends while a look reads the old list returns th
             count: () => visible.count(),
             evaluateAll: async (fn, arg) => {
               const read = await visible.evaluateAll(fn, arg);
-              changed = read;
+              // The winner's evidence, read once the wait decides, is its text.
+              if (typeof read === "number") changed = read;
               if (Date.now() - clicked > 2100) {
                 release();
                 await answered;
@@ -509,7 +584,7 @@ test("a tool whose outcome wait times out fails as a browser action timeout", as
     _tag: "BrowserActionTimeout",
   });
   // An ambiguous answer stays the tool's own failure.
-  await page.setContent(`${rooms}${rooms}`);
+  await page.setContent(`${rooms}<ul aria-label="Rooms"><li>Loft room</li></ul>`);
   expect(failure((await runExample(page, waitingTool, {})).result)).toMatchObject({
     _tag: "OperationFailure",
   });

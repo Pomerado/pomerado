@@ -12,6 +12,55 @@ const site = (answers: Readonly<Record<string, readonly string[]>>) => {
 };
 
 describe("resolveAddress", () => {
+  test("takes a place by its name when the caller gave no house number; a write lists any other, a read takes the site's first in the caller's area", async () => {
+    const asked = "Example Park, Exampleton, CA";
+    const place = "Example Park, 12 Sample Plaza, Exampleton, CA";
+    const longer = "Example Park Ferry Terminal, Exampleton, CA";
+    // The suggestion whose name is the caller's place is taken, whatever street follows its name,
+    // in either order and alone.
+    for (const rows of [[place, longer], [longer, place], [place]])
+      expect(await resolveAddress(asked, () => rows)).toMatchObject({ picked: true, label: place });
+    expect(await resolveAddress(asked, () => [longer, place], String, { read: true })).toMatchObject({ picked: true, label: place });
+    // A name holding the caller's among other words is another place: a write lists it, and a read
+    // with no suggestion of that name takes the site's first when it is in the caller's area.
+    expect(await resolveAddress(asked, () => [longer])).toEqual({
+      picked: false,
+      reason: "option_unclear",
+      wanted: asked,
+      available: [longer],
+      matches: [longer],
+      unit: "",
+    });
+    expect(await resolveAddress(asked, () => [longer], String, { read: true })).toMatchObject({ picked: true, label: longer });
+    // So any other name, or a house the caller did not give, however many of its words it shares.
+    const others = ["Example Gardens, Exampleton, CA", "Example Park Lot B, Exampleton, CA"];
+    expect(await resolveAddress(asked, () => others)).toMatchObject({ picked: false, reason: "option_unclear", matches: others });
+    for (const rows of [others, [...others].reverse()])
+      expect(await resolveAddress(asked, () => rows, String, { read: true })).toMatchObject({ picked: true, label: rows[0] });
+    // A read whose first suggestion is in another town, or state, refuses with the candidates.
+    for (const away of ["Example Gardens, Otherton, CA", "Example Gardens, Exampleton, TX"])
+      expect(await resolveAddress(asked, () => [away, ...others], String, { read: true })).toMatchObject({
+        picked: false,
+        reason: "option_unclear",
+        matches: [away, ...others],
+      });
+    expect(await resolveAddress("Example St, Exampleton, IL", () => ["12 Example St, Exampleton, IL, USA"])).toMatchObject({ picked: false });
+    // A name written another way word for word is the same name.
+    expect(await resolveAddress("Example St, Exampleton, IL", () => ["Example Street, Exampleton, IL, USA"])).toMatchObject({ picked: true });
+    // Of several with the name, a write takes the site's first, one that leaves out the state last.
+    const named = ["Example Park, Exampleton", "Example Park, Exampleton, CA, USA", place];
+    expect(await resolveAddress(asked, () => named)).toMatchObject({ picked: true, label: named[1] });
+    expect(await resolveAddress(asked, () => [named[0] ?? "", place, named[1] ?? ""])).toMatchObject({ picked: true, label: place });
+    // A place whose name holds a numbered street is taken by that name.
+    const market = "5th Street Market, 40 Sample St, Exampleton, CA";
+    expect(await resolveAddress("5th Street Market, Exampleton, CA", () => ["5th Street Market Garage, Exampleton, CA", market])).toMatchObject({
+      picked: true,
+      label: market,
+    });
+    // A street address with a house number is matched by its house number and street, as before.
+    expect(await resolveAddress("12 Sample Plaza, Exampleton, CA", () => [longer, place])).toMatchObject({ picked: true, label: place });
+  });
+
   test("types the street without the unit after a comma or a #, and returns the unit", async () => {
     const echo = (text: string) => [text];
     expect(await resolveAddress("1 Example St, Suite 2, Exampleton, IL 60000", echo)).toMatchObject({
@@ -133,6 +182,84 @@ describe("resolveAddress", () => {
     // A place word in a suggestion's street never counts, so only the other state's is usable.
     const streets = ["1 Exampleton Rd, Sampleton, IL, USA", "1 Example St, Exampleton, NY, USA"];
     expect(await resolveAddress("1 Example St, Exampleton, IL", () => streets)).toMatchObject({ picked: false, reason: "option_unclear", matches: [streets[1]] });
+  });
+
+  test("takes a place by its name over other places named after it, and never the site's control that lists more results", async () => {
+    const asked = "Example International Airport (EXA), Exampleton, CA";
+    const place = "Example International Airport (EXA), 400 Sample Rd, Exampleton, CA";
+    const others = ["Terminal 2, EXA", "Sample Terminal 1", "Terminal 3 (Door 3-4)", "International Terminal (B gates)"];
+    const controls = ["See more results for " + asked, 'Search for "Example International Airport (EXA), Exampleton, CA"'];
+    for (const read of [false, true])
+      expect(await resolveAddress(asked, () => [others[0] ?? "", place, ...others.slice(1), ...controls], String, { read })).toMatchObject({
+        picked: true,
+        label: place,
+      });
+    // Without the place, a write lists the other places and no control, and so does a read whose
+    // first place is not in the caller's area; one in it is taken, past a control listed first.
+    for (const read of [false, true])
+      expect(await resolveAddress(asked, () => [...others, ...controls], String, { read })).toMatchObject({
+        picked: false,
+        reason: "option_unclear",
+        available: others,
+        matches: others,
+      });
+    const parking = "Example International Airport Parking, Exampleton, CA";
+    expect(await resolveAddress(asked, () => [...controls, parking, ...others], String, { read: true })).toMatchObject({ picked: true, label: parking });
+    // A place showing the typed text after a house number or a part of its own, or as its own
+    // start, is no control.
+    expect(await resolveAddress("Example Rd, Exampleton, CA", () => ["Example Park, Example Rd, Exampleton, CA"])).toMatchObject({
+      matches: ["Example Park, Example Rd, Exampleton, CA"],
+    });
+    expect(await resolveAddress("Example St, Exampleton, IL", () => ["12 Example St, Exampleton, IL"])).toMatchObject({ matches: ["12 Example St, Exampleton, IL"] });
+    expect(await resolveAddress("Example St, Exampleton, IL", () => ["Example St, Exampleton, IL, USA"])).toMatchObject({ picked: true });
+  });
+
+  test("lists a place whose name holds a word before the caller's text, and keeps a read to the caller's area", async () => {
+    // A word before the caller's whole text, a site's country after it, or a count in the control's
+    // words, is no reason to take a row for a control or a control for a place.
+    for (const [asked, row] of [
+      ["Example Park, Exampleton, CA", "The Example Park, Exampleton, CA, USA"],
+      ["Exampleton, IL", "West Exampleton, IL, USA"],
+      ["Example Rd, Exampleton, CA", "N Example Rd, Exampleton, CA"],
+    ] as const)
+      expect(await resolveAddress(asked, () => [row])).toMatchObject({ picked: false, reason: "option_unclear", matches: [row] });
+    const asked = "Example Park, Exampleton, CA";
+    expect(await resolveAddress(asked, () => ["See 12 more results for " + asked], String, { read: true })).toMatchObject({ picked: false, available: [] });
+    expect(await resolveAddress(asked, () => ["See all results for " + asked + " (12)"], String, { read: true })).toMatchObject({ picked: false, available: [] });
+    // A read takes no first suggestion that shows the caller's whole text after words of its own, as
+    // a control the rule above leaves listed may, and passes over none either: it refuses.
+    for (const rows of [
+      ['Search "' + asked + '"', "Example Gardens, Exampleton, CA"],
+      ["The Example Park, Exampleton, CA, USA", "Example Gardens, Exampleton, CA"],
+    ])
+      expect(await resolveAddress(asked, () => rows, String, { read: true })).toMatchObject({ picked: false, matches: rows });
+    expect(await resolveAddress("Exampleton, IL", () => ["West Exampleton, IL, USA", "Exampleton Heights, IL, USA"], String, { read: true })).toMatchObject({
+      picked: false,
+    });
+    // A town given alone after the place's name is its town, so a read takes a first suggestion there.
+    expect(await resolveAddress("Example Park, Exampleton", () => ["Example Gardens, Exampleton, CA"], String, { read: true })).toMatchObject({
+      picked: true,
+      label: "Example Gardens, Exampleton, CA",
+    });
+    // The place's own row that leaves out the state, with its street after its name, is taken.
+    const place = "Example Park, 12 Sample Plaza, Exampleton";
+    expect(await resolveAddress(asked, () => [place])).toMatchObject({ picked: true, label: place });
+    // A read refuses a first suggestion whose town is only in its name, one in another town for a town
+    // the caller named alone, one with no area to compare, and another house.
+    for (const [address, row] of [
+      [asked, "Exampleton Ferry Terminal, Otherton, CA"],
+      ["Exampleton, IL", "Otherton, IL, USA"],
+      ["Exampleton, IL 60000", "Otherton, IL, USA"],
+      ["Example Park", "Set location on map"],
+      ["1 Example St, Exampleton, IL 60000", "2 Example St, Exampleton, IL 60000, USA"],
+    ] as const)
+      expect(await resolveAddress(address, () => [row], String, { read: true })).toMatchObject({ picked: false });
+    // A name the typed text brings only with a longer name is asked for again without its ZIP.
+    const { suggest } = site({
+      "Example Park, Exampleton, CA 90000": ["Example Park Ferry Terminal, Exampleton, CA 90000"],
+      "Example Park, Exampleton, CA": ["Example Park, 12 Sample Plaza, Exampleton, CA 90000"],
+    });
+    expect(await resolveAddress("Example Park, Exampleton, CA 90000", suggest)).toMatchObject({ picked: true, label: "Example Park, 12 Sample Plaza, Exampleton, CA 90000" });
   });
 
   test("in a read, takes a suggestion that keeps the house number, street and place but shows another ZIP", async () => {

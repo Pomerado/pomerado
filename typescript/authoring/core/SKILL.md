@@ -764,7 +764,9 @@ that later executions will be immediately ready. Include a bounded wait for the
 expected page or control even when exploration never observed a delay. Derive
 that readiness condition from the intended page, not from having seen a particular
 challenge. After navigation or any action, wait for a unique operation control or page state
-before testing absence or choosing a branch or fallback. Use `locator.waitFor` for one expected state, `waitForOutcome`
+before testing absence or choosing a branch or fallback; after an action, prefer the site's own
+reply to the request the action sent over what the page shows, apart from an error the page shows.
+Use `locator.waitFor` for one expected state, `waitForOutcome`
 (below) when the page can answer more than one way, `waitForRows`, `waitForValues` or
 `waitForChange` (below) for the values you return, or, only where none fits, a bounded loop of
 your own that reads every condition in one `evaluate` per pass;
@@ -859,7 +861,9 @@ choice the input asked for as "Configure, then read" says; ask the caller about 
 (.agents/caller-input/SKILL.md). It throws an
 `Error` named `OutcomeWaitFailure` whose message says what each outcome matched, which progress
 signs it saw and when progress stopped: `outcome_ambiguous` when the winning locator matches more
-than one element; `outcome_unknown` when the page stops progressing for `noProgressMs` (8 s)
+than one element, unless more than one is visible and the visible ones all read the same text (read
+such an answer's text from `waitForOutcomeResult`'s `evidence`, or scope the locator to one element before acting on it or reading inside it);
+`outcome_unknown` when the page stops progressing for `noProgressMs` (8 s)
 while showing none of the answers; and `outcome_timeout` when it is still progressing at
 `timeout` (30 s). An unknown page is a challenge, the site's error or a layout you have not
 handled: do not turn it into your own timeout; the host reports it as one. `references/navigation.ts` waits for a search's answer and
@@ -924,7 +928,7 @@ click it or to wait for readiness: collapsed menus often hold an earlier hidden
 match. Scope a role locator to its evidenced container and to visible elements,
 for example `nav.getByRole("link", { name: /log in/i }).filter({ visible: true })`,
 then check that exactly one element matches; `waitForOutcome` checks it for the outcome it
-returns. When several candidates remain, inspect them and choose by evidence such as
+returns unless its visible matches all read the same text. When several candidates remain, inspect them and choose by evidence such as
 section, accessible name and destination before clicking or waiting. A readiness wait targets one specific
 evidenced element or page state.
 
