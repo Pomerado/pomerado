@@ -114,25 +114,28 @@ export const resolveAddressWith = async <T>(
     match.spellings(text, { places: "never" }).length === 1 && match.spellings(text).some((form) => words(form).every((word) => !words(text).includes(word)));
   // How a part ends in a place: after other words, a place's code or two-word name, split off as its
   // own field, so a town and state in one part are two; the part itself a place; or a place's
-  // one-word name after other words, kept in one field that adds two when left out.
+  // one-word name after other words, split off too but paired, so both are kept or neither.
   const ending = (part: string) => {
     const each = words(part);
-    if (each.length > 1 && (each.at(-1) ?? "").length === 2 && isPlace(each.at(-1) ?? "")) return { split: 1, adds: 1 };
-    if (isPlace(part)) return { split: 0, adds: 1 };
-    if (each.length > 2 && isPlace(each.slice(-2).join(" "))) return { split: 2, adds: 1 };
-    return each.length > 1 && isPlace(each.at(-1) ?? "") ? { split: 0, adds: 2 } : undefined;
+    if (each.length > 1 && (each.at(-1) ?? "").length === 2 && isPlace(each.at(-1) ?? "")) return { split: 1, pair: false };
+    if (isPlace(part)) return { split: 0, pair: false };
+    if (each.length > 2 && isPlace(each.slice(-2).join(" "))) return { split: 2, pair: false };
+    return each.length > 1 && isPlace(each.at(-1) ?? "") ? { split: 1, pair: true } : undefined;
   };
-  // The caller's place as fields, each with the count it adds when left out. The state's part is the
-  // last one that ends in a place, else the last; only it reads a place's other forms, so a town
-  // named as a state is not kept by that state's code.
+  // The caller's place as fields. The state's part is the last one that ends in a place, else the
+  // last; only the state's field reads a place's other forms, so a town named as a state is not kept
+  // by that state's code.
   const endings = placeParts.map(ending);
   const stateAt = endings.some(Boolean) ? endings.map(Boolean).lastIndexOf(true) : placeParts.length - 1;
   const fields = placeParts.flatMap((part, index) => {
     const end = index === stateAt ? endings[index] : undefined;
     const each = words(part);
     return end !== undefined && end.split > 0
-      ? [{ ...toPlace(each.slice(0, -end.split).join(" "), "never"), adds: 1 }, { ...toPlace(each.slice(-end.split).join(" ")), adds: 1 }]
-      : [{ ...toPlace(part, index === stateAt ? "end" : "never"), adds: end?.adds ?? 1 }];
+      ? [
+          { ...toPlace(each.slice(0, -end.split).join(" "), "never"), state: false, pair: end.pair },
+          { ...toPlace(each.slice(-end.split).join(" ")), state: true, pair: false },
+        ]
+      : [{ ...toPlace(part, index === stateAt ? "end" : "never"), state: index === stateAt, pair: false }];
   });
   const unitPlace = next === "" ? [] : [toPlace(next)];
   const total = places.reduce((sum, part) => sum + part.words.length, 0);
@@ -304,23 +307,36 @@ export const resolveAddressWith = async <T>(
     // when only some of its words sit there; else left out, adding its count.
     const extra = spare(words(own.replace(zipGroups, " ")).filter((word) => !theirs.flatMap(words).includes(word)));
     const onward = [extra, ...rest].flatMap((list, part) => list.map((word) => ({ word, part })));
+    // The state's field is placed first, at its latest place; the others in order, at their first.
     const taken = new Set<number>();
-    const find = (form: string) => {
+    const find = (form: string, latest = false) => {
       const list = words(form);
-      const at = onward.findIndex(
-        (first, start) =>
-          list.length > 0 &&
-          list.every((word, offset) => !taken.has(start + offset) && onward[start + offset]?.word === word && onward[start + offset]?.part === first.part),
+      const starts = onward.flatMap((first, start) =>
+        list.length > 0 &&
+        list.every((word, offset) => !taken.has(start + offset) && onward[start + offset]?.word === word && onward[start + offset]?.part === first.part)
+          ? [start]
+          : [],
       );
-      return at < 0 ? [] : list.map((_, offset) => at + offset);
+      const at = latest ? starts.at(-1) : starts[0];
+      return at === undefined ? [] : list.map((_, offset) => at + offset);
     };
-    const held = fields.map((field) => {
-      const spots = field.forms.map(find).find((each) => each.length > 0);
-      if (spots === undefined) return field.words.some((forms) => forms.some((form) => find(form).length > 0)) ? "part" : "none";
-      for (const spot of spots) taken.add(spot);
-      return "kept";
+    const held = fields.map((): "kept" | "part" | "none" => "none");
+    for (const index of fields.map((_, at) => at).sort((one, two) => Number(fields[two]?.state) - Number(fields[one]?.state))) {
+      const field = fields[index];
+      if (field === undefined) continue;
+      const spots = field.forms.map((form) => find(form, field.state)).filter((each) => each.length > 0);
+      const best = field.state ? spots.sort((one, two) => (two[0] ?? 0) - (one[0] ?? 0))[0] : spots[0];
+      if (best === undefined) held[index] = field.words.some((forms) => forms.some((form) => find(form).length > 0)) ? "part" : "none";
+      else {
+        for (const spot of best) taken.add(spot);
+        held[index] = "kept";
+      }
+    }
+    // A paired town and state are held in part when only one of them is kept.
+    fields.forEach((field, index) => {
+      if (field.pair && (held[index] === "none") !== (held[index + 1] === "none")) held[index] = held[index + 1] = "part";
     });
-    const left = fields.reduce((sum, field, index) => sum + (held[index] === "none" ? field.adds : 0), 0);
+    const left = held.filter((kind) => kind === "none").length;
     const fit = !held.includes("part") && left + (zip !== "" && shown === "" ? 1 : 0) <= 1;
     const named = names.some((forms) => forms.some((form) => ownWords.some((word) => !houseWords.includes(word) && numeral(word) === form)));
     if (house.length > 0 && names.length > 0 && !named && (other || !close(callerWords, streetWords(own)))) return undefined;
@@ -457,10 +473,12 @@ export const resolveAddressWith = async <T>(
  * site's version. Of the ZIP, town and state the caller gave, it may leave out one, showing none of
  * it; it shows the others whole and no other ZIP, or it shows the caller's ZIP on the caller's
  * street. One that leaves out the town or state without showing the caller's ZIP is accepted only
- * when no other suggestion fits as well. Otherwise it refuses, with `picked: false` and every
- * suggestion the site gave as `available`, for `pickRefusal`: as `option_missing` when neither text
- * brought a usable one, else as `option_unclear`, with the usable ones as `matches`. It keeps no
- * list of words or addresses of its own but the compass directions.
+ * when no other suggestion fits as well. With `{ read: true }`, as in a read, it also accepts
+ * another ZIP when the caller gave a house number and a town or state. Otherwise it refuses, with
+ * `picked: false` and every suggestion the site gave as `available`, for `pickRefusal`: as
+ * `option_missing` when neither text brought a usable one, else as `option_unclear`, with the
+ * usable ones as `matches`. It keeps no list of words or addresses of its own but the compass
+ * directions.
  */
 export const resolveAddress = <T = string>(
   address: string,

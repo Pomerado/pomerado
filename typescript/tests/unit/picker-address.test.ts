@@ -169,6 +169,8 @@ describe("resolveAddress", () => {
       ["1 Example St, Exampleton, Illinois, USA", "1 Example St, Exampleton, IL, USA"],
       ["12 Example St, Exampleton IL 60000, USA", "12 Example St, Exampleton, IL, USA"],
       ["1 Example St, Exampleton IL, USA", "1 Example St, Exampleton, IL"],
+      ["1 Example St, Exampleton Illinois", "1 Example St, Exampleton, IL"],
+      ["1 Example St, Illinois Exampleton, Illinois", "1 Example St, Illinois Exampleton, IL"],
     ])
       expect(await resolveAddress(wanted ?? "", () => [shown ?? ""])).toMatchObject({ picked: true, label: shown });
     expect(await resolveAddress("1 Example Building, Exampleton, IL 60000", () => ["1 Example Bldg, Exampleton, IL"])).toMatchObject({ picked: true });
@@ -206,6 +208,7 @@ describe("resolveAddress", () => {
       ["12 West Example St, Washington, West Virginia, USA", "12 West Example St, West Washington, Virginia"],
       ["12 Example St, Exampleton Illinois, USA", "12 Example St, USA"],
       ["1 Example St, Port Exampleton, PA", "1 Example St, Port, Exampleton 60000"],
+      ["1 Example St, Port Washington", "1 Example St, Washington, PA"],
     ])
       expect(await resolveAddress(wanted ?? "", () => [shown ?? ""])).toMatchObject({ picked: false, reason: "option_unclear" });
   });
