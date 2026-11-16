@@ -7,7 +7,7 @@ import { rankChoices } from "./picker-rank.js";
  * address (`unit`, "" for none). Or a refusal that `pickRefusal` takes, listing every suggestion
  * the site gave as `available`: `option_missing` when no text brought a usable suggestion, or
  * `option_unclear`, with the usable ones as `matches`, when the best keeps the address only in part.
- * A read with any suggestion takes the site's first instead of refusing.
+ * A read takes the site's first suggestion instead when it is in the caller's area.
  */
 export type AddressOutcome<T> =
   | {
@@ -293,6 +293,13 @@ export const resolveAddressWith = async <T>(
   const holds = (forms: readonly string[], within: string) => forms.some((form) => form.trim() !== "" && within.includes(form));
   const keeps = (list: readonly ReturnType<typeof toPlace>[], within: string) =>
     list.reduce((sum, part) => sum + (holds(part.forms, within) ? part.words.length : part.words.filter((each) => holds(each, within)).length), 0);
+  // Whether a suggestion is in the caller's area: it shows no other ZIP, and shows the caller's ZIP
+  // or holds each of the caller's town and state whole, in any of its usual forms.
+  const inArea = (text: string) => {
+    const shown = zipOf(text);
+    if (zip !== "" && shown !== "" && shown !== zip) return false;
+    return (zip !== "" && shown === zip) || fields.every((field) => holds(field.forms, phrase(text.replace(zipGroups, " "))));
+  };
   // A suggestion with another house number, one whose street keeps none of the caller's street name
   // words and whose name is not close to the caller's or shows another ZIP, or one that reads the
   // caller's ZIP as its house number, is another address: undefined.
@@ -480,8 +487,8 @@ export const resolveAddressWith = async <T>(
       };
     if (scores[pick]?.whole === true) break;
   }
-  // A read with no clean suggestion takes the site's first.
-  const taken = best?.clean === true ? best : options.read === true ? first : undefined;
+  // A read with no clean suggestion takes the site's first when it is in the caller's area.
+  const taken = best?.clean === true ? best : options.read === true && first !== undefined && inArea(first.label) ? first : undefined;
   if (taken === undefined)
     return {
       picked: false,
@@ -557,8 +564,9 @@ export const resolveAddressWith = async <T>(
  * whose first part holds that name among other words, and of those it accepts takes the site's
  * first, one that leaves out a place field only when none keeps them all. With `{ read: true }`, as
  * in a read, it also accepts another ZIP when the caller gave a house number and a town or state,
- * and when it accepts none, takes the site's first suggestion for the first text that brought any,
- * which the tool reports as the site's version. A suggestion that shows the whole text typed, of
+ * and when it accepts none, takes the site's first suggestion for the first text that brought any
+ * when that one is in the caller's area: it shows no other ZIP, and shows the caller's ZIP or holds
+ * each of the caller's town and state whole. The tool reports it as the site's version. A suggestion that shows the whole text typed, of
  * two parts or more, after words of its own first part with no digit, as a site's control that lists
  * more results for that text does, is not a suggestion: it is not accepted, listed or taken in a
  * read. Otherwise it refuses, with
