@@ -50,7 +50,7 @@ export const preflightTestInput = (
      * read signed out. Kept so existing callers compile; it will be removed.
      */
     readonly executionHistory?: readonly {
-      readonly input?: "agent_chosen" | "agent_chosen_batch";
+      readonly input?: "agent_chosen" | "agent_chosen_batch" | "recent_inputs_batch";
       readonly entrypoint?: string;
     }[];
   },

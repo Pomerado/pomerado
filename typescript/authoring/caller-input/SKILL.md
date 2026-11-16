@@ -227,8 +227,9 @@ already asked for, or to solve a CAPTCHA.
      it. Wherever source calls `fillCard`, no source reads a
      field's value or the page's markup, runs or plants code in the page, opens a
      DevTools session, takes an accessibility snapshot, screenshot or PDF of the page,
-     records the page, or reads a request body, so delete such probes before you fill
-     the card. A ZIP or postal-code field in the card form is slot `billing_postal_code`,
+     records the page, or reads a request body, except in an explore step before the
+     card is filled, so delete such probes before any other step. A ZIP or postal-code
+     field in the card form is slot `billing_postal_code`,
      named in the same call as the card's other fields: the host fills it from the
      payer's billing address.
 2. For a choice, read the options in the execute call that reaches it and return them as
