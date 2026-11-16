@@ -126,10 +126,14 @@ delivery method to meet a limit. While building, ask the caller to revise or sto
 completed the write, so it never publishes.
 
 An account's state can change the add or buy flow, so that its controls would change an open
-order or a line already in the cart instead. Read that state before the commit mark. When the
-tool's inputs cover that change, as its quantity does for a line already in the cart (Quantity,
-above), continue; otherwise refuse with `InvalidInput` naming the site's state before the commit
-mark, as the caller-input skill says for a page's state that rules the task out.
+order or a line already in the cart instead. A product already in the cart can show that line's
+quantity control in place of its add control, so wait for whichever of the two the page shows with
+`waitForOutcome` (the core skill), not for the add control alone. Read that state before the
+commit mark. When the tool's inputs cover that change, as its quantity does for a line already in
+the cart, read the line's quantity there and bring it to the earlier quantity plus the input, or
+to the input, with that control (Quantity, above); otherwise refuse with `InvalidInput` naming the
+site's state before the commit mark, as the caller-input skill says for a page's state that rules
+the task out.
 
 An example item that is out of stock doesn't end the build. The tool returns that as the site's
 refusal for the item, and the build publishes on it as the writes skill says.
