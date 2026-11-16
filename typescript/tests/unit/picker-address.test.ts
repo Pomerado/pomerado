@@ -308,6 +308,10 @@ describe("resolveAddress", () => {
     expect(await houses("12A Example St, Exampleton, IL", ["12 A Example St, Exampleton, IL, USA"])).toBe("12 A Example St, Exampleton, IL, USA");
     expect(await houses("2nd Floor, 12 Example St, Exampleton, IL", ["12 Example St, Exampleton, IL, USA"])).toBe("12 Example St, Exampleton, IL, USA");
     expect(await houses("1 Example St, Exampleton, IL", ["100 Example St Apt 1, Exampleton, IL, USA"])).toBe(false);
+    // A place's name before its address may open with a number of its own.
+    for (const name of ["24 Hour Sample", "12 Hour Sample"])
+      expect(await houses("12 Example St, Exampleton, IL", [`${name}, 12 Example St, Exampleton, IL, USA`])).toBe(`${name}, 12 Example St, Exampleton, IL, USA`);
+    expect(await houses("12 Example St, Exampleton, IL", ["2 mi, Sample Place, 15 Example St, Exampleton, IL, USA"])).toBe(false);
   });
 
   test("refuses only when no form brings a suggestion with the caller's house number and street name, listing what the site gave", async () => {

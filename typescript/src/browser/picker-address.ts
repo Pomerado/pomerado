@@ -70,8 +70,12 @@ export const resolveAddressWith = async <T>(
     const [number = "", next = ""] = part;
     return next.length === 1 ? [number, number + next] : [number];
   };
-  // The street: the first part with a house number, else the first.
-  const streetOf = (list: readonly string[]) => Math.max(0, list.findIndex((part) => houseOf(part).length > 0));
+  // The street: the last part opening with one of the `wanted` house numbers, else the first with a
+  // house number, else the first.
+  const streetOf = (list: readonly string[], wanted: readonly string[] = []) => {
+    const at = list.findLastIndex((part) => houseOf(part).some((each) => wanted.includes(each)));
+    return Math.max(0, at >= 0 ? at : list.findIndex((part) => houseOf(part).length > 0));
+  };
   // A unit is the part right after a street with a house number, else the part right before it,
   // when it has at most two words, one of them holding a digit or a #, no ZIP, and no plain number
   // opening it before another word, as a street or a town may have; or a # and what follows it
@@ -228,12 +232,13 @@ export const resolveAddressWith = async <T>(
       name(two).some((word) => word.length > 2 && initials(one).includes(word))
     );
   };
-  // A suggestion's street; its parts after the street, as words (its whole text when it has no
-  // comma, and none in `beyond`) and each in its usual forms; its parts but the street; and the words
-  // of each of its parts after the street, ZIPs left out.
+  // A suggestion's street, the last part opening with the caller's house number when one does, as a
+  // place's name may open with a number before its address; its parts after the street, as words
+  // (its whole text when it has no comma, and none in `beyond`) and each in its usual forms; its parts
+  // but the street; and the words of each of its parts after the street, ZIPs left out.
   const sides = (text: string) => {
     const split = text.split(",");
-    const at = streetOf(split);
+    const at = streetOf(split, house);
     return {
       street: split[at] ?? "",
       after: phrase(split.length > 1 ? split.slice(at + 1).join(",") : text),
@@ -294,11 +299,11 @@ export const resolveAddressWith = async <T>(
   // field it holds on the caller's street with no word of its street left over.
   // A clean one ranks above any other.
   const score = (text: string) => {
-    const theirs = houseOf(text);
+    const { after, street: own, beyond, beyondForms, rest } = sides(text);
+    const theirs = houseOf(own);
     const shown = zipOf(text);
     if (house.length > 0 ? !theirs.some((each) => house.includes(each)) : zip !== "" && theirs.includes(zip) && shown !== zip)
       return undefined;
-    const { after, street: own, beyond, beyondForms, rest } = sides(text);
     const ownWords = words(own);
     const other = zip !== "" && shown !== "" && shown !== zip;
     // Its street's words but its house number's and those the caller's street keeps, then the words
@@ -454,8 +459,10 @@ export const resolveAddressWith = async <T>(
  * asks for the rest, and returns the unit for the site's own unit field unless the suggestion
  * taken keeps its number outside its own street, as a town and postcode or a street would be; such
  * a part before the street or ending the address is asked for as typed first. For an address whose
- * street opens with its house number, a suggestion with another one (12A and 12 A alike) is
- * another address and never usable, and so is one whose street keeps none of the caller's street
+ * street opens with its house number, a suggestion's street is its last part opening with that
+ * number, else its first opening with a number, as a place's name may come before its address; one
+ * whose street opens with another number (12A and 12 A alike) is another address and never usable,
+ * and so is one whose street keeps none of the caller's street
  * name words: its street's words but the last, a street type such as Ave, when it has another, of
  * three letters or more, and every word holding a digit but the house number's own, as the 9 of
  * Route 9, each in any of its usual forms from `spellingsOf` (Fifth for 5th) and a number without

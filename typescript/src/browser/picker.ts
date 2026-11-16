@@ -517,7 +517,8 @@ const pickerPageCode = String.raw`(element, args) => {
  *   caller question or an `available` list.
  * - `pickAddress(control, address, options?)` resolves an address the caller typed through the
  *   field's suggestions as `resolveAddress` does, with `read` in a read, reading each by its whole
- *   text with `pickerOptions`, then picks the one it accepted with `pickValue`, typing the text that
+ *   text with `pickerOptions`, its lines as comma parts, as a refusal lists it, then picks the one it
+ *   accepted with `pickValue`, typing the text that
  *   brought it and taking the first of copies. It returns `pickValue`'s outcome with that text as `query`
  *   and the unit it split off as `unit`, for the site's own unit field, or, when it accepts none,
  *   `resolveAddress`'s refusal, `option_missing` or `option_unclear`, with every suggestion the
@@ -1652,13 +1653,14 @@ const pickValues = async (control, values, options = {}) => {
     await s.handle?.dispose().catch(() => undefined);
   }
 };
-const pickerOptions = async (control, options = {}) => {
+// The options a picker lists, each with its lines, for pickerOptions and pickAddress.
+const pickerList = async (control, options = {}) => {
   const s = await pickerStart(control, options);
   try {
     s.kind = await pickerDetect(s);
     if (["select", "select-multiple", "datalist"].includes(s.kind)) {
       const list = await pickerNativeRead(s, (options) => pickerAvailable(options).length === 0);
-      return { kind: s.kind, options: list.map((option) => ({ label: option.label, text: option.label, value: option.value, disabled: option.disabled })) };
+      return { kind: s.kind, list: list.map((option) => ({ label: option.label, text: option.label, value: option.value, disabled: option.disabled })) };
     }
     let scan;
     let field = s.control;
@@ -1682,7 +1684,7 @@ const pickerOptions = async (control, options = {}) => {
     const found = await pickerCollect(s, scan, null);
     if (!found.complete) throw pickerLoadingFailure(s, found.scan, s.markedAt, undefined, found.list.length);
     await pickerClose(s, field);
-    return { kind: s.kind, options: found.list.map((option) => ({ label: option.label, text: pickerText(option), value: option.value, disabled: option.disabled })) };
+    return { kind: s.kind, list: found.list };
   } catch (error) {
     throw pickerTimedOut(error, s);
   } finally {
@@ -1691,13 +1693,19 @@ const pickerOptions = async (control, options = {}) => {
     await s.handle?.dispose().catch(() => undefined);
   }
 };
+const pickerOptions = async (control, options = {}) => {
+  const { kind, list } = await pickerList(control, options);
+  return { kind, options: list.map((option) => ({ label: option.label, text: pickerText(option), value: option.value, disabled: option.disabled })) };
+};
 const pickerResolveAddress = ${String(resolveAddressWith)};
+// Each suggestion is read with its lines as comma parts, as a refusal lists it, so a place's name on
+// the line above its address stays out of its street.
 const pickAddress = async (control, address, options = {}) => {
-  const suggest = async (query) => (await pickerOptions(control, { ...options, query })).options.filter((option) => !option.disabled);
+  const suggest = async (query) => (await pickerList(control, { ...options, query })).list.filter((option) => !option.disabled);
   const match = { fold: pickerFold, spellings: pickerSpellings, rank: pickerRankChoices };
-  const found = await pickerResolveAddress(String(address ?? ""), suggest, (option) => option.text, match, { read: pickerReads() });
+  const found = await pickerResolveAddress(String(address ?? ""), suggest, pickerCandidate, match, { read: pickerReads() });
   if (!found.picked) return found;
-  const picked = await pickValue(control, found.label, { ...options, query: found.query, tie: "first" });
+  const picked = await pickValue(control, pickerText(found.choice), { ...options, query: found.query, tie: "first" });
   return picked.picked ? { ...picked, query: found.query, unit: found.unit } : { ...picked, wanted: String(address ?? "").replace(/\s+/g, " ").trim(), unit: found.unit };
 };
 `;
