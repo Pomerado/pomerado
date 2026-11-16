@@ -150,11 +150,19 @@ describe("resolveAddress", () => {
   });
 
   test("takes a suggestion that leaves out one of the caller's ZIP, town and state, and none that shows another", async () => {
-    for (const shown of ["1 Example St, Exampleton", "1 Example St, IL", "1 Example St Exampleton"])
-      expect(await resolveAddress("1 Example St, Exampleton, IL", () => [shown])).toMatchObject({ picked: true, label: shown });
+    // A state after the town in one part is its own field too.
+    for (const [wanted, shown] of [
+      ["1 Example St, Exampleton, IL", "1 Example St, Exampleton"],
+      ["1 Example St, Exampleton, IL", "1 Example St, IL"],
+      ["1 Example St, Exampleton, IL", "1 Example St Exampleton"],
+      ["1 Example St, Exampleton IL", "1 Example St, Exampleton"],
+      ["1 Example St, Exampleton IL", "1 Example St, IL"],
+    ])
+      expect(await resolveAddress(wanted ?? "", () => [shown ?? ""])).toMatchObject({ picked: true, label: shown });
     expect(await resolveAddress("1 Example Building, Exampleton, IL 60000", () => ["1 Example Bldg, Exampleton, IL"])).toMatchObject({ picked: true });
-    // Two left out, a ZIP beside the state counting as its own field, or another town, state or
-    // ZIP, a town the site ran on into the street's line included, is not taken.
+    // Two left out, a ZIP beside the state counting as its own field; another town, state or ZIP,
+    // also on the street's line or opening with a word of the caller's street; or a word of the
+    // suggestion's street read as the town or state: none is taken.
     for (const [wanted, shown] of [
       ["1 Example St, Exampleton, IL 60000", "1 Example St, Exampleton"],
       ["1 Example St, Exampleton, IL 60000", "1 Example St, IL"],
@@ -164,6 +172,12 @@ describe("resolveAddress", () => {
       ["1 Example St, North Exampleton, IL", "1 Example St, Exampleton"],
       ["1 Example Building, Exampleton, IL 60000", "1 Example Bldg, Exampleton, IL 60001"],
       ["1 Example Building, Exampleton, IL 60000", "1 Example Bldg, Sampleton, IL"],
+      ["1 West St, Exampleton, IL", "1 West St, West Exampleton"],
+      ["1 Example St, Exampleton, MT", "1 Example St, St Exampleton"],
+      ["1 Example St, Exampleton, MT", "1 Example St St Exampleton"],
+      ["12 Exampleton Ave, Exampleton, IL", "12 Exampleton Ave"],
+      ["12 Exampleton Ave, Exampleton, IL 60000", "12 Exampleton Ave, IL"],
+      ["12 Exampleton Ave, Exampleton, IL", "12 Exampleton Ave, Sampleton, IL"],
     ])
       expect(await resolveAddress(wanted ?? "", () => [shown ?? ""])).toMatchObject({ picked: false, reason: "option_unclear" });
   });

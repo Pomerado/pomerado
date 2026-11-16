@@ -103,10 +103,18 @@ export const resolveAddressWith = async <T>(
     words: words(part).map((word) => match.spellings(word).map(phrase)),
   });
   const lineStreet = streetOf(lines);
-  const places = lines
+  const placeParts = lines
     .slice(lineStreet + 1, last ? -1 : undefined)
     .map((part) => squash(part.replace(zipGroups, "")))
-    .filter((part) => part !== "")
+    .filter((part) => part !== "");
+  const places = placeParts.map(toPlace);
+  // The caller's place as fields: each part, its last word its own field when that word has other
+  // usual forms, so a town and state in one part are two.
+  const fields = placeParts
+    .flatMap((part) => {
+      const each = words(part);
+      return each.length > 1 && match.spellings(each.at(-1) ?? "").length > 1 ? [each.slice(0, -1).join(" "), each.at(-1) ?? ""] : [part];
+    })
     .map(toPlace);
   const unitPlace = next === "" ? [] : [toPlace(next)];
   const total = places.reduce((sum, part) => sum + part.words.length, 0);
@@ -200,8 +208,8 @@ export const resolveAddressWith = async <T>(
     );
   };
   // A suggestion's street; its parts after the street, as words (its whole text when it has no
-  // comma, and none in `beyond`) and each in its usual forms; its parts but the street; and its words
-  // from its street on, ZIPs left out.
+  // comma, and none in `beyond`) and each in its usual forms; its parts but the street; and the words
+  // of its parts after the street, ZIPs left out.
   const sides = (text: string) => {
     const split = text.split(",");
     const at = streetOf(split);
@@ -211,14 +219,31 @@ export const resolveAddressWith = async <T>(
       beyond: phrase(split.slice(at + 1).join(" ")),
       beyondForms: split.slice(at + 1).map((part) => match.spellings(squash(part.replace(zipGroups, ""))).map(phrase)),
       others: phrase(split.length > 1 ? split.filter((_, index) => index !== at).join(",") : ""),
-      onward: words(split.slice(at).join(",").replace(zipGroups, " ")),
+      rest: words(split.slice(at + 1).join(",").replace(zipGroups, " ")),
     };
   };
-  // The caller's words, the unit's and the house number's included, each in its usual forms and its
+  // The caller's words but their street's, the unit's included, each in its usual forms and its
   // parts' (New York for NY, NY for New York).
   const known = new Set(
-    [...house, ...[...lines, next].flatMap((part) => [part, ...words(part)]).flatMap((text) => match.spellings(text)).flatMap(words)].map(numeral),
+    [...lines.filter((_, index) => index !== lineStreet), next]
+      .flatMap((part) => [part, ...words(part)])
+      .flatMap((text) => match.spellings(text))
+      .flatMap(words)
+      .map(numeral),
   );
+  // A suggestion street's words that the caller's street words but the house number's, each in its
+  // usual forms and taken once, leave over.
+  const streetTokens = words(lines[lineStreet] ?? "")
+    .filter((word) => !houseWords.includes(word))
+    .map((word) => new Set([word, ...match.spellings(word).flatMap(words)].map(numeral)));
+  const spare = (list: readonly string[]) => {
+    const unused = [...streetTokens];
+    return list.filter((word) => {
+      const at = unused.findIndex((forms) => forms.has(numeral(word)));
+      if (at >= 0) unused.splice(at, 1);
+      return at < 0;
+    });
+  };
   const holds = (forms: readonly string[], within: string) => forms.some((form) => form.trim() !== "" && within.includes(form));
   const keeps = (list: readonly ReturnType<typeof toPlace>[], within: string) =>
     list.reduce((sum, part) => sum + (holds(part.forms, within) ? part.words.length : part.words.filter((each) => holds(each, within)).length), 0);
@@ -232,30 +257,33 @@ export const resolveAddressWith = async <T>(
   // directions are the caller's street's, in order, and its own number is the caller's street's when
   // both show one, each read past the other side's places that run on from its street. It is whole
   // when it is on the caller's street, its street keeps any of the caller's street words, it keeps
-  // every place word, not counting a unit-shaped part, and it shows no other ZIP. It is clean when it
-  // is on the caller's street and keeps the address field by field: its street keeps a word of the
-  // caller's street, or of its name; its text holds anywhere, as a suggestion whose lines were joined
-  // may hold its town in its street's part, every word of each place part, or none of one, left out,
-  // only when every word of two letters or more it shows from its street on, but a ZIP, is the
-  // caller's; it leaves out at most one field, a ZIP it shows none of counting as one; and it shows
-  // no other ZIP, unless `read` is set and the caller gave a house number and a place. Or it is on
-  // the caller's street and shows the caller's ZIP on a street that keeps more than half the
-  // caller's street words, or the caller's ZIP when that is all they gave. It is loose when it leaves
-  // out a place part and shows no caller's ZIP, and then counts as clean only when no other ties
-  // with it.
+  // every place word, not counting a unit-shaped part, and it shows no other ZIP. It is clean when
+  // it is on the caller's street and keeps the address field by field: its street keeps a word of
+  // the caller's street, or of its name; outside its street's words that the caller's street keeps,
+  // its text holds every word of each field, as a suggestion whose lines were joined may hold its
+  // town in its street's part, or none of one, left out, only when every word of two letters or more
+  // it shows after its house number, but a ZIP and those the caller's street keeps, is the caller's;
+  // it leaves out at most one field, a ZIP it shows none of counting as one; and it shows no other
+  // ZIP, unless `read` is set and the caller gave a house number and a place. Or it is on the
+  // caller's street and shows the caller's ZIP on a street that keeps more than half the caller's
+  // street words, or the caller's ZIP when that is all they gave. It is loose when it leaves out a
+  // place field and shows no caller's ZIP, and then counts as clean only when no other ties with it.
   // A clean one ranks above any other.
   const score = (text: string) => {
     const theirs = houseOf(text);
     const shown = zipOf(text);
     if (house.length > 0 ? !theirs.some((each) => house.includes(each)) : zip !== "" && theirs.includes(zip) && shown !== zip)
       return undefined;
-    const { after, street: own, beyond, beyondForms, onward } = sides(text);
+    const { after, street: own, beyond, beyondForms, others, rest } = sides(text);
     const ownWords = words(own);
     const other = zip !== "" && shown !== "" && shown !== zip;
-    // The place words its text holds anywhere, part by part, and the fields it leaves out.
-    const held = places.map((part) => keeps([part], phrase(text)));
+    // Its street's words but its house number's and those the caller's street keeps; the place
+    // words its text holds outside those the caller's street keeps, field by field; and the fields
+    // it leaves out.
+    const extra = spare(words(own.replace(zipGroups, " ")).filter((word) => !theirs.flatMap(words).includes(word)));
+    const held = fields.map((part) => keeps([part], " " + extra.join(" ") + others));
     const left = held.filter((count) => count === 0).length;
-    const fields = held.every((count, index) => count === 0 || count === places[index]?.words.length) && left + (zip !== "" && shown === "" ? 1 : 0) <= 1;
+    const fit = held.every((count, index) => count === 0 || count === fields[index]?.words.length) && left + (zip !== "" && shown === "" ? 1 : 0) <= 1;
     const named = names.some((forms) => forms.some((form) => ownWords.some((word) => !houseWords.includes(word) && numeral(word) === form)));
     if (house.length > 0 && names.length > 0 && !named && (other || !close(callerWords, streetWords(own)))) return undefined;
     const share = Math.max(
@@ -267,10 +295,10 @@ export const resolveAddressWith = async <T>(
     const ours = bearing(lines[lineStreet] ?? "", beyondForms, callerAfter);
     const its = bearing(own, placeForms, beyond);
     const same = house.length === 0 || (ours.way === its.way && (ours.number === "" || its.number === "" || ours.number === its.number));
-    const plain = left === 0 || onward.every((word) => word.length < 2 || known.has(numeral(word)));
+    const plain = left === 0 || [...extra, ...rest].every((word) => word.length < 2 || known.has(numeral(word)));
     const clean =
       same &&
-      (((share > 0 || named) && fields && plain && (!other || (options.read === true && house.length > 0 && total > 0))) ||
+      (((share > 0 || named) && fit && plain && (!other || (options.read === true && house.length > 0 && total > 0))) ||
         (zipped && (share > 0.5 || words(query.replace(zipGroups, "")).length === 0)));
     return {
       value: [clean ? 1 : 0, zipped && share > 0.5 ? 1 : 0, kept + keeps(unitPlace, after), Math.round(share * 1000), other ? 0 : 1],
@@ -374,23 +402,26 @@ export const resolveAddressWith = async <T>(
  * with its ZIP left out and, from its end, the other side's places after its street, each whole or,
  * for the caller's, without a last word written another way, as a state's code is, in any of their
  * usual forms, unless its own side shows that place after its street in any of them, as a site may
- * run a street on into its town. When the text brings no usable suggestion, or none on the caller's street that
- * keeps any of the caller's street words and every place word and shows no other ZIP, it asks once
- * more with a tidied text: joined words split, the ZIP and a unit asked for as typed left out, and
- * stray punctuation dropped. It accepts the best suggestion either text brought when it is on the
- * caller's street and keeps the address field by field, so the tool reports the site's version as
- * it does any rewrite: its street keeps a word of the caller's street or of its name; of the fields
- * the caller gave after the street, the ZIP and each part between commas, it leaves out at most
- * one, by showing none of it, and holds every word of the others; and it shows no other ZIP, unless
- * `read` is set for a read and the caller gave a house number and a town or state; or it shows the
- * caller's ZIP on a street that keeps more than half the caller's street words, or shows the
- * caller's ZIP when that is all the caller gave. It accepts a part between commas left out only
- * when each word of two letters or more the suggestion shows from its street on, but a ZIP, is the
- * caller's, and, unless it shows the caller's ZIP, no other suggestion ranks the same. The unit is
- * not such a field, since it is returned for the site's own unit field. Otherwise it refuses, with `picked: false` and every suggestion the site gave as `available`, for
+ * run a street on into its town. When the text brings no usable suggestion, or none on the caller's
+ * street that keeps any of the caller's street words and every place word and shows no other ZIP,
+ * it asks once more with a tidied text: joined words split, the ZIP and a unit asked for as typed
+ * left out, and stray punctuation dropped. It accepts the best suggestion either text brought when
+ * it is on the caller's street and keeps the address field by field, so the tool reports the site's
+ * version as it does any rewrite: its street keeps a word of the caller's street or of its name; of
+ * the fields the caller gave after the street, the ZIP, each part between commas and a part's last
+ * word that has other usual forms, it leaves out at most one, showing none of it, and holds every
+ * word of the others, each read outside the words of its street that match the caller's street; and
+ * it shows no other ZIP, unless `read` is set for a read and the caller gave a house number and a
+ * town or state; or it shows the caller's ZIP on a street that keeps more than half the caller's
+ * street words, or shows the caller's ZIP when that is all the caller gave. It accepts a field
+ * other than the ZIP left out only when each word of two letters or more the suggestion shows after
+ * its house number, but a ZIP and one for each of the caller's street words, is one the caller gave
+ * after the street, and, unless it shows the caller's ZIP, no other suggestion ranks the same. The
+ * unit is not such a field, since it is returned for the site's own unit field. Otherwise it
+ * refuses, with `picked: false` and every suggestion the site gave as `available`, for
  * `pickRefusal`: as `option_missing` when neither text brought a usable one, else as
- * `option_unclear`, with the usable ones as `matches`. It keeps no list of words or addresses of its
- * own but the compass directions.
+ * `option_unclear`, with the usable ones as `matches`. It keeps no list of words or addresses of
+ * its own but the compass directions.
  */
 export const resolveAddress = <T = string>(
   address: string,
