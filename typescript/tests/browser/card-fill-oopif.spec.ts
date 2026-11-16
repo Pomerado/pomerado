@@ -155,6 +155,96 @@ test("types nothing into a payment frame that a frame off the site wraps", async
   expect(await frame.locator("#payment-numberInput").inputValue()).toBe("");
 });
 
+/**
+ * A card fill from a payment method, as a host that fills the card itself runs it: each card
+ * field by its slot and `fieldSelectors`, the host's fill noting the selectors it was handed.
+ */
+const fillFromMethod = async (page: Page, fieldSelectors: readonly string[]) => {
+  const host = await hostPage(page);
+  const { keyboard } = await hostKeyboard(page);
+  const reviews: CardFillReview[] = [];
+  const handedOver: string[][] = [];
+  const outcome = await Effect.runPromise(
+    runCardFill({
+      step: {
+        fields: (["card_number", "card_expiry", "card_cvc"] as const).map((slot, index) => ({
+          selector: fieldSelectors[index] ?? "",
+          slot,
+        })),
+        total: { amount: "12.50", currency: "USD" },
+      },
+      handles: makeSecretHandles(),
+      page: host,
+      keyboard,
+      siteOrigin: site,
+      review: (source) =>
+        Effect.sync(() => {
+          reviews.push(source);
+        }),
+      beforeTyping: () => Effect.void,
+      fillVia: ({ step }) =>
+        Effect.sync(() => {
+          handedOver.push(step.fields.map((field) => field.selector));
+          return {
+            outcome: "filled" as const,
+            fields: step.fields.map(({ slot }) => ({ slot, status: "filled" as const })),
+            submit: "none" as const,
+            url: `${site}/checkout`,
+            typed: true,
+          };
+        }),
+    }),
+  );
+  return { outcome, reviews, handedOver };
+};
+
+// The host's card fill takes CSS selectors only, each matching one editable field across the
+// page's frames, so the inspection refuses any other before Guardian's review or the host's fill.
+test("a card fill from a payment method refuses a role selector before the review and the host's fill", async ({
+  page,
+}) => {
+  await checkout(page, `${site}/checkout`, "https://js.stripe.com");
+  const roles = ["Card number", "Expiration date", "Security code"].map(
+    (name) => `role=textbox[name="${name}"]`,
+  );
+  const refused = await fillFromMethod(page, roles);
+  expect(refused.outcome).toMatchObject({
+    status: "refused",
+    report: { outcome: "refused", reason: "selector_unsupported", target: 0 },
+  });
+  expect(refused.outcome.observations).toContain("field 1's selector");
+  expect(refused.reviews).toEqual([]);
+  expect(refused.handedOver).toEqual([]);
+  const css = await fillFromMethod(page, selectors.slice(0, 3));
+  expect(css.outcome.status).toBe("filled");
+  expect(css.reviews).toHaveLength(1);
+  expect(css.handedOver).toEqual([selectors.slice(0, 3)]);
+});
+
+test("a card fill from a payment method refuses a CSS selector matching two editable fields across frames", async ({
+  page,
+}) => {
+  const frame = await checkout(page, `${site}/checkout`, "https://js.stripe.com");
+  // A second, hidden card number field in the payment frame: one visible match, two editable.
+  await frame.evaluate(() => {
+    const twin = document.createElement("input");
+    twin.className = "card-number";
+    twin.hidden = true;
+    document.querySelector("#payment-numberInput")?.classList.add("card-number");
+    document.body.append(twin);
+  });
+  const { outcome, reviews, handedOver } = await fillFromMethod(page, [
+    ".card-number",
+    ...selectors.slice(1, 3),
+  ]);
+  expect(outcome).toMatchObject({
+    status: "refused",
+    report: { reason: "selector_unsupported", target: 0 },
+  });
+  expect(reviews).toEqual([]);
+  expect(handedOver).toEqual([]);
+});
+
 /** A checkout whose card fields sit on the site's own page, inside `form`. */
 const ownPage = async (page: Page, form: string) => {
   await page.route(`${site}/**`, (route) =>

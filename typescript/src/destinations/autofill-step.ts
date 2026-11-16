@@ -426,6 +426,8 @@ export const LocatedError = Schema.Struct({
     "not_editable",
     "popup_missing",
     "popup_ambiguous",
+    // Inspection-only: a field a host's card fill takes whose selector it can't take.
+    "selector_unsupported",
   ),
   target: Schema.Union(Schema.Number, Schema.Literal("submit", "popup")),
   /** A private answer's question no longer reads as the host inspected it. */
@@ -965,7 +967,9 @@ const carriedRedirect = (
  * (`judgedBeforeTyping` given), a refusal names only the origins `namedAfterTyping` allows.
  * A step with a part of a payment card (a card-fill step) is refused unless the primary tab's top
  * document is on the site or exactly on one of `checkoutOrigins`, and its card fields may sit in a
- * frame on `paymentFrameOrigins`.
+ * frame on `paymentFrameOrigins`. Each of its fields a host's own card fill may take, every one but
+ * a billing postal code, is refused as `selector_unsupported` before anything is found unless its
+ * selector is CSS that matches exactly one editable input or select across the tab's frames.
  * `trustSignInUrl` lets a sign-in step's controls and popup also sit on an address the host's own
  * predicate trusts, asked only about one core's own floor allows; the inspection keeps it, so each
  * fill call judges again by the same rule, and names the origin of each address it trusted

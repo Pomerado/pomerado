@@ -9,6 +9,7 @@ import { hostOnSiteSource } from "../runtime/same-site.js";
 import { submissionGuardCode } from "./autofill-submission-guard.js";
 import { holdsFocusCode } from "./field-focus-code.js";
 import { pageControlsCode } from "./page-controls.js";
+import { isCardSlot } from "./payment-frames.js";
 
 /**
  * Page code: where each code field sits among its screen's one-character boxes, as
@@ -1163,6 +1164,55 @@ const questionRead = (
     : null;
 
 /**
+ * Inspection page code for a card-fill step, with `selectors` bound: each field a host's own card
+ * fill may take, every card field but a billing postal code, which core types itself
+ * (`runCardFill`), must be a CSS selector that matches exactly one editable input or select across
+ * the tab's frames, itself or inside an element it matches, as that fill finds it. Any other is
+ * refused as `selector_unsupported` before anything is found. It only reads each frame's document.
+ */
+const cardSelectorsCode = (fields: readonly { readonly slot?: string | undefined }[]) => {
+  const checked = fields.flatMap((field, index) =>
+    isCardSlot(field.slot) && field.slot !== "billing_postal_code" ? [index] : [],
+  );
+  return checked.length === 0
+    ? ""
+    : `const cssFields = ${JSON.stringify(checked)};
+// Each field's editable matches across the frames so far; null once a frame read it as no CSS.
+const editableMatches = cssFields.map(() => 0);
+for (const frame of primary.frames()) {
+  let counts;
+  try {
+    counts = await frame.evaluate((list) => list.map((selector) => {
+      let matched;
+      try {
+        matched = document.querySelectorAll(selector);
+      } catch {
+        return null;
+      }
+      const editable = "input:read-write, select:enabled";
+      const found = new Set();
+      for (const element of matched) {
+        if (element.matches(editable)) found.add(element);
+        for (const inside of element.querySelectorAll(editable)) found.add(inside);
+      }
+      return found.size;
+    }), cssFields.map((index) => selectors[index]));
+  } catch (error) {
+    // A frame the page took away mid-search, such as an ad slot, is skipped, as locate skips it.
+    if (frame.isDetached()) continue;
+    throw error;
+  }
+  counts.forEach((count, at) => {
+    const sum = editableMatches[at];
+    editableMatches[at] = count === null || sum === null ? null : sum + count;
+  });
+}
+const unsupported = cssFields.find((_, at) => editableMatches[at] !== 1);
+if (unsupported !== undefined) return { error: "selector_unsupported", target: unsupported, url: primary.url() };
+`;
+};
+
+/**
  * One host call for a step: its inspection, or with `fill`, one call of its fill. What it finds,
  * the page keeps under `observed`; a fill call compares against what it kept under `judged`.
  */
@@ -1211,6 +1261,7 @@ const submitSelector = ${JSON.stringify(step.submit ?? null)};
 const submitKey = ${JSON.stringify(step.submitKey ?? null)};
 const submitVia = ${JSON.stringify(step.submitVia ?? null)};
 const submitOption = ${JSON.stringify(step.option ?? null)};
+${fill === undefined ? cardSelectorsCode(step.fields) : ""}
 // Every control is found first, then read in one pass (readControls). A control that is not found
 // ends the call at once, after the no-wait read of the ones found before it (checkReads).
 const foundFields = [];
