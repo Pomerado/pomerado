@@ -218,16 +218,17 @@ already asked for, or to solve a CAPTCHA.
      `{ amount, currency }`. On a checkout the site opened in a pop-up, also pass
      `popup: { opener: "primary", origin }` as a sign-in step names it. The host fills
      the card and clicks nothing, so submit the payment in a later call under the
-      write's commit rules. Fill the card last: settle and read back everything else the
-      order needs first, then fill the card and press pay in the next step, with no read,
-      check or change between them, where the checkout allows it, since the filled card
-      lasts only minutes and a step that leaves or reloads the checkout can clear it.
-      Wherever source calls `fillCard`, no source reads a field's value or the page's
-      markup, runs or plants code in the page, opens a DevTools session, takes an
-      accessibility snapshot, screenshot or PDF of the page, records the page, or reads a
-      request body, so delete such probes before you fill the card. A ZIP or postal-code
-      field in the card form is slot `billing_postal_code`, named in the same call as the
-      card's other fields: the host fills it from the payer's billing address.
+     write's commit rules. Fill the card last: settle and read back everything else the
+     order needs first, then fill the card and press pay in the next step, with no step
+     or question between them unless the checkout itself requires one, since the filled
+     card lasts only minutes and a step that leaves or reloads the checkout can clear
+     it. Wherever source calls `fillCard`, no source reads a
+     field's value or the page's markup, runs or plants code in the page, opens a
+     DevTools session, takes an accessibility snapshot, screenshot or PDF of the page,
+     records the page, or reads a request body, so delete such probes before you fill
+     the card. A ZIP or postal-code field in the card form is slot `billing_postal_code`,
+     named in the same call as the card's other fields: the host fills it from the
+     payer's billing address.
 2. For a choice, read the options in the execute call that reaches it and return them as
    plain JSON. Each option has a `value` the script acts on and a `label` the caller
    reads. Values are unique within a question. Offer only options the page will accept:

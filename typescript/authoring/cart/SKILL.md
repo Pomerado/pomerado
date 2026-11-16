@@ -110,8 +110,9 @@ input and keep it as given. Without one, choose the standard option that adds no
 only options that cost extra remain, ask the caller which to use.
 
 An "earliest" pickup or delivery time moves with the clock: pick it in the step that places the
-order, or right before the card fill when picking it reloads the checkout. When the site says
-that time is gone and offers the next one, the next one is still the earliest.
+order, or right before the card fill when the host fills the card or picking it reloads the
+checkout. When the site says that time is gone and offers the next one, the next one is still
+the earliest.
 
 ## A checkout's inputs and output
 
