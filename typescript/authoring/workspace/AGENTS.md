@@ -83,7 +83,9 @@ the source files, never captures.
   tool descriptions.
 - `report_blocked` ends the build as blocked when its task is impossible as asked (below).
 - `request_browser_recovery` asks for a new browser when the browser, not your code, is at
-  fault; read .agents/browser-recovery/SKILL.md before using it.
+  fault; read .agents/browser-recovery/SKILL.md before using it. A site that challenges or refuses
+  the same browser again soon after a challenge was solved is scoring that browser, and solving
+  more checks does not restore it: ask at the second one rather than working one after another.
 
 ## Key rules
 
