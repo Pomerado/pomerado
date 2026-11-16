@@ -287,7 +287,8 @@ exception: it is optional unless the task can't run without it (below).
   or reading the site's own data for it when the list shows less. Then:
   1. Exactly one entry matches every part the caller gave: pick it.
   2. The entries differ in nothing the site shows for them: they are one record listed more than
-     once. Take any of them, and say in the output that the site lists it more than once.
+     once. Take any of them, and beside the entry the output returns, set an optional output field
+     `listed_more_than_once` to `true`.
   3. They differ in a part the caller didn't give, such as one entry with a unit and one
      without: before any commit mark, ask the caller with a declared choice question whose
      options each select exactly one, as the site labels them (.agents/caller-input/SKILL.md),

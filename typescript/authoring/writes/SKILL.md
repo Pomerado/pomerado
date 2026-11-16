@@ -168,8 +168,9 @@ During the session:
 - Save an account record only when the run needs it, unless saving it is the tool's purpose,
   such as a tool that adds an address to the address book. Read the account's saved entries
   first: when one already matches every part the input gives, use it and save nothing. When none
-  does and the task can't go on without a saved entry, add a new one rather than overwriting an
-  existing entry, and never add one that repeats an entry already there. Such a save runs only on
+  does and the task can't go on without a saved entry, never change an entry the input doesn't
+  name, and never add one that repeats an entry already there; when it is unclear whether to
+  update an entry or add one, ask the caller on that run. Such a save runs only on
   the inputs that need it: when the example didn't need it, the session never runs it, and the
   script declares it in `write.commits` after the steps the session entered and again in
   `write.commitsUnproven`.

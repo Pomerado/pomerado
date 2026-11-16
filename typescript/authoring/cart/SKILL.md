@@ -54,9 +54,12 @@ site's words, `field` that input, before any commit mark (the core skill).
 An item's options often come in groups whose option labels repeat, such as "None" or "Less"
 under both a sweetness group and an ice group. Find each option inside its own group, by the
 group's heading or fieldset, never by its label across the whole item dialog (the core skill,
-"Search inside the place the answer lives"). A list of saved addresses or stores can show the
-same name twice: settle it as the core skill's "Several equal matches" says, then act on the
-entry you chose, never on its name again.
+"Search inside the place the answer lives"). Choose a saved address with the core skill's
+address helpers, such as `resolveAddress` from `pomerado/runtime` with the saved entries as its
+suggestions, and compare a part they leave aside, such as the unit, with `sameText`, never with
+matching of your own. A list of saved addresses or stores can show the same name twice: settle
+it as the core skill's "Several equal matches" says, then act on the entry you chose, never on
+its name again.
 
 When the tool takes an item's or store's page link as its identity, decode both links before
 comparing them, as the core skill says, since the site may write a name in the path in more than
@@ -125,22 +128,26 @@ return only the target cart's entry, with one exception. To show the others stay
 compare them inside the step and return for each other cart only its identifier, its line count
 and whether it changed, never its items, store name or totals.
 
-Before the first `act` step, read how the path varies, without adding or saving anything, so
-the composed script handles more than the example: open a few other items' details, such as
-the one with the most option groups or an option name repeated across groups, a store whose
-name has punctuation, a store or item the site shows as closed or unavailable now, and the
-account's saved addresses and carts. Opening an item's details is a read; choosing its options
-waits for the session.
+Before the first `act` step, rehearse on varied samples as the writes skill says ("Rehearse on
+varied samples"), which also says how far an item's options may go before the session. In a
+signed-in cart, also read the account's saved addresses and carts, so the script handles a
+duplicate entry or another store's cart before the session meets one.
 
 ## The delivery address
 
 When the site keeps the delivery address on the account or the session rather than inside
 checkout, read the address the cart will use first, every part of it, the unit included. When it
-already matches the input, change nothing and ask nothing. When it differs, choose the input's
-address with the site's control that picks one for this visit, a read (the writes skill), and
-read the cart's own address back, unit included: some sites keep a detail such as the unit only on
-a saved address-book entry, so choosing an address by its street alone leaves it out. When the
-store, stock or whether the item can be ordered follow the address, check them after choosing it.
+already matches the input, compared with `readBackMatches` or `sameText` from `pomerado/runtime`
+(the core skill), change nothing and ask nothing. When it differs, choose the input's address
+with the site's control that picks one for this visit, and read the cart's own address back,
+unit included: some sites keep a detail such as the unit only on a saved address-book entry, so
+choosing an address by its street alone leaves it out. That choice is a read unless its requests
+save an address-book entry, a default or an account preference (the writes skill); then it is a
+write with its own commit mark, after every check that can refuse. When the store, stock or
+whether the item can be ordered follow the address, check them after a choice that is a read.
+After one that saves, check them first where the site allows, such as through an address preview
+or a store page that takes the address in its link, and when a check after it refuses, say in the
+refusal that the account's address changed.
 
 When only a saved entry can carry the input's unit or instructions, choose the saved entry that
 already holds them. When none does, saving one is a write to the account (the writes skill): it
