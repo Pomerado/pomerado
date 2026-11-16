@@ -1284,7 +1284,7 @@ describe("the publication policy", () => {
         publicationOutputPolicy.indexOf("Own address match:"),
       ),
     ).toContain(
-      "The fix is pickValue or pickValues, or pickAddress for a street address the caller typed, with their options for the site's quirks, such as query, answered, committed, commit or blur.",
+      "The fix is pickValue or pickValues, with their options for the site's quirks, such as query, answered, committed, commit or blur; for a street address the caller typed, it is pickAddress.",
     );
     expect(guardianPublicationPolicy).toContain(publicationOutputPolicy);
   });
