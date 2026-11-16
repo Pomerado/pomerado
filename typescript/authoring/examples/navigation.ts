@@ -90,6 +90,8 @@ export const detailNavigation = defineOperation(
         if (searched.shown === "none") return { refused: "The site's search lists no record with this ID" };
         if (searched.shown !== "found")
           return { failure: searched.ambiguous === "found" ? "result_ambiguous" : "results_unavailable" };
+        // Links that read the same can still lead to different records.
+        if ((await links.count()) > 1) return { failure: "result_ambiguous" };
         const resultsUrl = page.url();
         // The final page is checked against the link's own href, a URL the site produced.
         const target = new URL(await links.getAttribute("href"), resultsUrl);
@@ -322,10 +324,11 @@ export const searchThenRead = defineOperation(
         if (shown === "empty") return { rows: [], more: false };
         if (shown !== "results") return { failure: shown };
         // Rows still loading when the page stops progressing throw values_loading for the host.
-        return await waitForRows(results.getByRole("listitem"), { name: ".name" }, {
+        const shownResults = results.filter({ visible: true }).first();
+        return await waitForRows(shownResults.getByRole("listitem"), { name: ".name" }, {
           count: ${input.limit},
           key: { attribute: "data-room-id" },
-          region: results,
+          region: shownResults,
           ...site,
         });
       `,
