@@ -98,16 +98,16 @@ export const resolveAddressWith = async <T>(
   // The caller's place: the parts after the street, ZIP left out, as words. A word counts as kept
   // when a suggestion's parts after its own street hold it in one of its usual forms (Illinois for
   // IL), or hold a usual form of its whole part (NY for New York).
-  const toPlace = (part: string) => ({
-    forms: match.spellings(part).map(phrase),
-    words: words(part).map((word) => match.spellings(word).map(phrase)),
+  const toPlace = (part: string, places: "end" | "never" = "end") => ({
+    forms: match.spellings(part, { places }).map(phrase),
+    words: words(part).map((word) => match.spellings(word, { places }).map(phrase)),
   });
   const lineStreet = streetOf(lines);
   const placeParts = lines
     .slice(lineStreet + 1, last ? -1 : undefined)
     .map((part) => squash(part.replace(zipGroups, "")))
     .filter((part) => words(part).length > 0);
-  const places = placeParts.map(toPlace);
+  const places = placeParts.map((part) => toPlace(part));
   // Whether a text is a place's code or name: it has no other form anywhere, but has one as a place
   // that shares none of its words (Illinois for IL, WV for West Virginia).
   const isPlace = (text: string) =>
@@ -115,14 +115,18 @@ export const resolveAddressWith = async <T>(
   // The caller's place as fields, each with the count it adds when left out: each part, and the last
   // part's own place after other words, a code or a name of two words, its own field, so a town and
   // state in one part are two; a last part ending in a place's name of one word after other words
-  // stays one field, which adds two.
-  const fields = placeParts.flatMap((part, index) => {
+  // stays one field, which adds two. Only the last field reads as a place, in its place forms.
+  const fieldTexts = placeParts.flatMap((part, index) => {
     const each = words(part);
-    const tail = index < placeParts.length - 1 || isPlace(part) ? 0 : ([2, 1].find((size) => each.length > size && isPlace(each.slice(-size).join(" "))) ?? 0);
-    return tail === 2 || (tail === 1 && (each.at(-1) ?? "").length === 2)
-      ? [each.slice(0, -tail), each.slice(-tail)].map((list) => ({ ...toPlace(list.join(" ")), adds: 1 }))
-      : [{ ...toPlace(part), adds: tail === 1 ? 2 : 1 }];
+    const code = each.length > 1 && (each.at(-1) ?? "").length === 2 && isPlace(each.at(-1) ?? "");
+    const tail =
+      index < placeParts.length - 1 ? 0 : code ? 1 : isPlace(part) ? 0 : ([2, 1].find((size) => each.length > size && isPlace(each.slice(-size).join(" "))) ?? 0);
+    return code || tail === 2
+      ? [each.slice(0, -tail), each.slice(-tail)].map((list) => ({ text: list.join(" "), adds: 1 }))
+      : [{ text: part, adds: tail === 1 ? 2 : 1 }];
   });
+  const fieldMode = (index: number): "end" | "never" => (index === fieldTexts.length - 1 ? "end" : "never");
+  const fields = fieldTexts.map((field, index) => ({ ...toPlace(field.text, fieldMode(index)), adds: field.adds }));
   const unitPlace = next === "" ? [] : [toPlace(next)];
   const total = places.reduce((sum, part) => sum + part.words.length, 0);
   // Joined words split (La Salle for LaSalle) and punctuation other than commas, apostrophes and
@@ -229,12 +233,12 @@ export const resolveAddressWith = async <T>(
       rest: words(split.slice(at + 1).join(",").replace(zipGroups, " ")),
     };
   };
-  // The caller's words but their street's, the unit's included, and the usual forms of one word of
-  // each and of each part (NY for New York).
+  // The words of the caller's fields and unit, and the usual forms of one word of each field and of
+  // each of its words, as each field reads (NY for New York).
   const known = new Set(
-    [...lines.filter((_, index) => index !== lineStreet), next, marker?.[2] ?? ""]
-      .flatMap((part) => [part, ...words(part)])
-      .flatMap((text) => [...words(text), ...match.spellings(text).filter((form) => words(form).length === 1).flatMap(words)])
+    [...fieldTexts.map((field, index) => ({ text: field.text, places: fieldMode(index) })), { text: next, places: "never" as const }, { text: marker?.[2] ?? "", places: "never" as const }]
+      .flatMap(({ text, places }) => [text, ...words(text)].map((each) => ({ each, places })))
+      .flatMap(({ each, places }) => [...words(each), ...match.spellings(each, { places }).filter((form) => words(form).length === 1).flatMap(words)])
       .map(numeral),
   );
   // A word written short for another: one to four letters with no vowel (a, e, i, o, u or y), at
