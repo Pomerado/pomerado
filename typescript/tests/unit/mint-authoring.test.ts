@@ -1428,11 +1428,11 @@ it("renders the pinned standalone authoring", async () => {
     ["a08f1ef89cc10bf11e17b8d6086b6e37649b1d5d11b78c0542cc7db32460b7e3", "testing"],
     ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
     ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
-    ["d4ca333de9a4b80058ff8be33b640a72c0936685a084b3ae08936d0b66c6b9bd", "writes"],
-    ["bf3e7c035fffcd64aaac59417629f2d6d9e872cf6f48ecefe61c88b7772afb83", "cart"],
+    ["e776642a8b090684bdadf1409e936bc295d6759483a73984091a2fbda84f964c", "writes"],
+    ["180b6fd2a46f2beca09c56312c8c0385e1eba228ff2cd0ff25874c4672caac5d", "cart"],
     ["a956eaf7879b5f89ca80d96e6549c17203dab21423e92e31cec0027f12a13a05", "caller-input"],
-    ["47cba18121554c05c379f6ac754de07e8bfa7515250055585e631a2eb88b7468", "publication"],
-    ["7902e8d201bc5c0d86dd7ccd5a3669ce3b3dfedd731e589d1d06170df1fa3719", "workspace/AGENTS.md"],
+    ["aa8e0fc85d0f126797e91cc7e990fd928d8b1f2abd223119f94b228fc3cafced", "publication"],
+    ["909d9eeaa4cb5d177f60e5e559c0a59cc965f2be71444a998104609c94d84ef0", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);
 });
@@ -1553,7 +1553,7 @@ it("renders the search URL fast path only when a host turns it on", async () => 
     [sha256(on.agents), "workspace/AGENTS.md"],
   ]).toStrictEqual([
     ["052712afaba095b3ef925f265b1b1a49e4cc3838eee0f7318dad4f82663a8da8", "search"],
-    ["9723608e00282cae860067efa8577c828d29d34a9091525d10c59adc52f00429", "workspace/AGENTS.md"],
+    ["9dea92d3bce2d60fe419a9a8f7927defeaf920c7b56b10d976e74e54af62615a", "workspace/AGENTS.md"],
   ]);
   expect(on.digests.filter(([, name]) => name !== "search")).toStrictEqual(
     off.digests.filter(([, name]) => name !== "search"),
@@ -1628,10 +1628,10 @@ it("renders the pinned standalone input-feedback instructions", () => {
       ]),
     ),
   ).toStrictEqual([
-    ["966f8919d7f9887d159b4c61feda8179e62cc38dca40bd4c57d4e5e53f26c874", "read, 1 left"],
-    ["ffbcf9cb068ab6c25012e5904e5ced80b4b860bddf54e1c73d4d18cff9d63d7d", "read, 0 left"],
-    ["3e104c438a1b927afa00f8635868122fffb5fe9e6928abca0093379ab7bdaf0c", "write, 1 left"],
-    ["3d7f2a123ad3b66a71073f659956ec81d78839f33f1503b4f70babec2b0b6cad", "write, 0 left"],
+    ["f779f48d775231e36ca645bc0fd210369261aaf3cd414fb076fa3524581caa1a", "read, 1 left"],
+    ["439962e93ace65cde9e0ee164492173e4d940e86e2928809b11260596b821471", "read, 0 left"],
+    ["a1c1b3bd98e3dfc0c662ddd79fa99f6ab0e64978b613be10972e02a30260b04a", "write, 1 left"],
+    ["148d8cf9607f67e7e2823eb22914e63d7c5873e78e1556c517a3e4e6ccb350e1", "write, 0 left"],
   ]);
 });
 

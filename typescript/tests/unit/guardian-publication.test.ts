@@ -1613,11 +1613,11 @@ describe("the OpenAI publication reviewer", () => {
   });
 
   // With no caller choice, a write takes the tier of speed, class or service level the site
-  // presents as standard, so such a choice's input may default to it. Every rule that judges a
+  // presents as standard when the site requires one, so such a choice's input may default to it. Every rule that judges a
   // costly choice's default reads that one text.
   it("lets a costly choice among tiers default to the site's standard tier", () => {
     expect(publicationCostlyChoiceDefault).toContain(
-      "for a choice among tiers of speed, class or service level of one service, the tier the site presents as standard",
+      "when the site requires choosing one of a service's tiers of speed, class or service level, the tier the site presents as standard",
     );
     const inputReview = guardianPublicationPolicy
       .split("\n")
