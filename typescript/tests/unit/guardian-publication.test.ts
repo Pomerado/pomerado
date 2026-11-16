@@ -1329,7 +1329,7 @@ describe("the publication policy", () => {
       "Date in UTC: source that compares a site's date or time with today's date or the time in UTC, such as new Date().toISOString().slice(0, 10), rather than with today in the site's time zone or in that of the place the date is at,",
     );
     expect(publicationOutputPolicy).toContain(
-      "Zone-less time: an output time with no UTC offset, unless the output also returns that time with one. In a repair or change, only for an output time it adds or changes.",
+      "Zone-less time: an output time with no UTC offset, such as a label that keeps the site's wording, like \"7:45 PM\" or \"12:38-12:59 AM\", unless the output also returns that time with one and names the IANA zone the site's text is in, such as in a time_zone field of the record or of the whole output. A label kept word for word beside both is right. In a repair or change, only for an output time it adds or changes.",
     );
     expect(guardianPublicationPolicy).not.toContain("Past date in UTC");
     expect(guardianPublicationPolicy).toContain(publicationOutputPolicy);
