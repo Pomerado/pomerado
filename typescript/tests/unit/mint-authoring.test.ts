@@ -1257,7 +1257,7 @@ it("has a re-check before a commit match the approved choice by its kind or name
   const texts = await renderedTexts("typescript/authoring");
   const writes = (texts.get("writes") ?? "").replace(/\s+/g, " ");
   expect(writes).toContain(
-    "or right before the card fill when the host fills the card. There, and in any other re-check before a commit, match the choice the caller approved by its kind or name and any time it shows that stays fixed, not by a time that moves with the clock, check its price against the caller's limits as above, and keep it as approved when only that time changed. When the site answers the click",
+    "or right before the card fill when the host fills the card. There, and in any other re-check before a commit, match the choice the caller approved by its kind or name and any time it shows that stays fixed, not by a time that moves with the clock, check its price against the caller's limits as above, and keep it as approved when only that time changed. For a choice whose shown time moves with the clock, `readBackMatches` and `sameText` from `pomerado/runtime` take `{ ignoreClockTimes: true }` to compare its kind or name without its times. When the site answers the click",
   );
   expect(guardianPublicationPolicy).toContain(publicationApprovedChoicePolicy);
 });
@@ -1428,7 +1428,7 @@ it("renders the pinned standalone authoring", async () => {
     ["a08f1ef89cc10bf11e17b8d6086b6e37649b1d5d11b78c0542cc7db32460b7e3", "testing"],
     ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
     ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
-    ["77a4f98cf80ab14ed177b2b34c2d8550b90e3eb5e484f5dc14f3eb215a59737c", "writes"],
+    ["21ad4af1f0f0c1e0bc4902a462a11dc9fd1539c7063975ccd8d1822cb9ffb8ea", "writes"],
     ["556b560d66d52790fcf3f187720c48627d22b4b0f562c6c7f691b8824694ef8c", "cart"],
     ["a956eaf7879b5f89ca80d96e6549c17203dab21423e92e31cec0027f12a13a05", "caller-input"],
     ["b563d244521edf21386ad71815c8ff86202ea98049dc53ac38f0dae4272bb3ae", "publication"],
