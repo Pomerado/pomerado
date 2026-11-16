@@ -677,6 +677,7 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
     actedAt: -Infinity,
     messagesBefore: undefined,
     serverError: false,
+    unanswered: new Set(),
   };
   let looks = 0;
   const finish = (fields, summary) =>
@@ -692,7 +693,7 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
   let key;
   // How long the cleanup may take: 250 ms, and nothing past the wait's hard stop.
   let cleanupMs = () => 250;
-  let stopServerErrors;
+  let stopWrites;
   try {
     if (options.action !== undefined) {
       key = "pomerado.outcomeWait." + Date.now() + "." + Math.random();
@@ -708,14 +709,23 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
       if (committing) {
         const before = await waitBounded(outcomeWaitSite.read(page).catch(() => undefined), 1000);
         if (before !== undefined) state.messagesBefore = outcomeWaitSite.messageCounts(before);
-        // A server error to a request that may write, from any host, may have come after the
-        // commit saved: as confirmCommit reads one, the commit is then unclear, never refused.
-        const serverError = (response) => {
-          if (response.status() >= 500 && !["GET", "HEAD", "OPTIONS"].includes(response.request().method()))
-            state.serverError = true;
+        // A request that may write, to any host, sent from here on may still save the commit while
+        // it has no answer, and a server error to one may have come after the commit saved: as
+        // confirmCommit reads one, the commit is then unclear, never refused.
+        const writes = (request) => !["GET", "HEAD", "OPTIONS"].includes(request.method());
+        const sent = (request) => {
+          if (writes(request)) state.unanswered.add(request);
         };
-        page.on("response", serverError);
-        stopServerErrors = () => page.off("response", serverError);
+        const answered = (response) => {
+          state.unanswered.delete(response.request());
+          if (response.status() >= 500 && writes(response.request())) state.serverError = true;
+        };
+        page.on("request", sent);
+        page.on("response", answered);
+        stopWrites = () => {
+          page.off("request", sent);
+          page.off("response", answered);
+        };
       }
       state.urlBefore = page.url();
       if (state.announceKey !== undefined) await page.evaluate(outcomeWaitAnnounceInPage, { key: state.announceKey, seed: false });
@@ -765,10 +775,13 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
         if (waitContextLost(error)) return undefined;
         throw error;
       }));
+    // Whether a request that may write leaves the commit unclear: one unanswered, or a server error.
+    const writeOpen = () => state.serverError || state.unanswered.size > 0;
     // After a commit's click, the site's messages new since it that confirmCommit would judge the
-    // commit not done from, read once: undefined when none shows or the page can't be read.
+    // commit not done from, read once: undefined when none shows, the page can't be read, or a
+    // request that may write leaves the commit unclear.
     const siteRefusal = async () => {
-      if (state.messagesBefore === undefined || state.serverError) return undefined;
+      if (state.messagesBefore === undefined || writeOpen()) return undefined;
       const shown = await waitBounded(outcomeWaitSite.read(page).catch(() => undefined), Math.min(1000, beforeStop()));
       const errors = shown === undefined ? [] : outcomeWaitSite.judgeMessages(shown, state.messagesBefore).errors;
       return errors.length === 0 ? undefined : [...new Set(errors)].map((text) => outcomeWaitClean(text, 500));
@@ -878,7 +891,7 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
         const opened = events.unnamedDialog();
         // After a commit's click, one that says the write failed is the site's refusal, as
         // confirmCommit reads such a dialog.
-        const refused = committing && !state.serverError && outcomeWaitSite.saysError(opened.message());
+        const refused = committing && !writeOpen() && outcomeWaitSite.saysError(opened.message());
         const reason = refused ? "outcome_refused" : "outcome_unknown";
         const failure = outcomeWaitFailure(
           reason,
@@ -959,7 +972,7 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
     throw error;
   } finally {
     events.stop();
-    stopServerErrors?.();
+    stopWrites?.();
     // With a native dialog open the page cannot run the cleanup; what it leaves is inert.
     const inPage = !events.dialogOpen();
     // A page held up by a pending navigation gets a moment; what it keeps is inert.
@@ -1417,10 +1430,10 @@ const waitForChange = async (fields, options = {}) => {
  *   `enteringCommit`, which the runtime declares as `__pomeradoCommitting`) and the page shows a
  *   message new since the click that `confirmCommit` judges not done from, or, with a dialog
  *   outcome named, a native dialog no outcome names says the write failed, as `confirmCommit` reads
- *   one. A request that may write that got a server error after the click, from any host, keeps it
- *   `outcome_unknown`. Its `evidence` has the site's words: `messages`, or the dialog's `type` and
- *   `message`. The runtime then puts the step back unsent, as
- *   `notCommitted(name, { siteRefused: true })` does. The wait takes its `action` for the commit's
+ *   one. A request that may write, to any host, sent since the click, keeps it `outcome_unknown`
+ *   while it has no answer, or once it got a server error. Its `evidence` has the site's words:
+ *   `messages`, or the dialog's `type` and `message`. The runtime then puts the step back unsent,
+ *   as `notCommitted(name, { siteRefused: true })` does. The wait takes its `action` for the commit's
  *   click, so pass the commit's click as the `action`: after a commit clicked outside a wait, the
  *   next wait's `action` would read as the commit's.
  * - `outcome_timeout`, when the page was still progressing at `timeout`.
