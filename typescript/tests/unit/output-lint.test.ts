@@ -868,6 +868,36 @@ describe("output notation checks", () => {
     ]);
   });
 
+  // A bare clock time names no moment either: its zone is the browser's or the site's, not the
+  // caller's. The site's own text may stay beside a timestamp when the record names its zone.
+  it("flags a bare clock time in a record that names no zone", () => {
+    expect(
+      checksOf({
+        eta_label: "12:38-12:59 AM",
+        delivered: "7:45 PM",
+        window: "7-9 pm",
+        pickup_time: "19:45",
+        track_length: "3:45",
+        status_label: "Arriving at 7:45 PM",
+        quantity_range: "12-15",
+        cook_time: "1:30",
+        flightTime: "5:40",
+      }),
+    ).toEqual(["eta_label format_mismatch", "delivered format_mismatch", "window format_mismatch", "pickup_time format_mismatch"]);
+    const order = {
+      eta_start: "2026-11-16T00:38:00-05:00",
+      eta_end: "2026-11-16T00:59:00-05:00",
+      eta_label: "12:38-12:59 AM",
+    };
+    expect(checksOf({ order })).toEqual(["order.eta_label format_mismatch"]);
+    expect(checksOf({ order: { ...order, time_zone: "America/New_York" } })).toEqual([]);
+    expect(checksOf({ order: { ...order, time_zone: "" } })).toEqual(["order.eta_label format_mismatch"]);
+    // A zone the output names for its whole list keeps each row's clock time.
+    expect(
+      checksOf({ timeZone: "Europe/Paris", slots: [{ start_label: "7:00 PM" }, { start_label: "7:30 PM" }] }),
+    ).toEqual([]);
+  });
+
   it("leaves a timestamp with its offset, and a date alone, in a field that declares no format", () => {
     for (const departs of ["2026-12-15T07:15:00-08:00", "2026-12-15T15:15:00Z", "2026-12-15T07:15+05:30", "2026-12-15"])
       expect(checksOf({ departs })).toEqual([]);
