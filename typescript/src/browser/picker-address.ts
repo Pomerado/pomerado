@@ -141,23 +141,27 @@ export const resolveAddressWith = async <T>(
   // A street's words but its house number's, numbers without their ordinal ending.
   const streetWords = (text: string) => words(text).filter((word) => !houseWords.includes(word)).map(numeral);
   const callerWords = streetWords(lines[lineStreet] ?? "");
-  // A street's direction words, each as its letters (N for North, NW for Northwest), sorted, and its
-  // numbers but its house number's, once its ZIP is left out and, from its end, the other side's
-  // parts after its street, last first, each in any of its usual forms, as a street may run on into
-  // its town.
+  // A street's direction words in order, each as its letters (N for North, NW for N.W. or
+  // Northwest), and its own number, its first but the house number's, once its ZIP is left out and,
+  // from its end, the other side's places after its street, last first, each in any of its usual
+  // forms, unless its own side shows that place after its street (`shown`), as a street may run on
+  // into its town.
   const compass = /^(?:[nsew]|[ns][ew]|north|south|east|west|(?:north|south)(?:east|west))$/u;
-  const bearing = (street: string, after: readonly (readonly string[])[]) => {
-    let rest = phrase(street.replace(zipGroups, ""));
+  const bearing = (street: string, after: readonly (readonly string[])[], shown: string) => {
+    let rest = phrase(street.replace(zipGroups, "").replace(/(?<![\p{L}\p{N}])([ns])\.\s*([ew])\./giu, "$1$2"));
     for (const forms of [...after].reverse()) {
-      const end = forms.find((form) => form.trim() !== "" && rest.endsWith(form));
+      const end = forms.find((form) => form.trim() !== "" && rest.endsWith(form) && !shown.includes(form));
       if (end !== undefined) rest = rest.slice(0, -end.length) + " ";
     }
     const each = streetWords(rest);
     return {
-      way: each.filter((word) => compass.test(word)).map((word) => word.replace(/north|south|east|west/gu, (part) => part[0] ?? "")).sort().join(" "),
-      numbers: each.filter((word) => /\d/u.test(word)).join(" "),
+      way: each.filter((word) => compass.test(word)).map((word) => word.replace(/north|south|east|west/gu, (part) => part[0] ?? "")).join(" "),
+      number: each.find((word) => /\d/u.test(word)) ?? "",
     };
   };
+  // The caller's places after their street, each whole and each word alone, and the text after it.
+  const placeForms = places.flatMap((part) => [part.forms, ...part.words]);
+  const callerAfter = phrase(lines.slice(lineStreet + 1).join(" "));
   // Two streets' names are close when the numbers both show agree and, with their words of two
   // letters or more joined, the last left out when there is another, fewer edits than a third of
   // the shorter's letters, a swap of two letters one edit, turn one into the other (Exampel or Mian
@@ -188,15 +192,16 @@ export const resolveAddressWith = async <T>(
       name(two).some((word) => word.length > 2 && initials(one).includes(word))
     );
   };
-  // A suggestion's street, its parts after the street, joined and each in its usual forms, and its
-  // parts but the street.
+  // A suggestion's street; its parts after the street, as words (its whole text when it has no
+  // comma, and none in `beyond`) and each in its usual forms; and its parts but the street.
   const sides = (text: string) => {
     const split = text.split(",");
     const at = streetOf(split);
     return {
       street: split[at] ?? "",
       after: phrase(split.length > 1 ? split.slice(at + 1).join(",") : text),
-      places: split.slice(at + 1).map((part) => match.spellings(squash(part.replace(zipGroups, ""))).map(phrase)),
+      beyond: phrase(split.slice(at + 1).join(" ")),
+      beyondForms: split.slice(at + 1).map((part) => match.spellings(squash(part.replace(zipGroups, ""))).map(phrase)),
       others: phrase(split.length > 1 ? split.filter((_, index) => index !== at).join(",") : ""),
     };
   };
@@ -210,8 +215,8 @@ export const resolveAddressWith = async <T>(
   // the caller's street words; by the place words, a unit-shaped part's included, it keeps after its
   // own street; by the share of the caller's street words its street keeps; and by showing no other
   // ZIP. It is on the caller's street when the caller gave no house number, or when its street's
-  // directions are the caller's street's and the numbers both streets show agree, each read past the
-  // other side's parts after its street. It is whole when it is on the caller's street, its street
+  // directions are the caller's street's, in order, and its own number is the caller's street's when
+  // both show one, each read past the other side's places that run on from its street. It is whole when it is on the caller's street, its street
   // keeps any of the caller's street words, it keeps every place word, not counting a unit-shaped
   // part, and it shows no other ZIP. It is clean when it is on the caller's street and keeps the
   // address field by field: its street keeps a word of the caller's street, or of its name, its text
@@ -225,7 +230,7 @@ export const resolveAddressWith = async <T>(
     const shown = zipOf(text);
     if (house.length > 0 ? !theirs.some((each) => house.includes(each)) : zip !== "" && theirs.includes(zip) && shown !== zip)
       return undefined;
-    const { after, street: own, places: parts } = sides(text);
+    const { after, street: own, beyond, beyondForms } = sides(text);
     const ownWords = words(own);
     const other = zip !== "" && shown !== "" && shown !== zip;
     const named = names.some((forms) => forms.some((form) => ownWords.some((word) => !houseWords.includes(word) && numeral(word) === form)));
@@ -236,9 +241,9 @@ export const resolveAddressWith = async <T>(
     );
     const kept = keeps(places, after);
     const zipped = zip !== "" && shown === zip;
-    const ours = bearing(lines[lineStreet] ?? "", parts);
-    const its = bearing(own, places.map((part) => part.forms));
-    const same = house.length === 0 || (ours.way === its.way && (ours.numbers === "" || its.numbers === "" || ours.numbers === its.numbers));
+    const ours = bearing(lines[lineStreet] ?? "", beyondForms, callerAfter);
+    const its = bearing(own, placeForms, beyond);
+    const same = house.length === 0 || (ours.way === its.way && (ours.number === "" || its.number === "" || ours.number === its.number));
     const clean =
       same &&
       (((share > 0 || named) && keeps(places, phrase(text)) === total && (!other || (options.read === true && house.length > 0 && total > 0))) ||
@@ -332,11 +337,12 @@ export const resolveAddressWith = async <T>(
  * street keeps the largest share of the caller's street words; then one that shows no other ZIP;
  * then the one the text names most closely (`rankChoices`); then the site's first. For an address
  * whose street opens with its house number, a suggestion's street is the caller's street only when
- * it shows the same compass directions, N, S, E, W, NE, NW, SE and SW or their spelled-out forms,
- * before or after the name, none more and none fewer, and, when both show numbers other than the
- * house number, the same ones; each street is read with its ZIP left out and, from its end, the
- * other side's parts after its street, in any of their usual forms, as a site may run a street on
- * into its town. When the text brings no usable suggestion, or none on the caller's street that
+ * it shows the same compass directions in the same order, N, S, E, W, NE, NW, SE and SW, dotted or
+ * spelled out, before or after the name, none more and none fewer, and, when both show a number
+ * other than the house number, the same first one; each street is read with its ZIP left out and,
+ * from its end, the other side's places after its street, whole or word by word, in any of their
+ * usual forms, unless its own side shows that place after its street, as a site may run a street
+ * on into its town. When the text brings no usable suggestion, or none on the caller's street that
  * keeps any of the caller's street words and every place word and shows no other ZIP, it asks once
  * more with a tidied text: joined words split, the ZIP and a unit asked for as typed left out, and
  * stray punctuation dropped. It accepts the best suggestion either text brought when it is on the
