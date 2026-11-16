@@ -1269,6 +1269,17 @@ describe("the publication policy", () => {
     );
   });
 
+  // The general picker needs every word of a typed address, a ZIP included, to pair with a
+  // suggestion, so it refuses the site's own suggestion for that address when it leaves one out;
+  // the address resolver takes it and still refuses another address. A choice among the account's
+  // saved addresses is not a typed address.
+  it("finds a typed street address matched without the address resolver", () => {
+    expect(publicationOutputPolicy).toContain(
+      "Own address match: source that matches a street address the caller typed against the site's suggestions with pickValue, rankChoices or matching of its own, instead of pickAddress, or resolveAddress over the site's own suggestion request. A choice among the account's saved addresses is not this finding.",
+    );
+    expect(guardianPublicationPolicy).toContain(publicationOutputPolicy);
+  });
+
   // Matching a record by today's date, or turning the site's "Tomorrow" into a date, picks the
   // wrong day as surely as refusing a past date does when today is UTC's. A time with no offset
   // names no moment, but a repair or change is judged only on the times it adds or changes, so
