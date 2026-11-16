@@ -638,7 +638,12 @@ const outcomeWaitCallRoomMs = 5000;
 // The site's messages as confirmCommit reads and judges them, for a commit's wait.
 const outcomeWaitSite = (() => {
 ${siteMessageCode}
-  return { saysError, messages, read: (page) => page.locator(messages).evaluateAll(messagesInPage), messageCounts, judgeMessages };
+  // Whether a message reads as a success: words or styling of one, and no words of an error, a
+  // refusal or a decline.
+  const succeeds = (message) =>
+    (message.successStyle === true || successWords.test(message.text)) &&
+    !(saysError(message.text) || saysRefusal(message.text) || openWords.test(message.text));
+  return { saysError, succeeds, messages, messagesInPage, read: (page) => page.locator(messages).evaluateAll(messagesInPage), messageCounts, judgeMessages };
 })();
 // Whether this call already began a wait: in a commit's call only the first reads the site's
 // refusal, and only with an action, since a later one's click came after the commit's.
@@ -777,20 +782,28 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
       }));
     // Whether a request that may write leaves the commit unclear: one unanswered, or a server error.
     const writeOpen = () => state.serverError || state.unanswered.size > 0;
-    // Whether an outcome is the site's message, as a refusal is: a native dialog, an announcement,
-    // fields marked invalid, or an element that is, holds or sits in one of the site's messages as
-    // confirmCommit reads them. One the page can't tell counts.
-    const siteMessage = async (candidate) =>
-      ["dialog", "announced", "invalid"].includes(candidate.kind) ||
-      (candidate.kind === "locator" &&
-        (await waitBounded(
-          candidate.locator.filter({ visible: true }).evaluateAll(
-            (elements, selector) => elements.some((element) => element.closest(selector) !== null || element.querySelector(selector) !== null),
-            outcomeWaitSite.messages,
-          ).catch(() => true),
-          Math.min(1000, beforeStop()),
-          true,
-        )));
+    // Whether an outcome is the site's message, as a refusal is, unless it reads as a success:
+    // fields marked invalid, a native dialog, an announcement, or an element that is, holds or sits
+    // in a dialog or one of the site's messages as confirmCommit reads them. An element gone since
+    // the look, or one the page can't tell, counts.
+    const siteMessage = async (candidate) => {
+      if (candidate.kind === "invalid") return true;
+      if (candidate.kind === "dialog" || candidate.kind === "announced") {
+        const text = candidate.kind === "dialog" ? events.hit(candidate.name)?.evidence?.message : state.announcedText.get(candidate.name);
+        return !outcomeWaitSite.succeeds({ text: String(text ?? "") });
+      }
+      if (candidate.kind !== "locator") return false;
+      const elements = candidate.locator.filter({ visible: true });
+      const read = (reading) => waitBounded(reading.catch(() => undefined), Math.min(1000, beforeStop()));
+      const inMessage = await read(elements.evaluateAll(
+        (elements, selector) =>
+          elements.length === 0 || elements.some((element) => element.closest(selector) !== null || element.querySelector(selector) !== null),
+        outcomeWaitSite.messages + ', [role="dialog"], dialog',
+      ));
+      if (inMessage === false) return false;
+      const shown = await read(elements.evaluateAll(outcomeWaitSite.messagesInPage));
+      return !(shown !== undefined && shown.length > 0 && shown.every(outcomeWaitSite.succeeds));
+    };
     // When a site's message first showed while a request that may write left the commit unclear.
     let heldSince;
     // After a commit's click, the site's messages new since it that confirmCommit would judge the
@@ -1460,7 +1473,13 @@ const waitForChange = async (fields, options = {}) => {
  * - `outcome_ambiguous`, when the winning outcome's locator matches more than one element; its
  *   `outcome` is that key. Scope the locator, for example with `.filter({ visible: true })`.
  * - `outcome_unknown`, when no outcome shows and the page made no progress for `noProgressMs`: a
- *   challenge, the site's error or a layout the code does not handle, never slowness.
+ *   challenge, the site's error or a layout the code does not handle, never slowness. Also, after a
+ *   commit's click (below), when an outcome that is the site's message shows while a request that
+ *   may write, to any host, sent since the click, has no answer: fields marked invalid, a dialog, an
+ *   announcement, or an element that is, holds or sits in a dialog, an alert or an error-styled
+ *   message, unless it reads as a success. Such an outcome waits up to `noProgressMs` for the
+ *   answer and then decides as before, and fails so, with `outcome` naming it, when none comes in
+ *   time, or at once after a server error to such a request.
  * - `outcome_refused`, in place of `outcome_unknown`, when the wait's `action` is a commit's click
  *   (the call's first wait, with an `action`, in the call the script sends right after its
  *   `enteringCommit`, which the runtime declares as `__pomeradoCommitting`) and the page shows a
@@ -1471,11 +1490,7 @@ const waitForChange = async (fields, options = {}) => {
  *   `messages`, or the dialog's `type` and `message`. The runtime then puts the step back unsent,
  *   as `notCommitted(name, { siteRefused: true })` does. The wait takes its `action` for the commit's
  *   click, so pass the commit's click as the `action`: after a commit clicked outside a wait, the
- *   next wait's `action` would read as the commit's. There, an outcome that is the site's message (a
- *   dialog, an announcement, fields marked invalid, or an element that is, holds or sits in an alert
- *   or an error-styled message) waits up to `noProgressMs` while such a request has no answer, then
- *   decides as before once it has one. It fails as `outcome_unknown`, with `outcome` naming it, when
- *   none comes in time, or at once after a server error to one.
+ *   next wait's `action` would read as the commit's.
  * - `outcome_timeout`, when the page was still progressing at `timeout`.
  *
  * An outcome may also be an object naming one declared kind, raced beside the locators in the same

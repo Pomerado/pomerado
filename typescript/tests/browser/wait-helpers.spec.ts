@@ -633,7 +633,8 @@ test("in a commit's call, a request that may write still unanswered keeps the si
 // A paying step names the site's alert or dialog as an outcome beside the order's response. Its
 // error, shown on a timer of the page's own while a request that may write has no answer, waits
 // for that answer: once it comes, the outcomes decide as before. With none in time, or after a
-// server error, the commit is unclear. A success, or any wait outside a commit's call, decides at once.
+// server error, the commit is unclear, even once the error left. A success, even in an alert, or any
+// wait outside a commit's call, decides at once.
 test("in a commit's call, the site's alert, dialog or field errors named as an outcome wait for an unanswered request that may write", async ({
   page,
 }) => {
@@ -641,12 +642,15 @@ test("in a commit's call, the site's alert, dialog or field errors named as an o
     ["/orders", "none", "alert", true, "outcome_unknown"],
     ["/orders", "none", "dialog", true, "outcome_unknown"],
     ["/orders", "none", "field errors", true, "outcome_unknown"],
+    ["/orders", "none", "a modal", true, "outcome_unknown"],
+    ["/orders", "none", "an alert that leaves once read", true, "outcome_unknown"],
     ["/orders", 503, "alert", true, "outcome_unknown"],
     ["/orders", 402, "alert", true, "declined"],
     ["", "none", "alert", true, "declined"],
     ["/orders", "200 after 300 ms", "alert", true, "order"],
     ["/collect", "204 after 300 ms", "alert", true, "declined"],
     ["/orders", "none", "a success", true, "placed"],
+    ["/orders", "none", "a success in an alert", true, "placed"],
     ["/orders", "none", "alert", false, "declined"],
   ] as const) {
     await page.unrouteAll();
@@ -661,7 +665,15 @@ test("in a commit's call, the site's alert, dialog or field errors named as an o
       alert: `document.querySelector("#answer").innerHTML = '<div role="alert">Payment failed. Please try again.</div>';`,
       dialog: 'alert("Placing your order failed");',
       "field errors": 'document.querySelector("#card").setAttribute("aria-invalid", "true");',
+      "a modal": `document.querySelector("#answer").innerHTML = '<div role="dialog" aria-modal="true"><h2>Your card was declined.</h2></div>';`,
+      // The alert goes as soon as the wait has read it, before anything else looks at it.
+      "an alert that leaves once read": `const alert = document.createElement("div");
+        alert.setAttribute("role", "alert");
+        alert.textContent = "Payment failed. Please try again.";
+        Object.defineProperty(alert, "innerText", { get() { setTimeout(() => alert.remove()); return "Payment failed. Please try again."; } });
+        document.querySelector("#answer").append(alert);`,
       "a success": `document.querySelector("#answer").innerHTML = '<p class="placed">Order placed</p>';`,
+      "a success in an alert": `document.querySelector("#answer").innerHTML = '<div role="alert" class="placed alert alert-success">Order placed</div>';`,
     }[shows];
     await site(
       page,
@@ -681,10 +693,11 @@ test("in a commit's call, the site's alert, dialog or field errors named as an o
       `try {
         const result = await waitForOutcomeResult({
           order: { response: (response) => response.url().endsWith("/orders") && response.status() < 400 },
+          placed: page.locator(".placed"),
           declined: page.getByRole("alert"),
+          modal: page.getByRole("dialog"),
           notice: { dialog: true },
           invalid: { invalid: page.locator("#checkout") },
-          placed: page.locator(".placed"),
         }, { action: () => page.locator("#place").click(), noProgressMs: 1000, timeout: 3000 });
         await result.dialog?.dismiss();
         return result.outcome;
