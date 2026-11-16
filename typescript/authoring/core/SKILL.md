@@ -258,6 +258,13 @@ exception: it is optional unless the task can't run without it (below).
   own suggestion request, with `{ read: true }` after its `label` in a read. Fill the site's unit
   field, or its second address line, with the `unit` it returns, return the suggestion it accepted
   as the site's version of the address, and throw its `pickRefusal` only when it accepts none.
+  Never write address normalization or matching of your own, in the tool or in a file beside it:
+  no word lists, street-type or city tables, house-number, unit or postal-code comparisons,
+  regular expressions that split an address, similarity scores or "contains" tests. When the
+  helper's answer looks wrong for a site, refuse with its `available`; the fix belongs in the
+  helper, not in the tool. A site that takes the address as typed, such as a search or form that
+  goes on with the caller's text without a pick from its list, needs no match: type the caller's
+  text and read back what the site kept.
 - Match the caller's proper nouns, such as places, venues and company names, with a fuzzy
   match that accepts the usual forms of the same name, such as a name with or without its
   accents (Abaca for Abacá), or a city alone or with its state and country after a comma.
