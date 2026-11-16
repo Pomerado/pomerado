@@ -227,9 +227,15 @@ describe("resolveAddress", () => {
     expect(await resolveAddress(asked, () => ["See 12 more results for " + asked], String, { read: true })).toMatchObject({ picked: false, available: [] });
     expect(await resolveAddress(asked, () => ["See all results for " + asked + " (12)"], String, { read: true })).toMatchObject({ picked: false, available: [] });
     // A read takes no first suggestion that shows the caller's whole text after words of its own, as
-    // a control the rule above leaves listed may, and no place taken for one either.
-    for (const row of ['Search "' + asked + '"', "The Example Park, Exampleton, CA, USA"])
-      expect(await resolveAddress(asked, () => [row], String, { read: true })).toMatchObject({ picked: false, matches: [row] });
+    // a control the rule above leaves listed may, and passes over none either: it refuses.
+    for (const rows of [
+      ['Search "' + asked + '"', "Example Gardens, Exampleton, CA"],
+      ["The Example Park, Exampleton, CA, USA", "Example Gardens, Exampleton, CA"],
+    ])
+      expect(await resolveAddress(asked, () => rows, String, { read: true })).toMatchObject({ picked: false, matches: rows });
+    expect(await resolveAddress("Exampleton, IL", () => ["West Exampleton, IL, USA", "Exampleton Heights, IL, USA"], String, { read: true })).toMatchObject({
+      picked: false,
+    });
     // A town given alone after the place's name is its town, so a read takes a first suggestion there.
     expect(await resolveAddress("Example Park, Exampleton", () => ["Example Gardens, Exampleton, CA"], String, { read: true })).toMatchObject({
       picked: true,

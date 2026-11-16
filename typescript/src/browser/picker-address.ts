@@ -465,15 +465,14 @@ export const resolveAddressWith = async <T>(
   let best:
     | { readonly choice: T; readonly label: string; readonly query: string; readonly value: readonly number[]; readonly clean: boolean }
     | undefined;
-  // The site's first usable suggestion for the first text that brought one, past any that shows the
-  // whole text typed after words of its own, as a control may.
+  // The site's first usable suggestion for the first text that brought one.
   let first: { readonly choice: T; readonly label: string; readonly query: string } | undefined;
   for (const text of [...new Set([query, tidied])].filter((form) => form !== "")) {
     const items = [...(await suggest(text))];
     const labels = items.map((item) => squash(label(item))).map((name) => (echoes(name, text) ? "" : name));
     seen.push(...labels.filter((name) => name !== ""));
     const scores = labels.map((name) => (name === "" ? undefined : score(name)));
-    const shown = scores.findIndex((each, index) => each !== undefined && echoAt(labels[index] ?? "", text) < 0);
+    const shown = scores.findIndex((each) => each !== undefined);
     if (first === undefined && shown >= 0) first = { choice: items[shown] as T, label: labels[shown] ?? "", query: text };
     usable.push(...labels.filter((_, index) => scores[index] !== undefined));
     const top = scores.reduce<readonly number[] | undefined>(
@@ -502,8 +501,13 @@ export const resolveAddressWith = async <T>(
     if (scores[pick]?.whole === true) break;
   }
   // A read of a place's name with no clean suggestion takes the site's first when it is in the
-  // caller's area.
-  const taken = best?.clean === true ? best : options.read === true && byName && first !== undefined && inArea(first.label) ? first : undefined;
+  // caller's area and does not show the whole text typed after words of its own, as a control may.
+  const taken =
+    best?.clean === true
+      ? best
+      : options.read === true && byName && first !== undefined && echoAt(first.label, first.query) < 0 && inArea(first.label)
+        ? first
+        : undefined;
   if (taken === undefined)
     return {
       picked: false,
@@ -580,10 +584,10 @@ export const resolveAddressWith = async <T>(
  * first, one that leaves out a place field only when none keeps them all. With `{ read: true }`, as
  * in a read, it also accepts another ZIP when the caller gave a house number and a town or state;
  * and for an address with no house number, when it accepts none, it takes the site's first usable
- * suggestion for the first text that brought one, past any that shows the whole text typed after
- * words of its own first part, when that one is in the caller's area: it shows no other ZIP, and
- * shows the caller's ZIP, or holds each of the caller's town and state after its own street, and
- * the caller's place name when they gave no town. The tool reports it as the site's version. A
+ * suggestion for the first text that brought one when that one does not show the whole text typed
+ * after words of its own first part, as a control may, and is in the caller's area: it shows no
+ * other ZIP, and shows the caller's ZIP, or holds each of the caller's town and state after its own
+ * street, and the caller's place name when they gave no town. The tool reports it as the site's version. A
  * suggestion that shows the whole text typed, of two parts or more, after two words or more of its
  * own first part, the first with no digit, and ends in it or it and a count, as a site's control
  * that lists more results for that text does, is not a suggestion: it is not accepted, listed or
