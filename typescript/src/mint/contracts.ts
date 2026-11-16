@@ -1078,7 +1078,8 @@ export interface LiveTestHost {
    * case a host problem, a challenge, a site block or the deadline stopped is `inconclusive`; a
    * case not run by `batch.deadlineAt` (epoch milliseconds) is `inconclusive` with reason
    * `deadline`. A host may record the batch as one history entry marked `agent_chosen_batch`, as
-   * the local host does; none is required.
+   * the local host does; none is required. A host's own batch of a caller's recent inputs, which it
+   * runs outside the harness before a repair publishes, is marked `recent_inputs_batch` instead.
    */
   readonly run: (batch: LiveTestBatch) => Effect.Effect<LiveTestBatchResult, MintFailure>;
   /** The most browsers this host runs a batch on at once, the build's own included. */
