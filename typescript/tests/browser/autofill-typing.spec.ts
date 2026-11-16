@@ -716,6 +716,37 @@ held.addEventListener("input", () => {
   expect(received).toEqual([]);
 });
 
+// A code field whose mask script writes its placeholder once it takes the focus, then keeps the
+// digits typed: a mask with no letter or digit holds no earlier value, so the code goes in.
+test("an empty code field whose mask shows once it takes the focus is typed and sent", async ({
+  page,
+}) => {
+  const received = await serve(
+    page,
+    `${loginScreen}
+<label>Code<input name="code" inputmode="numeric" autocomplete="one-time-code"></label>
+<script>
+const code = document.querySelector("input[name=code]");
+const mask = () => {
+  code.value = code.value.replace(/\\D/g, "").slice(0, 6).padEnd(6, "_");
+};
+code.addEventListener("focus", () => {
+  if (code.value === "") mask();
+});
+code.addEventListener("input", mask);
+</script>`,
+  );
+  const step: AutofillStep = {
+    fields: [...loginStep.fields, { selector: "input[name=code]", slot: "code" }],
+    submit: loginStep.submit,
+  };
+  const report = await fillWithKeys(page, step, [username, password, "246802"]);
+  expect(report).toMatchObject({ outcome: "filled", submit: "clicked" });
+  expect(received.map((form) => Object.fromEntries(form))).toEqual([
+    { username, password, code: "246802" },
+  ]);
+});
+
 test("a field whose page fills it once it takes the focus is refused, with nothing typed after it", async ({
   page,
 }) => {

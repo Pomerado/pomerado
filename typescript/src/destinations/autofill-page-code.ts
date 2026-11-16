@@ -33,10 +33,10 @@ import { pageControlsCode } from "./page-controls.js";
  * `maximumCodeBoxes` boxes, has none.
  */
 /**
- * The slots whose fields commonly show a mask with no letter or digit once emptied, such as
- * "__ / __", and take their value at once: such a mask may stay before the host types.
+ * The slots whose field must hold nothing at all before the host types into it: a secret that may
+ * hold symbols alone, so any remnant may be part of one.
  */
-const maskedSlots: ReadonlySet<string> = new Set(["card_number", "card_expiry", "date_of_birth"]);
+const strictSlots: ReadonlySet<string> = new Set(["password", "private_answer"]);
 
 const codeBoxesCode = `const codeBoxes = [];
 const codeFields = codeSlots.filter(Boolean).length;
@@ -1273,10 +1273,12 @@ const selectors = ${JSON.stringify(step.fields.map((field) => field.selector))};
 const questionSelectors = ${JSON.stringify(step.fields.map((field) => questionRead(field, fill === undefined)))};
 const codeSlots = ${JSON.stringify(step.fields.map((field) => field.slot === "code"))};
 // What a field may hold once emptied and focused, before the host types into it: a phone field
-// its own mask, such as a calling code, which its typing allows for (null); a card number, card
-// expiry or date of birth field a mask with no letter or digit, such as "__ / __", which takes the
-// value typed at once ("mask"); every other field nothing ("any").
-const emptiedFields = ${JSON.stringify(step.fields.map((field) => (field.slot === "phone" ? null : maskedSlots.has(field.slot ?? "") ? "mask" : "any")))};
+// its own mask, such as a calling code, which its typing allows for (null); a password or private
+// answer nothing ("any"); every other field, whose value is letters and digits, a mask with no
+// letter or digit, such as "______" for a code or "__ / __" for a card expiry, which a mask script
+// may write once the field takes the focus and which holds no earlier value ("mask"). A mask with
+// letters, such as "mm/yy", counts as a value.
+const emptiedFields = ${JSON.stringify(step.fields.map((field) => (field.slot === "phone" ? null : strictSlots.has(field.slot ?? "") ? "any" : "mask")))};
 const submitSelector = ${JSON.stringify(step.submit ?? null)};
 const submitKey = ${JSON.stringify(step.submitKey ?? null)};
 const submitVia = ${JSON.stringify(step.submitVia ?? null)};
