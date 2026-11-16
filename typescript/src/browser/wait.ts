@@ -873,7 +873,10 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
       }
       if (shown !== undefined) {
         const observation = observations?.[shown.name];
-        if (shown.kind === "locator" && observation.count > 1) {
+        // A locator with more than one match decides only when it shows more than once and its
+        // visible matches all read the same.
+        if (shown.kind === "locator" && observation.count > 1 && !(observation.visible > 1 &&
+            (await waitBounded(outcomeWaitSameText(shown.locator).catch(() => false), Math.max(250, until - Date.now()), false)))) {
           const failure = outcomeWaitFailure("outcome_ambiguous", ": " + outcomeWaitSeen(observations), observations, {
             outcome: shown.name,
           });
@@ -1421,8 +1424,9 @@ const waitForChange = async (fields, options = {}) => {
  * `pending: true` on the result. Its
  * `OutcomeWaitFailure` has `observations` (`OutcomeObservation` by key) and one of these reasons:
  *
- * - `outcome_ambiguous`, when the winning outcome's locator matches more than one element; its
- *   `outcome` is that key. Scope the locator, for example with `.filter({ visible: true })`.
+ * - `outcome_ambiguous`, when the winning outcome's locator matches more than one element, unless
+ *   more than one is visible and the visible ones all read the same text; its `outcome` is that
+ *   key. Scope the locator, for example with `.filter({ visible: true })`.
  * - `outcome_unknown`, when no outcome shows and the page made no progress for `noProgressMs`: a
  *   challenge, the site's error or a layout the code does not handle, never slowness.
  * - `outcome_refused`, in place of `outcome_unknown`, when the wait's `action` is a commit's click

@@ -440,14 +440,16 @@ const outcomeWaitShows = (candidate, observation, state, stale, now) => {
 const outcomeWaitShowsAny = (candidate, observation) =>
   observation !== undefined &&
   (candidate.kind === "locator" ? observation.visible > 0 : candidate.kind !== "url" && candidate.kind !== "check" && observation.matched);
+// Whether a locator's visible matches, at most 20, all read the same text, spacing aside.
+const outcomeWaitSameText = (locator) =>
+  locator.filter({ visible: true }).evaluateAll((elements) =>
+    elements.length <= 20 && new Set(elements.map((element) => String(element.innerText ?? "").replace(/\s+/g, " ").trim())).size === 1);
 const outcomeWaitEvidence = async (candidate, observation, state, events, now) => {
   const { kind, name } = candidate;
   if (kind === "locator") {
     let text;
     try {
-      text = await candidate.locator.evaluateAll((elements) =>
-        elements.find((element) =>
-          typeof element.checkVisibility === "function" ? element.checkVisibility() : element.getClientRects().length > 0)?.innerText);
+      text = await candidate.locator.filter({ visible: true }).evaluateAll((elements) => elements[0]?.innerText);
     } catch {
       text = undefined;
     }

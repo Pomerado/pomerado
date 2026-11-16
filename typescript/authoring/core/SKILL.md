@@ -855,7 +855,9 @@ choice the input asked for as "Configure, then read" says; ask the caller about 
 (.agents/caller-input/SKILL.md). It throws an
 `Error` named `OutcomeWaitFailure` whose message says what each outcome matched, which progress
 signs it saw and when progress stopped: `outcome_ambiguous` when the winning locator matches more
-than one element; `outcome_unknown` when the page stops progressing for `noProgressMs` (8 s)
+than one element, unless more than one is visible and the visible ones all read the same text (read
+such an answer's text from `waitForOutcomeResult`'s `evidence`, or act on its first visible match);
+`outcome_unknown` when the page stops progressing for `noProgressMs` (8 s)
 while showing none of the answers; and `outcome_timeout` when it is still progressing at
 `timeout` (30 s). An unknown page is a challenge, the site's error or a layout you have not
 handled: do not turn it into your own timeout; the host reports it as one. `references/navigation.ts` waits for a search's answer and
