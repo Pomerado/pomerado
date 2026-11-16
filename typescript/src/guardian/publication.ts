@@ -568,12 +568,12 @@ export const publicationPurchaseOrderPolicy =
   "The last declared choice or confirm a write asks before a commit that buys or pays, once the page shows the items and total that commit pays, passes them as `order` to `ask`. One that passes none is a confirmation finding at that `ask`, in a repair too, even in code the repair did not change.";
 
 /**
- * A choice the caller approved can show a time that moves with the clock, such as a delivery
- * window or a ride's pickup time. A re-check before the commit that matches its exact text refuses
+ * A choice the caller approved can show a time that moves with the clock, such as an
+ * as-soon-as-possible delivery window or a ride's pickup time. A re-check before the commit that matches its exact text refuses
  * it once the time moves, though the site still offers it, so the review sends that check back.
  */
 export const publicationApprovedChoicePolicy =
-  "A re-check before a commit that stops the write or asks the caller again when the choice the caller approved changed only in a time it shows that moves with the clock, instead of matching it by its kind or name, its price and any time it shows that stays fixed, is a confirmation finding at that check.";
+  "A re-check before a commit, the marked call's re-read included, that stops the write or asks the caller again when the choice the caller approved changed only in a time it shows that moves with the clock, instead of matching it by its kind or name and any time it shows that stays fixed, is a confirmation finding at that check.";
 
 /** What Guardian reads about the output notes file, beside the example output's own rule. */
 export const publicationOutputNotesPolicy =
