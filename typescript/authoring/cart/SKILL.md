@@ -47,6 +47,10 @@ card with the requested name in turn and keep the one whose own details prove th
 when each card's details show another ID, refuse with `InvalidInput` before the add's commit
 mark, naming those IDs.
 
+A product identifier the site has no page for opens its not-found page or a search: name that
+page among the answers of every wait on the product page, and refuse with `InvalidInput` and the
+site's words, `field` that input, before any commit mark (the core skill).
+
 ## Quantity
 
 The request decides whether quantity adds that many to the cart or sets the line to that
