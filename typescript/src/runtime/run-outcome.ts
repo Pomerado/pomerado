@@ -87,7 +87,9 @@ export const unenteredWrite = (effect: string, marks: readonly CommitMark[] | un
  * entered mark is one its operation declared a setting (`WriteDeclaration.settings`), and a step
  * that is not one stayed unsent. Such a write changed only those choices on the way to its commit,
  * so its own refusal settles as not applied, naming them. Undefined for any other write. Pass the
- * marks as `unenteredWrite` takes them.
+ * marks as `unenteredWrite` takes them. A journal made with `makeEffectJournalWith({ settledCommits
+ * })` reports the settled marks as `not_sent`, although an earlier run sent them, so a maintenance
+ * or continuation run that uses one must never be judged by its marks here.
  */
 export const settingsOnlyWrite = (effect: string, marks: readonly CommitMark[] | undefined) => {
   const entered = marks?.filter((mark) => mark.state !== "not_sent") ?? [];

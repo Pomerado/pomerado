@@ -610,7 +610,7 @@ it("lets a host replace when a write's declared refusal completes the run", asyn
     (texts.get(name) ?? "").replace(/\s+/g, " ");
   const local = await renderedTexts("typescript/authoring");
   expect(text(local, "writes")).toContain(
-    'with those choices. Before any commit mark is entered, the run reports that it changed nothing, so throw a refusal before the mark. A write may instead declare its refusals in its output schema: a branch that requires `status` `"refused"` and a `reason` from a listed set of stable lowercase codes, such as `over_price_limit`, beside the values the caller needs, such as the total and the limit, with no other branch whose `status` could be `"refused"`. Prefer declaring each refusal as its own branch of the output\'s top-level union, and prefer a listed `status` on every other branch, such as `Schema.Literal("rated")`, so the host can tell a refusal from any other output. Returned before the first commit mark, a declared refusal completes the run with that output and reports the write not applied. A refusal returned in a shape the schema does not declare, or returned or thrown after a mark, reports a possible change. See `references/write-session.ts`',
+    'with those choices. Before any commit mark is entered, the run reports that it changed nothing, so throw a refusal before the mark. A write may instead declare its refusals in its output schema: a branch that requires `status` `"refused"` and a `reason` from a listed set of stable lowercase codes, such as `over_price_limit`, beside the values the caller needs, such as the total and the limit, with no other branch whose `status` could be `"refused"`. Prefer declaring each refusal as its own branch of the output\'s top-level union, and prefer a listed `status` on every other branch, such as `Schema.Literal("rated")`, so the host can tell a refusal from any other output. Returned before the first commit mark, or after only steps named in `write.settings`, a declared refusal completes the run with that output and reports the write not applied. A refusal returned in a shape the schema does not declare, or returned or thrown after a mark outside `write.settings`, reports a possible change. See `references/write-session.ts`',
   );
   expect(text(local, "publication")).toContain(
     "never a login; - a write runs every check that can refuse, such as a limit on its total, before the mark of the commit it guards, and refuses with `InvalidInput`, or returns a refusal its output schema declares before its first mark, never in an undeclared output shape; - a composed write",
@@ -1356,9 +1356,9 @@ it("has a tool return the site's no to a valid request as a declared refusal quo
     "when it lists them. - When the site says no to a valid request, such as sold out, no availability, not eligible, not offered for these facts or not served in this area, that no is the task's answer. Prefer returning it as a refusal the output schema declares (below), with a `reason` code of the tool's own, listed in the tool's description, `site_message`, the site's own words exactly as the page shows them, and any alternatives the site offers, exactly as shown. Return it only from what the site shows in this run, never from a rule copied into the tool's own checks, and never from a challenge, block, access-denied, error or maintenance page, which is a failure (`OperationFailure`). After a commit mark, return it only where the declared-refusal rule below says one returned there completes the run; otherwise prefer throwing `InvalidInput` with the site's words. - When the site swaps the request for something the caller didn't ask for, such as another product, a later date or a higher amount, stop before the step that would confirm it and return the refusal as above, with the site's words and its offer, unless the caller's own task asks for whatever the site ends up with. - Report a confirm popup",
   );
   expect(text("writes")).not.toContain("naming the field the site refused");
-  // The standalone rule completes no refusal returned after a mark.
+  // The standalone rule completes no refusal returned after a mark outside write.settings.
   expect(text("writes")).toContain(
-    "A refusal returned in a shape the schema does not declare, or returned or thrown after a mark, reports a possible change.",
+    "A refusal returned in a shape the schema does not declare, or returned or thrown after a mark outside `write.settings`, reports a possible change.",
   );
   expect(text("caller-input")).toContain(
     "- A write that declines the task because the caller's own limit or the page's state rules it out, such as a total over the caller's price limit or a product number whose page names another item than the caller's: `InvalidInput`, thrown before the mark of the commit it guards (writes skill). Pass `field`, the input the caller would change, `kind`, the reason as a stable lowercase token such as `over_price_limit` or `item_mismatch`, and `available` where the page lists choices,",
@@ -1428,7 +1428,7 @@ it("renders the pinned standalone authoring", async () => {
     ["a08f1ef89cc10bf11e17b8d6086b6e37649b1d5d11b78c0542cc7db32460b7e3", "testing"],
     ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
     ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
-    ["21ad4af1f0f0c1e0bc4902a462a11dc9fd1539c7063975ccd8d1822cb9ffb8ea", "writes"],
+    ["142da776ce2d875a3d19ca6d4b01cd77c966676ff520edbf36cfb465232596c5", "writes"],
     ["556b560d66d52790fcf3f187720c48627d22b4b0f562c6c7f691b8824694ef8c", "cart"],
     ["a956eaf7879b5f89ca80d96e6549c17203dab21423e92e31cec0027f12a13a05", "caller-input"],
     ["b563d244521edf21386ad71815c8ff86202ea98049dc53ac38f0dae4272bb3ae", "publication"],
