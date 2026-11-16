@@ -592,6 +592,29 @@ test("paged search example waits for the titles of the rows it returns to fill i
   );
 });
 
+test("paged search example reads each row once from results the site shows twice", async ({ page }) => {
+  const origin = "https://listings.example.test";
+  const results = `<ol id="results">${["L1", "L2", "L3"]
+    .map((id) => `<li data-id="${id}"><span class="title">Lamp ${id}</span></li>`)
+    .join("")}</ol>`;
+  await page.route(`${origin}/**`, (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: `<form action="/search"><input id="q" name="q" value="lamps"><button id="go">Search</button></form>
+<p id="count">1-3 of 3</p>${results}${results}`,
+    }),
+  );
+  const { result } = await runExample(page, searchListings, { query: "lamps", limit: 3 }, { siteOrigin: origin, list: {} });
+  expect(Either.getOrThrow(result)).toMatchObject({
+    results: [
+      { id: "L1", title: "Lamp L1", sponsored: false },
+      { id: "L2", title: "Lamp L2", sponsored: false },
+      { id: "L3", title: "Lamp L3", sponsored: false },
+    ],
+    has_more: false,
+  });
+});
+
 test("detail-page list example reads each row once from a list the site shows twice", async ({ page }) => {
   const origin = "https://items.example.invalid";
   const items = `<ul aria-label="Items">${["a", "b", "c"]
@@ -636,6 +659,16 @@ test("append example ends at the control going beside a loader the page always s
     Either.right(lastRooms(roomList(4))),
   );
   await expect(page.locator("#clicks")).toHaveText("1");
+});
+
+test("append example reads each room once from a list the page shows twice", async ({ page }) => {
+  const list = `<ul aria-label="Rooms">${roomList(2)
+    .map(({ id, name }) => `<li data-room-id="${id}"><span class="name">${name}</span></li>`)
+    .join("")}</ul>`;
+  await page.setContent(`<main>${list}${list}</main>`);
+  expect((await runExample(page, readRooms, { limit: 2 }, { list: {} })).result).toEqual(
+    Either.right(lastRooms(roomList(2))),
+  );
 });
 
 test("append example stops at the limit without another step", async ({ page }) => {

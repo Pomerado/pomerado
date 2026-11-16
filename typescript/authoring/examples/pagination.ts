@@ -57,11 +57,12 @@ const shown = await waitForOutcome({ empty: page.locator("#no-results"), results
 const query = (await page.locator("#q").inputValue({ timeout: waitLimits.action })).trim();
 if (shown === "empty")
   return { href: page.url(), query, rows: [], more: false, next: null, totalResults: null };
-const { rows, more } = await waitForRows(results.filter({ visible: true }).first().locator(":scope > li"), {
+const shownResults = results.filter({ visible: true }).first();
+const { rows, more } = await waitForRows(shownResults.locator(":scope > li"), {
   title: ".title",
   // The badge's presence is the mark, so read its class rather than text it may not have.
   sponsored: { selector: ".sponsored", attribute: "class", optional: true },
-}, { count: ${count}, key: { attribute: "data-id" }, region: results, ...site });
+}, { count: ${count}, key: { attribute: "data-id" }, region: shownResults, ...site });
 const counted = /of (\\d+)/.exec((await visibleTexts(page.locator("#count")))[0] ?? "");
 const next = page.locator("a[rel=next]");
 const nextHref = (await next.count()) === 1 ? await next.getAttribute("href", { timeout: waitLimits.action }) : null;
