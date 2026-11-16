@@ -373,14 +373,15 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
     "workspace/AGENTS.md",
     "ending, and the build goes on. Before ending blocked because a value the request gave is unavailable or invalid on the site, such as a time slot the site does not offer that day, a date outside its calendar or a name it does not list, ask the owner with `request_input` to revise it or stop, as the key rules say. End blocked only when they stop or their answer cannot be met either. A read whose bad value is its example's record proves the tool on another record first (\"Reads, writes and examples\"). In maintenance, follow the intake screen instead. Give the evidence in `intent`",
   ],
-  // Only what the caller asked for decides whether a tool books or refuses, every listed option
-  // gets read, a repair fixes a broken input but keeps a caller's documented design decision, a
-  // fix covers every required control the input has no value for rather than the one that
-  // failed, and a format read from one sample breaks on the next value, so the minter reads it
-  // off the page.
+  // Only what the caller asked for decides whether a tool books or refuses, each check guards the
+  // caller's request or the tool's own change and passes where the task went right, every listed
+  // option gets read, a repair fixes a broken input but keeps a caller's documented design
+  // decision, a fix covers every required control the input has no value for rather than the one
+  // that failed, and a format read from one sample breaks on the next value, so the minter reads
+  // it off the page.
   [
     "core",
-    "never just the example's value. The example's values are one case, never limits. - Prefer keying only on what the caller asked for. A detail that changes from one listing to the next, such as a seating label or a room name, shouldn't decide whether the tool books or refuses unless the caller chose it. - Read results for every option the schema lists. When an option leads to a page with a different structure (other fields or sections), handle that layout too, and on a read signed out run it live as a test case (testing skill); an option that only reorders or filters the same rows needs no case of its own. Never return results for another option in its place. - A repair that finds a declared input broken, never applied or always reported unsupported fixes it in the same repair, whether or not a caller is waiting. Keeping a tool's contract means every input and output it declares works, not leaving a broken one as it was. An input whose description starts \"By design:\" is applied in the use it records, a caller's decision: keep that use and its description word for word, and change them only after asking the same design question again (the input schema, \"Inputs that tailor the answer\"). - Prefer fixing the whole class of a failure over its one instance: when the page requires a control the input has no value for, prefer making every such control a declared caller question with the page's live options over throwing for it. - Never derive a format from one sample: not an input format, an element key, a selector, a URL path or a label. A key the page showed for the example's value says nothing about the next value, as when a calendar keyed December 3 as `12-3-2026` where the tool expected `12-03-2026`. Read the format off the page for the value you need, such as the day cell whose visible label or accessible name is the caller's date, or a key the page itself lists, never a key rebuilt from the one you saw. - Inputs are values a caller knows",
+    "never just the example's value. The example's values are one case, never limits. - Prefer keying only on what the caller asked for. A detail that changes from one listing to the next, such as a seating label or a room name, shouldn't decide whether the tool books or refuses unless the caller chose it. A tool's check guards what the caller asked for or what the tool itself changes: it proves the caller's request before the step it guards, stops on anything else only for a problem the page shows, not for something it can't find, and passes on every page where the task went right. A repair narrows or removes a check that stopped a run whose page was right. - Read results for every option the schema lists. When an option leads to a page with a different structure (other fields or sections), handle that layout too, and on a read signed out run it live as a test case (testing skill); an option that only reorders or filters the same rows needs no case of its own. Never return results for another option in its place. - A repair that finds a declared input broken, never applied or always reported unsupported fixes it in the same repair, whether or not a caller is waiting. Keeping a tool's contract means every input and output it declares works, not leaving a broken one as it was. An input whose description starts \"By design:\" is applied in the use it records, a caller's decision: keep that use and its description word for word, and change them only after asking the same design question again (the input schema, \"Inputs that tailor the answer\"). - Prefer fixing the whole class of a failure over its one instance: when the page requires a control the input has no value for, prefer making every such control a declared caller question with the page's live options over throwing for it. - Never derive a format from one sample: not an input format, an element key, a selector, a URL path or a label. A key the page showed for the example's value says nothing about the next value, as when a calendar keyed December 3 as `12-3-2026` where the tool expected `12-03-2026`. Read the format off the page for the value you need, such as the day cell whose visible label or accessible name is the caller's date, or a key the page itself lists, never a key rebuilt from the one you saw. - Inputs are values a caller knows",
   ],
   // The minter reads the never-loosened needed values, the facts a caller could use, typed output
   // and kept rows before it writes the schema and the parser, so a fact the code could not read
@@ -1274,6 +1275,31 @@ it("has the marked call re-read only what its page shows", async () => {
   );
 });
 
+// A check for something neither the caller asked for nor the tool changes, or one that needs the
+// page to show something a correct run may not show, stops correct runs of every kind of tool. So
+// each check guards the caller's request or the tool's own change, a repair narrows one that
+// stopped a right page, a write stops only on a paid option its page shows, and the publication
+// skill says the review finds such a check in every tool.
+it("has every tool's checks guard only what the caller asked for or the tool changes", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
+  expect(text("core")).toContain(
+    "A tool's check guards what the caller asked for or what the tool itself changes: it proves the caller's request before the step it guards, stops on anything else only for a problem the page shows, not for something it can't find, and passes on every page where the task went right. A repair narrows or removes a check that stopped a run whose page was right.",
+  );
+  expect(text("writes")).toContain(
+    "A paid add-on toggle, a pre-selected paid option or a lone saved payment method or address is still a choice to ask about.",
+  );
+  expect(text("writes")).toContain(
+    "check the total against any limit the input sets, stop when the page shows a paid option selected that the input does not settle, and check the items, address and payment.",
+  );
+  expect(text("publication")).toContain(
+    "- a tool's checks reject no correct run and guard only what the caller asked for or what the tool itself changes;",
+  );
+  expect(text("publication")).toContain(
+    "- a composed write reproduces the session's flow and returns the confirmation or read-back it declares, without committing twice; a before-and-after comparison",
+  );
+});
+
 // A consent banner whose text also agrees to the site's own terms is still a consent banner, and a
 // prompt whose own purpose is accepting terms is not. The core skill and Guardian say the same.
 it("has the minter and Guardian treat a consent banner that bundles the site's terms as a banner", async () => {
@@ -1434,16 +1460,16 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["cce1d31ee50b314dbd8337c6b719a54414d5102af99c3facf9e6deb1dc0741b1", "core"],
+    ["cc18d4558261edb860eb5f2e8083b35d1c8daf6d50595b9b4f54571b7fc4a4a9", "core"],
     ["e854aa6b9fe22ea741598abcf0643c529211b643d6b9b400281948a117156224", "search"],
     ["d6f0ed8446759ce44874a2cb7c7ee7251f92249673379b69439aaac2b5b7afb5", "auth"],
     ["a08f1ef89cc10bf11e17b8d6086b6e37649b1d5d11b78c0542cc7db32460b7e3", "testing"],
     ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
     ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
-    ["ba232eef00725bff2a0e1b1ffb59f26323d73110e4afc39ca22ef58c2758ee76", "writes"],
+    ["514fc0dd1f97bc5f7efeedcb96c6eed59661f99855ad3c15fe408dce93146905", "writes"],
     ["821e833093e962ecd1561648fdd2ca287ecc9fed9fe43278f783df6d51e9e46d", "cart"],
     ["82709b7a834848416464604938c1932b65d1048bdd6f53dbe751a545187be8b0", "caller-input"],
-    ["72fbe16dc78d22b32829b514b58b59feb9ab8fc553ecc66142e2a04149c740eb", "publication"],
+    ["4bcb6e3bff4cdb09212e0b0b6f9c6fefb2c9c08c52d6bdbf629f82dbeeef4146", "publication"],
     ["ba31a90dc5bf4b1f7e8be5e5145e99f6b4e2379e279be210c8537d9b93882d98", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);

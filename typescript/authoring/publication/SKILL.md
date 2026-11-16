@@ -219,6 +219,8 @@ pomerado:section publication.saved-files:end -->.
      outside the tool's purpose is declined;
    - a pop-up that shows only for some accounts, states or visits is handled when present and
      never required;
+   - a tool's checks reject no correct run and guard only what the caller asked for or what the
+     tool itself changes;
    - declared questions ask only what the page or the caller uniquely knows, never a login;
    <!-- pomerado:section publication.declared-refusal:start
 - a write runs every check that can refuse, such as a limit on its total, before the mark of
@@ -226,13 +228,13 @@ pomerado:section publication.saved-files:end -->.
      schema declares before its first mark, never in an undeclared output shape;
 pomerado:section publication.declared-refusal:end -->
    - a composed write reproduces the session's flow and returns the confirmation or read-back it
-     declares, without committing twice, and its checks reject no correct write: a
-     before-and-after comparison that compares whole objects or serialized text, reads through
-     another query after the commit than before it, or counts a field the site maintains as a
-     change, a branch the session did not run that confirms through its own code (its own commit
-     call is fine), a throw after a confirmed final commit once the read-back found the written
-     record, and a stop before it on free text a save rewrote, are findings too, as is a coverage
-     claim that a check passed offline over a body that was not saved whole.
+     declares, without committing twice; a before-and-after comparison that compares whole
+     objects or serialized text, reads through another query after the commit than before it,
+     or counts a field the site maintains as a change, a branch the session did not run that
+     confirms through its own code (its own commit call is fine), a throw after a confirmed final
+     commit once the read-back found the written record, and a stop before it on free text a
+     save rewrote, are findings too, as is a coverage claim that a check passed offline over a
+     body that was not saved whole.
 
 ## Never put these in published files
 

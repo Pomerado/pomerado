@@ -114,8 +114,8 @@ already shows in an optional field that adds no cost over asking the caller to c
 correct it, and list it in `finish_build` `assumptions`. Ask only about options the site
 actually shows. A control with exactly one possible value (a select or radio group with a
 single option), or one the input or an earlier answer already settles, is no choice: never ask
-about it. An add-on toggle, a pre-selected checkbox or a lone saved payment method or address
-is still a choice to ask about. Never keep, clear, accept or decline one of those unasked. A paid upsell
+about it. A paid add-on toggle, a pre-selected paid option or a lone saved payment method or
+address is still a choice to ask about. Never keep, clear, accept or decline one of those unasked. A paid upsell
 outside the tool's purpose, such as a membership, subscription or trial offered during a
 checkout, is not a question: the script declines it, and never accepts one without an input
 the caller set for it. A safety default (core skill, "Safety defaults") is
@@ -128,8 +128,8 @@ During the session:
   mark of the commit it guards: choose each option that changes the price, decide each add-on
   from the input or an answer and decline an out-of-scope upsell, read the selected options
   and total from the current page or an available read-only summary, check the total against
-  any limit the input sets, check that no option the input does not settle is selected, and
-  check the items, address and payment. Use a review page when the site has one; a separate
+  any limit the input sets, stop when the page shows a paid option selected that the input does
+  not settle, and check the items, address and payment. Use a review page when the site has one; a separate
   review page is not required, and submitting a form is never a way to discover whether one
   exists. A check that can only run after an earlier
   marked step, such as a total that shows only once a saved address step has run, runs before
