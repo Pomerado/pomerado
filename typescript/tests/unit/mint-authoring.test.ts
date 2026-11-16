@@ -1246,6 +1246,18 @@ it("has a write retry an expired quote once, which Guardian's reviews accept", a
   );
 });
 
+// A choice the caller approved can show a time that moves with the clock, such as a delivery
+// window or a ride's pickup time, so a re-check before the commit that matched its exact text
+// refused a choice the site still offered. The writes skill matches it by what stays fixed, in the
+// commit step's fresh quote and every other re-check before a commit.
+it("has a re-check before a commit match the approved choice by what stays fixed", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const writes = (texts.get("writes") ?? "").replace(/\s+/g, " ");
+  expect(writes).toContain(
+    "or right before the card fill when the host fills the card. There, and in any other re-check before a commit, match the choice the caller approved by what stays fixed, such as its kind or name, its id and its price, not by a time it shows that moves with the clock, and ask the caller again only when its kind or price changed. When the site answers the click",
+  );
+});
+
 // A consent banner whose text also agrees to the site's own terms is still a consent banner, and a
 // prompt whose own purpose is accepting terms is not. The core skill and Guardian say the same.
 it("has the minter and Guardian treat a consent banner that bundles the site's terms as a banner", async () => {
@@ -1412,7 +1424,7 @@ it("renders the pinned standalone authoring", async () => {
     ["a08f1ef89cc10bf11e17b8d6086b6e37649b1d5d11b78c0542cc7db32460b7e3", "testing"],
     ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
     ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
-    ["fdd72482312f6ff96596a9765a1bf96aab637cbe637752795f3f6f489f2b183d", "writes"],
+    ["96b7165fa621b02dfb8921c7584072b4435fa18798af8165bd5e9c157d1a5054", "writes"],
     ["556b560d66d52790fcf3f187720c48627d22b4b0f562c6c7f691b8824694ef8c", "cart"],
     ["27703ebaebc4a04684c1850b6dc086781a5a8eed44a2cbf7447ad4afbff0ece2", "caller-input"],
     ["47cba18121554c05c379f6ac754de07e8bfa7515250055585e631a2eb88b7468", "publication"],
