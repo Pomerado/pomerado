@@ -146,6 +146,12 @@ pomerado:section core.execute-calls:end -->
   page does not offer the caller's value, the repair makes the code throw with `available`,
   shows it with the caller's own input, and the run ends with those choices. A write that throws it before entering a commit mark reports that it changed nothing. A page,
   control or response that changed is still `OperationFailure`.
+- Give every error you throw a message that says what failed: the step, the record and field,
+  what the code expected and what it found, such as `item 4521: the detail answer has no price`
+  rather than `fields did not match`, naming IDs, fields and statuses, never a personal value.
+  The caller and a repair see only that message. Check an answer's shape before reading into it,
+  so a changed answer fails with your message, not a `TypeError` such as `Cannot read properties
+  of undefined`.
 - Check every rule the input alone breaks before any site action, such as a check-out on or
   before its check-in, a count below one or a past date, and throw `InvalidInput` at once. Hold
   in the input schema every rule it can express. The caller-input skill, "Validate it, and
@@ -713,7 +719,9 @@ element. Prefer values the list page already holds, in its rows or its embedded 
 site's own data request<!-- pomerado:section core.data-request-reference -->, to opening each record's page. When the tool must open
 each record's detail page, keep each to a few calls (open, wait, one read), and consider whether
 the request is better served as two tools, a search and a details read by identifier; say so in
-`coverage`. Prefer opening those detail pages only for the rows the call returns, after
+`coverage`. A details read takes a list of identifiers, up to a bound its schema states, such as
+20, and reads them together in one run, not one identifier per run: a caller who needs ten items
+then waits for one run's start, not ten. Prefer opening those detail pages only for the rows the call returns, after
 `readList`, not inside the list reader (pagination skill). When a read opens item pages, pop-ups
 or new tabs to collect details, prefer the list data the page already loads, and close each page
 before opening the next. A browser whose memory fills stops answering, and the run fails. When a
