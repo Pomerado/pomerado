@@ -239,3 +239,78 @@ async ({ask,fillCard}) => {
     }
   });
 });
+
+const checkout = `<title>Checkout</title><h1>Checkout</h1>
+<label for="number">Card number</label><input id="number" autocomplete="cc-number">`;
+/** A script that asks for the card at run time and types it with `fillCard`, named as `call` says. */
+const payWith = (call: string) => `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"pay",input:Schema.Unknown,output:Schema.Unknown,questions:{number:{type:"secret",secretKind:"card_number",prompt:"Card number?"}}},
+async (context) => {
+  const answer = await context.ask(["number"]);
+  return await ${call}({fields:[{selector:"#number",handle:answer.number}]});
+});`;
+/** A probe that reads the card field back reversed, which no screening of the number would see. */
+const readsCardBack = probe(
+  "return [...await page.locator('#number').inputValue()].reverse().join('');",
+);
+
+// A card a script typed from its own run-time answer, which the build never asked for, keeps every
+// later step from reading the page, even when no file names fillCard any more.
+test("refuses a read after a script typed a card the build never asked for", async () => {
+  test.setTimeout(90_000);
+  const number = "4242424242424242";
+  await withCheckout(checkout, async (site, endpoint) => {
+    const guardian = recordingGuardian();
+    const { requests, last } = await mint({
+      effect: "write",
+      url: site.url,
+      browser: { endpoint },
+      guardian,
+      intent: "Book the table and secure it with the caller's card",
+      answer: () => ({ number }),
+      turns: [
+        () => patch({ "explore/open.mjs": probe(), "explore/pay.mjs": payWith('context["fill" + "Card"]') }),
+        () => [call("execute", execution("explore", "explore/open.mjs"), "open")],
+        () => [call("execute", execution("act", "explore/pay.mjs", { writePath: writePath("pay") }), "pay")],
+        () => patch({ "explore/look.mjs": readsCardBack }),
+        () => [call("execute", execution("act", "explore/look.mjs"), "look")],
+      ],
+    });
+    expect(JSON.stringify(toolResult(last, "pay"))).toContain('\\"status\\":\\"filled\\"');
+    expect(toolResult(last, "look")).toMatchObject({ status: "unsupported" });
+    expect(JSON.stringify(toolResult(last, "look"))).toContain(
+      "explore/look.mjs line 5 reads a field's value: a card stays with the host",
+    );
+    for (const shown of [number, [...number].reverse().join("")]) {
+      expect(JSON.stringify(guardian.reviews)).not.toContain(shown);
+      expect(JSON.stringify(requests)).not.toContain(shown);
+    }
+  });
+});
+
+// An explore step types no card: its fillCard fails and the field stays empty.
+test("an explore step's fillCard types nothing", async () => {
+  test.setTimeout(90_000);
+  const number = "4242424242424242";
+  await withCheckout(checkout, async (site, endpoint) => {
+    const { requests, last } = await mint({
+      effect: "write",
+      url: site.url,
+      browser: { endpoint },
+      guardian: recordingGuardian(),
+      intent: "Book the table and secure it with the caller's card",
+      answer: () => ({ number }),
+      turns: [
+        () => patch({ "explore/pay.mjs": payWith("context.fillCard"), "explore/look.mjs": readsCardBack }),
+        () => [call("execute", execution("explore", "explore/pay.mjs"), "pay")],
+        () => [call("execute", execution("explore", "explore/look.mjs"), "look")],
+      ],
+    });
+    expect(toolResult(last, "pay")).toMatchObject({ status: "failed" });
+    expect(JSON.stringify(toolResult(last, "pay"))).toContain("This run has no card fill");
+    expect(toolResult(last, "look")).toMatchObject({ status: "completed" });
+    for (const shown of [number, [...number].reverse().join("")])
+      expect(JSON.stringify(requests)).not.toContain(shown);
+  });
+});

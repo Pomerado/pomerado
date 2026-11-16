@@ -368,9 +368,9 @@ describe("source that could read a typed card back", () => {
     );
   });
 
-  // The host types no card in an explore step, so one may read the page until the build has the
-  // caller's card, even importing the file that fills it.
-  it("lets an explore step read the page until the build has the caller's card", () => {
+  // The host types no card in an explore step, so one may read the page until a card may be on it,
+  // even importing the file that fills it.
+  it("lets an explore step read the page until a card may be on it", () => {
     const files = new Map([
       ["src/flow.mjs", `export const chooseStore = async () => {};\n${fills}`],
       ["explore/look.mjs", `import { chooseStore } from "../src/flow.mjs";\nreturn await page.locator("main").ariaSnapshot();`],
