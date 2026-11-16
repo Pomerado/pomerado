@@ -783,9 +783,10 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
     // Whether a request that may write leaves the commit unclear: one unanswered, or a server error.
     const writeOpen = () => state.serverError || state.unanswered.size > 0;
     // Whether an outcome is the site's message, as a refusal is, unless it says a success: fields
-    // marked invalid, a native dialog, an announcement, or an element with text that is, holds or
-    // sits in a dialog or one of the site's messages as confirmCommit reads them, never a control or
-    // a frame. An element gone since the look, or one the page can't tell, counts.
+    // marked invalid, a native dialog, an announcement, or an element that is, holds or sits in a
+    // dialog or one of the site's messages as confirmCommit reads them, never a control or a frame.
+    // An element gone since the look, one whose text can't be read yet, or a page that can't tell,
+    // counts.
     const siteMessage = async (candidate) => {
       if (candidate.kind === "invalid") return true;
       if (candidate.kind === "dialog" || candidate.kind === "announced") {
@@ -801,11 +802,14 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
         (elements, selector) => ({
           count: elements.length,
           inMessage: elements.some((element) => element.closest(selector) !== null || element.querySelector(selector) !== null),
+          control: elements.every((element) =>
+            element.closest('a, button, label, summary, input, select, textarea, option, [role="button"], [role="link"], iframe, frame, object, embed') !== null),
         }),
         outcomeWaitSite.messages + ', [role="dialog"], dialog',
       ));
       if (shown === undefined || placed === undefined || placed.count === 0) return true;
-      return placed.inMessage && shown.length > 0 && !shown.every(outcomeWaitSite.succeeds);
+      if (!placed.inMessage || placed.control) return false;
+      return shown.length === 0 || !shown.every(outcomeWaitSite.succeeds);
     };
     // When a site's message first showed while a request that may write left the commit unclear.
     let heldSince;
@@ -1479,8 +1483,8 @@ const waitForChange = async (fields, options = {}) => {
  *   challenge, the site's error or a layout the code does not handle, never slowness. Also, after a
  *   commit's click (below), when an outcome that is the site's message shows while a request that
  *   may write, to any host, sent since the click, has no answer: fields marked invalid, a dialog, an
- *   announcement, or an element with text that is, holds or sits in a dialog, an alert or an
- *   error-styled message, unless its words say a success. Such an outcome waits up to
+ *   announcement, or an element, not a control or a frame, that is, holds or sits in a dialog, an
+ *   alert or an error-styled message, unless its words say a success. Such an outcome waits up to
  *   `noProgressMs` for the answer and then decides as before, and fails so, with `outcome` naming
  *   it, when none comes in time, or at once after a server error to such a request.
  * - `outcome_refused`, in place of `outcome_unknown`, when the wait's `action` is a commit's click

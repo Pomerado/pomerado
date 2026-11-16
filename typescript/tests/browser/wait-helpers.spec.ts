@@ -644,6 +644,7 @@ test("in a commit's call, the site's alert, dialog or field errors named as an o
     ["/orders", "none", "field errors", true, "outcome_unknown"],
     ["/orders", "none", "a modal", true, "outcome_unknown"],
     ["/orders", "none", "an alert that leaves once read", true, "outcome_unknown"],
+    ["/orders", "none", "an alert still faded out", true, "outcome_unknown"],
     ["/orders", "none", "an alert that negates a success", true, "outcome_unknown"],
     ["/orders", "none", "an error in a success-styled alert", true, "outcome_unknown"],
     ["/orders", 503, "alert", true, "outcome_unknown"],
@@ -676,6 +677,7 @@ test("in a commit's call, the site's alert, dialog or field errors named as an o
         Object.defineProperty(alert, "innerText", { get() { setTimeout(() => alert.remove()); return "Payment failed. Please try again."; } });
         document.querySelector("#answer").append(alert);`,
       "a success": `document.querySelector("#answer").innerHTML = '<p class="placed">Order placed</p>';`,
+      "an alert still faded out": `document.querySelector("#answer").innerHTML = '<div role="alert" style="opacity: 0">Payment failed. Please try again.</div>';`,
       "an alert that negates a success": `document.querySelector("#answer").innerHTML = '<div role="alert">Your payment was not successful.</div>';`,
       "an error in a success-styled alert": `document.querySelector("#answer").innerHTML = '<div role="alert" class="alert alert-success">Something went wrong</div>';`,
       "a success in an alert": `document.querySelector("#answer").innerHTML = '<div role="alert" class="placed alert alert-success">Order confirmed. Thank you!</div>';`,
