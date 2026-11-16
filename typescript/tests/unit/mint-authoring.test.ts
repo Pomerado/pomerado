@@ -973,10 +973,10 @@ it("has a cart tool add through the line's own quantity control when the product
     " ",
   );
   expect(cart).toContain(
-    "A product already in the cart can show that line's quantity control in place of its add control, so wait for whichever of the two the page shows with `waitForOutcome` (the core skill), not for the add control alone.",
+    "A product already in the cart can show that line's quantity control in place of its add control, so wait for either with `waitForOutcome` (the core skill), not for the add control alone.",
   );
   expect(cart).toContain(
-    "When the tool's inputs cover that change, as its quantity does for a line already in the cart, read the line's quantity there and bring it to the earlier quantity plus the input, or to the input, with that control (Quantity, above);",
+    "When the tool's inputs cover that change, as its quantity does for a line already in the cart (Quantity, above), continue, bringing a line whose quantity control shows in place of its add control to the earlier quantity plus the input, or to the input, with that control under the add's commit mark;",
   );
 });
 
@@ -1476,7 +1476,7 @@ it("renders the pinned standalone authoring", async () => {
     ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
     ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
     ["ba232eef00725bff2a0e1b1ffb59f26323d73110e4afc39ca22ef58c2758ee76", "writes"],
-    ["09dbb150e3845776868c8fb98d40b37e2559747772439cb2f7a114e3b554a504", "cart"],
+    ["f5e0af9c01a69ec7638c4f462c8d180810111e48631f0735942576be1730483a", "cart"],
     ["106b256a4aa08ac546c0f3e6ee9bb68dd9ea25b412d3378ba573882d0b157ede", "caller-input"],
     ["72fbe16dc78d22b32829b514b58b59feb9ab8fc553ecc66142e2a04149c740eb", "publication"],
     ["ba31a90dc5bf4b1f7e8be5e5145e99f6b4e2379e279be210c8537d9b93882d98", "workspace/AGENTS.md"],
