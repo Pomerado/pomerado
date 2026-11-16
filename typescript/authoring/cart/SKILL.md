@@ -91,12 +91,12 @@ the page's selection silently. Offer each saved address and payment method as an
 account-specific option with its masked label (the caller-input skill), and say in the labels
 which one the page pre-selects. Take a saved address or payment method the caller names as the
 caller-input skill says, asking rather than refusing when it matches none or several. Choose it
-for this order only: leave the saved entries and the account's defaults as they are, and list in
-`saved_differences` any change the choice makes to the account's selection (writes skill). A
-paid add-on within the tool's purpose, such as a protection plan for the item bought, is an
-input or a question too. A paid membership, subscription or trial the checkout offers is outside
-its purpose: decline it without asking, never accept it without an input the caller set, and
-handle its pop-up as conditional (the forms skill), since it shows only to some accounts.
+for this order only, leaving the saved entries and the account's defaults as they are, and when
+the page shows that the choice changed a default, report it in its own output field (writes
+skill). A paid add-on within the tool's purpose, such as a protection plan for the item bought,
+is an input or a question too. A paid membership, subscription or trial the checkout offers is
+outside its purpose: decline it without asking, never accept it without an input the caller set,
+and handle its pop-up as conditional (the forms skill), since it shows only to some accounts.
 
 ## Minimums and refusals
 
