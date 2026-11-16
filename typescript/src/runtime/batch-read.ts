@@ -245,8 +245,8 @@ export async function adaptiveBatch<A>(
  * `expectJson` says the request asked for JSON; `retryAfter` is the answer's `Retry-After` and
  * `body` its text, both empty when unknown. Besides a 429 and a 5xx, a throttle is a 418 or 420
  * (statuses some edges send for a rate limit) that names its wait or says it is a rate limit, and
- * a short 2xx JSON answer whose own status is 429, or that carries no data and only a rate-limit
- * error. Self-contained: it is pasted into the page with `adaptiveBatch`.
+ * a short 2xx JSON answer that holds only an error and no data, whose status is the number 429 or
+ * whose error is a rate limit. Self-contained: it is pasted into the page with `adaptiveBatch`.
  */
 export function classifyBatchAnswer(
   status: number,
@@ -276,13 +276,20 @@ export function classifyBatchAnswer(
     }
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return "answered";
     const record = parsed as Record<string, unknown>;
+    const keys = Object.keys(record);
     const statusKey = /^(?:code|status|statuscode|status_code|httpstatus|http_status|errorcode)$/i;
-    const says429 = ([key, value]: [string, unknown]) =>
-      statusKey.test(key) && (value === 429 || value === "429");
-    if (Object.entries(record).some(says429)) return "throttled";
-    if (record["data"] !== undefined && record["data"] !== null) return "answered";
+    const errorKey = /^(?:errors?|message|msg|detail|description)$/i;
+    const metaKey = /^(?:data|success|ok|request_?id|trace_?id|timestamp|path)$/i;
+    // Only an error answer, with no data beside it, is a rate limit: a record whose `code` holds
+    // "429", or a partial answer with an error beside its results, is the site's data.
+    const errorOnly =
+      keys.every((key) => statusKey.test(key) || errorKey.test(key) || metaKey.test(key)) &&
+      (record["data"] === undefined || record["data"] === null) &&
+      keys.some((key) => errorKey.test(key));
+    if (!errorOnly) return "answered";
+    if (keys.some((key) => statusKey.test(key) && record[key] === 429)) return "throttled";
     const limitCode = /^(?:RATE_?LIMIT(?:ED|_EXCEEDED)?|TOO_MANY_REQUESTS|THROTTLED|429)$/i;
-    const errors = [record["errors"], record["error"]].flatMap((value) =>
+    const errors = [record["errors"], record["error"], record["message"]].flatMap((value) =>
       Array.isArray(value) ? value : value === undefined ? [] : [value],
     );
     const limitError = errors.some((error) => {

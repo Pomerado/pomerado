@@ -166,16 +166,20 @@ describe("classifyBatchAnswer for rate limits in other shapes", () => {
     expect(kindOf(418, "I'm a teapot", "", "text/plain")).toBe("answered");
   });
 
-  it("throttles a 2xx JSON answer whose own status is 429, or that holds only a rate-limit error", () => {
+  it("throttles a 2xx JSON error answer whose status is 429, or whose error is a rate limit", () => {
     expect(kindOf(200, '{"code":429,"message":"too many requests"}')).toBe("throttled");
-    expect(kindOf(200, '{"status":"429"}')).toBe("throttled");
+    expect(kindOf(200, '{"status":429,"error":"Slow down"}')).toBe("throttled");
     expect(kindOf(200, '{"data":null,"errors":[{"extensions":{"code":"RATE_LIMITED"}}]}')).toBe("throttled");
   });
 
-  it("keeps a 2xx JSON answer with data, another code, or a long body as an answer", () => {
+  it("keeps a 2xx JSON answer with data, a code as text, or a long body as an answer", () => {
     expect(kindOf(200, '{"data":{"id":1},"errors":[{"message":"Rate limited"}]}')).toBe("answered");
     expect(kindOf(200, '{"id":1,"code":"A429"}')).toBe("answered");
-    expect(kindOf(200, JSON.stringify({ code: 429, rows: "x".repeat(20_000) }))).toBe("answered");
+    expect(kindOf(200, '{"code":"429","name":"Route 429","price":12}')).toBe("answered");
+    expect(kindOf(200, '{"results":[1],"errors":[{"message":"Rate limit on reviews exceeded"}]}')).toBe(
+      "answered",
+    );
+    expect(kindOf(200, JSON.stringify({ code: 429, message: "x".repeat(20_000) }))).toBe("answered");
   });
 });
 
