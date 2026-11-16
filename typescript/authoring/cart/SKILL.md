@@ -55,7 +55,10 @@ An item's options often come in groups whose option labels repeat, such as "None
 under both a sweetness group and an ice group. Find each option inside its own group, by the
 group's heading or fieldset, never by its label across the whole item dialog. A list of saved
 addresses or stores can show the same name twice: choose by every part the input gives, such as
-the unit, and refuse when more than one entry still matches, never take the first.
+the unit, and refuse when more than one entry still matches, never take the first. Choose a
+saved address with the core skill's address helpers, such as `resolveAddress` from
+`pomerado/runtime` with the saved entries as its suggestions, and compare a part they leave
+aside, such as the unit, with `sameText`, never with matching of your own.
 
 When the tool takes an item's or store's page link as its identity, compare the identifiers in
 it, such as the store and item ids, after decoding both links, never the raw text of a name in
@@ -116,7 +119,8 @@ changed, never its items, store name or totals.
 
 When the site sets the delivery address on the account or the session rather than inside
 checkout, read the address the cart will use first. When it already matches the input, street
-and unit, change nothing and ask nothing. Setting it changes the account or session, so choosing
+and unit, compared with `readBackMatches` or `sameText` from `pomerado/runtime` (the core skill),
+change nothing and ask nothing. Setting it changes the account or session, so choosing
 it is a step with its own commit mark, and saving an address-book entry is another, separate one
 (the writes skill). Set it only when it differs, after every check that can refuse, such as
 finding the item and its options and that it can be ordered now, so a refusal leaves the account
