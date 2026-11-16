@@ -493,7 +493,8 @@ export interface PendingExecution {
        * agent_chosen_batch: a batch of a read's live tests on inputs the minting agent chose, whose
        * submitted input lists each case's input under `cases`. recent_inputs_batch: such a batch on
        * inputs this tool's recent runs in the caller's own account sent, which a host runs again
-       * before a repair publishes.
+       * before a repair publishes. A host lists in it only inputs callers' own runs sent, never one
+       * a build's or repair's own example or live tests ran.
        */
       readonly input?:
         | "agent_chosen"
@@ -568,8 +569,8 @@ export interface PendingExecution {
       /**
        * agent_chosen: a read's live test ran an input the minting agent chose.
        * agent_chosen_batch: a batch of such live tests on inputs it chose.
-       * recent_inputs_batch: such a batch on inputs this tool's recent runs in the caller's own
-       * account sent.
+       * recent_inputs_batch: a batch of a read's live tests on inputs this tool's recent runs in the
+       * caller's own account sent.
        */
       readonly input?: "agent_chosen" | "agent_chosen_batch" | "recent_inputs_batch";
       /**
