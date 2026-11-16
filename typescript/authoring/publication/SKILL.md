@@ -215,7 +215,7 @@ pomerado:section publication.saved-files:end -->.
      card or address, account ID) as an enum member, example or default; every input as general
      as the site's field, never narrowed to the example's value; on a write, every option the
      session met on the path is an input or a settled default, and a costly choice is an input
-     or a run-time question whose default may only decline it (writes skill); a paid upsell
+     or a run-time question whose default is one the writes skill allows; a paid upsell
      outside the tool's purpose is declined;
    - a pop-up that shows only for some accounts, states or visits is handled when present and
      never required;

@@ -1428,11 +1428,11 @@ it("renders the pinned standalone authoring", async () => {
     ["a08f1ef89cc10bf11e17b8d6086b6e37649b1d5d11b78c0542cc7db32460b7e3", "testing"],
     ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
     ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
-    ["142da776ce2d875a3d19ca6d4b01cd77c966676ff520edbf36cfb465232596c5", "writes"],
-    ["47f5c8536e1ab59c6a02a4caf4c9188b3f141db94075698a9664eb98db610369", "cart"],
+    ["a5376d22eb1fac9b2d1fc8f99cd4ef12ee91bab8e78b72405fca4c335f13a951", "writes"],
+    ["45b4cddd648e2967371be6d042c62a691c2727d3f4e26567d3e85b643b18622b", "cart"],
     ["a956eaf7879b5f89ca80d96e6549c17203dab21423e92e31cec0027f12a13a05", "caller-input"],
-    ["b563d244521edf21386ad71815c8ff86202ea98049dc53ac38f0dae4272bb3ae", "publication"],
-    ["7902e8d201bc5c0d86dd7ccd5a3669ce3b3dfedd731e589d1d06170df1fa3719", "workspace/AGENTS.md"],
+    ["72fbe16dc78d22b32829b514b58b59feb9ab8fc553ecc66142e2a04149c740eb", "publication"],
+    ["909d9eeaa4cb5d177f60e5e559c0a59cc965f2be71444a998104609c94d84ef0", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);
 });
@@ -1553,7 +1553,7 @@ it("renders the search URL fast path only when a host turns it on", async () => 
     [sha256(on.agents), "workspace/AGENTS.md"],
   ]).toStrictEqual([
     ["052712afaba095b3ef925f265b1b1a49e4cc3838eee0f7318dad4f82663a8da8", "search"],
-    ["9723608e00282cae860067efa8577c828d29d34a9091525d10c59adc52f00429", "workspace/AGENTS.md"],
+    ["9dea92d3bce2d60fe419a9a8f7927defeaf920c7b56b10d976e74e54af62615a", "workspace/AGENTS.md"],
   ]);
   expect(on.digests.filter(([, name]) => name !== "search")).toStrictEqual(
     off.digests.filter(([, name]) => name !== "search"),
@@ -1628,10 +1628,10 @@ it("renders the pinned standalone input-feedback instructions", () => {
       ]),
     ),
   ).toStrictEqual([
-    ["10bfff2324305b9608cd2a153a0b90e8c6e28383d4f32d7bf09d10ec23479705", "read, 1 left"],
-    ["31cd716b81eca4aeb91fd2997f5cbcc6f110071b4488eab16435b184d3fae43a", "read, 0 left"],
-    ["95f8842b93f08b7e92092f5f5e8e2996688a587763299560caa770f7fe4828d8", "write, 1 left"],
-    ["971c876f338e973bce199c666d750ceaf1808d88911f7e5cbe87bb69c7433ec1", "write, 0 left"],
+    ["f779f48d775231e36ca645bc0fd210369261aaf3cd414fb076fa3524581caa1a", "read, 1 left"],
+    ["439962e93ace65cde9e0ee164492173e4d940e86e2928809b11260596b821471", "read, 0 left"],
+    ["a1c1b3bd98e3dfc0c662ddd79fa99f6ab0e64978b613be10972e02a30260b04a", "write, 1 left"],
+    ["148d8cf9607f67e7e2823eb22914e63d7c5873e78e1556c517a3e4e6ccb350e1", "write, 0 left"],
   ]);
 });
 

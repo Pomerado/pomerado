@@ -425,10 +425,11 @@ export const publicationCostlyChoice = `a costly choice, one that changes what t
 
 /**
  * What a costly choice's default, or a caller's decision about it, may be: only declining it,
- * turning it off or the option that adds no cost, never accepting, keeping or choosing one.
+ * turning it off, the option that adds no cost or, when the site requires choosing one of a
+ * service's tiers, the site's standard tier.
  */
 export const publicationCostlyChoiceDefault =
-  "declining it, turning it off or the option that adds no cost and keeps the action cancellable, never accepting, keeping or choosing one";
+  "declining it, turning it off, the option that adds no cost and keeps the action cancellable or, when the site requires choosing one of a service's tiers of speed, class or service level, the tier the site presents as standard";
 
 const sentence = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
@@ -460,8 +461,9 @@ export const publicationLiveTestsPolicy = [
 
 /**
  * What no caller's decision fixes for every caller of a write: a costly choice
- * (`publicationCostlyChoices`). A decision may only decline it, turn it off or take the option
- * that adds no cost.
+ * (`publicationCostlyChoices`). A decision may only decline it, turn it off, take the option
+ * that adds no cost or, when the site requires choosing one of a service's tiers, take the
+ * site's standard tier.
  * Part of the caller decision rule and of the input schema review, so both read the same limit.
  */
 export const publicationPaidChoiceLimit =
