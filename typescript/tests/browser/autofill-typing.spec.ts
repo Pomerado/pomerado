@@ -770,6 +770,33 @@ remembered.addEventListener("focus", () => {
   expect(received).toEqual([]);
 });
 
+// A password field must hold nothing at all, since a secret may be symbols alone: a page that
+// writes a row of symbols into it once it takes the focus gets nothing typed after them.
+test("a password field whose page writes symbols into it on focus is refused", async ({ page }) => {
+  const received = await serve(
+    page,
+    `${loginScreen}
+<script>
+const secret = document.querySelector("input[name=password]");
+secret.addEventListener("focus", () => {
+  if (secret.value === "") secret.value = "****";
+});
+</script>`,
+  );
+  const report = await fillWithKeys(page, loginStep, [username, password]);
+  expect(report).toMatchObject({
+    outcome: "filled",
+    fields: [
+      { slot: "username", status: "filled" },
+      { slot: "password", status: "failed" },
+    ],
+    submit: "not_attempted",
+    failureDetail: { context: { check: "change", cause: "not_emptied" } },
+  });
+  expect(await page.locator("input[name=password]").inputValue()).toBe("****");
+  expect(received).toEqual([]);
+});
+
 // Six one-digit boxes that still hold the digits of a code the site refused. The widget takes
 // digits in order: a box that takes the focus hands it to the first empty box, or to the last box
 // when every box holds one, and Delete empties a box and moves back one.
