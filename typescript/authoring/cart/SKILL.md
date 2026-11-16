@@ -68,6 +68,16 @@ one the site capped, is still the written line: call `verified()` and list it in
 `saved_differences` (writes skill). A checkout reads the lines it is about to buy before its
 commit and returns them with the confirmation.
 
+An account can hold several carts at once, such as one per store or a separate section for some
+items, each with its own lines and totals, and a page may show one at a time. Find the cart the
+request is about by its store or section, open it through the site's own control for that cart,
+and read its lines, count and subtotal inside that cart's own container. Lines in another cart
+stay out of that read and out of the comparison of other lines.
+
+A cart button or checkout entry that floats or sticks to the page may be missing in some
+layouts, states or scroll positions. Prefer reaching the cart and the checkout through the
+site's own route or a control every layout shows, with that shortcut as a second way.
+
 In a tool that places the order, when the page shows no cart control and no empty-cart label,
 take the cart as empty. Then read back every line of the checkout's order summary with the other
 reads before the card fill, or before pressing pay when there is none, and confirm it holds only
