@@ -842,10 +842,13 @@ const listPager = (spec) => {
   const read = async (count, options = {}) => {
     if (!Number.isInteger(count) || count < 1) throw new TypeError("pager.read needs count, the number of rows to read");
     if (spec.empty !== undefined) {
-      const shown = await waitForOutcome(
+      const { outcome: shown, observations } = await waitForOutcomeResult(
         { empty: spec.empty, results: spec.list ?? spec.rows.first() },
         { ...waitOptions, timeout: Math.max(limits.timeout, limits.noProgressMs) },
       );
+      // The rows of a list shown twice, even reading the same, would each count twice.
+      if (shown === "results" && observations.results.count > 1)
+        throw outcomeWaitFailure("outcome_ambiguous", ": " + outcomeWaitSeen(observations), observations, { outcome: "results" });
       if (shown === "empty") {
         const seen = await look();
         return echoOf(segmentOf(seen, mechanismOf(seen), [], false, false, options));

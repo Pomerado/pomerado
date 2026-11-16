@@ -222,14 +222,15 @@ export const readRooms = defineOperation(
         // The site's own requests, on every host of its domain, count as progress.
         const site = ${JSON.stringify(siteDomain === undefined ? {} : { siteDomain })};
         const list = page.getByRole("list", { name: "Rooms", exact: true });
-        const rows = list.filter({ visible: true }).first().getByRole("listitem");
+        const shownList = list.filter({ visible: true }).first();
+        const rows = shownList.getByRole("listitem");
         const more = page.getByRole("button", { name: "Show more", exact: true });
         const offered = async () => (await more.count()) === 1 && (await more.isEnabled());
         const read = (count, action) =>
           waitForRows(rows, { name: ".name" }, {
             count,
             key: { attribute: "data-room-id" },
-            region: list,
+            region: shownList,
             ...site,
             ...(action === undefined ? {} : { action }),
           });
