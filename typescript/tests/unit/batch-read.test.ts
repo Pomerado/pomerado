@@ -152,6 +152,33 @@ describe("classifyBatchAnswer", () => {
   });
 });
 
+describe("classifyBatchAnswer for rate limits in other shapes", () => {
+  /** How the loop sorts a JSON request's answer with this status, body and `Retry-After`. */
+  const kindOf = (status: number, body: string, retryAfter = "", contentType = "application/json") =>
+    classifyBatchAnswer(status, contentType, false, true, retryAfter, body);
+
+  it("throttles a 418 or 420 that names its wait or says it is a rate limit", () => {
+    expect(kindOf(418, "", "300", "text/plain")).toBe("throttled");
+    expect(kindOf(420, '{"message":"Rate limit exceeded"}')).toBe("throttled");
+  });
+
+  it("keeps a 418 that says nothing of a limit as an answer", () => {
+    expect(kindOf(418, "I'm a teapot", "", "text/plain")).toBe("answered");
+  });
+
+  it("throttles a 2xx JSON answer whose own status is 429, or that holds only a rate-limit error", () => {
+    expect(kindOf(200, '{"code":429,"message":"too many requests"}')).toBe("throttled");
+    expect(kindOf(200, '{"status":"429"}')).toBe("throttled");
+    expect(kindOf(200, '{"data":null,"errors":[{"extensions":{"code":"RATE_LIMITED"}}]}')).toBe("throttled");
+  });
+
+  it("keeps a 2xx JSON answer with data, another code, or a long body as an answer", () => {
+    expect(kindOf(200, '{"data":{"id":1},"errors":[{"message":"Rate limited"}]}')).toBe("answered");
+    expect(kindOf(200, '{"id":1,"code":"A429"}')).toBe("answered");
+    expect(kindOf(200, JSON.stringify({ code: 429, rows: "x".repeat(20_000) }))).toBe("answered");
+  });
+});
+
 describe("batchRateLimitResetMs", () => {
   it("gives the reset once the site's rate-limit headers say no request remains", () => {
     expect(batchRateLimitResetMs("0", "2", null)).toBe(2000);
@@ -264,6 +291,20 @@ describe("batchRead", () => {
     expect(result.batches).toEqual([4, 2, 3, 4]);
     expect(site.sent.slice(4, 6)).toEqual([itemUrl(2), itemUrl(4)]);
     expect(bodies(result.items)).toEqual(Array.from({ length: 12 }, (_, id) => ({ id })));
+  });
+
+  it("waits a 418's Retry-After and a 200 whose JSON says 429 as throttles, then reads both", async () => {
+    const site = scriptedSite((url) =>
+      url === itemUrl(1)
+        ? [{ status: 418, headers: { "retry-after": "2" }, body: "Rate limit exceeded" }, json({ id: 1 })]
+        : url === itemUrl(2)
+          ? [json({ code: 429, message: "too many requests" }), json({ id: 2 })]
+          : [json({ id: idOf(url) })],
+    );
+    const { clock, waits } = fakeClock();
+    const result = await Effect.runPromise(batchRead(site.http, reads(4), { clock, start: 4 }));
+    expect(waits).toEqual([2000]);
+    expect(bodies(result.items)).toEqual(Array.from({ length: 4 }, (_, id) => ({ id })));
   });
 
   it("honours a Retry-After given in fractional seconds", async () => {
@@ -463,6 +504,24 @@ describe("batchFetch in the page", () => {
       ...[7, 8, 9].map((id) => ({ id })),
       ...Array.from({ length: 10 }, () => "not_sent"),
     ]);
+  });
+
+  it("waits out a 418 naming its wait and a 200 whose JSON says 429, then reads both", async () => {
+    vi.useFakeTimers();
+    const site = scriptedSite((url) =>
+      url === itemUrl(1)
+        ? [{ status: 418, headers: { "retry-after": "1" }, body: "Rate limit exceeded" }, json({ id: 1 })]
+        : url === itemUrl(2)
+          ? [json({ code: 429, message: "too many requests" }), json({ id: 2 })]
+          : [json({ id: idOf(url) })],
+    );
+    vi.stubGlobal("fetch", site.fetch);
+    const pending = runBatchFetch(Array.from({ length: 4 }, (_, index) => ({ url: itemUrl(index) })));
+    await vi.advanceTimersByTimeAsync(5_000);
+    const answer = await pending;
+    expect(answer.stopped).toBeNull();
+    expect(answer.results.map((result) => result.data)).toEqual([0, 1, 2, 3].map((id) => ({ id })));
+    expect(site.sent.filter((url) => url === itemUrl(1) || url === itemUrl(2))).toHaveLength(4);
   });
 
   it("stops as rate_limited within two throttled batches when the site turns to 529 after a burst", async () => {
