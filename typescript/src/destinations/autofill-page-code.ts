@@ -104,8 +104,9 @@ for (const [index, codeBox] of codeBoxes.entries())
 /**
  * Page code: the step's controls and visible native and ARIA actions, for the host and Guardian.
  * The page keeps the controls as found, with every form destination as found, under `observed`.
+ * With `hostFillChecked`, it also answers the first field `hostFillSelectorsCode` found unsupported.
  */
-const inspectCode = `await keep(observed, {
+const inspectCode = (hostFillChecked: boolean) => `await keep(observed, {
   questions: fields.map(({ described }) => described.questionText ?? null),
   targets: { fields: fields.map(({ target }) => target), submit: submit === null ? null : submit.target },
   destinations: [submit, ...fields].flatMap((found) => found?.destinations ?? []),
@@ -140,7 +141,7 @@ return {
   buttons,
   ...(submitKey === null || submit === null ? {} : { keySubmit: { submitControls: submit.submitControls } }),
   ...(popupTargetId === undefined ? {} : { popupTargetId }),
-  ...(codeBoxRow === undefined ? {} : { codeBoxRow }),
+  ...(codeBoxRow === undefined ? {} : { codeBoxRow }),${hostFillChecked ? "\n  ...(hostFillUnsupported === undefined ? {} : { hostFillUnsupported })," : ""}
   url: primary.url(),
   document: await documentStart(),
 };`;
@@ -1166,8 +1167,8 @@ const questionRead = (
  * Inspection page code, with `selectors` bound, once every control was found: each field at
  * `checked`, the ones a host's own card fill types, must be a CSS selector that matches exactly one
  * editable input or select across the tab's frames, itself or inside an element it matches, as
- * that fill finds it. Any other is refused as `selector_unsupported`. It only reads each frame's
- * document.
+ * that fill finds it. The first that isn't is `hostFillUnsupported`, which the host refuses after
+ * its own checks. It only reads each frame's document.
  */
 const hostFillSelectorsCode = (checked: readonly number[]) =>
   checked.length === 0
@@ -1177,34 +1178,36 @@ const hostFillSelectorsCode = (checked: readonly number[]) =>
 const editableMatches = cssFields.map(() => 0);
 for (const frame of primary.frames()) {
   let counts;
-  try {
-    counts = await frame.evaluate((list) => list.map((selector) => {
-      let matched;
-      try {
-        matched = document.querySelectorAll(selector);
-      } catch {
-        return null;
-      }
-      const editable = "input:read-write, select:enabled";
-      const found = new Set();
-      for (const element of matched) {
-        if (element.matches(editable)) found.add(element);
-        for (const inside of element.querySelectorAll(editable)) found.add(inside);
-      }
-      return found.size;
-    }), cssFields.map((index) => selectors[index]));
-  } catch (error) {
-    // A frame the page took away mid-search, such as an ad slot, is skipped, as locate skips it.
-    if (frame.isDetached()) continue;
-    throw error;
+  // A frame the page took away mid-search, such as an ad slot, is skipped, as locate skips it. One
+  // that navigated mid-search is read again, up to three times.
+  for (let attempt = 1; counts === undefined && !frame.isDetached(); attempt++) {
+    try {
+      counts = await frame.evaluate((list) => list.map((selector) => {
+        let matched;
+        try {
+          matched = document.querySelectorAll(selector);
+        } catch {
+          return null;
+        }
+        const editable = "input:read-write, select:enabled";
+        const found = new Set();
+        for (const element of matched) {
+          if (element.matches(editable)) found.add(element);
+          for (const inside of element.querySelectorAll(editable)) found.add(inside);
+        }
+        return found.size;
+      }), cssFields.map((index) => selectors[index]));
+    } catch (error) {
+      if (attempt === 3 && !frame.isDetached()) throw error;
+    }
   }
+  if (counts === undefined) continue;
   counts.forEach((count, at) => {
     const sum = editableMatches[at];
     editableMatches[at] = count === null || sum === null ? null : sum + count;
   });
 }
-const unsupported = cssFields.find((_, at) => editableMatches[at] !== 1);
-if (unsupported !== undefined) return { error: "selector_unsupported", target: unsupported, url: primary.url() };
+const hostFillUnsupported = cssFields.find((_, at) => editableMatches[at] !== 1);
 `;
 
 /**
@@ -1296,7 +1299,7 @@ if (
 )
   return { error: "not_found", target: "submit", located: submit.located, url: primary.url() };
 const located = { fields: fields.map((field) => field.located), submit: submit === null ? null : submit.located };
-${fill === undefined ? `${hostFillSelectorsCode(hostFilled)}${inspectCode}` : fillCallCode(fill.call, fill.judged, fill.check, fill.typedAt)}`;
+${fill === undefined ? `${hostFillSelectorsCode(hostFilled)}${inspectCode(hostFilled.length > 0)}` : fillCallCode(fill.call, fill.judged, fill.check, fill.typedAt)}`;
 
 /** What named a control when the host inspected it, each as `clip` keeps it. */
 export interface ControlIdentity {

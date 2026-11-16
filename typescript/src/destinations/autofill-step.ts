@@ -426,8 +426,6 @@ export const LocatedError = Schema.Struct({
     "not_editable",
     "popup_missing",
     "popup_ambiguous",
-    // Inspection-only, with `hostCardFill`: a field whose selector the host's card fill can't take.
-    "selector_unsupported",
   ),
   target: Schema.Union(Schema.Number, Schema.Literal("submit", "popup")),
   /** A private answer's question no longer reads as the host inspected it. */
@@ -452,6 +450,8 @@ const Located = Schema.Union(
     popupTargetId: Schema.optional(Schema.String),
     /** The other boxes of the row the step's one code field begins (`codeBoxRow`). */
     codeBoxRow: Schema.optional(Schema.Array(Schema.String)),
+    /** With `hostCardFill`: the first field whose selector the host's card fill can't take. */
+    hostFillUnsupported: Schema.optional(Schema.Number),
     url: Schema.String,
     /** When the primary page's document began loading (`performance.timeOrigin`). */
     document: Schema.optional(Schema.Number),
@@ -1117,6 +1117,13 @@ export const inspectAutofillStep = (input: {
         part: "no_form",
         ...foundEvidence(found.url, foundFor(found.located, "submit"), named),
       });
+    // Last, so a field another check refuses keeps that check's reason.
+    if (found.hostFillUnsupported !== undefined)
+      return withCheck(
+        refused("selector_unsupported", found.hostFillUnsupported),
+        "selector_unsupported",
+        foundEvidence(found.url, foundFor(found.located, found.hostFillUnsupported), named),
+      );
     const at = URL.parse(found.url);
     const frame = (found.submit ?? found.fields[0])?.target.ownerUrl;
     return {
