@@ -7,7 +7,9 @@ description: Design and run combined live test cases for a read. A read signed o
 
 This skill is for reads. A write does the original task: it proves its tool with its act session
 (writes skill), designs no tests, runs no live test and builds no offline test suite<!-- pomerado:section testing.write-http-check -->. It still checks its
-composed script's read-back and comparison offline over what the session read (writes skill).
+composed script's read-back and comparison offline over what the session read (writes skill),
+and before its session it rehearses the steps ahead of its first save, read-only, on varied
+samples it finds as below (writes skill, "Before the session").
 As the one exception, a write whose build runs in test mode, because its caller confirmed the
 site account is a test account, prefers one no-match case in `test/cases.json` when it takes an
 item's id, key or URL: a made-up value in the site's own format that the site has no record of,
@@ -83,6 +85,52 @@ second no-results case and no edge cases.<!-- pomerado:section testing.signed-in
 the host's record of the cases you ran signed in, judges a failing case as a bug, and treats
 what you did not test as disclosure, not a gap. Then go on at "Run and fix the cases", below.
 
+## Find varied samples
+
+The example is one sample. Callers send others, and the inputs that break a tool are the ones
+that differ from the example in ways it never showed: another page template, a feature turned
+off, a record ten times larger. Before you design a read signed out's first batch, find several
+other real, public samples of what the tool's main input picks, such as other stores, listings,
+items or a platform's other tenants, and see how they differ from the example:
+
+- Find them as a visitor would: through the site's own search, directory, store locator,
+  category or brand listings, its sitemap (`/sitemap.xml`, often named in `/robots.txt`), or the
+  links on the example's own pages. Take them from several listings, regions or categories, not
+  the first rows of one list. On a platform that hosts many tenants, take tenants its own
+  directory, search or links list, including some in other countries when it serves them.
+- Open about five to eight of them cheaply, read-only: the page's embedded data or the data
+  request the page sends, rather than every step of the page, where that shows enough. Compare
+  their pages and data with the example's, and name each way they differ. Look for:
+  - another page template, theme or version, whose data sits elsewhere or has other fields;
+  - a feature turned off, such as no pickup or delivery, online ordering paused or nothing for
+    sale, and a closed, sold-out, empty or not yet open record;
+  - a page that now redirects to another host or path while the site's own data still answers;
+  - a much larger record, such as hundreds of items, many pages or deep option trees;
+  - another country, currency, language, or address, date or number format;
+  - another URL shape the site's own links use for the same record, such as a locale prefix,
+    a short link or another host of the site;
+  - names with punctuation, accents or other scripts, and fields the site leaves blank.
+- Choose the batch's samples so that each difference you found has a case, then add samples
+  from other listings or regions. Cases that all share the example's template, region and
+  state test one sample many times. For a tool whose input picks a record, store or tenant,
+  aim for at least five distinct ones beyond the example in the first batch, each case's
+  `purpose` naming the difference it covers.
+- Treat each variant as a valid input: return what that record offers and say what it lacks,
+  such as a menu marked as not taking pickup orders, rather than failing; refuse only what the
+  site itself refuses.
+- A large record also tests the site's limits. Run it once, at the pace the site's own pages
+  use, never in a burst that could get the build's address rate limited, and prefer one
+  request for many items where the site's own pages send one.
+- List under `notTested` each difference you saw but could not test, with why.
+
+Use only records the site lists publicly to any visitor, never a person's or an account's
+(below). A few minutes of looking is enough; never let the search for samples stop the build.
+
+In a repair or a requested change, the failure shows a sample the tool did not handle. Find
+another public sample with the same trait, never the caller's own input, and keep a case on it,
+so the tool is tested on that trait from then on. A host that keeps a tool's passing cases runs
+them again in its later repairs, so the tool's tests grow with each failure it meets.
+
 ## A read signed out: a wide first batch
 
 Where the host offers `live_tests`, the host runs a read signed out's cases for you in
@@ -131,7 +179,9 @@ say under `notTested` why it does not apply to this tool:
 - a boundary value: the earliest or latest date the site offers, or the lowest or highest count
   or price it takes;
 - a value other than the default for each control;
-- a second store, seller or region, each such case setting as many inputs as still return rows;
+- the varied samples you chose (Find varied samples, above): other stores, sellers, regions or
+  tenants that differ from the example, each such case setting as many inputs as still return
+  rows;
 - for a free-text input, a value the example used written another way, such as in other case or
   with other spacing, punctuation, accents or another language's characters;
 - for a details or lookup tool, several records that differ in kind and layout, not variants of
@@ -205,7 +255,12 @@ site origin that keeps its browser's site data, in parallel browsers where the h
 (a signed-in read's on its own browser).
 Each result says whether the case ran `cold`, first on a new browser with an empty profile, or
 `warm`, on a browser that kept what earlier steps left. A case that passes warm and fails cold
-relies on something the site remembered: set that value from the input. When most of a batch's
+relies on something the site remembered: set that value from the input. A case that is blocked
+or challenged warm while the same input passes cold is the reverse: the site scores the cookies
+the browser built up, often by how much it sent in the last minutes, and the build's own requests
+spent them. Change no code for it: ask for a new browser where the host offers one, run those
+cases again on it, and say in coverage what happened and that runs should start without the
+site's cookies, since the tool must work from a browser with none of them. When most of a batch's
 cases fail at the same step before the part they test, such as setting a location, address or
 store, or a pop-up or banner covering a control, fix that step first and run only
 `example-again`, which a host with several browsers still runs cold, until it

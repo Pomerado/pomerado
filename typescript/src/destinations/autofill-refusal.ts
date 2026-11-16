@@ -256,6 +256,14 @@ export const lostTyping = (stepReport: AutofillStepReport) =>
   stepReport.outcome === "uncertain" && stepReport.failureDetail.phase === lostTypingPhase;
 
 /**
+ * What a refusal's check found, when it says more than the check does: the finite cause of a
+ * native insertion that inserted nothing (`InsertionRefusal`), or `not_emptied`, a field whose page
+ * put back what it held once the host emptied it, under the `change` check.
+ */
+export const RefusalCause = Schema.Union(InsertionRefusal, Schema.Literal("not_emptied"));
+export type RefusalCause = typeof RefusalCause.Type;
+
+/**
  * A host refusal while typing into an autofill sign-in screen, value-free. Two are identical
  * when every field is: the same check, cause, field and screen.
  */
@@ -270,11 +278,12 @@ export interface HostRefusal {
   readonly field: number;
   /**
    * What the check found, when it says more than the check does: the finite cause of a native
-   * insertion that inserted nothing, under the `typing_refused` check, or `question_changed`, a
-   * private answer's question that no longer reads as the host inspected it, under the `change`
-   * check. Never a binding key, a selector or a value.
+   * insertion that inserted nothing, under the `typing_refused` check, or, under the `change`
+   * check, `question_changed`, a private answer's question that no longer reads as the host
+   * inspected it, or `not_emptied`, a field whose page put back what it held once the host emptied
+   * it. Never a binding key, a selector or a value.
    */
-  readonly cause?: InsertionRefusal;
+  readonly cause?: RefusalCause;
   /** What the field takes: its slot, or the identifier kinds it accepts joined by ` or `. */
   readonly slot: string;
   /** The screen as the step names it: its fields' selectors, its submit and its popup's origin. */
@@ -314,14 +323,15 @@ interface NamedScreen {
   readonly submitKey?: string | undefined;
 }
 
-const isInsertionRefusal = Schema.is(InsertionRefusal);
+const isRefusalCause = Schema.is(RefusalCause);
 
 /**
  * The fill's refusal of a field of `step`, if its report is one: a check refused to type into the
  * field, or to keep typing once an earlier field was typed, so the host submitted nothing of the
  * screen. Only a fill's report counts; an inspection's refusal comes before any typing. A refused
  * submit, a failed call and a lost answer are not refusals of a field. A refused native insertion
- * keeps its finite cause, as does a private answer's question that changed.
+ * keeps its finite cause, as do a private answer's question that changed and a field whose page
+ * put back what it held.
  */
 export const typingRefusal = (
   step: NamedScreen,
@@ -340,7 +350,7 @@ export const typingRefusal = (
   if (typeof check !== "string" || typeof field !== "number" || named === undefined)
     return undefined;
   const evidence = report.failureDetail.context;
-  const cause = [evidence?.["insertion"], evidence?.["cause"]].find(isInsertionRefusal);
+  const cause = [evidence?.["insertion"], evidence?.["cause"]].find(isRefusalCause);
   return {
     check,
     field,
