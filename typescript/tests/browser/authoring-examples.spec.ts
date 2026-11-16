@@ -597,15 +597,18 @@ test("paged search example reads each row once from results the site shows twice
   const results = `<ol id="results">${["L1", "L2", "L3"]
     .map((id) => `<li data-id="${id}"><span class="title">Lamp ${id}</span></li>`)
     .join("")}</ol>`;
+  // With paged=true, each copy has its own Next link and more results follow.
+  let paged = false;
   await page.route(`${origin}/**`, (route) =>
     route.fulfill({
       contentType: "text/html",
       body: `<form action="/search"><input id="q" name="q" value="lamps"><button id="go">Search</button></form>
-<p id="count">1-3 of 3</p>${results}${results}`,
+<p id="count">1-3 of ${paged ? 6 : 3}</p>${(results + (paged ? `<a rel="next" href="/search?q=lamps&page=2">Next</a>` : "")).repeat(2)}`,
     }),
   );
-  const { result } = await runExample(page, searchListings, { query: "lamps", limit: 3 }, { siteOrigin: origin, list: {} });
-  expect(Either.getOrThrow(result)).toMatchObject({
+  const read = async () =>
+    (await runExample(page, searchListings, { query: "lamps", limit: 3 }, { siteOrigin: origin, list: {} })).result;
+  expect(Either.getOrThrow(await read())).toMatchObject({
     results: [
       { id: "L1", title: "Lamp L1", sponsored: false },
       { id: "L2", title: "Lamp L2", sponsored: false },
@@ -613,6 +616,9 @@ test("paged search example reads each row once from results the site shows twice
     ],
     has_more: false,
   });
+  // Two Next links are no answer to whether more follow.
+  paged = true;
+  expect(failure(await read())).toMatchObject({ _tag: "OperationFailure" });
 });
 
 test("detail-page list example reads each row once from a list the site shows twice", async ({ page }) => {
@@ -669,6 +675,12 @@ test("append example reads each room once from a list the page shows twice", asy
   expect((await runExample(page, readRooms, { limit: 2 }, { list: {} })).result).toEqual(
     Either.right(lastRooms(roomList(2))),
   );
+  // Two "Show more" controls, one with each copy, are no answer to whether more follow.
+  const more = `<button>Show more</button>`;
+  await page.setContent(`<main>${list}${more}${list}${more}</main>`);
+  expect(failure((await runExample(page, readRooms, { limit: 2 }, { list: {} })).result)).toMatchObject({
+    _tag: "OperationFailure",
+  });
 });
 
 test("append example stops at the limit without another step", async ({ page }) => {

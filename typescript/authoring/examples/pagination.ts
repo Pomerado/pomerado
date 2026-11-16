@@ -65,7 +65,7 @@ const { rows, more } = await waitForRows(shownResults.locator(":scope > li"), {
 }, { count: ${count}, key: { attribute: "data-id" }, region: shownResults, ...site });
 const counted = /of (\\d+)/.exec((await visibleTexts(page.locator("#count")))[0] ?? "");
 const next = page.locator("a[rel=next]");
-const nextHref = (await next.count()) === 1 ? await next.getAttribute("href", { timeout: waitLimits.action }) : null;
+const nextHref = (await next.count()) > 0 ? await next.getAttribute("href", { timeout: waitLimits.action }) : null;
 return {
   href: page.url(),
   query,
@@ -225,7 +225,7 @@ export const readRooms = defineOperation(
         const shownList = list.filter({ visible: true }).first();
         const rows = shownList.getByRole("listitem");
         const more = page.getByRole("button", { name: "Show more", exact: true });
-        const offered = async () => (await more.count()) === 1 && (await more.isEnabled());
+        const offered = async () => (await more.count()) > 0 && (await more.isEnabled());
         const read = (count, action) =>
           waitForRows(rows, { name: ".name" }, {
             count,
