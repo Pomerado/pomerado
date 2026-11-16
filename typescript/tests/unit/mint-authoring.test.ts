@@ -884,6 +884,17 @@ it("has a write take the site's rewrite of a typed value and note whether it cha
 });
 
 /*
+ * A search the site corrected, such as fixing a misspelled query, returned the site's rows for the
+ * corrected query as candidates, since the tool ranked them against the caller's text alone.
+ */
+it("has a search rank its results against the query the site applied as well as the caller's", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  expect((texts.get("search") ?? "").replace(/\s+/g, " ")).toContain(
+    "with that query as `applied_query` and a `query_corrected` boolean, and a tool that ranks the results ranks them against that query as well as the caller's.",
+  );
+});
+
+/*
  * A read's search step waited only for the site's results, so a value the site did not recognise
  * timed out instead of returning the site's own no-match answer. Both hosts read the line once,
  * right after the core skill's bullet on waiting for every answer a step can give.
@@ -1522,7 +1533,7 @@ it("renders the pinned standalone authoring", async () => {
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
     ["ba3479d3a212b5a28c82fd1937f8c6f50e104fe94f07270fed86ccc9f28f562e", "core"],
-    ["e854aa6b9fe22ea741598abcf0643c529211b643d6b9b400281948a117156224", "search"],
+    ["dbceac7dd36bff1a1472438832d3ad62bd6914b8c012b06381968cbc5fb5251b", "search"],
     ["d6f0ed8446759ce44874a2cb7c7ee7251f92249673379b69439aaac2b5b7afb5", "auth"],
     ["a08f1ef89cc10bf11e17b8d6086b6e37649b1d5d11b78c0542cc7db32460b7e3", "testing"],
     ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
@@ -1651,7 +1662,7 @@ it("renders the search URL fast path only when a host turns it on", async () => 
     ...on.digests.filter(([, name]) => name === "search"),
     [sha256(on.agents), "workspace/AGENTS.md"],
   ]).toStrictEqual([
-    ["052712afaba095b3ef925f265b1b1a49e4cc3838eee0f7318dad4f82663a8da8", "search"],
+    ["6f093fe10848595499e1a91f150114b216185147fce5238ba556c0a065e69f07", "search"],
     ["e7b57d9c1988e57c4e08485bcd795f2c0c0ab05a30a81504ce1f13dd5f47b193", "workspace/AGENTS.md"],
   ]);
   expect(on.digests.filter(([, name]) => name !== "search")).toStrictEqual(

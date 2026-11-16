@@ -131,7 +131,8 @@ Read the query the site applied from the page's embedded state, such as its sear
 than from a selector scoped to one container, which another layout of the results page breaks.
 When the site corrected or rewrote the caller's query, such as fixing its spelling, its echo
 shows the query it searched: return the site's results and say so, never silently, with that
-query as `applied_query` and a `query_corrected` boolean. The same holds for the query an HTTP
+query as `applied_query` and a `query_corrected` boolean, and a tool that ranks the results
+ranks them against that query as well as the caller's. The same holds for the query an HTTP
 version's answer echoes.
 
 ## Answer quickly
