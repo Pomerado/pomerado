@@ -1252,6 +1252,20 @@ describe("the publication policy", () => {
     );
   });
 
+  // A check that needs the page to show something a correct run may not show, or that stops on
+  // what neither the caller asked for nor the tool changes for anything but a problem the page
+  // shows, stops correct runs in every kind of tool. The rule sits in the output rules, which every
+  // host's review and the minter both read.
+  it("finds a check that can stop a run where the task went right", () => {
+    const wrongFailure = publicationOutputPolicy.slice(
+      publicationOutputPolicy.indexOf("Wrong failure:"),
+      publicationOutputPolicy.indexOf("Strict name check:"),
+    );
+    expect(wrongFailure).toContain(
+      "So is a check that can stop a run whose page shows the task went right, or one that stops for anything other than a problem the page shows while guarding what neither the caller asked for nor the tool itself changes.",
+    );
+  });
+
   // A site that quietly stops answering a data call can still show its no-results message while
   // another part of the same page shows results for the same inputs. Returning that as an honest
   // empty list hides the site's failure. The rule sits in the output rules, which the review and
