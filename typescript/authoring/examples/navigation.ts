@@ -324,10 +324,11 @@ export const searchThenRead = defineOperation(
         if (shown === "empty") return { rows: [], more: false };
         if (shown !== "results") return { failure: shown };
         // Rows still loading when the page stops progressing throw values_loading for the host.
-        return await waitForRows(results.getByRole("listitem"), { name: ".name" }, {
+        const shownResults = results.filter({ visible: true }).first();
+        return await waitForRows(shownResults.getByRole("listitem"), { name: ".name" }, {
           count: ${input.limit},
           key: { attribute: "data-room-id" },
-          region: results,
+          region: shownResults,
           ...site,
         });
       `,

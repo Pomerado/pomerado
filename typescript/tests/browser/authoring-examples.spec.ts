@@ -381,7 +381,7 @@ test("detail example fails a record URL whose page shows no answer once the page
 // "proved" still answers that URL; "moved" now sends it to the entry page and its search box
 // submits to /find?term=; "ignored" answers /search for its last query whatever q says, and its
 // search box submits ?query=. Every results page shows its search box holding the query it answers.
-const roomsSite = async (page: Page, origin: string, template: "proved" | "moved" | "ignored") => {
+const roomsSite = async (page: Page, origin: string, template: "proved" | "moved" | "ignored", twice = false) => {
   const requests: string[] = [];
   const rooms = [
     ["room-1", "North room"],
@@ -395,7 +395,7 @@ const roomsSite = async (page: Page, origin: string, template: "proved" | "moved
     return `${searchForm(action, name, query)}${
       found.length === 0
         ? `<p role="status">No matching rooms</p>`
-        : `<ul aria-label="Rooms">${found.map(([id, room]) => `<li data-room-id="${id}"><span class="name">${room}</span></li>`).join("")}</ul>`
+        : `<ul aria-label="Rooms">${found.map(([id, room]) => `<li data-room-id="${id}"><span class="name">${room}</span></li>`).join("")}</ul>`.repeat(twice ? 2 : 1)
     }`;
   };
   await page.route(`${origin}/**`, (route) => {
@@ -442,6 +442,22 @@ test("search example opens the proved results URL once and reads the rows there"
   );
   expect(result).toEqual(roomRows);
   expect(requests).toEqual(["/search?q=room"]);
+});
+
+test("search example reads each row once from results the site shows twice", async ({ page }) => {
+  const origin = "https://rooms.example.test";
+  await roomsSite(page, origin, "proved", true);
+  const { result } = await runExample(page, searchThenRead, { query: "room", limit: 3 }, { siteOrigin: origin });
+  expect(result).toEqual(
+    Either.right({
+      rooms: [
+        { id: "room-1", name: "North room" },
+        { id: "room-2", name: "South room" },
+        { id: "room-3", name: "East room" },
+      ],
+      more: false,
+    }),
+  );
 });
 
 for (const [template, landing] of [

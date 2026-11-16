@@ -176,6 +176,8 @@ test("visible matches of the winning outcome stay ambiguous when they are form c
     [`<input class="notice" value="1"><input class="notice" value="3">`, 2],
     [`<input class="notice" value="5"><input class="notice" value="5">`, 2],
     [`<input type="checkbox" class="notice" checked><input type="checkbox" class="notice">`, 2],
+    [`<select class="notice"><option>One</option><option selected>Two</option></select>` +
+      `<select class="notice"><option selected>One</option><option>Two</option></select>`, 2],
     [`<span ${box} aria-label="Sold out"></span><span ${box} aria-label="In stock"></span>`, 2],
     [`<p class="notice">No rooms match your dates</p>`.repeat(21), 21],
   ] as const) {

@@ -57,7 +57,7 @@ const shown = await waitForOutcome({ empty: page.locator("#no-results"), results
 const query = (await page.locator("#q").inputValue({ timeout: waitLimits.action })).trim();
 if (shown === "empty")
   return { href: page.url(), query, rows: [], more: false, next: null, totalResults: null };
-const { rows, more } = await waitForRows(page.locator("#results > li"), {
+const { rows, more } = await waitForRows(results.filter({ visible: true }).first().locator(":scope > li"), {
   title: ".title",
   // The badge's presence is the mark, so read its class rather than text it may not have.
   sponsored: { selector: ".sponsored", attribute: "class", optional: true },
@@ -221,7 +221,7 @@ export const readRooms = defineOperation(
         // The site's own requests, on every host of its domain, count as progress.
         const site = ${JSON.stringify(siteDomain === undefined ? {} : { siteDomain })};
         const list = page.getByRole("list", { name: "Rooms", exact: true });
-        const rows = list.getByRole("listitem");
+        const rows = list.filter({ visible: true }).first().getByRole("listitem");
         const more = page.getByRole("button", { name: "Show more", exact: true });
         const offered = async () => (await more.count()) === 1 && (await more.isEnabled());
         const read = (count, action) =>
