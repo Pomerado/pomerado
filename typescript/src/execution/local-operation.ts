@@ -228,7 +228,7 @@ const handleRequest = (
   deadline: Deadline,
   message: Exclude<LocalOperationMessage, { kind: "result" | "error" | "cancel" | "journal" }>,
   cardHandles: RunCardHandles,
-  /** The child's journal as it last streamed it, which it does before each request. */
+  /** The child's journal as it last streamed it, which it does on each change. */
   journal: LocalOperationJournal,
   /** Tells the child that its request opened to the caller, as the asker says (`AskBounds`). */
   opened: Effect.Effect<void> = Effect.void,

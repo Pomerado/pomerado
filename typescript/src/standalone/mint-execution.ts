@@ -211,8 +211,10 @@ const scriptQuestions = (
       // the owner's yes to the same order, and only while no act step since that yes may have
       // placed it: each made no browser call or left every commit step it declares unsent, by its
       // own report once it ended (`forgetOrderAnswers` below) and, for the asking step, by its
-      // journal when it asked (`commitsUnsent`). The reused answer reaches later reviews as a
-      // fresh one does. It is always the owner's latest answer to its prompt
+      // journal when it asked (`commitsUnsent`); an opened hand-off counts as a browser call. A
+      // save a script sends outside every commit step it declares is beyond this check, as it is
+      // for the commit fence; Guardian's source review looks for one. The reused answer reaches
+      // later reviews as a fresh one does. It is always the owner's latest answer to its prompt
       // (`forgetScriptAnswers`), so it never replaces a newer one in Guardian's list.
       const keys = yield* scriptQuestionKeys(candidate, (text) => projection.text(text));
       const kept =
