@@ -222,7 +222,7 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   ["core", "- The code works for every value the schema accepts."],
   [
     "core",
-    "- Match the caller's proper nouns, such as places, venues and company names, with a fuzzy match that accepts the usual forms of the same name, such as a name with or without its accents (Abaca for Abacá), or a city alone or with its state and country after a comma. Never require an exact match. A name with words added or dropped is a looser match, which a read picks and a write asks about, as above. `sameText` from `pomerado/runtime` matches a name that differs only in case, accents, spacing, apostrophes, periods, commas or hyphens, or in a word the site writes short, such as St-Jean for Saint-Jean, but not one with a word added or dropped. Prefer it for confirming the pick, so the read-back agrees with the choice, but not for choosing from a list, where a short label can match a longer name it isn't, such as UK for Ukraine. When more than one option matches equally, decide per tool: take the first in the site's order and return the one it used, as the site labels it, or list them for the caller to choose one, each selecting exactly one.",
+    "- Match the caller's proper nouns, such as places, venues and company names, with a fuzzy match that accepts the usual forms of the same name, such as a name with or without its accents (Abaca for Abacá), or a city alone or with its state and country after a comma. Never require an exact match. A name with words added or dropped is a looser match, which a read picks and a write asks about, as above. `sameText` from `pomerado/runtime` matches a name that differs only in case, accents, spacing, apostrophes, periods, commas or hyphens, or in a word the site writes short, such as St-Jean for Saint-Jean, but not one with a word added or dropped. Prefer it for confirming the pick, so the read-back agrees with the choice, but not for choosing from a list, where a short label can match a longer name it isn't, such as UK for Ukraine. When more than one option matches equally, settle them as \"Several equal matches\" below says.",
   ],
   // A value the caller names goes through the site's own search, not only a menu the page shows.
   [
@@ -1116,9 +1116,9 @@ it("has a write check caller values against the site's own option lists before i
   expect(text("writes")).toContain(
     "- Before the first commit mark, prefer looking up every existing entry the caller names, each item and option included, with read-only steps, in the session and on every run of the composed script. On a write saved across several pages, when the site's own option lists for a later page can be read before the first save and do not depend on what an earlier page saves, such as the form definitions or option data an earlier page loads, prefer reading them too and checking every caller value for those fields against them. Match each value by the site's option value as well as its label (forms skill), and count matching items by the site's own item id where the page shows one, so an item listed in more than one place is one match, not an ambiguous one. Refuse with `InvalidInput` and `available` before anything is saved when a value matches nothing. A refusal after an earlier save leaves a half-made record and an outcome the caller can't know.",
   );
-  // A check that can only run after an earlier save keeps its honest possible change.
+  // A check the site shows only after an earlier save keeps its honest possible change.
   expect(text("writes")).toContain(
-    "A check that can only run after an earlier marked step, such as a total that shows only once a saved address step has run, runs before the later step's mark;",
+    "A check the site shows only after an earlier save, such as a total that shows only once a saved address step has run, runs after that save only when no read can show it first, and before the later step's mark;",
   );
   // It sits after the refusal rule and its exceptions, so that rule's "those checks" still names
   // the checks before it.
@@ -1533,16 +1533,16 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["3636f13d8dffe45c3b794fac94ab0d328689eed37c1bc6f28ee075c2cce95b12", "core"],
+    ["9ee9b76c348401a7ccde53b2bb24edd0f898f305754722013dad4ee0676ab64d", "core"],
     ["7c3be765ee7c1c62b13a4876cc5453bbeb8acc7948b51511574f36f2aed09c4a", "search"],
     ["d6f0ed8446759ce44874a2cb7c7ee7251f92249673379b69439aaac2b5b7afb5", "auth"],
     ["a08f1ef89cc10bf11e17b8d6086b6e37649b1d5d11b78c0542cc7db32460b7e3", "testing"],
     ["d524204c6ed2dc0fa773d6e5cf0aef993e2b48ee9db3fcbf291e40ebe8c9913d", "pagination"],
-    ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
-    ["83da0f9ded9c0fd0d758a0aaa3956560cde22254244c10236acb0331a0ebb56b", "writes"],
-    ["0ac33d5aa38356254425cc52904f8e6819052bd44e5e226b130a1795078f5439", "cart"],
-    ["4b1a24956cd8ebebcf8b9eaa3c755c80971c7b29c72446fdae5e03480b19580a", "caller-input"],
-    ["5e831bd1ba21d5ec4b1da3a96152f9d905144cbef58b9bd26381933f27faa97c", "publication"],
+    ["353de86622940e0f9d00052a4114a654a27d27e0ec8d3cb0251b113d62dd0a8c", "forms"],
+    ["965182ffcc01912f2807c70ded418eebb3b6d677e87d55a423d3aa7ac48a6f04", "writes"],
+    ["79f479bdb48abf17f10b5f3fcf369dd31270d1e95004faf58cf40eca72b4ac3c", "cart"],
+    ["ba7e115259c8c6ed44dd7f94f13c52aecd55a5857e2dd048eaa735d0f3d4d7a8", "caller-input"],
+    ["2455d9ae8e9de968f4a5b9d2b80b761803437a88af5f2d02eaa58c1874dfa1d5", "publication"],
     ["ba31a90dc5bf4b1f7e8be5e5145e99f6b4e2379e279be210c8537d9b93882d98", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);
