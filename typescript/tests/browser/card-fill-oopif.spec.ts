@@ -45,7 +45,7 @@ const checkout = async (page: Page, top: string, frameOrigin: string) => {
   return frame;
 };
 
-const fill = async (page: Page) => {
+const fill = async (page: Page, fieldSelectors: readonly string[] = selectors) => {
   const handles = makeSecretHandles();
   const answers = handles.issue(
     {
@@ -68,7 +68,7 @@ const fill = async (page: Page) => {
     runCardFill({
       step: {
         fields: ["number", "expiry", "cvc", "zip"].map((id, index) => ({
-          selector: selectors[index] ?? "",
+          selector: fieldSelectors[index] ?? "",
           handle: handleFor(id),
         })),
       },
@@ -200,11 +200,12 @@ const fillFromMethod = async (page: Page, fieldSelectors: readonly string[]) => 
 
 // The host's card fill takes CSS selectors only, each matching one editable field across the
 // page's frames, so the inspection refuses any other before Guardian's review or the host's fill.
+// Core's own typing still takes any selector it finds.
 test("a card fill from a payment method refuses a role selector before the review and the host's fill", async ({
   page,
 }) => {
-  await checkout(page, `${site}/checkout`, "https://js.stripe.com");
-  const roles = ["Card number", "Expiration date", "Security code"].map(
+  const frame = await checkout(page, `${site}/checkout`, "https://js.stripe.com");
+  const roles = ["Card number", "Expiration date", "Security code", "ZIP code"].map(
     (name) => `role=textbox[name="${name}"]`,
   );
   const refused = await fillFromMethod(page, roles);
@@ -219,6 +220,22 @@ test("a card fill from a payment method refuses a role selector before the revie
   expect(css.outcome.status).toBe("filled");
   expect(css.reviews).toHaveLength(1);
   expect(css.handedOver).toEqual([selectors.slice(0, 3)]);
+  const typed = await fill(page, roles);
+  expect(typed.outcome.status).toBe("filled");
+  expect(await frame.locator("#payment-numberInput").inputValue()).toBe(card.number);
+});
+
+test("a card fill from a payment method whose fields the page doesn't show yet is refused as not found", async ({
+  page,
+}) => {
+  await page.route(`${site}/**`, (route) =>
+    route.fulfill({ contentType: "text/html", body: "<h1>Checkout</h1>" }),
+  );
+  await page.goto(`${site}/checkout`);
+  const { outcome, reviews, handedOver } = await fillFromMethod(page, selectors.slice(0, 3));
+  expect(outcome).toMatchObject({ status: "refused", report: { reason: "not_found", target: 0 } });
+  expect(reviews).toEqual([]);
+  expect(handedOver).toEqual([]);
 });
 
 test("a card fill from a payment method refuses a CSS selector matching two editable fields across frames", async ({
