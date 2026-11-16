@@ -949,7 +949,7 @@ it("has a purchase confirm's order and a checkout's output give lines, fees and 
  * A cart tool given an item ID found the card by the item's name. On a menu where the same name
  * appears under several IDs, it opened a copy with another ID, and its ID check stopped the add.
  * The cart skill has the tool open each card with that name until one proves the ID, and refuse
- * before the add when none does.
+ * before the add when each shows another ID.
  */
 it("has a cart tool find an item by its ID among cards that show only names", async () => {
   const cart = ((await renderedTexts("typescript/authoring")).get("cart") ?? "").replace(
@@ -957,7 +957,7 @@ it("has a cart tool find an item by its ID among cards that show only names", as
     " ",
   );
   expect(cart).toContain(
-    "When the page shows only item names, open each card with the requested name in turn and keep the one whose own details prove the requested ID; when none does, refuse with `InvalidInput` before the add's commit mark, naming what those cards showed.",
+    "Where the page carries no item ID, open each card with the requested name in turn and keep the one whose own details prove the requested ID; when each card's details show another ID, refuse with `InvalidInput` before the add's commit mark, naming those IDs.",
   );
 });
 
@@ -1457,7 +1457,7 @@ it("renders the pinned standalone authoring", async () => {
     ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
     ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
     ["ba232eef00725bff2a0e1b1ffb59f26323d73110e4afc39ca22ef58c2758ee76", "writes"],
-    ["6c84cb4a87202dd608cdb9ef01da5eb58b826aab42d84c325149903816673d0f", "cart"],
+    ["e6b00d1a392c8aed60f42037df804b3b83474b3384eaefd271f8132d6b0edcf4", "cart"],
     ["82709b7a834848416464604938c1932b65d1048bdd6f53dbe751a545187be8b0", "caller-input"],
     ["72fbe16dc78d22b32829b514b58b59feb9ab8fc553ecc66142e2a04149c740eb", "publication"],
     ["ba31a90dc5bf4b1f7e8be5e5145e99f6b4e2379e279be210c8537d9b93882d98", "workspace/AGENTS.md"],
