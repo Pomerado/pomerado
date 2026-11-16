@@ -597,6 +597,31 @@ it("inserts the note once after the provider's own compaction and keeps it on ea
   );
 });
 
+// A host's note may carry its own standing instructions beside the skills read, which a
+// compaction's summary would otherwise shorten, so it is sent after every compaction, with no
+// skill named when none was read.
+it("sends the host's note after a compaction when no skill was read", async () => {
+  const f = await fixture(
+    (_request, index) =>
+      [
+        () => readSource("src/tool.ts", "read_tool"),
+        (): ModelResponse => ({
+          ...call("execute", example, 5_000),
+          output: [compactedItem, ...call("execute", example).output],
+        }),
+        () => call("finish_build", finish),
+      ][index]!(),
+    { skills: skillCatalog, compactionSkillsNote: namesNote },
+  );
+  const outcome = await f.run();
+
+  expect(outcome.build).toBe("published");
+  const last = f.requests.at(-1);
+  expect(items(last)[0]).toMatchObject(compactedItem);
+  expect(items(last)[1]).toEqual(noteItems(last)[0]);
+  expect(listedSkills(last)).toEqual([[]]);
+});
+
 it("sends no note after a compaction when no skill was read", async () => {
   const f = await fixture(
     (_request, index) =>
