@@ -291,7 +291,9 @@ exception: it is optional unless the task can't run without it (below).
   goes on with the caller's text without a pick from its list, needs no match: type the caller's
   text and read back what the site kept. Compare an address read back, there or before and after
   a commit as the writes skill asks, with `readBackMatches(shown, wanted)` or `sameText` from
-  `pomerado/runtime` (Confirm, below), never with normalization of your own. When a hosted
+  `pomerado/runtime` (Confirm, below), and an address the site rewrote as it was typed with
+  `sameText(shown, typed, { rewrite: true })` as the writes skill says, never with normalization
+  of your own. When a hosted
   build's workspace guide names its own address helper, use that one instead of these.
 - Match the caller's proper nouns, such as places, venues and company names, with a fuzzy
   match that accepts the usual forms of the same name, such as a name with or without its
