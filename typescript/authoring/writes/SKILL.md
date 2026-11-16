@@ -105,7 +105,10 @@ pays or whether the action can be cancelled or refunded (each paid add-on and pr
 option within the tool's purpose, a rate, fare or plan tier, a refundable or non-refundable
 option, shipping speed, how much of a balance to pay, the payment method and the delivery
 address), and any other option only when
-the request's purpose clearly depends on it. An unasked optional field keeps the page's
+the request's purpose clearly depends on it. When the write must take one of a service's tiers
+of speed, class or service level that the caller's input does not settle, take the tier the site
+presents as standard instead of asking and list it in `finish_build` `assumptions`; ask only
+when the site shows no standard tier. An unasked optional field keeps the page's
 default and is still an optional input of the script. Prefer keeping the value the page
 already shows in an optional field that adds no cost over asking the caller to confirm or
 correct it, and list it in `finish_build` `assumptions`. Ask only about options the site

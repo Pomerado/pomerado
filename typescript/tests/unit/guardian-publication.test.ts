@@ -1627,6 +1627,19 @@ describe("the OpenAI publication reviewer", () => {
       expect(rule).toContain(publicationCostlyChoiceDefault);
   });
 
+  // A run that leaves such a choice's optional input unset takes its allowed default, such as
+  // the standard tier over a pre-selected faster one, so the live review counts that default as
+  // the caller's input instead of denying it as made up or escalating it as unsettled.
+  it("counts a costly choice's allowed default as the caller's input in the live review", () => {
+    const policy = guardianExecutionPolicy(nativeExecutionEnvironment);
+    expect(policy).toContain(
+      `including an optional input's default that settles a choice changing what the caller buys or pays as ${publicationCostlyChoiceDefault})`,
+    );
+    expect(policy).toContain(
+      `the caller's input includes an optional input's default that settles such an option as ${publicationCostlyChoiceDefault}.`,
+    );
+  });
+
   it("gives an execution review no publication policy or index", async () => {
     const requests = scripted((index) =>
       index === 0
