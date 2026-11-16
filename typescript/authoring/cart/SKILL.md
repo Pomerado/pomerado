@@ -131,6 +131,10 @@ order, or right before the card fill when the host fills the card or picking it 
 checkout. When the site says that time is gone and offers the next one, the next one is still
 the earliest.
 
+In the step that places the order, wait for the site's reply to that order request, or the page
+that carries the order's ID, and read the ID from it, as the writes skill says for a commit.
+Another answer that shows first ends that wait only when it is the site refusing the order.
+
 ## A checkout's inputs and output
 
 Prefer building a checkout for any order a caller could place on the site, not only the
