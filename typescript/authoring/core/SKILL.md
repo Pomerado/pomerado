@@ -590,13 +590,13 @@ Then, for every field:
   it holds as a timestamp too. Compare a site's date or time with today or now only in the
   site's or the place's zone, never UTC's: `todayIn` and `zonedTime` from `pomerado/runtime`
   give both.
-- Never return a bare clock time, such as "7:45 PM" or "12:38-12:59 AM": a caller cannot tell
-  its zone. Return each time as a timestamp with its offset, with `zonedClock` from
-  `pomerado/runtime` for a clock time the page shows, and name the IANA zone the site's text
-  is in, such as `"America/New_York"`, in a `time_zone` field of the record or of the whole
-  output, beside any `*_label` field that keeps the site's wording: `{ "eta_start":
-  "2026-11-16T00:38:00-05:00", "eta_end": "2026-11-16T00:59:00-05:00", "eta_label": "12:38-12:59
-  AM", "time_zone": "America/New_York" }`. A time the page shows with no zone beside it is in
+- Never return a clock time with no zone, such as "7:45 PM" or "12:38-12:59 AM" alone: a caller
+  cannot tell which moment it is. Return each time as a timestamp with its offset, with
+  `zonedClock` from `pomerado/runtime` for a clock time the page shows, and name the IANA zone
+  the site's text is in, such as `"America/New_York"`, in a `time_zone` field of the record or
+  of the whole output, beside any `*_label` field that keeps the site's wording:
+  `{ "eta_start": "2026-11-16T00:38:00-05:00", "eta_end": "2026-11-16T00:59:00-05:00",
+  "eta_label": "12:38-12:59 AM", "time_zone": "America/New_York" }`. A time the page shows with no zone beside it is in
   the browser's own zone whenever the page computes it from a timestamp, as order trackers,
   estimates and activity feeds do; read that zone in the same call as the times with
   `browserTimeZoneCode`, never from the script's own clock, the caller's place or an address,

@@ -880,6 +880,8 @@ describe("output notation checks", () => {
         track_length: "3:45",
         status_label: "Arriving at 7:45 PM",
         quantity_range: "12-15",
+        cook_time: "1:30",
+        flightTime: "5:40",
       }),
     ).toEqual(["eta_label format_mismatch", "delivered format_mismatch", "window format_mismatch", "pickup_time format_mismatch"]);
     const order = {

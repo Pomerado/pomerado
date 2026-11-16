@@ -329,9 +329,12 @@ const meridiem = /[ap]\.?\s?m\.?$/iu;
 // One 24-hour time alone: `07:00-08:00` is a time of day with its offset.
 const twentyFourHourClock = /^\d{1,2}:\d{2}(?::\d{2})?$/u;
 const clockKey = /(?:^|_)(?:time|eta|at)$|(?:Time|Eta|At)$/u;
+// A field named for a length of time, such as `cook_time: "1:30"`, holds a duration, not a clock time.
+const durationKey =
+  /(?:duration|elapsed|cook|prep|run|wait|travel|drive|transit|total|lead|play|hold|response|turnaround|flight)_?time$/iu;
 const bareClock = (text: string, key: string | undefined) =>
   (meridiemClock.test(text) && meridiem.test(text)) ||
-  (key !== undefined && clockKey.test(key) && twentyFourHourClock.test(text));
+  (key !== undefined && clockKey.test(key) && !durationKey.test(key) && twentyFourHourClock.test(text));
 /**
  * A field that names the zone of the times beside it, such as `time_zone`: a bare clock time in
  * its record, or in a record within it, keeps its zone.
@@ -1259,7 +1262,7 @@ export const outputCheckMeaning: Readonly<Record<OutputCheck, string>> = {
   loose_text:
     "is a required string whose declared schema accepts an empty string or whitespace alone",
   format_mismatch:
-    "is not in the form its field declares: a format date that is not YYYY-MM-DD, such as a timestamp or the site's own wording, a format date-time that is not ISO 8601 with an offset, a value in another notation than its description names (YYYY-MM-DD, ISO 8601 or ISO 4217), a currency field that is not a three-letter ISO 4217 code, a timestamp with no offset, or a bare clock time such as 7:45 PM in a record that names no time_zone",
+    "is not in the form its field declares: a format date that is not YYYY-MM-DD, such as a timestamp or the site's own wording, a format date-time that is not ISO 8601 with an offset, a value in another notation than its description names (YYYY-MM-DD, ISO 8601 or ISO 4217), a currency field that is not a three-letter ISO 4217 code, a timestamp with no offset, or a bare clock time such as 7:45 PM, or 19:45 in a field named for a time of day, in a record that names no time_zone (a duration such as cook_time 1:30 is not one)",
   case_variant:
     "holds one value in two letter cases across the list, such as paid and Paid, so callers cannot compare it",
   looser_than_input:

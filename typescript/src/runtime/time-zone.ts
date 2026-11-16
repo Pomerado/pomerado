@@ -38,13 +38,8 @@ const dateAt = (ms: number, timeZone: string) =>
 /** Today's date in `timeZone`, `YYYY-MM-DD`. */
 export const todayIn = (timeZone: string): string => dateAt(Date.now(), timeZone);
 
-/**
- * The ISO 8601 timestamp of a local date (`YYYY-MM-DD`) and clock time (`HH:MM` or `HH:MM:SS`,
- * 24-hour) in `timeZone`, with that zone's offset on that date: `2026-12-15T07:15:00-08:00`.
- * Across a daylight-saving change, a clock time the change skips moves forward by the change,
- * and one it repeats takes the earlier of the two. An impossible date or time throws `RangeError`.
- */
-export const zonedTime = (date: string, time: string, timeZone: string): string => {
+/** Every instant a valid local date and clock time names, earliest first (see `zonedTime`). */
+const instantsOf = (date: string, time: string, timeZone: string): number[] => {
   const written = `${date}T${time.length === 5 ? `${time}:00` : time}`;
   const wall = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/u.test(written)
     ? Date.parse(`${written}Z`)
@@ -55,12 +50,25 @@ export const zonedTime = (date: string, time: string, timeZone: string): string 
   const offsets = [...new Set([wall - dayMs, wall + dayMs].map((ms) => wallAt(ms, timeZone) - ms))];
   const fits = offsets.map((offset) => wall - offset).filter((ms) => wallAt(ms, timeZone) === wall);
   // A skipped time fits neither; the offset before the change moves it forward by the change.
-  const instant = fits.length > 0 ? Math.min(...fits) : wall - (offsets[0] ?? 0);
-  const offset = Math.round((wallAt(instant, timeZone) - instant) / 60_000);
-  const local = new Date(instant + offset * 60_000).toISOString().slice(0, 19);
+  return fits.length > 0 ? fits.sort((a, b) => a - b) : [wall - (offsets[0] ?? 0)];
+};
+
+/** Instant `ms` as an ISO 8601 timestamp with `timeZone`'s offset at that instant. */
+const stampAt = (ms: number, timeZone: string) => {
+  const offset = Math.round((wallAt(ms, timeZone) - ms) / 60_000);
+  const local = new Date(ms + offset * 60_000).toISOString().slice(0, 19);
   const size = Math.abs(offset);
   return `${local}${offset < 0 ? "-" : "+"}${pad(Math.floor(size / 60))}:${pad(size % 60)}`;
 };
+
+/**
+ * The ISO 8601 timestamp of a local date (`YYYY-MM-DD`) and clock time (`HH:MM` or `HH:MM:SS`,
+ * 24-hour) in `timeZone`, with that zone's offset on that date: `2026-12-15T07:15:00-08:00`.
+ * Across a daylight-saving change, a clock time the change skips moves forward by the change,
+ * and one it repeats takes the earlier of the two. An impossible date or time throws `RangeError`.
+ */
+export const zonedTime = (date: string, time: string, timeZone: string): string =>
+  stampAt(instantsOf(date, time, timeZone)[0] ?? Number.NaN, timeZone);
 
 /**
  * A clock time as sites write it: `7:45 PM`, `7 pm`, `7:45 p.m.`, `19:45`, `19:45:30`, `19h45`,
@@ -120,8 +128,10 @@ export type ClockDay = `${number}-${number}-${number}` | "next" | "last" | "near
  * is the zone the site wrote the time in: the zone the page names beside it, or else the
  * browser's own zone as `browserTimeZoneCode` reads it, since a page writes most times it shows
  * in its browser's zone. `now` is the instant `day`'s rule counts from, by default the current
- * time. Daylight-saving changes follow `zonedTime`. Anything else as `clock`, an impossible date
- * or an unknown zone throws `RangeError`.
+ * time. Across a daylight-saving change, a time the change skips moves forward by the change; one
+ * it repeats takes the earlier of the two on a stated date, while a rule weighs both, so `next`
+ * at 1:10 AM in the repeated hour finds the second 1:30 AM. Anything else as `clock`, an
+ * impossible date or an unknown zone throws `RangeError`.
  */
 export const zonedClock = (
   day: ClockDay,
@@ -132,12 +142,10 @@ export const zonedClock = (
   const time = clockOf(clock);
   if (day !== "next" && day !== "last" && day !== "nearest") return zonedTime(day, time, timeZone);
   const today = dateAt(now, timeZone);
-  const [yesterday, ...later] = [-1, 0, 1].map((days) => {
-    const stamp = zonedTime(dayFrom(today, days), time, timeZone);
-    return { stamp, from: Date.parse(stamp) - now };
-  });
   // Yesterday's time is before now and tomorrow's after it, so `next` and `last` always find one.
-  const candidates = yesterday === undefined ? later : [yesterday, ...later];
+  const candidates = [-1, 0, 1]
+    .flatMap((days) => instantsOf(dayFrom(today, days), time, timeZone))
+    .map((instant) => ({ instant, from: instant - now }));
   const chosen =
     day === "next"
       ? candidates.find(({ from }) => from > -nowSlackMs)
@@ -145,7 +153,7 @@ export const zonedClock = (
         ? candidates.findLast(({ from }) => from < nowSlackMs)
         : candidates.reduce((best, next) => (Math.abs(next.from) < Math.abs(best.from) ? next : best));
   if (chosen === undefined) throw new RangeError("zonedClock found no day for the clock time");
-  return chosen.stamp;
+  return stampAt(chosen.instant, timeZone);
 };
 
 /**
