@@ -42,6 +42,16 @@ read" in the core skill says before adding the product: a value the product does
 throws `InvalidInput` with `field` and `available`. Opening an item's details or options from
 its own card, name or picture, not a control labelled add or plus, is a read.
 
+An item's options often come in groups whose option labels repeat, such as "None" or "Less"
+under both a sweetness group and an ice group. Find each option inside its own group, by the
+group's heading or fieldset, never by its label across the whole item dialog. A list of saved
+addresses or stores can show the same name twice: choose by every part the input gives, such as
+the unit, and refuse when more than one entry still matches, never take the first.
+
+When the tool takes an item's or store's page link as its identity, compare the identifiers in
+it, such as the store and item ids, after decoding both links, never the raw text of a name in
+the path, which the site may encode in more than one way.
+
 ## Quantity
 
 The request decides whether quantity adds that many to the cart or sets the line to that
@@ -73,6 +83,29 @@ take the cart as empty. Then read back every line of the checkout's order summar
 reads before the card fill, or before pressing pay when there is none, and confirm it holds only
 the requested items, each at its requested options and quantity; when it holds anything else,
 throw `OperationFailure` before the order's commit mark.
+
+## Several carts on one account
+
+Some sites keep a separate cart for each store or seller in one account, such as food delivery,
+grocery and multi-vendor marketplaces, and list them in a cart switcher. Act on one cart, found
+by the cart or store identifier the site shows, taken as an input when the caller names a cart,
+and leave every other cart as it is. When the site asks to clear another cart before adding,
+that is a question for the caller (the writes skill). The switcher and the other carts are the
+caller's other records: in every step's output, while building and in the tool, return only the
+target cart's entry. To show the others stayed the same, compare them inside the step and return
+only the result, such as each cart's identifier, its line count and whether it changed, never
+their items.
+
+## The delivery address
+
+When the site sets the delivery address on the account or the session rather than inside
+checkout, read the address the cart will use first. When it already matches the input, street
+and unit, change nothing and ask nothing. Set it only when it differs, after every check that
+can refuse, such as finding the item and its options and that it can be ordered now, so a
+refusal leaves the account as it was. Prefer the site's control that picks an address for this
+order over editing a saved one. When saving the address-book entry is the only way to apply a
+detail such as the unit, that save is a write with its own commit mark (the writes skill), and
+any question about it is asked only on a run that needs the save.
 
 ## Values the account lacks
 
@@ -111,6 +144,12 @@ completed the write, so it never publishes.
 
 An example item that is out of stock doesn't end the build. The tool returns that as the site's
 refusal for the item, and the build publishes on it as the writes skill says.
+
+An item or store that can't be ordered right now, such as a store that is closed or takes only
+scheduled orders, or an item marked unavailable, often hides or relabels the add control rather
+than showing an error. Read the store's and the item's state before waiting for the add control,
+and return it as the site's refusal for the item, as for one out of stock, before any commit
+mark, setting the address included. Never wait out a timeout for a control the page replaced.
 
 When the site offers delivery speeds or pickup times, take the caller's choice from an optional
 input and keep it as given. Without one, choose the standard option that adds no extra cost; when
