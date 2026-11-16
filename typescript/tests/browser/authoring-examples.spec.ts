@@ -21,7 +21,7 @@ import readCatalog, {
   detailNavigation,
   searchThenRead,
 } from "../../authoring/examples/navigation.js";
-import searchListings, { readRooms } from "../../authoring/examples/pagination.js";
+import searchListings, { readItemDetails, readRooms } from "../../authoring/examples/pagination.js";
 import searchOrigin from "../../authoring/examples/picker-first.js";
 import assignOwner from "../../authoring/examples/picker.js";
 import selectStatus from "../../authoring/examples/selection.js";
@@ -223,7 +223,9 @@ const recordsSite = async (page: Page, origin: string) => {
         });
       const found = records.filter((id) => id.includes(query));
       const listed =
-        found.map((id) => `<a href="/records/${id}">${id}</a>`).join("") ||
+        query === "record_twice"
+          ? `<a href="/records/record_twice">record_twice</a><a href="/records/record_42">record_twice</a>`
+          : found.map((id) => `<a href="/records/${id}">${id}</a>`).join("") ||
         `<p role="status">No matching records</p>`;
       if (query === "record_8")
         return html(`<section role="region" aria-label="Search results" aria-busy="true"><p>Loading results</p></section>
@@ -286,6 +288,11 @@ test("detail example searches the site for the record, follows its link and chec
     _tag: "OperationFailure",
     message: "results_unavailable",
   });
+  // Two links that read the same still lead to two records.
+  expect(failure(await read("record_twice"))).toMatchObject({
+    _tag: "OperationFailure",
+    message: "result_ambiguous",
+  });
   expect(site.searches).toEqual([
     "record_42",
     "record_7",
@@ -293,6 +300,7 @@ test("detail example searches the site for the record, follows its link and chec
     "record_9",
     "record_8",
     "record_down",
+    "record_twice",
   ]);
 });
 
@@ -373,7 +381,7 @@ test("detail example fails a record URL whose page shows no answer once the page
 // "proved" still answers that URL; "moved" now sends it to the entry page and its search box
 // submits to /find?term=; "ignored" answers /search for its last query whatever q says, and its
 // search box submits ?query=. Every results page shows its search box holding the query it answers.
-const roomsSite = async (page: Page, origin: string, template: "proved" | "moved" | "ignored") => {
+const roomsSite = async (page: Page, origin: string, template: "proved" | "moved" | "ignored", twice = false) => {
   const requests: string[] = [];
   const rooms = [
     ["room-1", "North room"],
@@ -387,7 +395,7 @@ const roomsSite = async (page: Page, origin: string, template: "proved" | "moved
     return `${searchForm(action, name, query)}${
       found.length === 0
         ? `<p role="status">No matching rooms</p>`
-        : `<ul aria-label="Rooms">${found.map(([id, room]) => `<li data-room-id="${id}"><span class="name">${room}</span></li>`).join("")}</ul>`
+        : `<ul aria-label="Rooms">${found.map(([id, room]) => `<li data-room-id="${id}"><span class="name">${room}</span></li>`).join("")}</ul>`.repeat(twice ? 2 : 1)
     }`;
   };
   await page.route(`${origin}/**`, (route) => {
@@ -434,6 +442,22 @@ test("search example opens the proved results URL once and reads the rows there"
   );
   expect(result).toEqual(roomRows);
   expect(requests).toEqual(["/search?q=room"]);
+});
+
+test("search example reads each row once from results the site shows twice", async ({ page }) => {
+  const origin = "https://rooms.example.test";
+  await roomsSite(page, origin, "proved", true);
+  const { result } = await runExample(page, searchThenRead, { query: "room", limit: 3 }, { siteOrigin: origin });
+  expect(result).toEqual(
+    Either.right({
+      rooms: [
+        { id: "room-1", name: "North room" },
+        { id: "room-2", name: "South room" },
+        { id: "room-3", name: "East room" },
+      ],
+      more: false,
+    }),
+  );
 });
 
 for (const [template, landing] of [
@@ -568,6 +592,59 @@ test("paged search example waits for the titles of the rows it returns to fill i
   );
 });
 
+test("paged search example reads each row once from results the site shows twice", async ({ page }) => {
+  const origin = "https://listings.example.test";
+  const results = `<ol id="results">${["L1", "L2", "L3"]
+    .map((id) => `<li data-id="${id}"><span class="title">Lamp ${id}</span></li>`)
+    .join("")}</ol>`;
+  // With paged=true, each copy has its own Next link and more results follow.
+  let paged = false;
+  await page.route(`${origin}/**`, (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: `<form action="/search"><input id="q" name="q" value="lamps"><button id="go">Search</button></form>
+<p id="count">1-3 of ${paged ? 6 : 3}</p>${(results + (paged ? `<a rel="next" href="/search?q=lamps&page=2">Next</a>` : "")).repeat(2)}`,
+    }),
+  );
+  const read = async () =>
+    (await runExample(page, searchListings, { query: "lamps", limit: 3 }, { siteOrigin: origin, list: {} })).result;
+  expect(Either.getOrThrow(await read())).toMatchObject({
+    results: [
+      { id: "L1", title: "Lamp L1", sponsored: false },
+      { id: "L2", title: "Lamp L2", sponsored: false },
+      { id: "L3", title: "Lamp L3", sponsored: false },
+    ],
+    has_more: false,
+  });
+  // Two Next links are no answer to whether more follow.
+  paged = true;
+  expect(failure(await read())).toMatchObject({ _tag: "OperationFailure" });
+});
+
+test("detail-page list example reads each row once from a list the site shows twice", async ({ page }) => {
+  const origin = "https://items.example.invalid";
+  const items = `<ul aria-label="Items">${["a", "b", "c"]
+    .map((id) => `<li data-item-id="${id}"><a href="/items/${id}"><span class="name">Item ${id}</span></a></li>`)
+    .join("")}</ul>`;
+  await page.route(`${origin}/**`, (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      // The list shows twice, as on a page that repeats it in two layouts.
+      body: new URL(route.request().url()).pathname === "/items" ? items + items : `<p data-testid="maker">Acme</p>`,
+    }),
+  );
+  // Every item fits the limit, so nothing more follows; the second copy's rows are no more items.
+  const { result } = await runExample(page, readItemDetails, { limit: 3 }, { siteOrigin: origin });
+  expect(Either.getOrThrow(result)).toMatchObject({
+    items: [
+      { id: "a", name: "Item a", maker: "Acme" },
+      { id: "b", name: "Item b", maker: "Acme" },
+      { id: "c", name: "Item c", maker: "Acme" },
+    ],
+    has_more: false,
+  });
+});
+
 test("append example reads each step's filled-in new rows until the control goes", async ({
   page,
 }) => {
@@ -588,6 +665,22 @@ test("append example ends at the control going beside a loader the page always s
     Either.right(lastRooms(roomList(4))),
   );
   await expect(page.locator("#clicks")).toHaveText("1");
+});
+
+test("append example reads each room once from a list the page shows twice", async ({ page }) => {
+  const list = `<ul aria-label="Rooms">${roomList(2)
+    .map(({ id, name }) => `<li data-room-id="${id}"><span class="name">${name}</span></li>`)
+    .join("")}</ul>`;
+  await page.setContent(`<main>${list}${list}</main>`);
+  expect((await runExample(page, readRooms, { limit: 2 }, { list: {} })).result).toEqual(
+    Either.right(lastRooms(roomList(2))),
+  );
+  // Two "Show more" controls, one with each copy, are no answer to whether more follow.
+  const more = `<button>Show more</button>`;
+  await page.setContent(`<main>${list}${more}${list}${more}</main>`);
+  expect(failure((await runExample(page, readRooms, { limit: 2 }, { list: {} })).result)).toMatchObject({
+    _tag: "OperationFailure",
+  });
 });
 
 test("append example stops at the limit without another step", async ({ page }) => {
@@ -1520,14 +1613,31 @@ const checkoutSite = async (
             `<label>Promo code<input name="promo" value="SPRING" aria-invalid="true"></label>`,
           ),
         });
+      const confirmation = `<p role="status" aria-label="Order confirmation">Order ORD-${1000 + orders.length} is placed.</p>`;
       return route.fulfill({
         contentType: "text/html",
-        body: `<p role="status" aria-label="Order confirmation">Order ORD-${1000 + orders.length} is placed.</p>`,
+        // A mug's confirmation shows twice, as a banner and in the page.
+        body: posted.get("item") === "mug" ? confirmation.repeat(2) : confirmation,
       });
     }
     return route.fulfill({ status: 404, body: "Not found" });
   });
 };
+
+test("write-session example reads its order number from a confirmation the site shows twice", async ({ page }) => {
+  const origin = "https://shop.example.invalid";
+  const orders: string[] = [];
+  const input = { item: "mug", quantity: 1, gift_wrap: false, max_total_minor: 2500 };
+  await checkoutSite(page, origin, orders);
+  await page.goto("about:blank");
+  expect((await runExample(page, fillStep, input, { siteOrigin: origin })).result).toEqual(
+    Either.right({ review_shown: true }),
+  );
+  expect((await runExample(page, placeStep, input, { siteOrigin: origin })).result).toEqual(
+    Either.right({ order_number: "ORD-1001" }),
+  );
+  expect(orders).toEqual(["mug"]);
+});
 
 test("write-session example commits once across its act steps and reads the site's confirmation back", async ({
   page,

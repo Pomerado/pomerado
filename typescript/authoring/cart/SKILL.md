@@ -47,6 +47,10 @@ card with the requested name in turn and keep the one whose own details prove th
 when each card's details show another ID, refuse with `InvalidInput` before the add's commit
 mark, naming those IDs.
 
+A product identifier the site has no page for opens its not-found page or a search: name that
+page among the answers of every wait on the product page, and refuse with `InvalidInput` and the
+site's words, `field` that input, before any commit mark (the core skill).
+
 ## Quantity
 
 The request decides whether quantity adds that many to the cart or sets the line to that
@@ -126,10 +130,14 @@ delivery method to meet a limit. While building, ask the caller to revise or sto
 completed the write, so it never publishes.
 
 An account's state can change the add or buy flow, so that its controls would change an open
-order or a line already in the cart instead. Read that state before the commit mark. When the
-tool's inputs cover that change, as its quantity does for a line already in the cart (Quantity,
-above), continue; otherwise refuse with `InvalidInput` naming the site's state before the commit
-mark, as the caller-input skill says for a page's state that rules the task out.
+order or a line already in the cart instead. A product already in the cart can show that line's
+quantity control in place of its add control, so wait for either with `waitForOutcome` (the core
+skill), not for the add control alone. Read that state before the commit mark. When the tool's
+inputs cover that change, as its quantity does for a line already in the cart (Quantity, above),
+continue, bringing a line whose quantity control shows in place of its add control to the earlier
+quantity plus the input, or to the input, with that control under the add's commit mark; otherwise
+refuse with `InvalidInput` naming the site's state before the commit mark, as the caller-input
+skill says for a page's state that rules the task out.
 
 An example item that is out of stock doesn't end the build. The tool returns that as the site's
 refusal for the item, and the build publishes on it as the writes skill says.

@@ -23,7 +23,8 @@ const maximumQuestions = 8;
 export const maximumAnswerLength = 16_384;
 const Length = Schema.Int.pipe(Schema.between(1, maximumAnswerLength));
 
-export const InputOption = Schema.Struct({
+/** An option as the minting agent proposes it. */
+const ProposedOption = Schema.Struct({
   id: OptionId,
   label: Label,
   /**
@@ -32,6 +33,14 @@ export const InputOption = Schema.Struct({
    */
   accountSpecific: Schema.optional(Schema.Boolean),
   maskedLabel: Schema.optional(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(64))),
+});
+export const InputOption = Schema.Struct({
+  ...ProposedOption.fields,
+  /**
+   * Picking it is the caller's no to the write that asks, as a confirm's no is. Only a script
+   * marks it, never the minting agent's own question.
+   */
+  declines: Schema.optional(Schema.Boolean),
 });
 export type InputOption = typeof InputOption.Type;
 
@@ -70,12 +79,18 @@ export const optionsRepeatedBy = (options: readonly InputOption[], text: string)
   );
 };
 
+const distinctIds = (options: ReadonlyArray<{ readonly id: string }>) =>
+  new Set(options.map((option) => option.id)).size === options.length;
+const distinctIdsMessage = { message: () => "option ids must be unique" };
 const Options = Schema.Array(InputOption).pipe(
   Schema.minItems(1),
   Schema.maxItems(maximumOptions),
-  Schema.filter((options) => new Set(options.map((option) => option.id)).size === options.length, {
-    message: () => "option ids must be unique",
-  }),
+  Schema.filter(distinctIds, distinctIdsMessage),
+);
+const ProposedOptions = Schema.Array(ProposedOption).pipe(
+  Schema.minItems(1),
+  Schema.maxItems(maximumOptions),
+  Schema.filter(distinctIds, distinctIdsMessage),
 );
 
 const base = { id: QuestionId, prompt: Prompt };
@@ -153,12 +168,12 @@ export const MultiChoiceQuestion = MultiChoiceFields.pipe(
  * A choice as the minting agent proposes it: whether the caller may answer in their own words is
  * the host's to say, never the agent's.
  */
-const ProposedChoiceFields = Schema.Struct(choiceFields);
+const ProposedChoiceFields = Schema.Struct({ ...choiceFields, options: ProposedOptions });
 export const ProposedChoiceQuestion = ProposedChoiceFields.pipe(
   Schema.filter((question) => recommendationOffered(question), recommendationMessage),
 );
 /** A multiple choice as the minting agent proposes it (see `ProposedChoiceQuestion`). */
-const ProposedMultiChoiceFields = Schema.Struct(multiChoiceFields);
+const ProposedMultiChoiceFields = Schema.Struct({ ...multiChoiceFields, options: ProposedOptions });
 export const ProposedMultiChoiceQuestion = ProposedMultiChoiceFields.pipe(
   Schema.filter(selectionsFitOptions, selectionsMessage),
   Schema.filter((question) => recommendationOffered(question), recommendationMessage),

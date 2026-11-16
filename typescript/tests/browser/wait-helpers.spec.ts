@@ -580,6 +580,146 @@ test("in a commit's call, a server error to a request that may write keeps the s
   }
 });
 
+// The order may still go through while a request that may write, sent to any host since the click,
+// has no answer: the site's error, shown on a timer of the page's own, then leaves the commit
+// unclear. One answered with a failure, a read, or a request sent before the click doesn't.
+test("in a commit's call, a request that may write still unanswered keeps the site's error unclear", async ({ page }) => {
+  for (const [method, order, shows, reason] of [
+    ["POST", "unanswered", "message", "outcome_unknown"],
+    ["POST", "unanswered", "dialog", "outcome_unknown"],
+    ["POST", "no answer, failed", "message", "outcome_unknown"],
+    ["POST", 402, "message", "outcome_refused"],
+    ["POST", 402, "dialog", "outcome_refused"],
+    ["POST", "none", "message", "outcome_refused"],
+    ["GET", "unanswered", "message", "outcome_refused"],
+    ["POST", "unanswered, sent before the click", "message", "outcome_refused"],
+  ] as const) {
+    await page.unrouteAll();
+    await page.route("https://orders.example-api.test/**", (route) =>
+      order === 402
+        ? route.fulfill({ status: 402, contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: "{}" })
+        : order === "no answer, failed" ? route.abort() : undefined,
+    );
+    const send = `fetch("https://orders.example-api.test/orders", { method: ${JSON.stringify(method)} }).catch(() => undefined)`;
+    await site(
+      page,
+      `<button type="button" id="place">Place order</button>
+      <section id="answer"></section>
+      <script>
+        ${order === "unanswered, sent before the click" ? send + ";" : ""}
+        document.querySelector("#place").onclick = async () => {
+          const sent = ${order === "none" || order === "unanswered, sent before the click" ? "undefined" : send};
+          await Promise.race([sent, new Promise((resolve) => setTimeout(resolve, 200))]);
+          ${shows === "dialog" ? 'alert("Placing your order failed");' : `document.querySelector("#answer").innerHTML = '<div role="alert">Payment failed. Please try again.</div>';`}
+        };
+      </script>`,
+    );
+    const answer = await call(
+      page,
+      `try {
+        return await waitForOutcome({ placed: page.locator(".placed"), notice: { dialog: "confirm" } }, {
+          action: () => page.locator("#place").click(), noProgressMs: 300, timeout: 2000,
+        });
+      } catch (error) {
+        await error.dialog?.dismiss();
+        return error.reason;
+      }`,
+      `${commitCall}${waitCode}`,
+    );
+    expect(answer.result, `${method} ${order}, ${shows}`).toBe(reason);
+  }
+});
+
+// A paying step names the site's alert or dialog as an outcome beside the order's response. Its
+// error, shown on a timer of the page's own while a request that may write has no answer, waits
+// for that answer: once it comes, the outcomes decide as before. With none in time, or after a
+// server error, the commit is unclear, even once the error left. A success its words say, even in an
+// alert, a control in a dialog, or any wait outside a commit's call, decides at once.
+test("in a commit's call, the site's alert, dialog or field errors named as an outcome wait for an unanswered request that may write", async ({
+  page,
+}) => {
+  for (const [path, answer, shows, commit, expected] of [
+    ["/orders", "none", "alert", true, "outcome_unknown"],
+    ["/orders", "none", "dialog", true, "outcome_unknown"],
+    ["/orders", "none", "field errors", true, "outcome_unknown"],
+    ["/orders", "none", "a modal", true, "outcome_unknown"],
+    ["/orders", "none", "an alert that leaves once read", true, "outcome_unknown"],
+    ["/orders", "none", "an alert still faded out", true, "outcome_unknown"],
+    ["/orders", "none", "an alert that negates a success", true, "outcome_unknown"],
+    ["/orders", "none", "an error in a success-styled alert", true, "outcome_unknown"],
+    ["/orders", 503, "alert", true, "outcome_unknown"],
+    ["/orders", 402, "alert", true, "declined"],
+    ["", "none", "alert", true, "declined"],
+    ["/orders", "200 after 300 ms", "alert", true, "order"],
+    ["/collect", "204 after 300 ms", "alert", true, "declined"],
+    ["/orders", "none", "a success", true, "placed"],
+    ["/orders", "none", "a success in an alert", true, "placed"],
+    ["/orders", "none", "a button in a dialog", true, "upsell"],
+    ["/orders", "none", "alert", false, "declined"],
+  ] as const) {
+    await page.unrouteAll();
+    await page.route("https://orders.example-api.test/**", async (route) => {
+      if (answer === "none") return;
+      const [status, after] = typeof answer === "number" ? [answer, 0] : [Number(answer.slice(0, 3)), 300];
+      await new Promise((resolve) => setTimeout(resolve, after));
+      // A page the next case opens may have cancelled the request by now.
+      await route.fulfill({ status, headers: { "access-control-allow-origin": "*" }, body: status === 204 ? "" : "{}" }).catch(() => undefined);
+    });
+    const show = {
+      alert: `document.querySelector("#answer").innerHTML = '<div role="alert">Payment failed. Please try again.</div>';`,
+      dialog: 'alert("Placing your order failed");',
+      "field errors": 'document.querySelector("#card").setAttribute("aria-invalid", "true");',
+      "a modal": `document.querySelector("#answer").innerHTML = '<div role="dialog" aria-modal="true"><h2>Your card was declined.</h2></div>';`,
+      // The alert goes as soon as the wait has read it, before anything else looks at it.
+      "an alert that leaves once read": `const alert = document.createElement("div");
+        alert.setAttribute("role", "alert");
+        alert.textContent = "Payment failed. Please try again.";
+        Object.defineProperty(alert, "innerText", { get() { setTimeout(() => alert.remove()); return "Payment failed. Please try again."; } });
+        document.querySelector("#answer").append(alert);`,
+      "a success": `document.querySelector("#answer").innerHTML = '<p class="placed">Order placed</p>';`,
+      "an alert still faded out": `document.querySelector("#answer").innerHTML = '<div role="alert" style="opacity: 0">Payment failed. Please try again.</div>';`,
+      "an alert that negates a success": `document.querySelector("#answer").innerHTML = '<div role="alert">Your payment was not successful.</div>';`,
+      "an error in a success-styled alert": `document.querySelector("#answer").innerHTML = '<div role="alert" class="alert alert-success">Something went wrong</div>';`,
+      "a success in an alert": `document.querySelector("#answer").innerHTML = '<div role="alert" class="placed alert alert-success">Order confirmed. Thank you!</div>';`,
+      "a button in a dialog": `document.querySelector("#answer").innerHTML = '<div role="dialog" aria-modal="true"><button type="button" class="upsell">No thanks</button></div>';`,
+    }[shows];
+    await site(
+      page,
+      `<form id="checkout" novalidate><input id="card" aria-label="Card number" value="4242"></form>
+      <button type="button" id="place">Place order</button>
+      <section id="answer"></section>
+      <script>
+        document.querySelector("#place").onclick = async () => {
+          const sent = ${path === "" ? "undefined" : `fetch("https://orders.example-api.test${path}", { method: "POST" }).catch(() => undefined)`};
+          await Promise.race([sent, new Promise((resolve) => setTimeout(resolve, 100))]);
+          ${show}
+        };
+      </script>`,
+    );
+    const result = await call(
+      page,
+      `try {
+        const result = await waitForOutcomeResult({
+          order: { response: (response) => response.url().endsWith("/orders") && response.status() < 400 },
+          placed: page.locator(".placed"),
+          upsell: page.locator(".upsell"),
+          declined: page.getByRole("alert"),
+          modal: page.getByRole("dialog"),
+          notice: { dialog: true },
+          invalid: { invalid: page.locator("#checkout") },
+        }, { action: () => page.locator("#place").click(), noProgressMs: 1000, timeout: 3000 });
+        await result.dialog?.dismiss();
+        return result.outcome;
+      } catch (error) {
+        await error.dialog?.dismiss();
+        return error.reason;
+      }`,
+      commit ? `${commitCall}${waitCode}` : waitCode,
+    );
+    expect.soft(result.result, `${path || "no request"} ${answer}, ${shows}, ${commit ? "a commit" : "no commit"}`).toBe(expected);
+  }
+});
+
 test("a write whose commit the site declined behind its own dialog reports the step unsent, with the site's words", async ({
   page,
 }) => {

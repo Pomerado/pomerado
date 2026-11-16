@@ -120,6 +120,8 @@ export const ScriptOption = Schema.Struct({
   accountSpecific: Schema.optional(Schema.Boolean),
   /** How an account-specific option reads outside the protected page, like "Visa •••• 4242". */
   maskedLabel: Schema.optional(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(64))),
+  /** Picking it is the caller's no to the write, as a confirm's no is. */
+  declines: Schema.optional(Schema.Boolean),
 });
 export type ScriptOption = typeof ScriptOption.Type;
 
@@ -320,6 +322,7 @@ const offeredOptions = (id: string, given: ReadonlyArray<ScriptOption> | undefin
       label: cutTo(option.label, longestLabel),
       ...(option.accountSpecific === undefined ? {} : { accountSpecific: option.accountSpecific }),
       ...(option.maskedLabel === undefined ? {} : { maskedLabel: option.maskedLabel }),
+      ...(option.declines === undefined ? {} : { declines: option.declines }),
     })),
   });
 };

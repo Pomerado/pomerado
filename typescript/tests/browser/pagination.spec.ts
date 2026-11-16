@@ -284,6 +284,19 @@ test.describe("finding and stopping", () => {
     expect(result).toMatchObject({ rows: records(30), stoppedBy: "max_steps", hasMore: true, steps: 2 });
   });
 
+  test("a named list the page shows twice stays ambiguous rather than reading each row twice", async ({ page }) => {
+    const list = `<ul class="rooms">${["R1", "R2", "R3"]
+      .map((id) => `<li data-id="${id}"><span class="name">Room ${id}</span></li>`)
+      .join("")}</ul>`;
+    await page.setContent(`<main>${list}${list}</main><p id="none" hidden>No rooms</p>`);
+    const result = await runPager(
+      page,
+      `const pager = listPager({ rows: page.locator("ul.rooms > li"), list: page.locator("ul.rooms"), key: { attribute: "data-id" }, fields: { name: ".name" }, empty: page.locator("#none"), ${fastBudgets} });
+return await pager.read(3);`,
+    );
+    expect(result).toMatchObject({ failure: "outcome_ambiguous" });
+  });
+
   test("an empty result is the site's own empty message, never a failure", async ({ page }) => {
     await openTable(page, { style: "datatables", total: 20, pageSize: 10 });
     await page.locator("#filter").fill("nothing like this");
