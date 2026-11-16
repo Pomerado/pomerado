@@ -194,7 +194,16 @@ const childScriptInput = (
   makeScriptInput(
     questions,
     (request, opened) =>
-      call({ kind: "ask", request }, opened).pipe(
+      call({ kind: "ask", request }, () => {
+        // An opened browser hand-off puts the page in a person's hands, as a page call does,
+        // unless the write already recorded its confirmation (as `markHandOff` checks).
+        if (
+          request.questions.some((question) => question.type === "browser_handoff") &&
+          Effect.runSync(journal.confirmation) === undefined
+        )
+          Effect.runSync(journal.enteringDispatch);
+        opened();
+      }).pipe(
         Effect.flatMap((value) => Schema.decodeUnknown(InputAnswers)(value)),
         Effect.mapError(
           (error) =>
