@@ -443,7 +443,7 @@ return match;`;
 // site lists first, whatever street follows it, and a longer name alone is a candidate.
 test("pickerMatchAddress takes a place by its name, and lists a longer name, when the caller gave no house number", async ({ page }) => {
   const longer = ["f1", "Example Park Ferry Terminal", "Example City, CA, US"];
-  const place = ["b1", "Example Park", "24 Sample Plaza, Example City, CA, US"];
+  const place = ["b1", "Example Park", "12 Sample Plaza, Example City, CA, US"];
   const address = JSON.stringify("Example Park, Example City, CA");
   const match = `const field = page.getByRole("combobox", { name: "Address" });
 await pickerTypeAddress(field, ${address}, fast);
@@ -452,7 +452,7 @@ const { row, ...match } = await pickerMatchAddress(field, ${address}, fast);
 await row?.click();
 return match;`;
   await serve(page, twoLines(JSON.stringify([longer, place])));
-  expect(await call(page, match)).toEqual({ result: { picked: true, label: "Example Park, 24 Sample Plaza, Example City, CA, US", unit: "" } });
+  expect(await call(page, match)).toEqual({ result: { picked: true, label: "Example Park, 12 Sample Plaza, Example City, CA, US", unit: "" } });
   expect(await submitted(page)).toEqual({ address: "b1" });
   await serve(page, twoLines(JSON.stringify([longer])));
   expect(await call(page, match)).toMatchObject({
@@ -463,10 +463,10 @@ return match;`;
   await serve(page, twoLines(JSON.stringify([
     ["m1", "See more results for " + airport],
     ["t2", "Terminal 2", "EXA"],
-    ["a1", "Example International Airport (EXA)", "780 Sample Rd, Example City, CA, US"],
+    ["a1", "Example International Airport (EXA)", "400 Sample Rd, Example City, CA, US"],
   ])));
   expect(await call(page, match.replaceAll(address, JSON.stringify(airport)))).toEqual({
-    result: { picked: true, label: "Example International Airport (EXA), 780 Sample Rd, Example City, CA, US", unit: "" },
+    result: { picked: true, label: "Example International Airport (EXA), 400 Sample Rd, Example City, CA, US", unit: "" },
   });
   expect(await submitted(page)).toEqual({ address: "a1" });
 });

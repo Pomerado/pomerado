@@ -7,7 +7,8 @@ import { rankChoices } from "./picker-rank.js";
  * address (`unit`, "" for none). Or a refusal that `pickRefusal` takes, listing every suggestion
  * the site gave as `available`: `option_missing` when no text brought a usable suggestion, or
  * `option_unclear`, with the usable ones as `matches`, when the best keeps the address only in part.
- * A read takes the site's first suggestion instead when it is in the caller's area.
+ * A read of an address with no house number takes the site's first usable one instead when it is in
+ * the caller's area.
  */
 export type AddressOutcome<T> =
   | {
@@ -293,12 +294,14 @@ export const resolveAddressWith = async <T>(
   const holds = (forms: readonly string[], within: string) => forms.some((form) => form.trim() !== "" && within.includes(form));
   const keeps = (list: readonly ReturnType<typeof toPlace>[], within: string) =>
     list.reduce((sum, part) => sum + (holds(part.forms, within) ? part.words.length : part.words.filter((each) => holds(each, within)).length), 0);
-  // Whether a suggestion is in the caller's area: it shows no other ZIP, and shows the caller's ZIP
-  // or holds each of the caller's town and state whole, in any of its usual forms.
+  // Whether a suggestion is in the caller's area: it shows no other ZIP, and shows the caller's ZIP,
+  // or holds each of the caller's town and state whole, in any of its usual forms, after its own
+  // street, and the caller's place name when they gave no town. With none of them, it is not.
   const inArea = (text: string) => {
     const shown = zipOf(text);
     if (zip !== "" && shown !== "" && shown !== zip) return false;
-    return (zip !== "" && shown === zip) || fields.every((field) => holds(field.forms, phrase(text.replace(zipGroups, " "))));
+    const named = fields.some((field) => !field.state) || holds([phrase(placeName.join(" "))], phrase(text));
+    return (zip !== "" && shown === zip) || (named && fields.length > 0 && fields.every((field) => holds(field.forms, sides(text).beyond)));
   };
   // A suggestion with another house number, one whose street keeps none of the caller's street name
   // words and whose name is not close to the caller's or shows another ZIP, or one that reads the
@@ -325,7 +328,7 @@ export const resolveAddressWith = async <T>(
   // number, one whose first part is the caller's place name keeps the caller's street whatever
   // street follows that name; it is the only one that can be clean, and those that are rank in the
   // site's order, any that leaves out a place field last.
-  // A clean one ranks above any other, and of those, one whose first part is the caller's place name.
+  // A clean one ranks above any other.
   const score = (text: string) => {
     const { after, street: own, beyond, beyondForms, rest } = sides(text);
     const theirs = houseOf(own);
@@ -396,10 +399,12 @@ export const resolveAddressWith = async <T>(
     const ours = bearing(lines[lineStreet] ?? "", beyondForms, callerAfter);
     const its = bearing(own, placeForms, beyond);
     const same = house.length === 0 || (ours.way === its.way && (ours.number === "" || its.number === "" || ours.number === its.number));
-    const plain = left === 0 || onward.every((each, index) => taken.has(index) || each.word.length < 2 || unitWords.includes(each.word));
-    // Its first part is the caller's place name, whatever street follows. With no house number, no
-    // other is clean, such as one holding that name among other words.
+    // Its first part is the caller's place name, whatever street follows, whose words are then its
+    // own. With no house number, no other is clean, such as one holding that name among other words.
     const titled = isPlaceName(text.split(",")[0] ?? "");
+    const plain =
+      left === 0 ||
+      onward.every((each, index) => taken.has(index) || each.word.length < 2 || unitWords.includes(each.word) || (titled && each.part === 0));
     const clean =
       same &&
       (titled || !byName) &&
@@ -409,8 +414,8 @@ export const resolveAddressWith = async <T>(
     return {
       value: byName
         ? [clean && !loose ? 1 : 0, clean ? 1 : 0]
-        : [clean ? 1 : 0, titled ? 1 : 0, zipped && share > 0.5 ? 1 : 0, kept + keeps(unitPlace, after), Math.round(share * 1000), other ? 0 : 1],
-      whole: same && (share > 0 || titled) && kept === total && !other,
+        : [clean ? 1 : 0, zipped && share > 0.5 ? 1 : 0, kept + keeps(unitPlace, after), Math.round(share * 1000), other ? 0 : 1],
+      whole: (titled || !byName) && same && (share > 0 || titled) && kept === total && !other,
       clean,
       loose,
       held,
@@ -439,28 +444,29 @@ export const resolveAddressWith = async <T>(
       .map((part) => words(part).join(" "))
       .filter(Boolean)
       .join(", ");
-  // The site's own control for the text typed, such as one listing more results for it, shows that
-  // whole text, of two parts or more, after words of its first part with no digit. It is no
-  // suggestion.
+  // The site's own control for the text typed, such as one listing more results for it, ends in that
+  // whole text, of two parts or more, after two words or more of its own first part, the first with
+  // no digit. It is no suggestion.
   const echoes = (name: string, text: string) => {
     const [typed, shown] = [sequence(text), sequence(name)];
-    const at = shown.indexOf(typed);
-    return typed.includes(",") && at > 0 && shown[at - 1] === " " && !/[\d,]/u.test(shown.slice(0, at));
+    const before = shown.slice(0, shown.length - typed.length);
+    const lead = before.split(" ").filter(Boolean);
+    return typed.includes(",") && shown.endsWith(typed) && before.endsWith(" ") && !before.includes(",") && lead.length > 1 && !/\d/u.test(lead[0] ?? "");
   };
   const seen: string[] = [];
   const usable: string[] = [];
   let best:
     | { readonly choice: T; readonly label: string; readonly query: string; readonly value: readonly number[]; readonly clean: boolean }
     | undefined;
-  // The site's first suggestion for the first text that brought any.
+  // The site's first usable suggestion for the first text that brought one.
   let first: { readonly choice: T; readonly label: string; readonly query: string } | undefined;
   for (const text of [...new Set([query, tidied])].filter((form) => form !== "")) {
     const items = [...(await suggest(text))];
     const labels = items.map((item) => squash(label(item))).map((name) => (echoes(name, text) ? "" : name));
     seen.push(...labels.filter((name) => name !== ""));
-    const shown = labels.findIndex((name) => name !== "");
-    if (first === undefined && shown >= 0) first = { choice: items[shown] as T, label: labels[shown] ?? "", query: text };
     const scores = labels.map((name) => (name === "" ? undefined : score(name)));
+    const shown = scores.findIndex((each) => each !== undefined);
+    if (first === undefined && shown >= 0) first = { choice: items[shown] as T, label: labels[shown] ?? "", query: text };
     usable.push(...labels.filter((_, index) => scores[index] !== undefined));
     const top = scores.reduce<readonly number[] | undefined>(
       (most, each) => (each === undefined || (most !== undefined && compare(each.value, most) <= 0) ? most : each.value),
@@ -487,8 +493,9 @@ export const resolveAddressWith = async <T>(
       };
     if (scores[pick]?.whole === true) break;
   }
-  // A read with no clean suggestion takes the site's first when it is in the caller's area.
-  const taken = best?.clean === true ? best : options.read === true && first !== undefined && inArea(first.label) ? first : undefined;
+  // A read of a place's name with no clean suggestion takes the site's first when it is in the
+  // caller's area.
+  const taken = best?.clean === true ? best : options.read === true && byName && first !== undefined && inArea(first.label) ? first : undefined;
   if (taken === undefined)
     return {
       picked: false,
@@ -563,13 +570,15 @@ export const resolveAddressWith = async <T>(
  * whatever street follows the name. It accepts no other suggestion for such an address, such as one
  * whose first part holds that name among other words, and of those it accepts takes the site's
  * first, one that leaves out a place field only when none keeps them all. With `{ read: true }`, as
- * in a read, it also accepts another ZIP when the caller gave a house number and a town or state,
- * and when it accepts none, takes the site's first suggestion for the first text that brought any
- * when that one is in the caller's area: it shows no other ZIP, and shows the caller's ZIP or holds
- * each of the caller's town and state whole. The tool reports it as the site's version. A suggestion that shows the whole text typed, of
- * two parts or more, after words of its own first part with no digit, as a site's control that lists
- * more results for that text does, is not a suggestion: it is not accepted, listed or taken in a
- * read. Otherwise it refuses, with
+ * in a read, it also accepts another ZIP when the caller gave a house number and a town or state;
+ * and for an address with no house number, when it accepts none, it takes the site's first usable
+ * suggestion for the first text that brought one when that one is in the caller's area: it shows
+ * no other ZIP, and shows the caller's ZIP, or holds each of the caller's town and state after its
+ * own street, and the caller's place name when they gave no town. The tool reports it as the site's
+ * version. A suggestion that ends in the whole text typed, of two parts or more, after two words or
+ * more of its own first part, the first with no digit, as a site's control that lists more results
+ * for that text does, is not a suggestion: it is not accepted, listed or taken in a read. Otherwise
+ * it refuses, with
  * `picked: false` and every suggestion the site gave as `available`, for `pickRefusal`: as
  * `option_missing` when neither text brought a usable one, else as `option_unclear`, with the
  * usable ones as `matches`. It keeps no list of words or addresses of its own but the compass
