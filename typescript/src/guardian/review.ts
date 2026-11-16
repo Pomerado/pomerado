@@ -491,9 +491,16 @@ export interface PendingExecution {
        * same kind, which the agent found on the site or an answer gave, in place of the caller's
        * own input, after the host recorded the tool refusing that input with InvalidInput.
        * agent_chosen_batch: a batch of a read's live tests on inputs the minting agent chose, whose
-       * submitted input lists each case's input under `cases`.
+       * submitted input lists each case's input under `cases`. recent_inputs_batch: such a batch on
+       * inputs this tool's recent runs in the caller's own account sent, which a host runs again
+       * before a repair publishes.
        */
-      readonly input?: "agent_chosen" | "intent_derived" | "substitute" | "agent_chosen_batch";
+      readonly input?:
+        | "agent_chosen"
+        | "intent_derived"
+        | "substitute"
+        | "agent_chosen_batch"
+        | "recent_inputs_batch";
       /**
        * An intent_derived act step's input keys whose values are the caller's own, as its current
        * input has them. Absent when none is.
@@ -561,8 +568,10 @@ export interface PendingExecution {
       /**
        * agent_chosen: a read's live test ran an input the minting agent chose.
        * agent_chosen_batch: a batch of such live tests on inputs it chose.
+       * recent_inputs_batch: such a batch on inputs this tool's recent runs in the caller's own
+       * account sent.
        */
-      readonly input?: "agent_chosen" | "agent_chosen_batch";
+      readonly input?: "agent_chosen" | "agent_chosen_batch" | "recent_inputs_batch";
       /**
        * The task revision the execution ran under, once an update applied: 0 for the original
        * request, else the `taskUpdates` revision then in force. What it did is judged against that
