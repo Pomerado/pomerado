@@ -260,6 +260,42 @@ describe("executeKernelOperation", () => {
     expect(await Effect.runPromise(journal.commits)).toEqual([{ name: "place-order", state: expected.state }]);
   });
 
+  // A hand-off after the runtime's put-back enters the step again without the script: the
+  // journal's one put-back a run then holds, so the step can't be clicked a second time.
+  it("lets a hand-off after the runtime's put-back keep the step sent", async () => {
+    const questions = { review: { type: "browser_handoff", prompt: "Check the order." } } as const;
+    const codes: string[] = [];
+    const write = defineOperation(
+      {
+        input: Schema.Struct({}),
+        output: Schema.String,
+        questions,
+        write: { confirmation: "readback", commits: ["place-order"] },
+      },
+      async ({ kernel, sessionId, enteringCommit, notCommitted, handOff }) => {
+        enteringCommit("place-order");
+        await kernel.browsers.playwright.execute(sessionId, { code: "return 2;" });
+        await handOff("review");
+        notCommitted("place-order");
+        enteringCommit("place-order");
+        await kernel.browsers.playwright.execute(sessionId, { code: "return 4;" });
+        return "placed";
+      },
+    );
+    const { said, journal } = await sayingJournal();
+    const scriptInput = makeScriptInput(questions, () => Effect.succeed({ review: { done: true } }));
+    const { exit } = await run(
+      executeKernelOperation(write, {}, { kernel: refusingKernel(codes), sessionId: "s" }).pipe(
+        Effect.provideService(ScriptInput, scriptInput),
+      ),
+      Effect.succeed(journal),
+    );
+    expect(failureOf(exit)).toMatchObject(Option.some({ _tag: "CommitAlreadySent", name: "place-order" }));
+    expect(said).toEqual([{ siteRefused: true, outcomeRefused: true }, undefined]);
+    expect(codes.filter((code) => code.includes("return 4;"))).toEqual([]);
+    expect(await Effect.runPromise(journal.commits)).toEqual([{ name: "place-order", state: "sent" }]);
+  });
+
   // Only the script's own call after enteringCommit is that step's, even one held behind a sign-in:
   // never the runtime's own, such as a challenge wait, nor one after a question, since a person may
   // have sent the step meanwhile.

@@ -640,9 +640,9 @@ const outcomeWaitSite = (() => {
 ${siteMessageCode}
   return { saysError, read: (page) => page.locator(messages).evaluateAll(messagesInPage), messageCounts, judgeMessages };
 })();
-// Whether this call already began a wait with an action: in a commit's call only the first reads
-// the site's refusal, since a later one's click came after the commit's.
-let outcomeWaitActed = false;
+// Whether this call already began a wait: in a commit's call only the first reads the site's
+// refusal, and only with an action, since a later one's click came after the commit's.
+let outcomeWaitBegun = false;
 const waitForOutcomeResult = async (outcomes, options = {}) => {
   const names = Object.keys(outcomes ?? {});
   if (names.length === 0) throw new TypeError("waitForOutcome needs at least one outcome");
@@ -657,11 +657,11 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
   const timeout = options.timeout ?? waitLimits.answerCap;
   const noProgressMs = options.noProgressMs ?? waitLimits.answer;
   // The runtime declares __pomeradoCommitting on a commit's own call, the first after the script's
-  // enteringCommit: there, the first wait with an action reads the site's refusal before ending
-  // outcome_unknown.
-  const committing = options.action !== undefined && !outcomeWaitActed &&
+  // enteringCommit: there, the call's first wait, with an action, reads the site's refusal before
+  // ending outcome_unknown.
+  const committing = options.action !== undefined && !outcomeWaitBegun &&
     typeof __pomeradoCommitting !== "undefined" && __pomeradoCommitting === true;
-  if (options.action !== undefined) outcomeWaitActed = true;
+  outcomeWaitBegun = true;
   const progress = waitProgress({ ...options, noProgressMs, whileSending: true });
   const events = outcomeWaitEvents(candidates);
   const state = {
@@ -704,10 +704,10 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
           state.invalidBefore.set(candidate.name, outcomeWaitInvalidKey(await candidate.locator.evaluateAll(outcomeWaitInvalidInPage)));
       }
       // How many of the site's messages show each text before a commit's click, as confirmCommit
-      // notes them where it is pasted.
+      // notes them where it is pasted. A page it can't read then has its messages read as none new.
       if (committing) {
-        state.messagesBefore = outcomeWaitSite.messageCounts(
-          (await waitBounded(outcomeWaitSite.read(page).catch(() => undefined), 1000)) ?? []);
+        const before = await waitBounded(outcomeWaitSite.read(page).catch(() => undefined), 1000);
+        if (before !== undefined) state.messagesBefore = outcomeWaitSite.messageCounts(before);
         // A server error to a request that may write, from any host, may have come after the
         // commit saved: as confirmCommit reads one, the commit is then unclear, never refused.
         const serverError = (response) => {
@@ -1413,7 +1413,7 @@ const waitForChange = async (fields, options = {}) => {
  * - `outcome_unknown`, when no outcome shows and the page made no progress for `noProgressMs`: a
  *   challenge, the site's error or a layout the code does not handle, never slowness.
  * - `outcome_refused`, in place of `outcome_unknown`, when the wait's `action` is a commit's click
- *   (the first wait with an `action` in the call the script sends right after its
+ *   (the call's first wait, with an `action`, in the call the script sends right after its
  *   `enteringCommit`, which the runtime declares as `__pomeradoCommitting`) and the page shows a
  *   message new since the click that `confirmCommit` judges not done from, or, with a dialog
  *   outcome named, a native dialog no outcome names says the write failed, as `confirmCommit` reads

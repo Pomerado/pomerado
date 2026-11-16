@@ -909,7 +909,7 @@ export const runKernelScript = <Input, EncodedInput, Output, EncodedOutput>(
     // (`withCommitCall`), or it asks a question, since a person may send the step meanwhile.
     let entering: string | undefined;
     // Steps the runtime put back after their call's `outcome_refused`, until entered again: the
-    // script's own put-back of one finds it done.
+    // script's own put-back of one still unsent finds it done.
     const putBack = new Set<string>();
     const effect = browser.effect ?? (operation.write === undefined ? "read" : "write");
     // The host's sign-in under way. Every browser call the script starts meanwhile, from a timer
@@ -1042,8 +1042,15 @@ export const runKernelScript = <Input, EncodedInput, Output, EncodedOutput>(
             putBack.delete(name);
             entering = name;
           },
+          // A hand-off since enters the step again without the script, and the journal's rule
+          // then holds.
           notCommitted: (name, said) => {
-            if (!putBack.has(name)) context.notCommitted(name, said);
+            const journal = browser.journal;
+            const done =
+              putBack.has(name) &&
+              journal !== undefined &&
+              Effect.runSync(journal.commits).some((mark) => mark.name === name && mark.state === "not_sent");
+            if (!done) context.notCommitted(name, said);
           },
           decideDialog: (report) => afterSignIn(() => context.decideDialog(report)),
           // Typing a card is a browser call too.

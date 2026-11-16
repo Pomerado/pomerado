@@ -466,14 +466,26 @@ test("after a commit's click, only a new message confirmCommit judges not done e
 test("after a commit's click, a native dialog no outcome names that says the order failed is the site's refusal", async ({
   page,
 }) => {
-  for (const [said, commit, reason] of [
-    ["Placing your order failed", true, "outcome_refused"],
-    ["Your order is being prepared", true, "outcome_unknown"],
-    ["Placing your order failed", false, "outcome_unknown"],
+  // With a status, the order first goes to another host, which answers so.
+  for (const [said, commit, reason, status] of [
+    ["Placing your order failed", true, "outcome_refused", undefined],
+    ["Your order is being prepared", true, "outcome_unknown", undefined],
+    ["Placing your order failed", false, "outcome_unknown", undefined],
+    ["Placing your order failed", true, "outcome_unknown", 503],
+    ["Placing your order failed", true, "outcome_refused", 402],
   ] as const) {
-    await page.setContent(`
-      <button type="button" id="place">Place order</button>
-      <script>document.querySelector("#place").onclick = () => setTimeout(() => alert(${JSON.stringify(said)}), 50);</script>`);
+    await page.unrouteAll();
+    await page.route("https://orders.example-api.test/**", (route) =>
+      route.fulfill({ status: status ?? 200, headers: { "access-control-allow-origin": "*" }, body: "{}" }),
+    );
+    await site(
+      page,
+      `<button type="button" id="place">Place order</button>
+      <script>document.querySelector("#place").onclick = async () => {
+        ${status === undefined ? "" : 'await fetch("https://orders.example-api.test/orders", { method: "POST" });'}
+        setTimeout(() => alert(${JSON.stringify(said)}), 50);
+      };</script>`,
+    );
     const answer = await call(
       page,
       `try {
@@ -486,41 +498,48 @@ test("after a commit's click, a native dialog no outcome names that says the ord
       }`,
       commit ? `${commitCall}${waitCode}` : waitCode,
     );
-    expect(answer.result, `${said}, ${commit ? "a commit" : "no commit"}`).toEqual({
+    expect(answer.result, `${said}, ${commit ? "a commit" : "no commit"}, ${status ?? "no order call"}`).toEqual({
       reason,
       ...(reason === "outcome_refused" ? { evidence: { type: "alert", message: said } } : {}),
     });
   }
 });
 
-// The commit's answer came with the first wait. A later wait's click, such as one that opens the
-// receipt, shows errors of its own, never the commit's.
-test("in a commit's call, a wait after the first with an action never reads the site's refusal", async ({ page }) => {
-  await page.setContent(`
-    <button type="button" id="place">Place order</button>
-    <button type="button" id="receipt">View receipt</button>
-    <section id="answer"></section>
-    <script>
-      document.querySelector("#place").onclick = () =>
-        setTimeout(() => { document.querySelector("#answer").innerHTML = '<p class="placed">Order placed</p>'; }, 100);
-      document.querySelector("#receipt").onclick = () =>
-        setTimeout(() => { document.querySelector("#answer").insertAdjacentHTML("beforeend", '<p class="error">Loading the receipt failed</p>'); }, 100);
-    </script>`);
-  const answer = await call(
-    page,
-    `const placed = await waitForOutcome({ placed: page.locator(".placed") }, {
+// The commit's answer came with the call's first wait, whether its click was the wait's action or
+// came before it. A later wait's click, such as one that opens the receipt, shows errors of its own,
+// never the commit's.
+test("in a commit's call, a wait after the first never reads the site's refusal", async ({ page }) => {
+  for (const placing of [
+    `await waitForOutcome({ placed: page.locator(".placed") }, {
       action: () => page.locator("#place").click(), noProgressMs: 300, timeout: 2000,
-    });
-    try {
-      return [placed, await waitForOutcome({ receipt: page.locator(".receipt") }, {
-        action: () => page.locator("#receipt").click(), noProgressMs: 300, timeout: 2000,
-      })];
-    } catch (error) {
-      return [placed, error.reason];
-    }`,
-    `${commitCall}${waitCode}`,
-  );
-  expect(answer.result).toEqual(["placed", "outcome_unknown"]);
+    })`,
+    `await page.locator("#place").click(),
+    await waitForOutcome({ placed: page.locator(".placed") }, { noProgressMs: 300, timeout: 2000 })`,
+  ]) {
+    await page.setContent(`
+      <button type="button" id="place">Place order</button>
+      <button type="button" id="receipt">View receipt</button>
+      <section id="answer"></section>
+      <script>
+        document.querySelector("#place").onclick = () =>
+          setTimeout(() => { document.querySelector("#answer").innerHTML = '<p class="placed">Order placed</p>'; }, 100);
+        document.querySelector("#receipt").onclick = () =>
+          setTimeout(() => { document.querySelector("#answer").insertAdjacentHTML("beforeend", '<p class="error">Loading the receipt failed</p>'); }, 100);
+      </script>`);
+    const answer = await call(
+      page,
+      `const placed = (${placing});
+      try {
+        return [placed, await waitForOutcome({ receipt: page.locator(".receipt") }, {
+          action: () => page.locator("#receipt").click(), noProgressMs: 300, timeout: 2000,
+        })];
+      } catch (error) {
+        return [placed, error.reason];
+      }`,
+      `${commitCall}${waitCode}`,
+    );
+    expect(answer.result, placing).toEqual(["placed", "outcome_unknown"]);
+  }
 });
 
 // A server error may come after the order saved, as confirmCommit reads one: the site's error then
