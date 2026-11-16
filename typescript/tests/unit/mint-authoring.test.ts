@@ -381,7 +381,7 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   // it off the page.
   [
     "core",
-    "never just the example's value. The example's values are one case, never limits. - Prefer keying only on what the caller asked for. A detail that changes from one listing to the next, such as a seating label or a room name, shouldn't decide whether the tool books or refuses unless the caller chose it. A tool's check guards what the caller asked for or what the tool itself changes: it proves the caller's request before the step it guards and the tool's own change after it, stops on anything else only for a problem the page shows, not for something it can't find, and passes on every page where the task went right. A repair narrows a check that stopped a run where the task went right, or removes it when it guards anything else. - Read results for every option the schema lists. When an option leads to a page with a different structure (other fields or sections), handle that layout too, and on a read signed out run it live as a test case (testing skill); an option that only reorders or filters the same rows needs no case of its own. Never return results for another option in its place. - A repair that finds a declared input broken, never applied or always reported unsupported fixes it in the same repair, whether or not a caller is waiting. Keeping a tool's contract means every input and output it declares works, not leaving a broken one as it was. An input whose description starts \"By design:\" is applied in the use it records, a caller's decision: keep that use and its description word for word, and change them only after asking the same design question again (the input schema, \"Inputs that tailor the answer\"). - Prefer fixing the whole class of a failure over its one instance: when the page requires a control the input has no value for, prefer making every such control a declared caller question with the page's live options over throwing for it. - Never derive a format from one sample: not an input format, an element key, a selector, a URL path or a label. A key the page showed for the example's value says nothing about the next value, as when a calendar keyed December 3 as `12-3-2026` where the tool expected `12-03-2026`. Read the format off the page for the value you need, such as the day cell whose visible label or accessible name is the caller's date, or a key the page itself lists, never a key rebuilt from the one you saw. - Inputs are values a caller knows",
+    "never just the example's value. The example's values are one case, never limits. - Prefer keying only on what the caller asked for. A detail that changes from one listing to the next, such as a seating label or a room name, shouldn't decide whether the tool books or refuses unless the caller chose it. A tool's check guards what the caller asked for or what the tool itself changes: it proves the caller's request before the step it guards and the tool's own change after it, stops on anything else only for a problem the page shows, not for something it can't find, and passes on every page where the task went right. A repair narrows a check that stopped a run where the task went right, or removes it when it guards neither. - Read results for every option the schema lists. When an option leads to a page with a different structure (other fields or sections), handle that layout too, and on a read signed out run it live as a test case (testing skill); an option that only reorders or filters the same rows needs no case of its own. Never return results for another option in its place. - A repair that finds a declared input broken, never applied or always reported unsupported fixes it in the same repair, whether or not a caller is waiting. Keeping a tool's contract means every input and output it declares works, not leaving a broken one as it was. An input whose description starts \"By design:\" is applied in the use it records, a caller's decision: keep that use and its description word for word, and change them only after asking the same design question again (the input schema, \"Inputs that tailor the answer\"). - Prefer fixing the whole class of a failure over its one instance: when the page requires a control the input has no value for, prefer making every such control a declared caller question with the page's live options over throwing for it. - Never derive a format from one sample: not an input format, an element key, a selector, a URL path or a label. A key the page showed for the example's value says nothing about the next value, as when a calendar keyed December 3 as `12-3-2026` where the tool expected `12-03-2026`. Read the format off the page for the value you need, such as the day cell whose visible label or accessible name is the caller's date, or a key the page itself lists, never a key rebuilt from the one you saw. - Inputs are values a caller knows",
   ],
   // The minter reads the never-loosened needed values, the facts a caller could use, typed output
   // and kept rows before it writes the schema and the parser, so a fact the code could not read
@@ -1300,19 +1300,16 @@ it("has every tool's checks guard only what the caller asked for or the tool cha
   const texts = await renderedTexts("typescript/authoring");
   const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
   expect(text("core")).toContain(
-    "A tool's check guards what the caller asked for or what the tool itself changes: it proves the caller's request before the step it guards and the tool's own change after it, stops on anything else only for a problem the page shows, not for something it can't find, and passes on every page where the task went right. A repair narrows a check that stopped a run where the task went right, or removes it when it guards anything else.",
+    "A tool's check guards what the caller asked for or what the tool itself changes: it proves the caller's request before the step it guards and the tool's own change after it, stops on anything else only for a problem the page shows, not for something it can't find, and passes on every page where the task went right. A repair narrows a check that stopped a run where the task went right, or removes it when it guards neither.",
   );
   expect(text("writes")).toContain(
-    "A paid add-on toggle, a pre-selected paid option or a lone saved payment method or address is still a choice to ask about.",
-  );
-  expect(text("forms")).toContain(
-    "never keep or clear a paid add-on, pre-selected paid option or saved payment unasked",
+    "An add-on toggle, a pre-selected paid option or a lone saved payment method or address is still a choice to ask about.",
   );
   expect(text("writes")).toContain(
     "check the total against any limit the input sets, stop when the page shows a paid option selected that neither the input nor an answer settles, and check the items, address and payment.",
   );
   expect(text("publication")).toContain(
-    "- a tool's checks reject no run where the task went right, and one guarding what neither the caller asked for nor the tool itself changes stops only for a problem the page shows;",
+    "- a tool's checks reject no run whose page shows the task went right, and one guarding what neither the caller asked for nor the tool itself changes stops only for a problem the page shows;",
   );
   expect(text("publication")).toContain(
     "- a composed write reproduces the session's flow and returns the confirmation or read-back it declares, without committing twice; among its checks, a before-and-after comparison",
@@ -1479,16 +1476,16 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["324e1c8df98073765839a4b679c0d65e50606e42277fe949cb6a6ba6f2b9b0bd", "core"],
+    ["7817aaebb108d7184b9c595e009e8a024a8ad780b19400d8143ae2a46d0353ab", "core"],
     ["e854aa6b9fe22ea741598abcf0643c529211b643d6b9b400281948a117156224", "search"],
     ["d6f0ed8446759ce44874a2cb7c7ee7251f92249673379b69439aaac2b5b7afb5", "auth"],
     ["a08f1ef89cc10bf11e17b8d6086b6e37649b1d5d11b78c0542cc7db32460b7e3", "testing"],
     ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
-    ["929659d0cfaaa86b6b0bc2b1f8f80bc0fd8379f311d7d6e0d2e922ade65609a3", "forms"],
-    ["0c5ca814314a12e012e1f6cce90bee42dad984d90da39ae34c182abcc85e635a", "writes"],
+    ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
+    ["75917651d3d386db5dbc9e2ee74190b1892453f7c0e1f2a6de3900e7d062e744", "writes"],
     ["e6b00d1a392c8aed60f42037df804b3b83474b3384eaefd271f8132d6b0edcf4", "cart"],
     ["82709b7a834848416464604938c1932b65d1048bdd6f53dbe751a545187be8b0", "caller-input"],
-    ["a9312425c46b7ca163ff0817b54e79ec65a8ec034111bf6941763f08f5fd0d5c", "publication"],
+    ["5e831bd1ba21d5ec4b1da3a96152f9d905144cbef58b9bd26381933f27faa97c", "publication"],
     ["ba31a90dc5bf4b1f7e8be5e5145e99f6b4e2379e279be210c8537d9b93882d98", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);

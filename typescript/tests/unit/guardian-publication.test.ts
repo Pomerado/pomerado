@@ -1262,7 +1262,7 @@ describe("the publication policy", () => {
       publicationOutputPolicy.indexOf("Strict name check:"),
     );
     expect(wrongFailure).toContain(
-      "So is a check that can stop a run where the task went right, or one that stops for anything other than a problem the page shows while guarding what neither the caller asked for nor the tool itself changes.",
+      "So is a check that can stop a run whose page shows the task went right, or one that stops for anything other than a problem the page shows while guarding what neither the caller asked for nor the tool itself changes.",
     );
   });
 

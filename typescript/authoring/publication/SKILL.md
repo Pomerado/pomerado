@@ -219,8 +219,9 @@ pomerado:section publication.saved-files:end -->.
      outside the tool's purpose is declined;
    - a pop-up that shows only for some accounts, states or visits is handled when present and
      never required;
-   - a tool's checks reject no run where the task went right, and one guarding what neither the
-     caller asked for nor the tool itself changes stops only for a problem the page shows;
+   - a tool's checks reject no run whose page shows the task went right, and one guarding what
+     neither the caller asked for nor the tool itself changes stops only for a problem the page
+     shows;
    - declared questions ask only what the page or the caller uniquely knows, never a login;
    <!-- pomerado:section publication.declared-refusal:start
 - a write runs every check that can refuse, such as a limit on its total, before the mark of
@@ -233,7 +234,7 @@ pomerado:section publication.declared-refusal:end -->
      than before it, or counts a field the site maintains as a change, a branch the session did
      not run that confirms through its own code (its own commit call is fine), a throw after a
      confirmed final commit once the read-back found the written record, and a stop before it on
-     free text a save rewrote, are findings too, as is a coverage claim that a check passed
+     free text a save rewrote, are findings, as is a coverage claim that a check passed
      offline over a body that was not saved whole.
 
 ## Never put these in published files

@@ -114,8 +114,8 @@ already shows in an optional field that adds no cost over asking the caller to c
 correct it, and list it in `finish_build` `assumptions`. Ask only about options the site
 actually shows. A control with exactly one possible value (a select or radio group with a
 single option), or one the input or an earlier answer already settles, is no choice: never ask
-about it. A paid add-on toggle, a pre-selected paid option or a lone saved payment method or
-address is still a choice to ask about. Never keep, clear, accept or decline one of those unasked. A paid upsell
+about it. An add-on toggle, a pre-selected paid option or a lone saved payment method or address
+is still a choice to ask about. Never keep, clear, accept or decline one of those unasked. A paid upsell
 outside the tool's purpose, such as a membership, subscription or trial offered during a
 checkout, is not a question: the script declines it, and never accepts one without an input
 the caller set for it. A safety default (core skill, "Safety defaults") is

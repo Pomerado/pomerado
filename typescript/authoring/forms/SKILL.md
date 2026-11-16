@@ -277,7 +277,7 @@ draft to the account and requires caller-expected item, quantity, amount/currenc
 and destination. Read current terms immediately before commitment; fail with a
 specific correction when changed. Use server quote/version checks where available;
 otherwise report the read-to-submit race. Ask about choices as `AGENTS.md` ("Try hard,
-then ask") says, and never keep or clear a paid add-on, pre-selected paid option or saved
+then ask") says, and never keep or clear an add-on, pre-selected paid option or saved
 payment unasked; every optional field the flow offers is still an optional input (core
 skill, the input schema). Prefer confirming from the commit request the final click sends,
 checked as the writes skill says, and otherwise from the confirmation the page shows after
