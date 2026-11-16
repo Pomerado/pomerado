@@ -42,7 +42,10 @@ read" in the core skill says before adding the product: a value the product does
 throws `InvalidInput` with `field` and `available`. Opening an item's details or options from
 its own card, name or picture, not a control labelled add or plus, is a read. Prefer finding
 the item's row or card by the site's own item ID where the page carries one, over its picture or
-position, since a site's pages can differ in layout.
+position, since a site's pages can differ in layout. When the page shows only item names, open
+each card with the requested name in turn and keep the one whose own details prove the requested
+ID; when none does, refuse with `InvalidInput` before the add's commit mark, naming what those
+cards showed.
 
 ## Quantity
 
