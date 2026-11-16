@@ -442,6 +442,27 @@ return match;`;
   }
 });
 
+// A place's name with no house number: the suggestion with that name is taken over a longer name the
+// site lists first, whatever street follows it, and a longer name alone is a candidate.
+test("pickerMatchAddress takes a place by its name, and lists a longer name, when the caller gave no house number", async ({ page }) => {
+  const longer = ["f1", "Example Park Ferry Terminal", "Example City, CA, US"];
+  const place = ["b1", "Example Park", "24 Sample Plaza, Example City, CA, US"];
+  const address = JSON.stringify("Example Park, Example City, CA");
+  const match = `const field = page.getByRole("combobox", { name: "Address" });
+await pickerTypeAddress(field, ${address}, fast);
+await page.getByRole("option").first().waitFor();
+const { row, ...match } = await pickerMatchAddress(field, ${address}, fast);
+await row?.click();
+return match;`;
+  await serve(page, twoLines(JSON.stringify([longer, place])));
+  expect(await call(page, match)).toEqual({ result: { picked: true, label: "Example Park, 24 Sample Plaza, Example City, CA, US", unit: "" } });
+  expect(await submitted(page)).toEqual({ address: "b1" });
+  await serve(page, twoLines(JSON.stringify([longer])));
+  expect(await call(page, match)).toMatchObject({
+    result: { picked: false, reason: "option_unclear", matches: ["Example Park Ferry Terminal, Example City, CA, US"] },
+  });
+});
+
 test("pickValue picks a native select's option by label, value or another spelling", async ({ page }) => {
   await serve(page, `<form><label>State <select name="state">
 <option value="">Choose a state</option><option value="CA">California</option><option value="NV">Nevada</option>
