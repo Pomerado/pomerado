@@ -1432,7 +1432,7 @@ it("renders the pinned standalone authoring", async () => {
     ["61b3867a63f7bb097bebf9a848f18d784a2661347a0babe377959e036b8b75cf", "cart"],
     ["a956eaf7879b5f89ca80d96e6549c17203dab21423e92e31cec0027f12a13a05", "caller-input"],
     ["72fbe16dc78d22b32829b514b58b59feb9ab8fc553ecc66142e2a04149c740eb", "publication"],
-    ["0056d961a299830f9a4e5c92701d4df3311726029b8319f53e3b7772caa83df1", "workspace/AGENTS.md"],
+    ["ba31a90dc5bf4b1f7e8be5e5145e99f6b4e2379e279be210c8537d9b93882d98", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);
 });
@@ -1553,7 +1553,7 @@ it("renders the search URL fast path only when a host turns it on", async () => 
     [sha256(on.agents), "workspace/AGENTS.md"],
   ]).toStrictEqual([
     ["052712afaba095b3ef925f265b1b1a49e4cc3838eee0f7318dad4f82663a8da8", "search"],
-    ["314422f04e9ab97e2c638a1947e4fe67b597162ae41a7ef2620caf76391348e3", "workspace/AGENTS.md"],
+    ["e7b57d9c1988e57c4e08485bcd795f2c0c0ab05a30a81504ce1f13dd5f47b193", "workspace/AGENTS.md"],
   ]);
   expect(on.digests.filter(([, name]) => name !== "search")).toStrictEqual(
     off.digests.filter(([, name]) => name !== "search"),
