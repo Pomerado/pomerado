@@ -638,7 +638,7 @@ const outcomeWaitCallRoomMs = 5000;
 // The site's messages as confirmCommit reads and judges them, for a commit's wait.
 const outcomeWaitSite = (() => {
 ${siteMessageCode}
-  return { saysError, read: (page) => page.locator(messages).evaluateAll(messagesInPage), messageCounts, judgeMessages };
+  return { saysError, messages, read: (page) => page.locator(messages).evaluateAll(messagesInPage), messageCounts, judgeMessages };
 })();
 // Whether this call already began a wait: in a commit's call only the first reads the site's
 // refusal, and only with an action, since a later one's click came after the commit's.
@@ -777,6 +777,22 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
       }));
     // Whether a request that may write leaves the commit unclear: one unanswered, or a server error.
     const writeOpen = () => state.serverError || state.unanswered.size > 0;
+    // Whether an outcome is the site's message, as a refusal is: a native dialog, an announcement,
+    // fields marked invalid, or an element that is, holds or sits in one of the site's messages as
+    // confirmCommit reads them. One the page can't tell counts.
+    const siteMessage = async (candidate) =>
+      ["dialog", "announced", "invalid"].includes(candidate.kind) ||
+      (candidate.kind === "locator" &&
+        (await waitBounded(
+          candidate.locator.filter({ visible: true }).evaluateAll(
+            (elements, selector) => elements.some((element) => element.closest(selector) !== null || element.querySelector(selector) !== null),
+            outcomeWaitSite.messages,
+          ).catch(() => true),
+          Math.min(1000, beforeStop()),
+          true,
+        )));
+    // When a site's message first showed while a request that may write left the commit unclear.
+    let heldSince;
     // After a commit's click, the site's messages new since it that confirmCommit would judge the
     // commit not done from, read once: undefined when none shows, the page can't be read, or a
     // request that may write leaves the commit unclear.
@@ -878,6 +894,26 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
             outcome: shown.name,
           });
           finish({ reason: "outcome_ambiguous", outcome: shown.name }, failure.message);
+          throw failure;
+        }
+        // After a commit's click, the site's message may be its refusal: while a request that may
+        // write has no answer, it waits for one, up to noProgressMs, and decides as before once
+        // answered. With none in time, or after a server error to one, the commit is unclear.
+        if (committing && writeOpen() && (await siteMessage(shown))) {
+          heldSince ??= now;
+          if (!state.serverError && now - heldSince < noProgressMs && now < until) {
+            await waitSleep(100);
+            continue;
+          }
+          const failure = outcomeWaitFailure(
+            "outcome_unknown",
+            " after " + (Date.now() - begun) + ' ms: "' + shown.name + '"' + (shown.kind === "locator" ? "" : " (" + shown.kind + ")") +
+              " showed " + (state.serverError ? "after a request that may write got a server error" : "while a request that may write had no answer") +
+              "; " + progress.describe(),
+            observations ?? last ?? {},
+            { outcome: shown.name, progress: progress.diagnostics() },
+          );
+          finish({ reason: "outcome_unknown", outcome: shown.name }, failure.message);
           throw failure;
         }
         const evidence = await waitBounded(
@@ -1435,7 +1471,11 @@ const waitForChange = async (fields, options = {}) => {
  *   `messages`, or the dialog's `type` and `message`. The runtime then puts the step back unsent,
  *   as `notCommitted(name, { siteRefused: true })` does. The wait takes its `action` for the commit's
  *   click, so pass the commit's click as the `action`: after a commit clicked outside a wait, the
- *   next wait's `action` would read as the commit's.
+ *   next wait's `action` would read as the commit's. There, an outcome that is the site's message (a
+ *   dialog, an announcement, fields marked invalid, or an element that is, holds or sits in an alert
+ *   or an error-styled message) waits up to `noProgressMs` while such a request has no answer, then
+ *   decides as before once it has one. It fails as `outcome_unknown`, with `outcome` naming it, when
+ *   none comes in time, or at once after a server error to one.
  * - `outcome_timeout`, when the page was still progressing at `timeout`.
  *
  * An outcome may also be an object naming one declared kind, raced beside the locators in the same

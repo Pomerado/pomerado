@@ -630,6 +630,74 @@ test("in a commit's call, a request that may write still unanswered keeps the si
   }
 });
 
+// A paying step names the site's alert or dialog as an outcome beside the order's response. Its
+// error, shown on a timer of the page's own while a request that may write has no answer, waits
+// for that answer: once it comes, the outcomes decide as before. With none in time, or after a
+// server error, the commit is unclear. A success, or any wait outside a commit's call, decides at once.
+test("in a commit's call, the site's alert, dialog or field errors named as an outcome wait for an unanswered request that may write", async ({
+  page,
+}) => {
+  for (const [path, answer, shows, commit, expected] of [
+    ["/orders", "none", "alert", true, "outcome_unknown"],
+    ["/orders", "none", "dialog", true, "outcome_unknown"],
+    ["/orders", "none", "field errors", true, "outcome_unknown"],
+    ["/orders", 503, "alert", true, "outcome_unknown"],
+    ["/orders", 402, "alert", true, "declined"],
+    ["", "none", "alert", true, "declined"],
+    ["/orders", "200 after 300 ms", "alert", true, "order"],
+    ["/collect", "204 after 300 ms", "alert", true, "declined"],
+    ["/orders", "none", "a success", true, "placed"],
+    ["/orders", "none", "alert", false, "declined"],
+  ] as const) {
+    await page.unrouteAll();
+    await page.route("https://orders.example-api.test/**", async (route) => {
+      if (answer === "none") return;
+      const [status, after] = typeof answer === "number" ? [answer, 0] : [Number(answer.slice(0, 3)), 300];
+      await new Promise((resolve) => setTimeout(resolve, after));
+      // A page the next case opens may have cancelled the request by now.
+      await route.fulfill({ status, headers: { "access-control-allow-origin": "*" }, body: status === 204 ? "" : "{}" }).catch(() => undefined);
+    });
+    const show = {
+      alert: `document.querySelector("#answer").innerHTML = '<div role="alert">Payment failed. Please try again.</div>';`,
+      dialog: 'alert("Placing your order failed");',
+      "field errors": 'document.querySelector("#card").setAttribute("aria-invalid", "true");',
+      "a success": `document.querySelector("#answer").innerHTML = '<p class="placed">Order placed</p>';`,
+    }[shows];
+    await site(
+      page,
+      `<form id="checkout" novalidate><input id="card" aria-label="Card number" value="4242"></form>
+      <button type="button" id="place">Place order</button>
+      <section id="answer"></section>
+      <script>
+        document.querySelector("#place").onclick = async () => {
+          const sent = ${path === "" ? "undefined" : `fetch("https://orders.example-api.test${path}", { method: "POST" }).catch(() => undefined)`};
+          await Promise.race([sent, new Promise((resolve) => setTimeout(resolve, 100))]);
+          ${show}
+        };
+      </script>`,
+    );
+    const result = await call(
+      page,
+      `try {
+        const result = await waitForOutcomeResult({
+          order: { response: (response) => response.url().endsWith("/orders") && response.status() < 400 },
+          declined: page.getByRole("alert"),
+          notice: { dialog: true },
+          invalid: { invalid: page.locator("#checkout") },
+          placed: page.locator(".placed"),
+        }, { action: () => page.locator("#place").click(), noProgressMs: 1000, timeout: 3000 });
+        await result.dialog?.dismiss();
+        return result.outcome;
+      } catch (error) {
+        await error.dialog?.dismiss();
+        return error.reason;
+      }`,
+      commit ? `${commitCall}${waitCode}` : waitCode,
+    );
+    expect.soft(result.result, `${path || "no request"} ${answer}, ${shows}, ${commit ? "a commit" : "no commit"}`).toBe(expected);
+  }
+});
+
 test("a write whose commit the site declined behind its own dialog reports the step unsent, with the site's words", async ({
   page,
 }) => {
