@@ -205,7 +205,11 @@ site origin that keeps its browser's site data, in parallel browsers where the h
 (a signed-in read's on its own browser).
 Each result says whether the case ran `cold`, first on a new browser with an empty profile, or
 `warm`, on a browser that kept what earlier steps left. A case that passes warm and fails cold
-relies on something the site remembered: set that value from the input. When most of a batch's
+relies on something the site remembered: set that value from the input. A case that is blocked
+or challenged warm while the same input passes cold is the reverse: the site scores the cookies
+the browser built up, often by how much it sent in the last minutes, and the build's own requests
+spent them. Change no code for it; the tool must work from a browser with none of the site's
+cookies, so say in coverage that runs should start without them. When most of a batch's
 cases fail at the same step before the part they test, such as setting a location, address or
 store, or a pop-up or banner covering a control, fix that step first and run only
 `example-again`, which a host with several browsers still runs cold, until it

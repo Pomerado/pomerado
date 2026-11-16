@@ -130,6 +130,15 @@ pomerado:section core.execute-calls:end -->
   challenge, or `waitPastChallenge` throws there, prefer letting the call fail over retrying or
   looping inside the tool, or over returning the rows read so far: a host may give a blocked
   read another browser or one rerun, and only a failed call reaches it.
+- An answer that lacks the data you read is not always a changed page. A bot check often answers
+  200 with its own page in place of the site's: a few KB where the site's page is far larger,
+  answered faster, with little visible text, a title or heading such as "Access Denied",
+  "Challenge Validation", "Security Check" or "Just a moment", and none of the site's layout.
+  Before you treat the data as missing, compare the answer's status, size and title with the
+  example's. On a page, name the check as one answer of the same wait and call
+  `waitPastChallenge`; for a request the tool sent, treat it as the block above and let the call
+  fail with a message that names the answer's status, size and title, never as missing data. A
+  site that changed lacks the data on a new browser too; test that before you change a parser.
 - Never repeat a call that may have run.
 - When the site itself refuses a caller's value, such as a past date, an unknown airport code
   or a party size over its limit, throw `new errors.InvalidInput(message, { field })` saying why,
