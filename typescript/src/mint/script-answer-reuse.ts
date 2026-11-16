@@ -138,8 +138,10 @@ export const reusedScriptAnswers = (
 };
 
 /**
- * The kept answers once a step entered a commit step: the order a purchase confirm's yes answered
- * may have been placed, so no kept answer with an order answers again.
+ * The kept answers once the order a purchase confirm's yes answered may have been placed: after a
+ * step that may have sent its write, unless its own report shows every commit step it declares
+ * unsent, and after a step's first purchase confirm, for the rest of that step. No kept answer
+ * with an order answers again.
  */
 export const forgetOrderAnswers = (kept: readonly KeptScriptAnswer[]) =>
   kept.filter((entry) => entry.order === undefined);

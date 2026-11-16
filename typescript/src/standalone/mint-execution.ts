@@ -203,17 +203,22 @@ const scriptQuestions = (
   const { projection } = state.session;
   let scriptQuestion: ScriptQuestionOutcome | undefined;
   let unanswered = false;
+  let orderAsked = false;
   const scriptAsk: InputAsker = (candidate, bounds) =>
     Effect.gen(function* () {
       // The same question asked again reuses the owner's answer before Guardian reviews it, which
       // would refuse it as a repeat of an answer it already trusts, however long ago the owner
       // gave it and whether or not a step entered a commit since; a purchase confirm reuses only
-      // a yes to the same order, until an act step entered a commit step. The reused answer
-      // reaches later reviews as a fresh one does. It is always the owner's latest answer to its
-      // prompt (`forgetScriptAnswers`), so it never replaces a newer one in Guardian's list.
+      // a yes to the same order, for the step's first purchase confirm alone, since the step may
+      // have placed the order after it, and only while every act step since proved it placed
+      // nothing. The reused answer reaches later reviews as a fresh one does. It is always the
+      // owner's latest answer to its prompt (`forgetScriptAnswers`), so it never replaces a newer
+      // one in Guardian's list.
       const keys = yield* scriptQuestionKeys(candidate, (text) => projection.text(text));
+      const kept = orderAsked ? forgetOrderAnswers(scriptAnswers.kept) : scriptAnswers.kept;
+      if (candidate.order !== undefined) orderAsked = true;
       const answers =
-        reusedScriptAnswers(candidate, keys, scriptAnswers.kept) ??
+        reusedScriptAnswers(candidate, keys, kept) ??
         (yield* Effect.gen(function* () {
           const question = yield* questionForReview(
             candidate,
@@ -298,6 +303,7 @@ const actOutcome = (
       })
     : undefined;
   return {
+    commit,
     marks: {
       ...(journal.confirmation === undefined ? {} : { confirmation: journal.confirmation }),
       ...(action === undefined ? {} : { action }),
@@ -754,9 +760,10 @@ const authoredExecution = (
           );
         if (act !== undefined) {
           writeSession.steps.push({ executionId: id, ...act.marks });
-          // Once a step entered or streamed a commit mark, the order its owner said yes to may
-          // have been placed, so that yes answers no later purchase confirm.
-          if (act.marks.enteredMarks.length > 0 || (act.marks.streamedMarks ?? []).length > 0)
+          // Unless the step made no browser call or its own report shows every commit step it
+          // declares unsent, it may have placed the order its owner said yes to, so that yes
+          // answers no later purchase confirm.
+          if (act.marks.possiblySent && act.commit !== "not_entered")
             state.scriptAnswers.kept = forgetOrderAnswers(state.scriptAnswers.kept);
         }
         // The marks of the session's recorded path not yet settled: until none is left, a
