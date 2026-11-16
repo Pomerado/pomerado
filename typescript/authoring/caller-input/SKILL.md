@@ -220,10 +220,11 @@ already asked for, or to solve a CAPTCHA.
      `{ amount, currency }`. On a checkout the site opened in a pop-up, also pass
      `popup: { opener: "primary", origin }` as a sign-in step names it. The host fills
      the card and clicks nothing, so submit the payment in a later call under the
-     write's commit rules. Prefer filling the card last: settle and read back everything
-     else the order needs first, then fill the card and submit the payment with no step
-     between where the checkout allows it, since a step that leaves or reloads the
-     checkout can clear the card. Wherever source calls `fillCard`, no source reads a
+     write's commit rules. Fill the card last: settle and read back everything else the
+     order needs first, then fill the card and press pay in the next step, with no step
+     or question between them unless the checkout itself requires one, since the filled
+     card lasts only minutes and a step that leaves or reloads the checkout can clear
+     it. Wherever source calls `fillCard`, no source reads a
      field's value or the page's markup, runs or plants code in the page, opens a
      DevTools session, takes an accessibility snapshot, screenshot or PDF of the page,
      records the page, or reads a request body, so delete such probes before you fill
