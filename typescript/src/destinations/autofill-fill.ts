@@ -77,14 +77,16 @@ const FillAnswer = Schema.Union(
   Schema.Struct({
     focused: Schema.Boolean,
     /**
-     * Why the field did not take the focus: the error focusing threw, the tag that holds it, or
-     * that the field takes no typing yet, which the call never focused.
+     * Why the field did not take the focus: the error focusing threw, the tag that holds it, that
+     * the field takes no typing yet, which the call never focused, or that its page put back what
+     * it held once the call emptied it (`emptied: false`), which the call never bound.
      */
     unfocused: Schema.optional(
       Schema.Union(
         Schema.Struct({ focusError: Schema.String }),
         Schema.Struct({ activeTag: Schema.String }),
         Schema.Struct({ editable: Schema.Literal(false) }),
+        Schema.Struct({ emptied: Schema.Literal(false) }),
       ),
     ),
     located: Schema.optional(FoundIn),
@@ -908,8 +910,9 @@ const fillField = (
 /**
  * A field that did not take the focus, or whose native insertion refused (`insertion`, its finite
  * cause), and why. A private answer's question that changed is a change on the screen, as when the
- * call found it changed before focusing. A field that still takes no typing once the host's wait
- * ran out is `not_editable`, as inspection refuses one.
+ * call found it changed before focusing, and so is a field whose page put back what it held once
+ * the call emptied it (`not_emptied`). A field that still takes no typing once the host's wait ran
+ * out is `not_editable`, as inspection refuses one.
  */
 const untypedRefusal = (
   input: FillInput,
@@ -921,6 +924,12 @@ const untypedRefusal = (
   if (answer.unfocused !== undefined && "editable" in answer.unfocused)
     return withCheck(refused("not_editable", index), "not_editable", {
       control: progress.judged.fields[index]?.control,
+      ...targetEvidence(progress.judged.fields[index], evidenceOrigins(input, progress)),
+      ...foundEvidence(answer.url, answer.located, evidenceOrigins(input, progress)),
+    });
+  if (answer.unfocused !== undefined && "emptied" in answer.unfocused)
+    return withCheck(refused("credential_target_refused", index), "change", {
+      cause: "not_emptied",
       ...targetEvidence(progress.judged.fields[index], evidenceOrigins(input, progress)),
       ...foundEvidence(answer.url, answer.located, evidenceOrigins(input, progress)),
     });

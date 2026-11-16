@@ -710,8 +710,32 @@ held.addEventListener("input", () => {
       { slot: "password", status: "failed" },
     ],
     submit: "not_attempted",
+    failureDetail: { context: { check: "change", cause: "not_emptied" } },
   });
   expect(await page.locator("input[name=password]").inputValue()).toBe("refused-pass");
+  expect(received).toEqual([]);
+});
+
+test("a field whose page fills it once it takes the focus is refused, with nothing typed after it", async ({
+  page,
+}) => {
+  const received = await serve(
+    page,
+    `${loginScreen}
+<script>
+const remembered = document.querySelector("input[name=username]");
+remembered.addEventListener("focus", () => {
+  if (remembered.value === "") remembered.value = "remembered.user";
+});
+</script>`,
+  );
+  const report = await fillWithKeys(page, loginStep, [username, password]);
+  expect(report).toMatchObject({
+    outcome: "refused",
+    target: 0,
+    failureDetail: { context: { check: "change", cause: "not_emptied" } },
+  });
+  expect(await page.locator("input[name=username]").inputValue()).toBe("remembered.user");
   expect(received).toEqual([]);
 });
 

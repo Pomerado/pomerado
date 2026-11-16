@@ -289,6 +289,29 @@ test("types into card fields on the site's own page in a form that names no meth
   expect(outcome.status).toBe("filled");
 });
 
+// A card form shown again keeps its expiry field's mask, which the mask's script puts back once
+// the field is emptied or takes the focus. A mask with no digit is no value, so the card goes in.
+test("types into a card expiry field whose mask comes back once it is emptied", async ({ page }) => {
+  await ownPage(
+    page,
+    `<form><script>
+addEventListener("DOMContentLoaded", () => {
+  const expiry = document.querySelector("#payment-expiryInput");
+  const mask = () => {
+    const digits = expiry.value.replace(/\\D/g, "").slice(0, 4);
+    expiry.value = digits === "" ? "__ / __" : \`\${digits.slice(0, 2)} / \${digits.slice(2)}\`;
+  };
+  expiry.value = "__ / __";
+  expiry.addEventListener("input", mask);
+  expiry.addEventListener("focus", mask);
+});
+</script>`,
+  );
+  const { outcome } = await fill(page);
+  expect(outcome.status).toBe("filled");
+  expect(await page.locator("#payment-expiryInput").inputValue()).toBe("12 / 34");
+});
+
 test("types nothing into card fields on the site's own page in a form that says GET", async ({ page }) => {
   await ownPage(page, '<form method="GET" action="/pay">');
   const { outcome, reviews } = await fill(page);
