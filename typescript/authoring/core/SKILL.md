@@ -109,6 +109,15 @@ answers `{ success, result, error, stderr }`. Throw
   it once unchanged for 2 s. If the site may reload the page some time after saving a setting,
   name an outcome only the new page shows, such as a changed URL, and look the next element up
   again before typing. If it only redraws, name the new setting shown outside its dialog.
+- Before waiting for the control a step needs, such as an add, book or continue button, list
+  what the page can show in its place: a closed, sold-out or unavailable notice, a control to
+  schedule for later, a sign-in prompt, a not-found page. Read the state the site's own data
+  gives first when the page loads it, such as a store's hours or an item's availability. Then
+  wait for any of those answers at once with `waitForOutcome`, and branch on the one that
+  showed: the site's own no is a refusal with its words, before any commit mark. When none of
+  them shows within the budget, the page is one the tool doesn't know: throw `OperationFailure`
+  naming what the page shows, so a repair can add that answer. Never wait out a timeout for a
+  control the page replaced.
 - Check the null case if possible. Make sure the tool handles a lookup or filter that matches
   nothing.
 - Start a response wait in the same call as the click that causes it: name the response as a
@@ -252,10 +261,8 @@ exception: it is optional unless the task can't run without it (below).
   `pickRefusal`. A value it lacks lists the site's closest options first. With no match, throw
   its `pickRefusal`, an
   `InvalidInput` with `field` and `available`, the entries the site showed, even when the site
-  offered only one. With one, use it. With several, decide per tool: take the first in the site's own
-  order and return the one it used, as the site labels it, or list those matches as the site
-  labels them for the caller to choose one, each selecting exactly one, with a declared choice
-  question (.agents/caller-input/SKILL.md) or `pickRefusal`, which lists them as `available`.
+  offered only one. With one, use it. With several, settle them as "Several equal matches"
+  below says.
   Resolve a typed address through the site's suggestions with `pickerTypeAddress`, then, once the
   list shows every suggestion the site offers for it, `pickerMatchAddress` from `pickerCode`,
   clicking the `row` it returns; or with `resolveAddress` from `pomerado/runtime` over the site's
@@ -272,9 +279,20 @@ exception: it is optional unless the task can't run without it (below).
   with a word added or dropped. Prefer it for confirming the pick, so the read-back agrees with
   the choice, but not for choosing from a list, where a short label can match a longer name it
   isn't, such as UK for Ukraine.
-  When more than one option matches equally, decide per tool: take the first in the site's
-  order and return the one it used, as the site labels it, or list them for the caller to
-  choose one, each selecting exactly one.
+  When more than one option matches equally, settle them as "Several equal matches" below says.
+- Several equal matches. When more than one of the site's entries matches the caller's value
+  equally, such as a saved address listed twice or a restaurant with several locations, never
+  take the first in the site's order. Compare every part: each part the caller gave, such as a
+  unit, a postal code or a street, against each entry's whole record, opening an entry's details
+  or reading the site's own data for it when the list shows less. Then:
+  1. Exactly one entry matches every part the caller gave: pick it.
+  2. The entries differ in nothing the site shows for them: they are one record listed more than
+     once. Take any of them, and beside the entry the output returns, set an optional output field
+     `listed_more_than_once` to `true`.
+  3. They differ in a part the caller didn't give, such as one entry with a unit and one
+     without: before any commit mark, ask the caller with a declared choice question whose
+     options each select exactly one, as the site labels them (.agents/caller-input/SKILL.md),
+     or refuse with `pickRefusal`, which lists them as `available`.
 - In a product or catalog search, a result whose name has every word of the caller's value
   among words the value lacks is a looser match, which a read picks and a write asks about, as
   above: with no match, throw
@@ -601,7 +619,9 @@ that depends on them:
    with one option, or a disabled control showing one value, is a
    fixed value: read it, never click it.
 2. Set. Apply each input's value through the page's own control, in the order the page
-   presents the groups, since one choice can change the options of the next. An input whose
+   presents the groups, since one choice can change the options of the next. Find each option
+   inside its own group's container, by the site's ID for the option where the page carries
+   one, since option names such as "None" repeat across groups. An input whose
    options depend on another goes after it, such as times after their date, slots after the
    party size, models after the make or regions after the country, even when the page shows it
    first. When the value is not among the options the page lists at all, throw
@@ -766,8 +786,8 @@ that readiness condition from the intended page, not from having seen a particul
 challenge. After navigation or any action, wait for a unique operation control or page state
 before testing absence or choosing a branch or fallback; after an action, prefer the site's own
 reply to the request the action sent over what the page shows, apart from an error the page shows.
-Use `locator.waitFor` for one expected state, `waitForOutcome`
-(below) when the page can answer more than one way, `waitForRows`, `waitForValues` or
+Use `locator.waitFor` only where the page can show nothing else in that place, `waitForOutcome`
+(below) when the page can answer more than one way, as for a control a notice may replace, `waitForRows`, `waitForValues` or
 `waitForChange` (below) for the values you return, or, only where none fits, a bounded loop of
 your own that reads every condition in one `evaluate` per pass;
 `count()` and `isVisible()` only observe the current instant. Share one bounded navigation
@@ -932,6 +952,20 @@ returns unless its visible matches all read the same text. When several candidat
 section, accessible name and destination before clicking or waiting. A readiness wait targets one specific
 evidenced element or page state.
 
+Search inside the place the answer lives. When the page shows where the element you need
+belongs, such as an option's group, a cart's own section, a dialog or a list's section, find that
+container first, by its own heading, label or the site's ID for it, and look the element up
+inside it, never across the whole page: a label such as "None" or "Regular" often repeats in
+another group. The same holds for the site's own search: when the input names the parent, such
+as the store an item belongs to, search in that parent's page or the site's search scoped to it
+over the site-wide one.
+
+Use text to choose, never to act. Compare text to decide which element or entry the caller
+means; then act on that element itself, the row a helper returned, its place in the list you
+read, or the site's ID for it, found inside its container as above. Never look a chosen entry
+up again by its text: when a label repeats, such as an address saved twice or an option name in
+two groups, that lookup clicks whichever copy comes first or fails as ambiguous.
+
 Never search the open web, such as Google, to find the page a task needs. Make its URL an
 input and ask the caller for it.
 
@@ -942,7 +976,11 @@ itself uses when that is clearly better (AGENTS.md, "Work through the page's own
 A successful response or plausible content is insufficient: the final page's
 site (any https host on the site's registrable domain), final path and stable page
 identity must all agree with the requested identifier. A path agrees when it carries the
-identifier; a site can serve one record under several of its own routes. Explicitly classify
+identifier; a site can serve one record under several of its own routes. Before comparing two
+links, such as the caller's and the page's, parse both with `new URL` and decode each path
+part and query value with `decodeURIComponent`: a site may write the same name as `%26` or
+`&`, or `%20` or a space. Then compare the decoded parts, leaving out tracking parameters, the
+order of query parameters and a trailing slash; never compare the links' raw text. Explicitly classify
 a detail page, loading state, known interstitial and unsupported or mismatched page. Continue through an interstitial only when its
 own stable identity matches the request and one unique continuation control belongs
 to that interstitial. This exception does not include a CAPTCHA, login or unknown

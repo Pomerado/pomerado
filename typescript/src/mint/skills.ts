@@ -53,7 +53,6 @@ const catalog = [
     references: [
       "dates-and-dropdowns.ts",
       "picker.ts",
-      "picker-first.ts",
       "custom-selection.ts",
       "dialog-picker.ts",
       "dates-and-files.ts",

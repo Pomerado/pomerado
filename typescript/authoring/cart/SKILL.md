@@ -53,17 +53,17 @@ site's words, `field` that input, before any commit mark (the core skill).
 
 An item's options often come in groups whose option labels repeat, such as "None" or "Less"
 under both a sweetness group and an ice group. Find each option inside its own group, by the
-group's heading or fieldset, never by its label across the whole item dialog. A list of saved
-addresses or stores can show the same name twice: choose by every part the input gives, such as
-the unit, and refuse when more than one entry still matches, never take the first. Choose a
-saved address with the core skill's address helpers, such as `resolveAddress` from
-`pomerado/runtime` with the saved entries as its suggestions, and compare a part they leave
-aside, such as the unit, with `sameText`, never with matching of your own.
+group's heading or fieldset, never by its label across the whole item dialog (the core skill,
+"Search inside the place the answer lives"). Choose a saved address with the core skill's
+address helpers, such as `resolveAddress` from `pomerado/runtime` with the saved entries as its
+suggestions, and compare a part they leave aside, such as the unit, with `sameText`, never with
+matching of your own. A list of saved addresses or stores can show the same name twice: settle
+it as the core skill's "Several equal matches" says, then act on the entry you chose, never on
+its name again.
 
-When the tool takes an item's or store's page link as its identity, compare the identifiers in
-it, such as the store and item ids, after decoding both links, never the raw text of a name in
-the path, which the site may encode in more than one way, and ignore tracking parameters and a
-trailing slash.
+When the tool takes an item's or store's page link as its identity, decode both links before
+comparing them, as the core skill says, since the site may write a name in the path in more than
+one way, such as `%26` or `&`.
 
 ## Quantity
 
@@ -103,34 +103,58 @@ reads before the card fill, or before pressing pay when there is none, and confi
 the requested items, each at its requested options and quantity; when it holds anything else,
 throw `OperationFailure` before the order's commit mark.
 
-## Several carts on one account
+## Which kind of cart the site keeps
 
-Some sites keep a separate cart for each store or seller in one account, such as food delivery,
-grocery and multi-vendor marketplaces, and list them in a cart switcher. Act on one cart, found
-by the cart or store identifier the site shows, taken as an input when the caller names a cart,
-and leave every other cart as it is. When the site asks to clear another cart before adding,
-that is a question for the caller (the writes skill). The switcher and the other carts are the
-caller's other records: in every step's output, while building and in the tool, return only the
-target cart's entry, with one exception. To show the others stayed the same, compare them inside
-the step and return for each other cart only its identifier, its line count and whether it
-changed, never its items, store name or totals.
+The kind of cart decides how the tool's input names it. While exploring read-only, find which
+kind the site keeps, from its cart pages, a cart switcher or a cart's sections, and list it in
+`finish_build` `assumptions`:
+
+- One cart per store or seller in one account, such as food delivery, grocery and multi-vendor
+  marketplaces, often listed in a cart switcher. An add finds the store from the item's or
+  store's own link or ID. A tool that reads, changes or checks out a cart takes which cart as an
+  input, the cart's or the store's ID as the site shows it and a list-carts tool returns it.
+  When the account holds several carts and the input names none, refuse with `InvalidInput`,
+  `field` that input and `available` the carts, or ask; never take the first.
+- One cart for the whole account, sometimes split into sections, such as groceries beside
+  other items, bought in full or in part. It needs no cart input; a section the site splits off
+  is an optional input, and a checkout that buys part of the cart takes the lines it buys.
+- A guest or session cart that lives one run (above). The run makes it and uses it, so it needs
+  no cart input.
+
+Act on one cart and leave every other cart as it is. When the site asks to clear another cart
+before adding, that is a question for the caller (the writes skill). The switcher and the other
+carts are the caller's other records: in every step's output, while building and in the tool,
+return only the target cart's entry, with one exception. To show the others stayed the same,
+compare them inside the step and return for each other cart only its identifier, its line count
+and whether it changed, never its items, store name or totals.
+
+Before the first `act` step, rehearse on varied samples as the writes skill says ("Rehearse on
+varied samples"), which also says how far an item's options may go before the session. In a
+signed-in cart, also read the account's saved addresses and carts, so the script handles a
+duplicate entry or another store's cart before the session meets one.
 
 ## The delivery address
 
-When the site sets the delivery address on the account or the session rather than inside
-checkout, read the address the cart will use first. When it already matches the input, street
-and unit, compared with `readBackMatches` or `sameText` from `pomerado/runtime` (the core skill),
-change nothing and ask nothing. Setting it changes the account or session, so choosing
-it is a step with its own commit mark, and saving an address-book entry is another, separate one
-(the writes skill). Set it only when it differs, after every check that can refuse, such as
-finding the item and its options and that it can be ordered now, so a refusal leaves the account
-as it was. When the store, stock or whether the item can be ordered follow the address, read them
-for the input's address without saving it where the site allows, such as through an address
-preview or a store page that takes the address in its link, and refuse before the marked step.
-Otherwise set the address with the site's control that picks one for this order, then check, and
-when one refuses, say in the refusal that the account's address changed. Prefer that control
-over editing a saved address. When saving the address-book entry is the only way to apply a
-detail such as the unit, ask any question about it only on a run that needs the save.
+When the site keeps the delivery address on the account or the session rather than inside
+checkout, read the address the cart will use first, every part of it, the unit included. When it
+already matches the input, compared with `readBackMatches` or `sameText` from `pomerado/runtime`
+(the core skill), change nothing and ask nothing. When it differs, choose the input's address
+with the site's control that picks one for this visit, and read the cart's own address back,
+unit included: some sites keep a detail such as the unit only on a saved address-book entry, so
+choosing an address by its street alone leaves it out. That choice is a read unless its requests
+save an address-book entry, a default or an account preference (the writes skill); then it is a
+write with its own commit mark, after every check that can refuse. When the store, stock or
+whether the item can be ordered follow the address, check them after a choice that is a read.
+After one that saves, check them first where the site allows, such as through an address preview
+or a store page that takes the address in its link, and when a check after it refuses, say in the
+refusal that the account's address changed.
+
+When only a saved entry can carry the input's unit or instructions, choose the saved entry that
+already holds them. When none does, saving one is a write to the account (the writes skill): it
+runs only on a run whose input differs from every saved entry, after the checks that can refuse,
+adds a new entry rather than editing an existing one, and never adds one that repeats an entry
+already there. Take whether to save from an optional input, such as `save_address`, or ask on
+that run only, right before the save; never on a run that saves nothing.
 
 ## Values the account lacks
 
@@ -188,8 +212,10 @@ refusal for the item, and the build publishes on it as the writes skill says.
 An item or store that can't be ordered right now, such as a store that is closed or takes only
 scheduled orders, or an item marked unavailable, often hides or relabels the add control rather
 than showing an error. Read the store's and the item's state before waiting for the add control,
-and return it as the site's refusal for the item, as for one out of stock, before any commit
-mark, setting the address included. Never wait out a timeout for a control the page replaced.
+then wait for any of the add control, the site's notice or a control to schedule for later at
+once (the core skill), and return the site's state as its refusal for the item, as for one out
+of stock, before any commit mark, an address save included. Never wait out a timeout for a
+control the page replaced.
 
 When the order must take one of a service's tiers of speed, class or service level, take the
 caller's choice from an optional input and keep it as given. Without one, choose the tier

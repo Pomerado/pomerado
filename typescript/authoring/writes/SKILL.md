@@ -115,7 +115,11 @@ correct it, and list it in `finish_build` `assumptions`. Ask only about options 
 actually shows. A control with exactly one possible value (a select or radio group with a
 single option), or one the input or an earlier answer already settles, is no choice: never ask
 about it. An add-on toggle, a pre-selected paid option or a lone saved payment method or address
-is still a choice to ask about. Never keep, clear, accept or decline one of those unasked. A paid upsell
+is still a choice to ask about. Never keep, clear, accept or decline one of those unasked. A
+saved value that matches the caller's input in every part the input gives, such as a saved
+address with the same street and unit, is the input's answer: use it and ask nothing. Ask about
+a value the account already holds, such as a saved address's unit, only on a run whose input
+differs from it. A paid upsell
 outside the tool's purpose, such as a membership, subscription or trial offered during a
 checkout, is not a question: the script declines it, and never accepts one without an input
 the caller set for it. A safety default (core skill, "Safety defaults") is
@@ -131,10 +135,7 @@ During the session:
   any limit the input sets, stop when the page shows a paid option selected that neither the
   input nor an answer settles, and check the items, address and payment. Use a review page when
   the site has one; a separate review page is not required, and submitting a form is never a way
-  to discover whether one exists. A check that can only run after an earlier
-  marked step, such as a total that shows only once a saved address step has run, runs before
-  the later step's mark; its refusal then reports a possible change, because the earlier step
-  may have saved something, and that is honest. Still mark that earlier step. Mark a commit
+  to discover whether one exists. Mark a commit
   step as a setting in `write.settings` when its click only changes a choice on the way to the
   final commit and cannot place, buy, book, send or charge anything by itself. An `InvalidInput`
   or a declared refusal after only such steps, the caller's no included, ends with nothing
@@ -153,6 +154,26 @@ During the session:
   report of the form's fields, its validation messages or the options to pick from is a
   refusal (`InvalidInput` with `available`) or a failure (`OperationFailure`), not the write's
   output.
+- Order the steps: every read and every check that can refuse first, then the writes, with a
+  write to the account itself, such as an address-book entry, a saved payment method or a
+  default, last. Before each write that sets a value the site may already hold, such as the
+  address the cart uses or a saved entry's unit, read it and change only what differs: when it
+  already matches, the script skips that step and asks nothing about it. Prefer a per-visit control,
+  which is a read (above), or a preview over a save. A save the site requires before it shows a
+  later page, such as a form that saves each page before showing the next, comes where the site
+  puts it. A check the site shows only after an earlier save, such as a total that shows only
+  once a saved address step has run, runs after that save only when no read can show it first,
+  and before the later step's mark; its refusal then reports a possible change, because the
+  earlier step may have saved something, and that is honest. Still mark that earlier step.
+- Save an account record only when the run needs it, unless saving it is the tool's purpose,
+  such as a tool that adds an address to the address book. Read the account's saved entries
+  first: when one already matches every part the input gives, use it and save nothing. When none
+  does and the task can't go on without a saved entry, never change an entry the input doesn't
+  name, and never add one that repeats an entry already there; when it is unclear whether to
+  update an entry or add one, ask the caller on that run. Such a save runs only on
+  the inputs that need it: when the example didn't need it, the session never runs it, and the
+  script declares it in `write.commits` after the steps the session entered and again in
+  `write.commitsUnproven`.
 - While building, when the site says no to the example's valid input before any save step, as
   "The session" below describes, or shows a record already past the state the action needs when
   the request says to stop and report it, prefer publishing the tool with that no as the
@@ -571,9 +592,8 @@ note.
   did not run, prove it in an `act` step that only reads, while the session is open (below),
   never by committing again.
   When no entry matches, throw `InvalidInput` with `field` and `available`; when several match
-  equally, take the first in the site's order and return the one it used, as the site labels
-  it, or list them for the caller to choose one, as the tool decides (core skill, the input
-  schema). Write that ID or pick that entry, and
+  equally, settle them as the core skill's "Several equal matches" says. Write that ID or pick
+  that entry, and
   compare the read-back by ID, never a label against an ID. Return the reference as
   `{ id, label }` (records skill). Do not drop a reference field only because the site saves an
   ID: the lookup is the fix. When the site shows no ID and offers no list to resolve one, compare
