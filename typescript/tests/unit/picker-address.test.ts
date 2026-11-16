@@ -312,6 +312,21 @@ describe("resolveAddress", () => {
     for (const name of ["24 Hour Sample", "12 Hour Sample"])
       expect(await houses("12 Example St, Exampleton, IL", [`${name}, 12 Example St, Exampleton, IL, USA`])).toBe(`${name}, 12 Example St, Exampleton, IL, USA`);
     expect(await houses("12 Example St, Exampleton, IL", ["2 mi, Sample Place, 15 Example St, Exampleton, IL, USA"])).toBe(false);
+    // A later part opening with the caller's house number, such as a distance or a town, is not the street.
+    for (const [address, shown] of [
+      ["12 Example St, Exampleton, IL", "12 Example St, Exampleton, IL, USA, 12 min"],
+      ["100 Main St, 100 Mile House, BC", "100 Main St, 100 Mile House, BC, Canada"],
+    ])
+      expect(await houses(address ?? "", [shown ?? ""])).toBe(shown);
+  });
+
+  test("keeps the unit when only a place's name or a distance beside the suggestion holds its number", async () => {
+    for (const [address, shown, unit] of [
+      ["5 Sample Blvd, Suite 5, Example City, IL", "5 Sample Bar, 5 Sample Blvd, Example City, IL, USA", "Suite 5"],
+      ["100 Example St, Suite 24, Exampleton, IL", "24 Hour Sample, 100 Example St, Exampleton, IL, USA", "Suite 24"],
+      ["12 Example St, Apt 2, Exampleton, IL", "Sample Cafe, 12 Example St, Exampleton, IL, USA, 2 mi", "Apt 2"],
+    ])
+      expect(await resolveAddress(address ?? "", () => [shown ?? ""])).toMatchObject({ picked: true, label: shown, unit });
   });
 
   test("refuses only when no form brings a suggestion with the caller's house number and street name, listing what the site gave", async () => {

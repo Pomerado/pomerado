@@ -70,12 +70,8 @@ export const resolveAddressWith = async <T>(
     const [number = "", next = ""] = part;
     return next.length === 1 ? [number, number + next] : [number];
   };
-  // The street: the last part opening with one of the `wanted` house numbers, else the first with a
-  // house number, else the first.
-  const streetOf = (list: readonly string[], wanted: readonly string[] = []) => {
-    const at = list.findLastIndex((part) => houseOf(part).some((each) => wanted.includes(each)));
-    return Math.max(0, at >= 0 ? at : list.findIndex((part) => houseOf(part).length > 0));
-  };
+  // The street: the first part with a house number, else the first.
+  const streetOf = (list: readonly string[]) => Math.max(0, list.findIndex((part) => houseOf(part).length > 0));
   // A unit is the part right after a street with a house number, else the part right before it,
   // when it has at most two words, one of them holding a digit or a #, no ZIP, and no plain number
   // opening it before another word, as a street or a town may have; or a # and what follows it
@@ -174,6 +170,9 @@ export const resolveAddressWith = async <T>(
   // A street's words but its house number's, numbers without their ordinal ending.
   const streetWords = (text: string) => words(text).filter((word) => !houseWords.includes(word)).map(numeral);
   const callerWords = streetWords(lines[lineStreet] ?? "");
+  // Whether a street holds a word of the caller's street name, its house number's aside.
+  const naming = (text: string) =>
+    names.some((forms) => forms.some((form) => words(text).some((word) => !houseWords.includes(word) && numeral(word) === form)));
   // A street's direction words in order, each as its letters (N for North, NW for N.W. or
   // Northwest), and its own number, its first but the house number's, read in its usual forms (5 for
   // Fifth), once its ZIP is left out and, from its end, the other side's places after its street,
@@ -232,19 +231,21 @@ export const resolveAddressWith = async <T>(
       name(two).some((word) => word.length > 2 && initials(one).includes(word))
     );
   };
-  // A suggestion's street, the last part opening with the caller's house number when one does, as a
-  // place's name may open with a number before its address; its parts after the street, as words
+  // A suggestion's street: of its parts opening with the caller's house number, the last that names
+  // the caller's street or is close to it, else the first, as a place's name or a distance may open
+  // with a number too; else its first part with a house number. Its parts after the street, as words
   // (its whole text when it has no comma, and none in `beyond`) and each in its usual forms; its parts
-  // but the street; and the words of each of its parts after the street, ZIPs left out.
+  // but the street, each as words; and the words of each of its parts after the street, ZIPs left out.
   const sides = (text: string) => {
     const split = text.split(",");
-    const at = streetOf(split, house);
+    const ours = split.flatMap((part, index) => (houseOf(part).some((each) => house.includes(each)) ? [index] : []));
+    const at = ours.findLast((index) => naming(split[index] ?? "") || close(callerWords, streetWords(split[index] ?? ""))) ?? ours[0] ?? streetOf(split);
     return {
       street: split[at] ?? "",
       after: phrase(split.length > 1 ? split.slice(at + 1).join(",") : text),
       beyond: phrase(split.slice(at + 1).join(" ")),
       beyondForms: split.slice(at + 1).map((part) => match.spellings(squash(part.replace(zipGroups, ""))).map(phrase)),
-      others: phrase(split.length > 1 ? split.filter((_, index) => index !== at).join(",") : ""),
+      others: split.length > 1 ? split.filter((_, index) => index !== at).map(words) : [],
       rest: split.slice(at + 1).map((part) => words(part.replace(zipGroups, " "))),
     };
   };
@@ -357,7 +358,7 @@ export const resolveAddressWith = async <T>(
         : first;
     const left = held.filter((kind) => kind === "none").length;
     const fit = !held.includes("part") && left + (zip !== "" && shown === "" ? 1 : 0) <= 1;
-    const named = names.some((forms) => forms.some((form) => ownWords.some((word) => !houseWords.includes(word) && numeral(word) === form)));
+    const named = naming(own);
     if (house.length > 0 && names.length > 0 && !named && (other || !close(callerWords, streetWords(own)))) return undefined;
     const share = Math.max(
       0,
@@ -441,10 +442,12 @@ export const resolveAddressWith = async <T>(
       matches: best === undefined ? [] : [...new Set(usable)].slice(0, 100),
       unit: next || (marker?.[2] ?? ""),
     };
-  // A unit-shaped part the suggestion keeps, its number outside the suggestion's own street, was a
-  // town and postcode or a street rather than a unit.
-  const number = phrase(next.split(" ").find((word) => /[\d#]/u.test(word)) ?? "");
-  const unit = next !== "" && !holds([number], sides(best.label).others) ? next : (marker?.[2] ?? "");
+  // A unit-shaped part the suggestion keeps, its number in one of the suggestion's parts but its
+  // street, alone there or after another word, was a town and postcode or a street rather than a
+  // unit; a place's name or a distance opening with that number keeps none.
+  const number = words(next.split(" ").find((word) => /[\d#]/u.test(word)) ?? "")[0] ?? "";
+  const kept = sides(best.label).others.some((each) => each.includes(number) && (each.length === 1 || each[0] !== number));
+  const unit = next !== "" && !kept ? next : (marker?.[2] ?? "");
   return { picked: true, choice: best.choice, label: best.label, query: best.query, unit };
 };
 
@@ -457,12 +460,14 @@ export const resolveAddressWith = async <T>(
  * right before it, when it has at most two words, one of them holding a digit or a #, no ZIP, and
  * no plain number opening it before another word; or a # and what follows it ending the street. It
  * asks for the rest, and returns the unit for the site's own unit field unless the suggestion
- * taken keeps its number outside its own street, as a town and postcode or a street would be; such
- * a part before the street or ending the address is asked for as typed first. For an address whose
- * street opens with its house number, a suggestion's street is its last part opening with that
- * number, else its first opening with a number, as a place's name may come before its address; one
- * whose street opens with another number (12A and 12 A alike) is another address and never usable,
- * and so is one whose street keeps none of the caller's street
+ * taken keeps its number in a part outside its own street, alone there or after another word, as a
+ * town and postcode or a street would be; such a part before the street or ending the address is
+ * asked for as typed first. For an address whose street opens with its house number, a
+ * suggestion's street is its last part opening with that number whose name is the caller's
+ * street's or close to it (below), else its first opening with that number, else its first opening
+ * with a number, as a place's name or a distance may open with a number too; one whose street
+ * opens with another number (12A and 12 A alike) is another address and never usable, and so is
+ * one whose street keeps none of the caller's street
  * name words: its street's words but the last, a street type such as Ave, when it has another, of
  * three letters or more, and every word holding a digit but the house number's own, as the 9 of
  * Route 9, each in any of its usual forms from `spellingsOf` (Fifth for 5th) and a number without
