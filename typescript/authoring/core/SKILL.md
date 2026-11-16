@@ -1034,8 +1034,12 @@ See the compiling `references/variants.ts` example.
 Whenever a cookie or tracking consent banner shows, or a privacy notice, consent dialog or survey
 pop-up, dismiss it before you do anything else on the page: in an `explore`, in each sign-in step as
 its `dismiss` (the auth skill), and in the tool's own code, which dismisses it on every run where it
-shows. Use its own control, in this order: its close or dismiss control, then one that rejects or
-declines what is not essential in one click, then accept. A control such as
+shows. In the tool's code, close one that opens on its own with a standing handler, `waitForReady`'s
+`dismiss` naming its close control, so one that opens later, after a page change or partway through
+a form, closes too; never with a one-time visibility check at the start, which misses a pop-up that
+opens after it, such as a survey a site shows a minute into a visit. Use its own control, in this
+order: its close or dismiss control, then one that rejects or declines what is not essential in one
+click, then accept. A control such as
 "I understand" or "OK" accepts too, so prefer its close or decline control whenever it has one.
 Never click anything else in it, such as its settings or partner lists. A request that says
 otherwise about cookies wins. Such a banner stays one even when its text says accepting it or using
