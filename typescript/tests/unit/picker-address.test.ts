@@ -161,6 +161,9 @@ describe("resolveAddress", () => {
       ["1 Example Building, Exampleton, IL", "1 Example Bldg, IL 60000"],
       ["1 Example Road, Exampleton, IL", "1 Example Rd, Exampleton"],
       ["1 N Example St, Exampleton, IL", "1 North Example St, Exampleton"],
+      ["1 Example St, Exampleton New York", "1 Example St, Exampleton"],
+      ["1 Example St, Exampleton, West Virginia", "1 Example St, Exampleton, WV"],
+      ["1 Example St #4B, Exampleton, IL", "1 Example St #4B, Exampleton"],
     ])
       expect(await resolveAddress(wanted ?? "", () => [shown ?? ""])).toMatchObject({ picked: true, label: shown });
     expect(await resolveAddress("1 Example Building, Exampleton, IL 60000", () => ["1 Example Bldg, Exampleton, IL"])).toMatchObject({ picked: true });
@@ -183,6 +186,14 @@ describe("resolveAddress", () => {
       ["12 Exampleton Ave, Exampleton, IL", "12 Exampleton Ave"],
       ["12 Exampleton Ave, Exampleton, IL 60000", "12 Exampleton Ave, IL"],
       ["12 Exampleton Ave, Exampleton, IL", "12 Exampleton Ave, Sampleton, IL"],
+      ["1 Example St, Exampleton, NJ", "1 Example St, New Exampleton"],
+      ["1 Example St, Exampleton, WV", "1 Example St, Exampleton, Virginia"],
+      ["1 Example St, Exampleton, West Virginia", "1 Example St, Exampleton, VA"],
+      ["1 Example St, Washington DC", "1 Example St, WA"],
+      ["1 Example St, Exampleton Center, MA", "1 Example St, Center, MA"],
+      ["1 Example St, Exampleton New York", "1 Example St"],
+      ["12 Example Rd, Exampleton, IL", "12 Example Riverside, IL"],
+      ["1 Example St, Exampleton, IL", "Exampleton Mall, 1 Example St"],
     ])
       expect(await resolveAddress(wanted ?? "", () => [shown ?? ""])).toMatchObject({ picked: false, reason: "option_unclear" });
   });
@@ -203,6 +214,12 @@ describe("resolveAddress", () => {
     // The same street and town in another state, a same-named town, is listed too.
     const states = ["1 Example St, Exampleton, WI", "1 Example St, Exampleton"];
     expect(await resolveAddress("1 Example St, Exampleton, IL", () => states)).toMatchObject({ picked: false, reason: "option_unclear", matches: states });
+    // Another street, or the street with a unit, is no rival.
+    for (const shown of ["12 Example Ave, Exampleton", "12 Example St Apt 1, Exampleton"])
+      expect(await resolveAddress("12 Example St, Exampleton, IL", () => ["12 Example St, Exampleton", shown])).toMatchObject({
+        picked: true,
+        label: "12 Example St, Exampleton",
+      });
   });
 
   test("returns as a candidate a suggestion whose street shows another direction or street number", async () => {
