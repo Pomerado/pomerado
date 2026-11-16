@@ -655,10 +655,13 @@ explicit, so the script never keeps, clears, accepts or declines one the input l
 asks with a declared question before the commit mark (the caller-input skill), offering a
 saved payment or address as an account-specific choice. The same holds for any choice that
 changes what the caller buys or pays, or whether the action can be cancelled or refunded, such
-as a rate, fare or plan tier, a refundable option, shipping speed or how much of a balance to pay. An owner's
-answer may make declining such an option, turning it off or the option that adds no cost and
-keeps the action cancellable the default of its optional input, never accepting, keeping or
-choosing one. Choosing the address and payment is
+as a rate, fare or plan tier, a refundable option, shipping speed or how much of a balance to pay.
+When the site requires choosing one of a service's tiers of speed, class or service level, that
+choice's optional input defaults to the tier the site presents as standard, and the script asks
+only when the site shows no standard tier. An owner's answer may make only declining such an
+option, turning it off or the option that adds no cost and keeps the action cancellable the
+default of its optional input.
+Choosing the address and payment is
 part of a checkout's job, so the page's pre-selected one is never used silently. The request
 and the owner's answers settle such a choice for the session only: the published tool serves
 other callers, so it takes the choice as an input or asks, never hard-codes the build's answer,

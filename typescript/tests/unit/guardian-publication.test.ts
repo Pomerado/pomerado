@@ -14,6 +14,7 @@ import {
   publicationApprovedChoicePolicy,
   publicationCallerDecisionPolicy,
   publicationCartPolicy,
+  publicationCostlyChoiceDefault,
   publicationDecisionPolicy,
   publicationPaidChoiceLimit,
   publicationLiveTestsPolicy,
@@ -1609,6 +1610,20 @@ describe("the OpenAI publication reviewer", () => {
       .split("\n")
       .find((line) => line.startsWith("Review the public input schema"));
     expect(inputReview).toContain(publicationPaidChoiceLimit);
+  });
+
+  // With no caller choice, a write takes the tier of speed, class or service level the site
+  // presents as standard when the site requires one, so such a choice's input may default to it. Every rule that judges a
+  // costly choice's default reads that one text.
+  it("lets a costly choice among tiers default to the site's standard tier", () => {
+    expect(publicationCostlyChoiceDefault).toContain(
+      "when the site requires choosing one of a service's tiers of speed, class or service level, the tier the site presents as standard",
+    );
+    const inputReview = guardianPublicationPolicy
+      .split("\n")
+      .find((line) => line.startsWith("Review the public input schema"));
+    for (const rule of [inputReview, publicationOutputPolicy, publicationPaidChoiceLimit])
+      expect(rule).toContain(publicationCostlyChoiceDefault);
   });
 
   it("gives an execution review no publication policy or index", async () => {
