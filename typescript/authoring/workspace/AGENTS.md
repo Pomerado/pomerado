@@ -170,8 +170,9 @@ other business effects still need their existing authority.
 
 **Work through the page's own controls.** In the Playwright version and your browser probes,
 type into the site's search boxes and forms, pick its suggestions and options, and click its
-links and buttons. URLs built from caller values are brittle for many kinds of input, so build
-the flow through the page's controls first. A URL the caller supplied, on the
+links and buttons. Prefer reaching each page this way over a URL the tool builds or guesses,
+which is brittle, unless the site's own controls or links were seen producing that URL and the
+tool reads the landing page's identity and inputs back, as below. A URL the caller supplied, on the
 tool's site, may be opened unchanged: the build's start page, or a URL input such as a product
 or listing page, which a details tool takes as input and opens directly. A stable identifier
 route the site itself uses may be opened from the caller's identifier when it is clearly better
