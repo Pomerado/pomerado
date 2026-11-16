@@ -86,19 +86,23 @@ it("keeps a choice from the caller's own account marked", () => {
     available: [
       "Pick up in store",
       { label: "12 Example Rd, Springfield 99999", accountSpecific: true, maskedLabel: "Home" },
+      { label: "14 Example Rd", accountSpecific: true, maskedLabel: "a".repeat(65) },
     ],
   });
   expect(refusal.available).toEqual([
     "Pick up in store",
     { label: "12 Example Rd, Springfield 99999", accountSpecific: true, maskedLabel: "Home" },
+    { label: "14 Example Rd", accountSpecific: true },
   ]);
 });
 
 it("tells a local caller a choice from the caller's own account by its masked label", async () => {
   const failure = await outcomeOf(
-    `, { field: "size", available: ["One Size", { label: "Size 12 Example Rd", accountSpecific: true, maskedLabel: "Saved size" }] }`,
+    `, { field: "size", available: ["One Size", { label: "Size 12 Example Rd", accountSpecific: true, maskedLabel: "Saved size" }, { label: "Size 14 Example Rd", accountSpecific: true }] }`,
   );
-  expect(failure.outcome.details).toMatchObject({ available: ["One Size", "Saved size"] });
+  expect(failure.outcome.details).toMatchObject({
+    available: ["One Size", "Saved size", "Saved option 3"],
+  });
   expect(failure.message).not.toContain("Example Rd");
 });
 

@@ -78,7 +78,8 @@ const maximumRefusalKindLength = 40;
 
 /**
  * A choice as a host may carry it, bounded: a true/false or finite number choice as its text, and
- * one marked from the caller's own account with its label and masked label. None for any other.
+ * one marked from the caller's own account with its label and masked label, a masked label longer
+ * than a question's left out. None for any other.
  */
 const boundedChoice = (choice: unknown): RefusalChoice | undefined => {
   if (typeof choice === "boolean" || (typeof choice === "number" && Number.isFinite(choice)))
@@ -95,8 +96,10 @@ const boundedChoice = (choice: unknown): RefusalChoice | undefined => {
     : {
         label: label.slice(0, maximumRefusalChoiceLength),
         accountSpecific: true,
-        ...(typeof masked === "string" && masked.trim() !== ""
-          ? { maskedLabel: masked.slice(0, maximumMaskedChoiceLength) }
+        ...(typeof masked === "string" &&
+        masked.trim() !== "" &&
+        masked.length <= maximumMaskedChoiceLength
+          ? { maskedLabel: masked }
           : {}),
       };
 };
@@ -113,14 +116,17 @@ const boundedChoices = (detail: unknown) => {
     : [];
 };
 
-/** A choice as anyone but the account's owner reads it: one from the account by its masked label. */
-const publicChoice = (choice: RefusalChoice) =>
-  typeof choice === "string" ? choice : (choice.maskedLabel ?? "••••");
+/**
+ * A choice as anyone but the account's owner reads it: one from the account by its masked label,
+ * or by its place in the list without one.
+ */
+const publicChoice = (choice: RefusalChoice, index: number) =>
+  typeof choice === "string" ? choice : (choice.maskedLabel ?? `Saved option ${index + 1}`);
 
 /**
  * The detail as a host may carry it: a bounded field name and up to the most choices, each bounded,
  * a true/false or finite number choice as its text, and one from the caller's own account as its
- * masked label.
+ * masked label, or "Saved option N" by its place without one.
  */
 export const boundedRefusalDetail = (detail: unknown): InputRefusalDetail => {
   if (typeof detail !== "object" || detail === null) return {};
