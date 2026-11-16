@@ -40,7 +40,9 @@ addresses, and keeps the address the account has selected when it is left out: a
 order, and a checkout still chooses its address as below. Set the options as "Configure, then
 read" in the core skill says before adding the product: a value the product does not offer
 throws `InvalidInput` with `field` and `available`. Opening an item's details or options from
-its own card, name or picture, not a control labelled add or plus, is a read.
+its own card, name or picture, not a control labelled add or plus, is a read. Prefer finding
+the item's row or card by the site's own item ID where the page carries one, over its picture,
+position or a search box, since a site's pages can differ in layout.
 
 ## Quantity
 
@@ -70,13 +72,9 @@ commit and returns them with the confirmation.
 
 An account can hold several carts at once, such as one per store or a separate section for some
 items, each with its own lines and totals, and a page may show one at a time. Find the cart the
-request is about by its store or section, open it through the site's own control for that cart,
-and read its lines, count and subtotal inside that cart's own container. Lines in another cart
-stay out of that read and out of the comparison of other lines.
-
-A cart button or checkout entry that floats or sticks to the page may be missing in some
-layouts, states or scroll positions. Prefer reaching the cart and the checkout through the
-site's own route or a control every layout shows, with that shortcut as a second way.
+call is about by the store or section its input or item names, open it through the site's own
+control for that cart, and read its lines, count and subtotal inside that cart's own container.
+Lines in another cart stay out of that read and out of the comparison of other lines.
 
 In a tool that places the order, when the page shows no cart control and no empty-cart label,
 take the cart as empty. Then read back every line of the checkout's order summary with the other
@@ -124,6 +122,17 @@ delivery method to meet a limit. While building, ask the caller to revise or sto
 `report_blocked` and explain the site's limit: a build that only reached the limit never
 completed the write, so it never publishes.
 
+An account's state can change the add or buy flow, so that its controls would change an open
+order or a line already in the cart instead. Read that state before the commit mark. When the
+request covers that change, continue; otherwise refuse with `InvalidInput` naming the site's
+state before the commit mark, as the caller-input skill says for a page's state that rules the
+task out.
+
+When the checkout's amounts still show only placeholders once the page has stopped progressing,
+prefer treating them as the site's own state, as the core skill treats a plain "unavailable"
+value, and refusing with `InvalidInput` naming that state before the order's commit mark, over
+waiting out a timeout.
+
 An example item that is out of stock doesn't end the build. The tool returns that as the site's
 refusal for the item, and the build publishes on it as the writes skill says.
 
@@ -136,9 +145,10 @@ order, or right before the card fill when the host fills the card or picking it 
 checkout. When the site says that time is gone and offers the next one, the next one is still
 the earliest.
 
-In the step that places the order, wait for the site's reply to that order request, or the page
-that carries the order's ID, and read the ID from it, as the writes skill says for a commit.
-Another answer that shows first ends that wait only when it is the site refusing the order.
+In the step that places the order, name the site's reply to that order request and the order's
+ID shown on the page as that wait's answers, beside the site's refusal and error messages, as the
+writes skill says for a commit, and read the ID from the reply or the page it leaves. Prefer not
+naming a sign of progress that can show before them as one of its answers.
 
 ## A checkout's inputs and output
 
