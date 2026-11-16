@@ -523,6 +523,14 @@ const pickerPageCode = String.raw`(element, args) => {
  *   and the unit it split off as `unit`, for the site's own unit field, or, when it accepts none,
  *   `resolveAddress`'s refusal, `option_missing` or `option_unclear`, with every suggestion the
  *   field gave as `available` and `unit`.
+ * - `pickerTypeAddress(control, address, options?)` types the address into the field as
+ *   `resolveAddress` first asks for it, its unit split off, key by key as `pickValue` types, and
+ *   returns that text as `query`. It reads and picks nothing.
+ * - `pickerMatchAddress(control, address, options?)` reads the options the field's list shows now,
+ *   without typing, scrolling or opening more, and resolves the address against them as
+ *   `pickAddress` does. It returns `{ picked: true, row, label, unit }`, `row` the element of the
+ *   option it accepted, for the tool to click, and `label` that option's text, or `pickAddress`'s
+ *   refusal.
  *
  * The kind is detected from the control, or set as `options.kind`: `select`, `datalist`,
  * `typeahead` (an editable field: type, then choose a suggestion), `dropdown` (a button or div
@@ -1700,13 +1708,55 @@ const pickerOptions = async (control, options = {}) => {
 const pickerResolveAddress = ${String(resolveAddressWith)};
 // Each suggestion is read with its lines as comma parts, as a refusal lists it, so a place's name on
 // the line above its address stays out of its street.
+const pickerAddressRules = { fold: pickerFold, spellings: pickerSpellings, rank: pickerRankChoices };
 const pickAddress = async (control, address, options = {}) => {
   const suggest = async (query) => (await pickerList(control, { ...options, query })).list.filter((option) => !option.disabled);
-  const match = { fold: pickerFold, spellings: pickerSpellings, rank: pickerRankChoices };
-  const found = await pickerResolveAddress(String(address ?? ""), suggest, pickerCandidate, match, { read: pickerReads() });
+  const found = await pickerResolveAddress(String(address ?? ""), suggest, pickerCandidate, pickerAddressRules, { read: pickerReads() });
   if (!found.picked) return found;
   const picked = await pickValue(control, pickerText(found.choice), { ...options, query: found.query, tie: "first" });
   return picked.picked ? { ...picked, query: found.query, unit: found.unit } : { ...picked, wanted: String(address ?? "").replace(/\s+/g, " ").trim(), unit: found.unit };
+};
+// Types the text the resolver asks the site for first, which it hands to suggest before any other.
+const pickerTypeAddress = async (control, address, options = {}) => {
+  let query = "";
+  const first = (text) => {
+    query ||= text;
+    return [];
+  };
+  await pickerResolveAddress(String(address ?? ""), first, String, pickerAddressRules);
+  const s = await pickerStart(control, options);
+  try {
+    await pickerType(s, s.control, query, 0);
+    return { query };
+  } catch (error) {
+    throw pickerTimedOut(error, s);
+  } finally {
+    s.net.stop();
+  }
+};
+// Resolves the address against the list open now, read once as it shows, as the only suggestions,
+// and returns the element of the one it accepted (its one link or button when it has one).
+const pickerMatchAddress = async (control, address, options = {}) => {
+  const s = await pickerStart(control, options);
+  try {
+    let rows = (await pickerEval(s, "scan")).options.filter((option) => !option.disabled && !option.creation);
+    const once = () => {
+      const read = rows;
+      rows = [];
+      return read;
+    };
+    const found = await pickerResolveAddress(String(address ?? ""), once, pickerCandidate, pickerAddressRules, { read: pickerReads() });
+    if (!found.picked) return found;
+    const hit = pickerTag(s, "data-pomerado-pick-hit", found.choice.tag);
+    const row = await ((await hit.count()) > 0 ? hit : pickerTag(s, "data-pomerado-pick", found.choice.tag)).elementHandle(s.act());
+    return { picked: true, row, label: found.label, unit: found.unit };
+  } catch (error) {
+    throw pickerTimedOut(error, s);
+  } finally {
+    s.net.stop();
+    await pickerEval(s, "cleanup").catch(() => undefined);
+    await s.handle?.dispose().catch(() => undefined);
+  }
 };
 `;
 

@@ -344,6 +344,70 @@ test("pickAddress reads a suggestion's place name and address as separate lines"
   });
 });
 
+// A place search that lists places by name over a short address with no state or ZIP, and a last
+// row that lists them again with their whole addresses, as some ride sites do.
+const shortPlaces = `<form><label for="pickup">Pickup</label>
+<input id="pickup" role="combobox" aria-controls="places" autocomplete="off">
+<ul id="places" role="listbox" hidden></ul><input type="hidden" name="pickup"></form>
+<script>
+const input = document.getElementById("pickup"), list = document.getElementById("places");
+const short = [["s1", "Example Building", "1 Example Bldg, Example City"], ["s2", "Example Building Garage", "5 Sample St, Example City"]];
+const whole = [["w1", "Example Building", "1 Example Bldg, Example City, CA 94000, US"], ["w2", "Example Building Garage", "5 Sample St, Example City, CA 94000, US"]];
+const render = (rows, more) => {
+  list.innerHTML = rows.map(([value, ...lines]) => '<li role="option" data-value="' + value + '">' + lines.map((line) => "<div>" + line + "</div>").join("") + "</li>").join("") +
+    (more ? '<li role="option" id="more">See more results for ' + input.value + "</li>" : "");
+  list.hidden = false;
+};
+input.addEventListener("input", () => render(short, true));
+list.addEventListener("mousedown", (event) => event.preventDefault());
+list.addEventListener("click", (event) => {
+  const option = event.target.closest("[role=option]");
+  if (option.id === "more") return render(whole, false);
+  document.querySelector("[name=pickup]").value = option.dataset.value;
+  input.value = option.firstElementChild.textContent;
+  list.hidden = true;
+});
+</script>`;
+
+// The address is typed with its unit split off; the short list is refused, and once the tool opens
+// the whole addresses, the row taken is the one the tool clicks.
+test("pickerTypeAddress types the address and pickerMatchAddress takes a row of the list open now", async ({ page }) => {
+  await serve(page, shortPlaces);
+  const address = "1 Example Building, Suite 5, Example City, CA 94000";
+  const outcome = await call(
+    page,
+    `const field = page.getByRole("combobox", { name: "Pickup" });
+const more = page.getByRole("option", { name: /^See more results/ });
+const typed = await pickerTypeAddress(field, ${JSON.stringify(address)}, fast);
+await more.waitFor();
+const short = await pickerMatchAddress(field, ${JSON.stringify(address)}, fast);
+await more.click();
+await more.waitFor({ state: "detached" });
+const { row, ...whole } = await pickerMatchAddress(field, ${JSON.stringify(address)}, fast);
+await row.click();
+return { typed, short, whole };`,
+  );
+  expect(outcome).toEqual({
+    result: {
+      typed: { query: "1 Example Building, Example City, CA 94000" },
+      short: {
+        picked: false,
+        reason: "option_unclear",
+        wanted: address,
+        available: [
+          "Example Building, 1 Example Bldg, Example City",
+          "Example Building Garage, 5 Sample St, Example City",
+          "See more results for 1 Example Building, Example City, CA 94000",
+        ],
+        matches: ["Example Building, 1 Example Bldg, Example City"],
+        unit: "Suite 5",
+      },
+      whole: { picked: true, label: "Example Building, 1 Example Bldg, Example City, CA 94000, US", unit: "Suite 5" },
+    },
+  });
+  expect(await submitted(page)).toEqual({ pickup: "w1" });
+});
+
 test("pickValue picks a native select's option by label, value or another spelling", async ({ page }) => {
   await serve(page, `<form><label>State <select name="state">
 <option value="">Choose a state</option><option value="CA">California</option><option value="NV">Nevada</option>
