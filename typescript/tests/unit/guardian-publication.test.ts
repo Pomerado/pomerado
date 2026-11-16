@@ -1258,7 +1258,7 @@ describe("the publication policy", () => {
         publicationOutputPolicy.indexOf(name),
         publicationOutputPolicy.indexOf(next),
       );
-    expect(rule("Own picker:", "Unapplied supplied input:")).toContain(
+    expect(rule("Own picker:", "Own address match:")).toContain(
       "It is also this finding when source drops rows of a search's results from the list it returns because they fail matching of its own against the caller's text, instead of ranking them with `rankChoices` with `spellingsOf`, or returns an empty list when none matches cleanly instead of the site's rows, in the site's order, as candidates.",
     );
     expect(rule("Wrong failure:", "Strict name check:")).toContain(
@@ -1272,10 +1272,19 @@ describe("the publication policy", () => {
   // The general picker needs every word of a typed address, a ZIP included, to pair with a
   // suggestion, so it refuses the site's own suggestion for that address when it leaves one out;
   // the address resolver takes it and still refuses another address. A choice among the account's
-  // saved addresses is not a typed address.
+  // saved addresses is not a typed address. An address typeahead the tool drives itself is also an
+  // own picker, whose fix names the address resolver too, so the two rules ask for the same fix.
   it("finds a typed street address matched without the address resolver", () => {
     expect(publicationOutputPolicy).toContain(
       "Own address match: source that matches a street address the caller typed against the site's suggestions with pickValue, rankChoices or matching of its own, instead of pickAddress, or resolveAddress over the site's own suggestion request. A choice among the account's saved addresses is not this finding.",
+    );
+    expect(
+      publicationOutputPolicy.slice(
+        publicationOutputPolicy.indexOf("Own picker:"),
+        publicationOutputPolicy.indexOf("Own address match:"),
+      ),
+    ).toContain(
+      "The fix is pickValue or pickValues, with their options for the site's quirks, such as query, answered, committed, commit or blur; for a street address the caller typed, it is pickAddress.",
     );
     expect(guardianPublicationPolicy).toContain(publicationOutputPolicy);
   });
