@@ -67,6 +67,12 @@ one the site capped, is still the written line: call `verified()` and list it in
 `saved_differences` (writes skill). A checkout reads the lines it is about to buy before its
 commit and returns them with the confirmation.
 
+In a tool that places the order, when the page shows no cart control and no empty-cart label,
+take the cart as empty. Then read back the checkout's order summary with the other reads before
+the card fill, or before pressing pay when there is none, and confirm it holds only the
+requested items; when it holds anything else, throw `OperationFailure` before the order's
+commit mark.
+
 ## Values the account lacks
 
 A value the flow needs that the account lacks, such as a delivery address, is a question for
