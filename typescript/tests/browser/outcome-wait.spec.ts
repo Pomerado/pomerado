@@ -145,7 +145,7 @@ test("visible matches of the winning outcome that all read the same decide it, w
   await searchPage(
     page,
     `<p class="notice" style="visibility: hidden">Rooms are available</p>` +
-      `<p class="notice">No rooms match your dates</p><div><p class="notice">No rooms\n  match your dates </p></div>`,
+      `<p class="notice">No rooms match your dates</p><div><p class="notice" style="white-space: pre">No rooms\n  match your dates </p></div>`,
   );
   expect(
     await call(
@@ -162,6 +162,24 @@ test("visible matches of the winning outcome that all read the same decide it, w
   ).toEqual({
     result: { outcome: "empty", evidence: { count: 3, visible: 2, text: "No rooms match your dates" } },
   });
+});
+
+test("visible matches of the winning outcome stay ambiguous when their values differ, they have no text, or more than 20 show", async ({
+  page,
+}) => {
+  const body = `const answer = page.locator("#answer");
+    return await waitForOutcome({ failed: answer.getByRole("alert"), empty: answer.locator(".notice") }, { timeout: 5000 });`;
+  const box = `class="notice" style="display: inline-block; width: 20px; height: 20px"`;
+  for (const [html, shown] of [
+    [`<input class="notice" value="1"><input class="notice" value="3">`, 2],
+    [`<span ${box} aria-label="Sold out"></span><span ${box} aria-label="In stock"></span>`, 2],
+    [`<p class="notice">No rooms match your dates</p>`.repeat(21), 21],
+  ] as const) {
+    await searchPage(page, html);
+    expect(await call(page, body)).toEqual({
+      error: `outcome_ambiguous: failed 0 visible of 0, empty ${shown} visible of ${shown}`,
+    });
+  }
 });
 
 test("an ambiguous outcome below the winner does not block it", async ({ page }) => {

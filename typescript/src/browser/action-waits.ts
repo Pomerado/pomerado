@@ -23,9 +23,10 @@ export interface InvalidField {
 }
 
 /**
- * What showed the winning outcome, by kind: the locator's one visible match and its text, how long
- * a `gone` element stayed gone, the fields marked invalid, the URL reached, the response's method,
- * URL and status, the native dialog's type and message, the popup's URL, or a `check`'s value.
+ * What showed the winning outcome, by kind: the locator's matches and its first visible one's
+ * text, how long a `gone` element stayed gone, the fields marked invalid, the URL reached, the
+ * response's method, URL and status, the native dialog's type and message, the popup's URL, or a
+ * `check`'s value.
  */
 export interface OutcomeEvidence {
   readonly count?: number;
@@ -440,10 +441,14 @@ const outcomeWaitShows = (candidate, observation, state, stale, now) => {
 const outcomeWaitShowsAny = (candidate, observation) =>
   observation !== undefined &&
   (candidate.kind === "locator" ? observation.visible > 0 : candidate.kind !== "url" && candidate.kind !== "check" && observation.matched);
-// Whether a locator's visible matches, at most 20, all read the same text, spacing aside.
+// Whether a locator's visible matches, two to 20, all read the same text, spacing aside: a form
+// control's value, any other element's text. Matches with no text never read the same.
 const outcomeWaitSameText = (locator) =>
-  locator.filter({ visible: true }).evaluateAll((elements) =>
-    elements.length <= 20 && new Set(elements.map((element) => String(element.innerText ?? "").replace(/\s+/g, " ").trim())).size === 1);
+  locator.filter({ visible: true }).evaluateAll((elements) => {
+    const texts = new Set(elements.map((element) =>
+      String((element.matches("input, textarea, select") ? element.value : element.innerText) ?? "").replace(/\s+/g, " ").trim()));
+    return elements.length > 1 && elements.length <= 20 && texts.size === 1 && !texts.has("");
+  });
 const outcomeWaitEvidence = async (candidate, observation, state, events, now) => {
   const { kind, name } = candidate;
   if (kind === "locator") {
