@@ -1042,6 +1042,10 @@ usable, with no commit mark and without making the tool a write for it, even whe
 sends a request. Prefer its close control when it has one. When the request is about that notice
 itself, accepting it is the write.
 
+Before acting on a notice, find its container in the page's structure, not its place in the
+accessibility snapshot. A notice applies only to the controls in its own container; a word it
+shares with a control outside that container does not make it that control's.
+
 An app-download, open-in-app or location-permission prompt is an obstacle, not a reason to stop.
 Dismiss it with its skip, close, "not now", "continue on the web" or "type address instead"
 control, in the tool's code only when it shows. When a path ends at an app-only wall, try the

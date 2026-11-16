@@ -182,11 +182,8 @@ shows it always follows that action. When a click times out, read the page for a
 dialog covering its control before trying it again; a commit or pay click follows the writes
 skill.
 
-Before acting on a notice, find its container in the page's structure (its form or group), not
-its place in the accessibility snapshot, which can hide dividers. A notice applies only to the
-controls in its own container, or a control its text names. Before you end a build because the
-site requires something, name its exact text and the control it belongs to; when that control
-is not on the request's path, keep going.
+Before you end a build because the site requires something, name its exact text and the control
+it belongs to; when that control is not on the request's path, keep going.
 
 Type each date-only input and output as the runtime's `CalendarDate`, imported beside
 `formControlsCode`, never a bare `YYYY-MM-DD` pattern, which accepts `2026-02-30`. It checks
