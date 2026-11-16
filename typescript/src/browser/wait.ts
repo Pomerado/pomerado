@@ -1420,7 +1420,9 @@ const waitForChange = async (fields, options = {}) => {
  *   one. A request that may write that got a server error after the click, from any host, keeps it
  *   `outcome_unknown`. Its `evidence` has the site's words: `messages`, or the dialog's `type` and
  *   `message`. The runtime then puts the step back unsent, as
- *   `notCommitted(name, { siteRefused: true })` does.
+ *   `notCommitted(name, { siteRefused: true })` does. The wait takes its `action` for the commit's
+ *   click, so pass the commit's click as the `action`: after a commit clicked outside a wait, the
+ *   next wait's `action` would read as the commit's.
  * - `outcome_timeout`, when the page was still progressing at `timeout`.
  *
  * An outcome may also be an object naming one declared kind, raced beside the locators in the same
