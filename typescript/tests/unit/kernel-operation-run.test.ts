@@ -268,6 +268,33 @@ describe("executeKernelOperation", () => {
     ]);
   });
 
+  it("reports a step the write declares a setting as one in its marks", async () => {
+    const journal = await Effect.runPromise(makeEffectJournal);
+    const write = defineOperation(
+      {
+        input: Schema.Struct({}),
+        output: Schema.String,
+        write: {
+          confirmation: "readback",
+          commits: ["save-tip", "place-order"],
+          settings: ["save-tip"],
+        },
+      },
+      async ({ enteringCommit }) => {
+        enteringCommit("save-tip");
+        return "saved";
+      },
+    );
+    await run(
+      executeKernelOperation(write, {}, { kernel: answeringKernel, sessionId: "s" }),
+      Effect.succeed(journal),
+    );
+    expect(commitReportOf({ commits: await Effect.runPromise(journal.commits) }).marks).toEqual([
+      { name: "save-tip", state: "sent", setting: true },
+      { name: "place-order", state: "not_sent" },
+    ]);
+  });
+
   it("fails before dispatch when the deadline is already spent, and as unknown when it passes mid-run", async () => {
     const spent = Deadline.after(1);
     await new Promise((resolve) => setTimeout(resolve, 5));
