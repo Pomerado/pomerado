@@ -1533,7 +1533,7 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["fcac627575d1249ab47fcbcc5f4489f0d071d9076dd9f51b940dba933b4ef57d", "core"],
+    ["b97d03f456b3ca7c7c8a4b25615d4f0fcc8db8361cf53fd00cd1a33b74d89123", "core"],
     ["7c3be765ee7c1c62b13a4876cc5453bbeb8acc7948b51511574f36f2aed09c4a", "search"],
     ["d6f0ed8446759ce44874a2cb7c7ee7251f92249673379b69439aaac2b5b7afb5", "auth"],
     ["539abe36b602c8e2eff8745dd0462aea41837a20cc0b90cbef7a01cbad6fb89a", "testing"],
