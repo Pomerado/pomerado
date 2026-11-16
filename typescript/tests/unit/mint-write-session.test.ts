@@ -742,6 +742,9 @@ describe("a write build's write path", () => {
       // A form filled and read back, never submitted.
       const filled: WritePath = { steps: [], ends: "The filled form, unsubmitted" };
       expect(writePathRefusal(act(filled), session(false))).toContain("writePath names no step");
+      // The ending it names is one the harness takes: the request's own stop is caller_input,
+      // never host_refused, which the harness refuses when no host check refused a step.
+      expect(writePathRefusal(act(filled), session(false))).toContain("reason caller_input");
       expect(
         writePathRefusal(act(filled), session(false), { publishOnReadBack: true }),
       ).toBeUndefined();

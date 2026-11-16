@@ -83,7 +83,9 @@ with `request_input` for one that does not. Publication judges the finished tool
 (`reference/publication-review.md`). Declare it as `writePath` on the first `act` step: in
 `steps`, each step that saves or submits, in order, with the `commit` mark its helper will
 enter and what it saves (`does`); in `ends`, what the last step leaves the caller with. When the
-request ends before any save, `steps` is empty: never name a step that saves nothing. Mark
+request ends before any save, `steps` is empty: never name a step that saves nothing. On a host
+that publishes only a write that saves on the site, such a request ends the build with
+`report_blocked`, reason `caller_input`, quoting the words of the request that stop it there. Mark
 `setup: true` on a step that only makes state the site creates by itself as the session starts,
 such as an empty cart when the menu opens, and saves nothing of the caller's, or leave that step
 out.
