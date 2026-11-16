@@ -332,8 +332,8 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   execute call that can send that change, and declare the names in order as
   `write.commits`. Use the same marked helper in the session and the composed
   script. The marked call does the commit and nothing that can still refuse: it re-reads
-  only what a change since the checks would make wrong, such as the total and items they
-  read, and when one moved it returns before clicking and the script throws
+  only what a change since the checks would make wrong and its page still shows, such as the
+  total and items they read, and when one moved it returns before clicking and the script throws
   `OperationFailure` naming the change, such as `total_changed`; otherwise it clicks once
   and waits for the confirmation. That guard is expected. Name the in-between state the site
   can show after the click, beside its final answers, in that wait's `pending`: it holds up to
@@ -376,8 +376,8 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   mark as above, all in that one step, or right before the card fill when the host fills the card.
   There, and in any other re-check before a commit, match the choice the caller approved by its
   kind or name and any time it shows that stays fixed, not by a time that moves with the clock,
-  check its price against the caller's limits as above, and keep it as approved when only that
-  time changed. For a choice whose shown time moves with the clock, `readBackMatches` and
+  check the price it shows against the caller's limits as above, and keep it as approved when
+  only that time changed or the page leaves out a value an earlier check read. For a choice whose shown time moves with the clock, `readBackMatches` and
   `sameText` from `pomerado/runtime` take `{ ignoreClockTimes: true }` to compare its kind or name
   without its times. When the site
   answers the click by saying the quote expired or the price changed, with
@@ -408,7 +408,8 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   notation, such as `queued`, with the site's own word in a `status_label` field. Then read
   what the output promises from that response or from the page the commit
   left, match it to the caller's values, and call `verified()` with no argument just before
-  returning. Declare `write: { confirmation: "readback" }`. Prefer not opening another page,
+  returning, also when the page does not show its own confirmation, since that response
+  already confirms the write. Declare `write: { confirmation: "readback" }`. Prefer not opening another page,
   such as a list, a history or an account screen, only to prove the write: a commit that went
   through, with the new record's id, already proves it. Return the tool's whole output from the
   step that confirms the write, read from the commit's response or the page it left: the caller
