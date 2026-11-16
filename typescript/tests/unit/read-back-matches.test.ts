@@ -215,6 +215,10 @@ it("confirms an approved choice whose time moved with the clock, only when asked
   expect(readBackMatches("Express 7:23pm–8:53pm $3.99", "Express 7:21pm–8:51pm $3.99")).toBe(false);
   expect(readBackMatches("Express 7:23pm–8:53pm $4.99", "Express 7:21pm–8:51pm $3.99", options)).toBe(false);
   expect(readBackMatches("Standard 7:23pm–8:53pm $3.99", "Express 7:21pm–8:51pm $3.99", options)).toBe(false);
+  // Each function holds its own copy of the times it leaves out, so page code can embed it alone.
+  const times = (fn: unknown) => /\/\(\?<!.*?\/giu/u.exec(String(fn))?.[0];
+  expect(times(readBackMatches)).toBeDefined();
+  expect(times(readBackMatches)).toBe(times(sameText));
 });
 
 it("refuses text that drops a wanted word or names another value", () => {

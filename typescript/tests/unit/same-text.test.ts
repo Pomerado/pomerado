@@ -457,6 +457,7 @@ it("leaves out times that move with the clock only when asked", () => {
     ["Delivery 7–8pm", "Delivery 8–9 p.m."],
     ["Ready in 25–40 min", "Ready in 30-45 minutes"],
     ["Ready in 1 hr", "Ready in 2 hours"],
+    ["Arrives 7:21\u202fPM", "Arrives 7:40\u202fPM"],
   ];
   for (const [shown, wanted] of moved) {
     expect(sameText(shown, wanted, { ignoreClockTimes: true }), `${shown} | ${wanted}`).toBe(true);
@@ -466,8 +467,9 @@ it("leaves out times that move with the clock only when asked", () => {
   for (const [shown, wanted] of [
     ["Express 7:21pm–8:51pm", "Standard 7:23pm–8:53pm"],
     ["Priority 7:21pm $3.99", "Priority 7:40pm $4.99"],
-    ["Sat Nov 21 7pm", "Sun Nov 22 7pm"],
-    ["Size 12", "Size 13"],
+    ["Nov 21 7pm", "Nov 22 7pm"],
+    ["Nov 21-22 Amber Room", "Nov 20-22 Amber Room"],
+    ["$10 min order", "$15 min order"],
     ["Gate 12", "Gate 12 pm"],
   ] as const)
     expect(sameText(shown, wanted, { ignoreClockTimes: true }), `${shown} | ${wanted}`).toBe(false);

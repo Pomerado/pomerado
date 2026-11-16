@@ -87,11 +87,12 @@ export const foldChoiceText = (text: unknown): string => {
  * a country code the caller typed where the site shows none. An email, domain or file name, or a
  * `wanted` with no letter or digit, compares as it does without the option.
  *
- * With `{ ignoreClockTimes: true }`, each time of day, such as 7:21pm, 7 p.m. or 19:21, and each
- * count of minutes or hours, such as 6 min or 25–40 minutes, leaves both texts first, ranges
- * included, so a choice whose time moved with the clock still matches when every other word and
- * number is the same. Use it only for a choice whose shown time moves with the clock, since two
- * times of day the caller chose between match too.
+ * With `{ ignoreClockTimes: true }`, each time of day written with a colon or with am or pm, such
+ * as 7:21pm, 7 p.m. or 19:21, and each count of minutes or hours, such as 6 min or 25–40 minutes,
+ * leaves both texts first, ranges included, so a choice whose time moved with the clock still
+ * matches when every other word and number is the same. A number right after a currency sign
+ * stays. Use it only for a choice whose shown time moves with the clock, since two times of day,
+ * or two lengths of time, the caller chose between match too.
  *
  * It is pure and self-contained, so page code can embed it.
  */
@@ -104,7 +105,7 @@ export const sameText = (
     // The same times readBackMatches leaves out: a time of day, an hour before am or pm, the
     // first hour of such a range, and a count of minutes or hours.
     const times =
-      /(?<![\p{N}:.,])(?:\p{N}{1,2}(?::\p{N}{2}){1,2}(?:\s*[ap]\.?\s?m\.?)?|\p{N}{1,2}\s*[ap]\.?\s?m\.?|\p{N}{1,2}(?::\p{N}{2})?(?=\s*[-\u2010-\u2014]\s*\p{N}{1,2}(?::\p{N}{2})?\s*[ap]\.?\s?m)|\p{N}+(?:\s*[-\u2010-\u2014]\s*\p{N}+)?\s*(?:minutes?|mins?|hours?|hrs?)\.?)(?![\p{L}\p{N}:])/giu;
+      /(?<![\p{N}\p{Sc}:.,])(?:\p{N}{1,2}(?::\p{N}{2}){1,2}(?:\s*[ap]\.?\s?m\.?)?|\p{N}{1,2}\s*[ap]\.?\s?m\.?|\p{N}{1,2}(?::\p{N}{2})?(?=\s*[-\u2010-\u2014]\s*\p{N}{1,2}(?::\p{N}{2})?\s*[ap]\.?\s?m\.?(?![\p{L}\p{N}]))|\p{N}+(?:\s*[-\u2010-\u2014]\s*\p{N}+)?\s*(?:minutes?|mins?|hours?|hrs?)\.?)(?![\p{L}\p{N}:])/giu;
     shown = String(shown ?? "").replace(times, " ");
     wanted = String(wanted ?? "").replace(times, " ");
   }
@@ -495,7 +496,7 @@ export const readBackMatches = (
   if (options?.ignoreClockTimes === true) {
     // The same times sameText leaves out with ignoreClockTimes.
     const times =
-      /(?<![\p{N}:.,])(?:\p{N}{1,2}(?::\p{N}{2}){1,2}(?:\s*[ap]\.?\s?m\.?)?|\p{N}{1,2}\s*[ap]\.?\s?m\.?|\p{N}{1,2}(?::\p{N}{2})?(?=\s*[-\u2010-\u2014]\s*\p{N}{1,2}(?::\p{N}{2})?\s*[ap]\.?\s?m)|\p{N}+(?:\s*[-\u2010-\u2014]\s*\p{N}+)?\s*(?:minutes?|mins?|hours?|hrs?)\.?)(?![\p{L}\p{N}:])/giu;
+      /(?<![\p{N}\p{Sc}:.,])(?:\p{N}{1,2}(?::\p{N}{2}){1,2}(?:\s*[ap]\.?\s?m\.?)?|\p{N}{1,2}\s*[ap]\.?\s?m\.?|\p{N}{1,2}(?::\p{N}{2})?(?=\s*[-\u2010-\u2014]\s*\p{N}{1,2}(?::\p{N}{2})?\s*[ap]\.?\s?m\.?(?![\p{L}\p{N}]))|\p{N}+(?:\s*[-\u2010-\u2014]\s*\p{N}+)?\s*(?:minutes?|mins?|hours?|hrs?)\.?)(?![\p{L}\p{N}:])/giu;
     shown = String(shown ?? "").replace(times, " ");
     wanted = String(wanted ?? "").replace(times, " ");
   }
