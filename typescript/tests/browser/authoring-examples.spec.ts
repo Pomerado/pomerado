@@ -21,7 +21,7 @@ import readCatalog, {
   detailNavigation,
   searchThenRead,
 } from "../../authoring/examples/navigation.js";
-import searchListings, { readRooms } from "../../authoring/examples/pagination.js";
+import searchListings, { readItemDetails, readRooms } from "../../authoring/examples/pagination.js";
 import searchOrigin from "../../authoring/examples/picker-first.js";
 import assignOwner from "../../authoring/examples/picker.js";
 import selectStatus from "../../authoring/examples/selection.js";
@@ -574,6 +574,30 @@ test("paged search example waits for the titles of the rows it returns to fill i
       list_changed: false,
     }),
   );
+});
+
+test("detail-page list example reads each row once from a list the site shows twice", async ({ page }) => {
+  const origin = "https://items.example.invalid";
+  const items = `<ul aria-label="Items">${["a", "b", "c"]
+    .map((id) => `<li data-item-id="${id}"><a href="/items/${id}"><span class="name">Item ${id}</span></a></li>`)
+    .join("")}</ul>`;
+  await page.route(`${origin}/**`, (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      // The list shows twice, as on a page that repeats it in two layouts.
+      body: new URL(route.request().url()).pathname === "/items" ? items + items : `<p data-testid="maker">Acme</p>`,
+    }),
+  );
+  // Every item fits the limit, so nothing more follows; the second copy's rows are no more items.
+  const { result } = await runExample(page, readItemDetails, { limit: 3 }, { siteOrigin: origin });
+  expect(Either.getOrThrow(result)).toMatchObject({
+    items: [
+      { id: "a", name: "Item a", maker: "Acme" },
+      { id: "b", name: "Item b", maker: "Acme" },
+      { id: "c", name: "Item c", maker: "Acme" },
+    ],
+    has_more: false,
+  });
 });
 
 test("append example reads each step's filled-in new rows until the control goes", async ({

@@ -862,7 +862,7 @@ choice the input asked for as "Configure, then read" says; ask the caller about 
 `Error` named `OutcomeWaitFailure` whose message says what each outcome matched, which progress
 signs it saw and when progress stopped: `outcome_ambiguous` when the winning locator matches more
 than one element, unless more than one is visible and the visible ones all read the same text (read
-such an answer's text from `waitForOutcomeResult`'s `evidence`, or scope the locator to one control before acting on it);
+such an answer's text from `waitForOutcomeResult`'s `evidence`, or scope the locator to one element before acting on it or reading inside it);
 `outcome_unknown` when the page stops progressing for `noProgressMs` (8 s)
 while showing none of the answers; and `outcome_timeout` when it is still progressing at
 `timeout` (30 s). An unknown page is a challenge, the site's error or a layout you have not

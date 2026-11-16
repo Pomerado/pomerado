@@ -354,10 +354,11 @@ ${code}`,
 const list = page.getByRole("list", { name: "Items", exact: true });
 const shown = await waitForOutcome({ empty: page.getByRole("status").filter({ hasText: /^No items$/ }), list }, site);
 if (shown === "empty") return { rows: [], more: false };
-const { rows, more } = await waitForRows(list.getByRole("listitem"), {
+const shownList = list.filter({ visible: true }).first();
+const { rows, more } = await waitForRows(shownList.getByRole("listitem"), {
   name: ".name",
   href: { selector: "a", attribute: "href" },
-}, { count: ${count}, key: { attribute: "data-item-id" }, region: list, ...site });
+}, { count: ${count}, key: { attribute: "data-item-id" }, region: shownList, ...site });
 return { rows: rows.map((row) => ({ id: row.key, name: row.name, href: new URL(row.href, page.url()).href })), more };`),
       );
       return { ...read, hasNext: false };
