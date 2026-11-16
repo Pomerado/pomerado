@@ -1001,11 +1001,12 @@ describe("the publication policy", () => {
   });
 
   // A caller's place, venue or company name matches in its usual forms, so neither the review of
-  // a live step nor the publication review asks a tool to require an exact match.
-  it("gives the execution and publication reviews the same fuzzy proper-noun rule", () => {
+  // a live step nor the publication review asks a tool to require an exact match. Every review's
+  // shared instructions hold the execution policy, so the publication policy does not say it again.
+  it("gives every review the fuzzy proper-noun rule once, in the shared execution policy", () => {
     const rule =
       "A tool matches the caller's proper nouns, such as places, venues and company names, with a fuzzy match that accepts the usual forms of the same name. Never ask a tool to require an exact match. When more than one option matches a caller's value equally, the tool either takes the first in the site's order and returns the one it used, as the site labels it, or lists them for the caller to choose one, in a question or a refusal whose options each select exactly one of them. Which of the two is the tool's own choice, never a finding or a reason to deny. A tool that takes the first and does not return the one it used is a schema_mismatch finding with reason source_correction.";
-    expect(guardianPublicationPolicy.split(rule)).toHaveLength(2);
+    expect(guardianPublicationPolicy).not.toContain(rule);
     expect(guardianExecutionPolicy(nativeExecutionEnvironment)).toContain(`\n${rule}\n`);
   });
 
@@ -1029,7 +1030,10 @@ describe("the publication policy", () => {
     const choice = "Which of the two is the tool's own choice, never a finding or a reason to deny.";
     const missing =
       "A tool that takes the first and does not return the one it used is a schema_mismatch finding with reason source_correction.";
-    expect(guardianPublicationPolicy.split(`${choice} ${missing}`)).toHaveLength(2);
+    expect(
+      guardianExecutionPolicy(nativeExecutionEnvironment).split(`${choice} ${missing}`),
+    ).toHaveLength(2);
+    expect(guardianPublicationPolicy).not.toContain(choice);
     expect(publicationFindingCategories).toContain("schema_mismatch");
     expect(publicationReasons).toContain("source_correction");
   });
@@ -1138,20 +1142,20 @@ describe("the publication policy", () => {
 
   // A site's own "Remember me" choice left at its default keeps the owner's session for later
   // runs. It is not a safety default, so neither review denies the host's sign-in step over it.
-  it("leaves a site's own Remember me choice at its default in both reviews", () => {
+  it("leaves a site's own Remember me choice at its default, said once in the shared execution policy", () => {
     const rule =
       "Prefer leaving a site's own \"Remember me\" or \"Keep me signed in\" choice at its default on the tool's own sign-in. It keeps the account owner's session, which later runs rely on, and it is not a safety default. Never deny the host's own sign-in step over that choice.";
-    expect(publicationSafetyDefaultPolicy).toContain(` ${rule} `);
+    expect(guardianPublicationPolicy).not.toContain(rule);
     expect(guardianExecutionPolicy(nativeExecutionEnvironment)).toContain(`\n${rule} `);
   });
 
   // A screen that only asks whether to remember or trust this browser has no default to leave it
   // at. Declining it saves nothing, so neither review holds the host's sign-in step that declines
   // it, and the publication review reads the same step in the saved sign-in.
-  it("prefers allowing the host's sign-in step that declines a remember or trust screen in both reviews", () => {
+  it("prefers allowing the host's sign-in step that declines a remember or trust screen, said once", () => {
     const rule =
       "Prefer allowing the host's own sign-in step that declines a screen asking only whether to remember or trust this browser or device, whatever its wording: declining saves nothing and needs no owner answer, so neither escalate nor deny that step over it.";
-    expect(publicationSafetyDefaultPolicy.endsWith(` ${rule}`)).toBe(true);
+    expect(guardianPublicationPolicy).not.toContain(rule);
     expect(guardianPublicationPolicy).toContain(publicationSafetyDefaultPolicy);
     expect(guardianExecutionPolicy(nativeExecutionEnvironment)).toContain(
       ` names that box. An agent's own step that changes such a box still follows the sign-in screen rule above. ${rule}\n`,
@@ -1616,14 +1620,12 @@ describe("the OpenAI publication reviewer", () => {
   });
 
   // One caller's "always" answer must not make a published write take a paid add-on, an upsell,
-  // a payment method or a delivery address for every later caller. Both rules that could excuse
-  // such a choice, the input schema review and the caller decision rule, carry the same limit.
-  it("limits a caller's decision on a write's paid or payment choices in both rules that read it", () => {
+  // a payment method or a delivery address for every later caller. The caller decision rule
+  // carries the limit, and the publication policy, which holds that rule and the input schema
+  // review together, says it once.
+  it("limits a caller's decision on a write's paid or payment choices, said once per review", () => {
     expect(publicationCallerDecisionPolicy).toContain(publicationPaidChoiceLimit);
-    const inputReview = guardianPublicationPolicy
-      .split("\n")
-      .find((line) => line.startsWith("Review the public input schema"));
-    expect(inputReview).toContain(publicationPaidChoiceLimit);
+    expect(guardianPublicationPolicy.split(publicationPaidChoiceLimit)).toHaveLength(2);
   });
 
   // With no caller choice, a write takes the tier of speed, class or service level the site
