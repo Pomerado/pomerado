@@ -1076,7 +1076,7 @@ it("has a write confirm from its own commit request, and read back only when tha
   const texts = await renderedTexts("typescript/authoring");
   const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
   expect(text("writes")).toContain(
-    '- Prefer confirming the write from its commit request. Keep the click on the final commit control, such as Save, Send, Submit, Book or Pay, in its own step. In the same call as that click, wait for the site\'s response to the request it sends, matched by the method and path the session saw carry the commit on the site, and by its body where the body shows the caller\'s values, as `references/write-readback.ts` does: a `{ response }` answer of `waitForOutcomeResult`, beside every way the page can answer, listing the site\'s error or validation message (`{ invalid: form }`) first. The write went through when that response is 2xx or 3xx, a body the call can read shows no error, and the page shows no error or validation message after it. A 201 whose Location names the new record went through as soon as it arrives, with no wait for the page. A 200 whose body reports an error, as GraphQL can, did not go through. A 202, or a 2xx whose body says the work is queued, went through too; return that in the output as a status in the core notation, such as `queued`, with the site\'s own word in a `status_label` field. Then read what the output promises from that response or from the page the commit left, match it to the caller\'s values, and call `verified()` with no argument just before returning. Declare `write: { confirmation: "readback" }`. Prefer not opening another page, such as a list, a history or an account screen, only to prove the write: a commit that went through, with the new record\'s id, already proves it. Return the tool\'s whole output from the step that confirms the write, read from the commit\'s response or the page it left: the caller or the site may cancel, refund or delete the record soon after, and a later read-back then shows less. In the same call as the click, read a success message that disappears on its own. When a commit step returned without calling `verified()` and its `stateChangingRequests` list the commit request with a 2xx or 3xx status, prefer confirming it in the next step from that response, with no error in its body or on the page as it stands, over waiting for a message that may be gone. Make no execute call after `verified()`: a later call reopens the effect. After the confirming step, further `act` steps are refused.',
+    '- Prefer confirming the write from its commit request. Keep the click on the final commit control, such as Save, Send, Submit, Book or Pay, in its own step. In the same call as that click, wait for the site\'s response to the request it sends, matched by the method and path the session saw carry the commit on the site, and by its body where the body shows the caller\'s values, as `references/write-readback.ts` does: a `{ response }` answer of `waitForOutcomeResult`, beside every way the page can answer, listing the site\'s error or validation message (`{ invalid: form }`) first. The write went through when that response is 2xx or 3xx, a body the call can read shows no error, and the page shows no error or validation message after it. A 201 whose Location names the new record went through as soon as it arrives, with no wait for the page. A 200 whose body reports an error, as GraphQL can, did not go through. A 202, or a 2xx whose body says the work is queued, went through too; return that in the output as a status in the core notation, such as `queued`, with the site\'s own word in a `status_label` field. Then read what the output promises from that response or from the page the commit left, match it to the caller\'s values, and call `verified()` with no argument just before returning, also when the page shows no confirmation, since that response already confirms the write. Declare `write: { confirmation: "readback" }`. Prefer not opening another page, such as a list, a history or an account screen, only to prove the write: a commit that went through, with the new record\'s id, already proves it. Return the tool\'s whole output from the step that confirms the write, read from the commit\'s response or the page it left: the caller or the site may cancel, refund or delete the record soon after, and a later read-back then shows less. In the same call as the click, read a success message that disappears on its own. When a commit step returned without calling `verified()` and its `stateChangingRequests` list the commit request with a 2xx or 3xx status, prefer confirming it in the next step from that response, with no error in its body or on the page as it stands, over waiting for a message that may be gone. Make no execute call after `verified()`: a later call reopens the effect. After the confirming step, further `act` steps are refused.',
   );
   // Every case the request cannot settle keeps a read-back.
   expect(text("writes")).toContain(
@@ -1250,16 +1250,28 @@ it("has a write retry an expired quote once, which Guardian's reviews accept", a
 // A choice the caller approved can show a time that moves with the clock, such as an
 // as-soon-as-possible delivery window or a ride's pickup time, so a re-check before the commit that matched its exact text
 // refused a choice the site still offered. The writes skill matches it by its kind or name and any
-// time that stays fixed, with its price checked against the caller's limits, in the commit step's
-// fresh quote and every other re-check before a commit, and Guardian's publication review says
-// the same.
+// time that stays fixed, with the price it shows checked against the caller's limits, in the
+// commit step's fresh quote and every other re-check before a commit, and keeps it when the page
+// leaves out a value an earlier check read. Guardian's publication review says the same of the
+// moving time.
 it("has a re-check before a commit match the approved choice by its kind or name and fixed time", async () => {
   const texts = await renderedTexts("typescript/authoring");
   const writes = (texts.get("writes") ?? "").replace(/\s+/g, " ");
   expect(writes).toContain(
-    "or right before the card fill when the host fills the card. There, and in any other re-check before a commit, match the choice the caller approved by its kind or name and any time it shows that stays fixed, not by a time that moves with the clock, check its price against the caller's limits as above, and keep it as approved when only that time changed. For a choice whose shown time moves with the clock, `readBackMatches` and `sameText` from `pomerado/runtime` take `{ ignoreClockTimes: true }` to compare its kind or name without its times. When the site answers the click",
+    "or right before the card fill when the host fills the card. There, and in any other re-check before a commit, match the choice the caller approved by its kind or name and any time it shows that stays fixed, not by a time that moves with the clock, check the price it shows against the caller's limits as above, and keep it as approved when only that time changed, even when the page leaves out a value an earlier check read. For a choice whose shown time moves with the clock, `readBackMatches` and `sameText` from `pomerado/runtime` take `{ ignoreClockTimes: true }` to compare its kind or name without its times. When the site answers the click",
   );
   expect(guardianPublicationPolicy).toContain(publicationApprovedChoicePolicy);
+});
+
+// A screen right before the commit, such as a confirm screen, can leave out a value the write
+// already checked. The marked call re-reads only what its page shows, so that alone does not
+// stop the write.
+it("has the marked call re-read only what its page shows", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const writes = (texts.get("writes") ?? "").replace(/\s+/g, " ");
+  expect(writes).toContain(
+    "it re-reads only what a change since the checks would make wrong and its page shows, such as the total and items they read, and when one moved it returns before clicking",
+  );
 });
 
 // A consent banner whose text also agrees to the site's own terms is still a consent banner, and a
@@ -1428,7 +1440,7 @@ it("renders the pinned standalone authoring", async () => {
     ["a08f1ef89cc10bf11e17b8d6086b6e37649b1d5d11b78c0542cc7db32460b7e3", "testing"],
     ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
     ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
-    ["acfda464740c203142138bc625905d11ea3e2007c42cfa19afcaa481cfddb44e", "writes"],
+    ["ba232eef00725bff2a0e1b1ffb59f26323d73110e4afc39ca22ef58c2758ee76", "writes"],
     ["821e833093e962ecd1561648fdd2ca287ecc9fed9fe43278f783df6d51e9e46d", "cart"],
     ["82709b7a834848416464604938c1932b65d1048bdd6f53dbe751a545187be8b0", "caller-input"],
     ["72fbe16dc78d22b32829b514b58b59feb9ab8fc553ecc66142e2a04149c740eb", "publication"],
