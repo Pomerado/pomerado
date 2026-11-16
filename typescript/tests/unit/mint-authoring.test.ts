@@ -1535,11 +1535,11 @@ it("renders the pinned standalone authoring", async () => {
   ]).toStrictEqual([
     ["30e75f9f3c89b2e95261d4bab6676a13b303cd7c9faee52a83de34ccfdfc772a", "core"],
     ["7c3be765ee7c1c62b13a4876cc5453bbeb8acc7948b51511574f36f2aed09c4a", "search"],
-    ["d6f0ed8446759ce44874a2cb7c7ee7251f92249673379b69439aaac2b5b7afb5", "auth"],
+    ["b64347efc8ee8a099cd2ac3f6550bdbe5425765f0b43d89011167a87b0c91151", "auth"],
     ["539abe36b602c8e2eff8745dd0462aea41837a20cc0b90cbef7a01cbad6fb89a", "testing"],
     ["d524204c6ed2dc0fa773d6e5cf0aef993e2b48ee9db3fcbf291e40ebe8c9913d", "pagination"],
     ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
-    ["4203b7e115b495fa7cabe2d26715db2bfd46c0d3bf69133f2d18ac12c6b94b34", "writes"],
+    ["4c076a64132c8d31a05189c103c12c680b8cd49ba7b814f168e4790de42135f5", "writes"],
     ["f5a961311d1c32086aac2dac03208f9f735ad18ea50cf34ae23d1342f292a418", "cart"],
     ["b1bf6ce5a4df84fb1fbe88a03337e7a62ffe3892db3f30e5ee9298607b83a554", "caller-input"],
     ["5e831bd1ba21d5ec4b1da3a96152f9d905144cbef58b9bd26381933f27faa97c", "publication"],
