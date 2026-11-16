@@ -163,6 +163,7 @@ describe("a write session's publication check", () => {
     readonly confirmation: "message" | "readback" | "unverifiable";
     readonly commits?: readonly unknown[];
     readonly commitsUnproven?: readonly unknown[];
+    readonly settings?: readonly unknown[];
   }) => ({ contract: write === undefined ? {} : { write }, inputDecodes: true });
   const check = (
     steps: readonly WriteSessionMarks[],
@@ -206,6 +207,16 @@ describe("a write session's publication check", () => {
     );
     expect(reason(result)).toBe("commit_marks_unentered");
     expect(extractions).toBe(1);
+  });
+
+  it("refuses setting steps outside its commit steps or with no other commit step after them", () => {
+    const settings = (commits: readonly string[], named: readonly string[]) =>
+      reason(
+        check([confirmed], contract({ confirmation: "readback", commits, settings: named })).result,
+      );
+    expect(settings(["save-tip", "place-order"], ["place-order"])).toBe("commit_settings_invalid");
+    expect(settings(["place-order"], ["save-tip"])).toBe("commit_settings_invalid");
+    expect(settings(["place-order"], [])).toBeUndefined();
   });
 
   it("then refuses a contract that does not match the session", () => {

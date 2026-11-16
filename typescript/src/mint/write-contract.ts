@@ -13,6 +13,16 @@ const declaresCommitMarks = (commits: readonly unknown[] | undefined) =>
   );
 
 /**
+ * Setting steps (`settings`) that name distinct steps of `commits`, with a step that is not one
+ * after the last of them.
+ */
+const settingsFollowed = (commits: readonly unknown[], settings: readonly unknown[] | undefined) =>
+  settings === undefined ||
+  (new Set(settings).size === settings.length &&
+    settings.every((name) => commits.includes(name)) &&
+    !settings.includes(commits.at(-1)));
+
+/**
  * The marks `commitsUnproven` may excuse from having been entered: distinct marks of `commits`
  * after the last one the session entered, and those of `skippable` it never entered, wherever they
  * sit. A session that entered none has nothing to follow, so it may excuse none, unless its outcome
@@ -49,7 +59,8 @@ const unprovenMarks = (
  * Why a composed write script cannot publish against its session: it declares no confirmation,
  * names none of its commit steps (so no run of it could show it sent nothing), declares a
  * commit step the session never entered (so its marks do not follow its real commit), rejects
- * the caller's own input, declares one the named step did not record, or declares
+ * the caller's own input, declares setting steps outside `commits` or with no other step after
+ * them, declares one the named step did not record, or declares
  * `unverifiable` although a step of the session did confirm the write. A commit step after the
  * last one the session entered may stay unentered when `commitsUnproven` names it: the session
  * stopped before it, as when the caller's facts ran out, and publication reports it unproven. So
@@ -69,6 +80,7 @@ export const writeContractRefusal = (
         readonly confirmation: "message" | "readback" | "unverifiable";
         readonly commits?: readonly unknown[];
         readonly commitsUnproven?: readonly unknown[];
+        readonly settings?: readonly unknown[];
       }
     | undefined,
   inputDecodes: boolean,
@@ -89,6 +101,7 @@ export const writeContractRefusal = (
     !(session.stopsBeforeSave === true && commits.length === 0)
   )
     return "commit_marks_undeclared" as const;
+  if (!settingsFollowed(commits, declared.settings)) return "commit_settings_invalid" as const;
   const refused = session.refused === true;
   const excused = unprovenMarks(
     commits,

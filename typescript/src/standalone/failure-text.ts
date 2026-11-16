@@ -27,7 +27,10 @@ const then = (outcome: RunOutcome, step: string, confirmed = "") => {
     return `The website confirmed the action, so running the tool again would repeat it.${outcome.possibleCommit ? ` ${readBackSentence}` : ""}${confirmed === "" ? "" : ` ${confirmed}`}`;
   if (outcome.possibleCommit || outcome.writeStatus === "may_have_applied")
     return `A step may already have changed the website, so ${readBackAdvice}. Then ${step.charAt(0).toLowerCase()}${step.slice(1)}`;
-  return `Nothing changed on the website. ${step}`;
+  const settings = outcome.details["settings_changed"];
+  return Array.isArray(settings) && settings.length > 0
+    ? `Only these settings changed on the website, and the final step was not sent: ${settings.join(", ")}. ${step}`
+    : `Nothing changed on the website. ${step}`;
 };
 const detail = (outcome: RunOutcome, key: string) => {
   const value = outcome.details[key];

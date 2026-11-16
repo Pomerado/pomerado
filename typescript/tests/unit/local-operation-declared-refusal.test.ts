@@ -11,22 +11,25 @@ import { returnedRun, type RunOutcomeFailure } from "../../src/standalone/run-re
 const entrypoint = "operation/src/tool.mjs";
 const declaredRefusal = `Schema.Struct({ status: Schema.Literal("refused"), reason: Schema.Literal("over_price_limit"), total: Schema.Number, limit: Schema.Number })`;
 const undeclaredRefusal = `Schema.Struct({ status: Schema.Literal("refused"), reason: Schema.String, total: Schema.Number, limit: Schema.Number })`;
-const checkout = (refusal: string, refuse: "before_commit" | "after_commit") => `import { Schema } from "effect";
+const checkout = (
+  refusal: string,
+  refuse: "before_commit" | "after_commit" | "after_setting",
+) => `import { Schema } from "effect";
 import { defineOperation } from "../../runtime/index.js";
 const Placed = Schema.Struct({ status: Schema.Literal("placed"), orderNumber: Schema.String });
 export default defineOperation(
   {
     input: Schema.Struct({ maxTotal: Schema.Number }),
     output: Schema.Union(Placed, ${refusal}),
-    write: { confirmation: "readback", commits: ["place-order"] },
+    write: { confirmation: "readback", ${refuse === "after_setting" ? 'commits: ["save-tip", "place-order"], settings: ["save-tip"]' : 'commits: ["place-order"]'} },
   },
   async ({ kernel, sessionId, input, enteringCommit, verified }) => {
     const review = await kernel.browsers.playwright.execute(sessionId, { code: "return readTotal();" });
     const total = review.result.total;
-    ${refuse === "after_commit" ? 'enteringCommit("place-order");' : ""}
+    ${refuse === "before_commit" ? "" : `enteringCommit("${refuse === "after_commit" ? "place-order" : "save-tip"}");`}
     if (total > input.maxTotal)
       return { status: "refused", reason: "over_price_limit", total, limit: input.maxTotal };
-    ${refuse === "before_commit" ? 'enteringCommit("place-order");' : ""}
+    ${refuse === "after_commit" ? "" : 'enteringCommit("place-order");'}
     await kernel.browsers.playwright.execute(sessionId, { code: "return placeOrder();" });
     verified();
     return { status: "placed", orderNumber: "A-1" };
@@ -81,6 +84,12 @@ describe("a write that refuses in its output", { timeout: 30_000 }, () => {
     expect(failure.unconfirmed).toEqual({
       output: { status: "refused", reason: "over_price_limit", total: 120, limit: 100 },
     });
+  });
+
+  it("returns a declared refusal made after only a setting step as its result", async () => {
+    expect(await run(checkout(declaredRefusal, "after_setting"), 100)).toEqual(
+      Either.right({ status: "refused", reason: "over_price_limit", total: 120, limit: 100 }),
+    );
   });
 
   it("does not take a refusal shape the output schema does not declare as a refusal", async () => {

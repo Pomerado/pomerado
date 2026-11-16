@@ -521,6 +521,11 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
     /** A write session's composed script names none of its commit steps in `write.commits`. */
     | "commit_marks_undeclared"
     /**
+     * The composed script's `write.settings` names a step outside `write.commits`, or no step that
+     * is not a setting comes after the last of them.
+     */
+    | "commit_settings_invalid"
+    /**
      * The composed script declares a commit step no act step of the session ever entered, and
      * `write.commitsUnproven` does not name it as one after the last mark the session entered, or
      * as one the host lets it skip (`skippableCommits`).

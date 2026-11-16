@@ -183,8 +183,8 @@ const journal: typeof baseJournal = {
   confirmed: (confirmation) =>
     baseJournal.confirmed(confirmation).pipe(Effect.tap(() => publishJournal)),
   verified: baseJournal.verified.pipe(Effect.tap(() => publishJournal)),
-  declareCommits: (names) =>
-    baseJournal.declareCommits(names).pipe(Effect.tap(() => publishJournal)),
+  declareCommits: (names, settings) =>
+    baseJournal.declareCommits(names, settings).pipe(Effect.tap(() => publishJournal)),
 };
 /** The script's `ask`: each question goes to the host, which asks only declared ones. */
 const childScriptInput = (
