@@ -264,7 +264,8 @@ exception: it is optional unless the task can't run without it (below).
   helper's answer looks wrong for a site, refuse with its `available`; the fix belongs in the
   helper, not in the tool. A site that takes the address as typed, such as a search or form that
   goes on with the caller's text without a pick from its list, needs no match: type the caller's
-  text and read back what the site kept.
+  text and read back what the site kept. When a hosted build's workspace guide names its own
+  address helper, use that one instead of these.
 - Match the caller's proper nouns, such as places, venues and company names, with a fuzzy
   match that accepts the usual forms of the same name, such as a name with or without its
   accents (Abaca for Abacá), or a city alone or with its state and country after a comma.
