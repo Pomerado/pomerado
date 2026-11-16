@@ -208,8 +208,9 @@ Each result says whether the case ran `cold`, first on a new browser with an emp
 relies on something the site remembered: set that value from the input. A case that is blocked
 or challenged warm while the same input passes cold is the reverse: the site scores the cookies
 the browser built up, often by how much it sent in the last minutes, and the build's own requests
-spent them. Change no code for it; the tool must work from a browser with none of the site's
-cookies, so say in coverage that runs should start without them. When most of a batch's
+spent them. Change no code for it: ask for a new browser where the host offers one, run those
+cases again on it, and say in coverage what happened and that runs should start without the
+site's cookies, since the tool must work from a browser with none of them. When most of a batch's
 cases fail at the same step before the part they test, such as setting a location, address or
 store, or a pop-up or banner covering a control, fix that step first and run only
 `example-again`, which a host with several browsers still runs cold, until it
