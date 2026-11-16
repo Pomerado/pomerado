@@ -8,6 +8,8 @@ import {
   isProtectedQuestion,
   maximumInputWaitMs,
   noticeRequest,
+  ProposedChoiceQuestion,
+  ProposedMultiChoiceQuestion,
   validateAnswer,
 } from "../../src/runtime/input-request.js";
 
@@ -436,4 +438,18 @@ describe("a browser hand-off", () => {
       }),
     ).toBe(true);
   });
+});
+
+// Only a script marks the option that is the caller's no; the minting agent's own question can't.
+it("takes the caller's-no mark on a script's option, never on an option the minting agent proposes", () => {
+  const strict = { onExcessProperty: "error" } as const;
+  const options = [
+    { id: "go", label: "Go on" },
+    { id: "stop", label: "Stop", declines: true },
+  ];
+  const choice = { id: "pick", type: "choice", prompt: "Which?", options };
+  const multi = { ...choice, type: "multi_choice", minSelections: 1, maxSelections: 1 };
+  expect(Either.isRight(Schema.decodeUnknownEither(InputRequest, strict)({ ...request, questions: [choice] }))).toBe(true);
+  expect(Either.isLeft(Schema.decodeUnknownEither(ProposedChoiceQuestion, strict)(choice))).toBe(true);
+  expect(Either.isLeft(Schema.decodeUnknownEither(ProposedMultiChoiceQuestion, strict)(multi))).toBe(true);
 });
