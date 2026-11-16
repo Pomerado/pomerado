@@ -229,7 +229,7 @@ export const writePathRefusal = (
       ? undefined
       : "A write build's first act step declares writePath before anything is sent: in steps, each step that saves or submits on the site through to the outcome the request asks for, by the commit mark its helper enters, in order, and none when the request ends before any save, never a step that saves nothing; in ends, what the last step leaves the caller with. Guardian reviews the path as publication will review the tool, and the session runs until every mark on it is entered. Add writePath and execute again. Nothing was executed.";
   if (submitted.writePath.steps.length === 0 && host.publishOnReadBack !== true)
-    return "writePath names no step, and this host publishes only a write that saves on the site. When the request ends before any save, end with report_blocked and say so. Nothing was executed.";
+    return "writePath names no step, and this host publishes only a write that saves on the site. When the request itself ends before any save, such as one that fills a form and stops before it submits, end with report_blocked, reason caller_input, with an intent quoting the words of the request that stop it there; no host check refused anything, so host_refused is not the reason. Nothing was executed.";
   const misplaced = setupMisplaced(submitted.writePath);
   if (misplaced.length > 0)
     return `A setup step only comes before every other step of writePath, and its last step, which reaches the outcome, is never one. Remove setup: ${misplaced.join(", ")}. Nothing was executed.`;
