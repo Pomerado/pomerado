@@ -28,6 +28,7 @@ const CommitReport = Schema.Struct({
         Schema.pattern(commitMarkPattern),
       ),
       state: Schema.Literal("not_sent", "sent", "confirmed"),
+      setting: Schema.optionalWith(Schema.Literal(true), { exact: true }),
     }),
   ),
 });
@@ -80,6 +81,25 @@ export const unenteredWrite = (effect: string, marks: readonly CommitMark[] | un
   marks !== undefined &&
   marks.length > 0 &&
   marks.every((mark) => mark.state === "not_sent");
+
+/**
+ * The setting steps a possibly dispatched write entered, when they are all it entered: each
+ * entered mark is one its operation declared a setting (`WriteDeclaration.settings`), and a step
+ * that is not one stayed unsent. Such a write changed only those choices on the way to its commit,
+ * so its own refusal settles as not applied, naming them. Undefined for any other write. Pass the
+ * marks as `unenteredWrite` takes them. A journal made with `makeEffectJournalWith({ settledCommits
+ * })` reports the settled marks as `not_sent`, although an earlier run sent them, so a maintenance
+ * or continuation run that uses one must never be judged by its marks here.
+ */
+export const settingsOnlyWrite = (effect: string, marks: readonly CommitMark[] | undefined) => {
+  const entered = marks?.filter((mark) => mark.state !== "not_sent") ?? [];
+  return effect === "may_have_dispatched" &&
+    entered.length > 0 &&
+    entered.every((mark) => mark.setting === true) &&
+    marks?.some((mark) => mark.setting !== true) === true
+    ? entered.map((mark) => mark.name)
+    : undefined;
+};
 
 /** The tool revision fields the outcome functions read: its effect and declared confirmation. */
 export interface OutcomeRevision {
@@ -365,9 +385,10 @@ export const declaredRefusalOf = (
  * The refusal a write that returned a validated output made before committing, or undefined
  * when it must be classified as any other returned write. Only a declared refusal counts, and
  * only when the runner proves nothing was committed: the write declared its commit steps and
- * entered none (`not_entered`), and recorded no confirmation (`runnerEffect` is not `verified`).
- * A refusal returned after a commit step was entered, by a write that declares no commit steps,
- * or with a missing or unreadable report may have changed the website, so it stays unconfirmed.
+ * entered none (`not_entered`), or only setting steps (`settingsOnly`, from `settingsOnlyWrite`),
+ * and recorded no confirmation (`runnerEffect` is not `verified`). A refusal returned after any
+ * other commit step was entered, by a write that declares no commit steps, or with a missing or
+ * unreadable report may have changed the website, so it stays unconfirmed.
  *
  * Two cautions for a host that passes `commits`:
  * - The evidence must cover every channel the run could send the write through. A request a host
@@ -382,8 +403,10 @@ export const returnedRefusal = (returned: {
   readonly output: unknown;
   readonly commits: CommitEvidence;
   readonly runnerEffect: string;
+  readonly settingsOnly?: boolean;
 }): DeclaredRefusal | undefined =>
-  returned.commits === "not_entered" && returned.runnerEffect !== "verified"
+  (returned.commits === "not_entered" || returned.settingsOnly === true) &&
+  returned.runnerEffect !== "verified"
     ? declaredRefusalOf(returned.outputSchema, returned.output)
     : undefined;
 
@@ -426,6 +449,8 @@ export interface RunEvidence {
   readonly refusal_reason?: string | undefined;
   /** The input a refusal named, when the tool named it. */
   readonly refusal_field?: string | undefined;
+  /** The setting steps a refused write entered, all it entered (`settingsOnlyWrite`). */
+  readonly settings_changed?: readonly string[] | undefined;
   /** Every choice the page offers for the refused input, when the tool read them. */
   readonly refusal_available?: readonly string[] | undefined;
   /** The refusal's kind as a short token, such as a refused cursor's `expired`. */
@@ -571,6 +596,9 @@ export const runError = (view: RunEvidence): RunFailure => {
           ? {}
           : { available: view.refusal_available }),
         ...(view.refusal_kind === undefined ? {} : { kind: view.refusal_kind }),
+        ...(view.settings_changed === undefined || view.settings_changed.length === 0
+          ? {}
+          : { settings_changed: view.settings_changed }),
       });
     case "input_not_applied":
     // A record an earlier release kept under the location-only reason.

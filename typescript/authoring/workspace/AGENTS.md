@@ -384,8 +384,8 @@ optional input whose default is the answered value (`defaultedInput`), and keep 
 no input, only where varying it would be unsafe or meaningless (.agents/core/SKILL.md, the input
 schema). An
 answer that gives only this run's value, such as which customer or date, is this run's input. A
-costly choice stays a required input or a declared question for every caller, and an answer may
-only make declining it its default (.agents/writes/SKILL.md). No request or answer authorizes made-up values:
+costly choice stays a required input or a declared question for every caller, with only the
+defaults .agents/writes/SKILL.md allows. No request or answer authorizes made-up values:
 words such as synthetic, sample or test data settle no value or choice. A caller that wants
 invented values supplies them itself, as its answers to your questions. Guardian denies a live
 step that types or submits a value none of those supplied, naming the field, except the one

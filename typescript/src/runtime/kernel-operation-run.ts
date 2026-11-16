@@ -10,7 +10,6 @@ import {
   decodeKernelOperationInput,
   validateKernelOperationOutput,
 } from "./kernel-operation-validation.js";
-import type { WriteDeclaration } from "./operation.js";
 import type { ScriptFailure } from "./operation-failure.js";
 import { ScriptInput } from "./script-input.js";
 import { withListHost } from "./list-host.js";
@@ -57,10 +56,8 @@ const liveBrowser = <
     : { ...browser, kernel: journaledKernel(browser.kernel, journal), journal };
 
 /** The write's declared commit step names, only strings, in order. */
-const declaredCommits = (write: WriteDeclaration | undefined): readonly string[] => {
-  const declared: unknown = write?.commits;
-  return Array.isArray(declared) ? declared.filter((n): n is string => typeof n === "string") : [];
-};
+const declaredNames = (declared: unknown): readonly string[] =>
+  Array.isArray(declared) ? declared.filter((n): n is string => typeof n === "string") : [];
 
 /**
  * Runs an operation's script under the execution deadline: input decoded, capture bracketed,
@@ -99,7 +96,10 @@ export const executeKernelOperation = <
   Effect.gen(function* () {
     const execution = yield* ExecutionContext;
     // Declared first, so every exit reports which commit steps were never reached.
-    yield* execution.journal.declareCommits(declaredCommits(operation.write));
+    yield* execution.journal.declareCommits(
+      declaredNames(operation.write?.commits),
+      declaredNames(operation.write?.settings),
+    );
     const decoded = yield* decodeKernelOperationInput(operation, rawInput);
     // A host that signs list cursors puts the checked position beside the input, never in it.
     const input = browser.list === undefined ? decoded : withListHost(decoded, browser.list);

@@ -131,7 +131,11 @@ During the session:
   exists. A check that can only run after an earlier
   marked step, such as a total that shows only once a saved address step has run, runs before
   the later step's mark; its refusal then reports a possible change, because the earlier step
-  may have saved something, and that is honest. Still mark that earlier step.
+  may have saved something, and that is honest. Still mark that earlier step. Mark a commit
+  step as a setting in `write.settings` when its click only changes a choice on the way to the
+  final commit and cannot place, buy, book, send or charge anything by itself. An `InvalidInput`
+  or a declared refusal after only such steps, the caller's no included, ends with nothing
+  applied.
 - When one of those checks rules the task out, such as a total over the caller's limit, an
   item out of stock or a variant the page does not offer, the script refuses before the mark
   with `InvalidInput` (the caller-input skill, "Throw the error that matches what happened"),
@@ -658,10 +662,13 @@ explicit, so the script never keeps, clears, accepts or declines one the input l
 asks with a declared question before the commit mark (the caller-input skill), offering a
 saved payment or address as an account-specific choice. The same holds for any choice that
 changes what the caller buys or pays, or whether the action can be cancelled or refunded, such
-as a rate, fare or plan tier, a refundable option, shipping speed or how much of a balance to pay. An owner's
-answer may make declining such an option, turning it off or the option that adds no cost and
-keeps the action cancellable the default of its optional input, never accepting, keeping or
-choosing one. Choosing the address and payment is
+as a rate, fare or plan tier, a refundable option, shipping speed or how much of a balance to pay.
+When the site requires choosing one of a service's tiers of speed, class or service level, that
+choice's optional input defaults to the tier the site presents as standard, and the script asks
+only when the site shows no standard tier. An owner's answer may make only declining such an
+option, turning it off or the option that adds no cost and keeps the action cancellable the
+default of its optional input.
+Choosing the address and payment is
 part of a checkout's job, so the page's pre-selected one is never used silently. The request
 and the owner's answers settle such a choice for the session only: the published tool serves
 other callers, so it takes the choice as an input or asks, never hard-codes the build's answer,
@@ -758,9 +765,10 @@ mark. A write may instead declare its refusals in its output schema: a branch th
 no other branch whose `status` could be `"refused"`. Prefer declaring each refusal as its own
 branch of the output's top-level union, and prefer a listed `status` on every other branch, such
 as `Schema.Literal("rated")`, so the host can tell a refusal from any other output. Returned
-before the first commit mark, a declared refusal completes the run with that output and reports
-the write not applied. A refusal returned in a shape the schema does not declare, or returned or
-thrown after a mark, reports a possible change.
+before the first commit mark, or after only steps named in `write.settings`, a declared refusal
+completes the run with that output and reports the write not applied. A refusal returned in a
+shape the schema does not declare, or returned or thrown after a mark outside `write.settings`,
+reports a possible change.
 pomerado:section writes.declared-refusal:end -->
 
 See `references/write-session.ts` for two steps and the composed script, and

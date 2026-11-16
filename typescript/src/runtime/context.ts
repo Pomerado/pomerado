@@ -57,6 +57,8 @@ export type CommitMarkState = "not_sent" | "sent" | "confirmed";
 export interface CommitMark {
   readonly name: string;
   readonly state: CommitMarkState;
+  /** The operation declared the step a setting (`WriteDeclaration.settings`). */
+  readonly setting?: true;
 }
 
 /** What a script says about a `notCommitted` call. */
@@ -113,8 +115,14 @@ export interface EffectJournal {
     name: string,
     options?: JournalNotCommittedOptions,
   ) => Effect.Effect<void, CommitAlreadySent>;
-  /** The operation's declared marks, in order; `executeOperation` records them before it runs. */
-  readonly declareCommits: (names: readonly string[]) => Effect.Effect<void>;
+  /**
+   * The operation's declared marks, in order, and those of them it declares settings;
+   * `executeOperation` records them before it runs.
+   */
+  readonly declareCommits: (
+    names: readonly string[],
+    settings?: readonly string[],
+  ) => Effect.Effect<void>;
   /** Every mark: the declared ones in order, then any entered without a declaration. */
   readonly commits: Effect.Effect<readonly CommitMark[]>;
 }
@@ -139,7 +147,7 @@ export const makeEffectJournalWith = (options: {
     const withMark = (name: string, next: (current: CommitMarkState) => CommitMarkState) =>
       Ref.update(commits, (marks) =>
         marks.some((mark) => mark.name === name)
-          ? marks.map((mark) => (mark.name === name ? { name, state: next(mark.state) } : mark))
+          ? marks.map((mark) => (mark.name === name ? { ...mark, state: next(mark.state) } : mark))
           : [...marks, { name, state: next("not_sent") }],
       );
     return {
@@ -197,10 +205,19 @@ export const makeEffectJournalWith = (options: {
           });
           yield* withMark(name, () => "not_sent");
         }),
-      declareCommits: (names) =>
+      declareCommits: (names, settings = []) =>
         Ref.update(declared, (known) => new Set([...known, ...names])).pipe(
           Effect.zipRight(
             Effect.forEach(names, (name) => withMark(name, (current) => current), { discard: true }),
+          ),
+          Effect.zipRight(
+            Ref.update(commits, (marks) =>
+              marks.map((mark) =>
+                names.includes(mark.name) && settings.includes(mark.name)
+                  ? { ...mark, setting: true as const }
+                  : mark,
+              ),
+            ),
           ),
         ),
       commits: Ref.get(commits),
