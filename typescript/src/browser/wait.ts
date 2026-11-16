@@ -640,6 +640,9 @@ const outcomeWaitSite = (() => {
 ${siteMessageCode}
   return { saysError, read: (page) => page.locator(messages).evaluateAll(messagesInPage), messageCounts, judgeMessages };
 })();
+// Whether this call already began a wait with an action: in a commit's call only the first reads
+// the site's refusal, since a later one's click came after the commit's.
+let outcomeWaitActed = false;
 const waitForOutcomeResult = async (outcomes, options = {}) => {
   const names = Object.keys(outcomes ?? {});
   if (names.length === 0) throw new TypeError("waitForOutcome needs at least one outcome");
@@ -654,9 +657,11 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
   const timeout = options.timeout ?? waitLimits.answerCap;
   const noProgressMs = options.noProgressMs ?? waitLimits.answer;
   // The runtime declares __pomeradoCommitting on a commit's own call, the first after the script's
-  // enteringCommit: there, an action's wait reads the site's refusal before ending outcome_unknown.
-  const committing = options.action !== undefined &&
+  // enteringCommit: there, the first wait with an action reads the site's refusal before ending
+  // outcome_unknown.
+  const committing = options.action !== undefined && !outcomeWaitActed &&
     typeof __pomeradoCommitting !== "undefined" && __pomeradoCommitting === true;
+  if (options.action !== undefined) outcomeWaitActed = true;
   const progress = waitProgress({ ...options, noProgressMs, whileSending: true });
   const events = outcomeWaitEvents(candidates);
   const state = {
@@ -671,6 +676,7 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
     urlBefore: undefined,
     actedAt: -Infinity,
     messagesBefore: undefined,
+    serverError: false,
   };
   let looks = 0;
   const finish = (fields, summary) =>
@@ -686,6 +692,7 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
   let key;
   // How long the cleanup may take: 250 ms, and nothing past the wait's hard stop.
   let cleanupMs = () => 250;
+  let stopServerErrors;
   try {
     if (options.action !== undefined) {
       key = "pomerado.outcomeWait." + Date.now() + "." + Math.random();
@@ -698,9 +705,18 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
       }
       // How many of the site's messages show each text before a commit's click, as confirmCommit
       // notes them where it is pasted.
-      if (committing)
+      if (committing) {
         state.messagesBefore = outcomeWaitSite.messageCounts(
           (await waitBounded(outcomeWaitSite.read(page).catch(() => undefined), 1000)) ?? []);
+        // A server error to a request that may write, from any host, may have come after the
+        // commit saved: as confirmCommit reads one, the commit is then unclear, never refused.
+        const serverError = (response) => {
+          if (response.status() >= 500 && !["GET", "HEAD", "OPTIONS"].includes(response.request().method()))
+            state.serverError = true;
+        };
+        page.on("response", serverError);
+        stopServerErrors = () => page.off("response", serverError);
+      }
       state.urlBefore = page.url();
       if (state.announceKey !== undefined) await page.evaluate(outcomeWaitAnnounceInPage, { key: state.announceKey, seed: false });
       await progress.baseline();
@@ -752,7 +768,7 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
     // After a commit's click, the site's messages new since it that confirmCommit would judge the
     // commit not done from, read once: undefined when none shows or the page can't be read.
     const siteRefusal = async () => {
-      if (state.messagesBefore === undefined) return undefined;
+      if (state.messagesBefore === undefined || state.serverError) return undefined;
       const shown = await waitBounded(outcomeWaitSite.read(page).catch(() => undefined), Math.min(1000, beforeStop()));
       const errors = shown === undefined ? [] : outcomeWaitSite.judgeMessages(shown, state.messagesBefore).errors;
       return errors.length === 0 ? undefined : [...new Set(errors)].map((text) => outcomeWaitClean(text, 500));
@@ -862,7 +878,7 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
         const opened = events.unnamedDialog();
         // After a commit's click, one that says the write failed is the site's refusal, as
         // confirmCommit reads such a dialog.
-        const refused = committing && outcomeWaitSite.saysError(opened.message());
+        const refused = committing && !state.serverError && outcomeWaitSite.saysError(opened.message());
         const reason = refused ? "outcome_refused" : "outcome_unknown";
         const failure = outcomeWaitFailure(
           reason,
@@ -943,6 +959,7 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
     throw error;
   } finally {
     events.stop();
+    stopServerErrors?.();
     // With a native dialog open the page cannot run the cleanup; what it leaves is inert.
     const inPage = !events.dialogOpen();
     // A page held up by a pending navigation gets a moment; what it keeps is inert.
@@ -1396,11 +1413,13 @@ const waitForChange = async (fields, options = {}) => {
  * - `outcome_unknown`, when no outcome shows and the page made no progress for `noProgressMs`: a
  *   challenge, the site's error or a layout the code does not handle, never slowness.
  * - `outcome_refused`, in place of `outcome_unknown`, when the wait's `action` is a commit's click
- *   (the call the runtime sends right after the script's `enteringCommit`, which it declares as
- *   `__pomeradoCommitting`) and the page shows a message new since the click that `confirmCommit`
- *   judges not done from, or a native dialog no outcome names says the write failed, as
- *   `confirmCommit` reads one. Its `evidence` has the site's words: `messages`, or the dialog's
- *   `type` and `message`. The runtime then puts the step back unsent, as
+ *   (the first wait with an `action` in the call the script sends right after its
+ *   `enteringCommit`, which the runtime declares as `__pomeradoCommitting`) and the page shows a
+ *   message new since the click that `confirmCommit` judges not done from, or, with a dialog
+ *   outcome named, a native dialog no outcome names says the write failed, as `confirmCommit` reads
+ *   one. A request that may write that got a server error after the click, from any host, keeps it
+ *   `outcome_unknown`. Its `evidence` has the site's words: `messages`, or the dialog's `type` and
+ *   `message`. The runtime then puts the step back unsent, as
  *   `notCommitted(name, { siteRefused: true })` does.
  * - `outcome_timeout`, when the page was still progressing at `timeout`.
  *
