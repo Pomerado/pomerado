@@ -1325,6 +1325,17 @@ it("has the marked call re-read only what its page shows", async () => {
   );
 });
 
+// After an action, a page state can show for a moment and be gone before the tool reads it, while
+// the site's own reply to the action's request already settled the outcome. The tool prefers that
+// reply over what the page shows, apart from an error the page shows.
+it("has the site's reply to an action's request count over what the page shows", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const core = (texts.get("core") ?? "").replace(/\s+/g, " ");
+  expect(core).toContain(
+    "After navigation or any action, wait for a unique operation control or page state before testing absence or choosing a branch or fallback; after an action, prefer the site's own reply to the request the action sent over what the page shows, apart from an error the page shows.",
+  );
+});
+
 // A check for something neither the caller asked for nor the tool changes, or one that needs the
 // page to show something a correct run may not show, stops correct runs of every kind of tool. So
 // each check guards the caller's request or the tool's own change, a repair narrows one that
@@ -1510,7 +1521,7 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["7817aaebb108d7184b9c595e009e8a024a8ad780b19400d8143ae2a46d0353ab", "core"],
+    ["ba3479d3a212b5a28c82fd1937f8c6f50e104fe94f07270fed86ccc9f28f562e", "core"],
     ["e854aa6b9fe22ea741598abcf0643c529211b643d6b9b400281948a117156224", "search"],
     ["d6f0ed8446759ce44874a2cb7c7ee7251f92249673379b69439aaac2b5b7afb5", "auth"],
     ["a08f1ef89cc10bf11e17b8d6086b6e37649b1d5d11b78c0542cc7db32460b7e3", "testing"],
