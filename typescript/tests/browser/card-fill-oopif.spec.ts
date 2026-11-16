@@ -238,7 +238,7 @@ test("a card fill from a payment method whose fields the page doesn't show yet i
   expect(handedOver).toEqual([]);
 });
 
-test("a card fill from a payment method refuses a CSS selector matching two editable fields across frames", async ({
+test("a card fill from a payment method refuses a CSS selector matching two editable fields", async ({
   page,
 }) => {
   const frame = await checkout(page, `${site}/checkout`, "https://js.stripe.com");
@@ -258,6 +258,18 @@ test("a card fill from a payment method refuses a CSS selector matching two edit
     status: "refused",
     report: { reason: "selector_unsupported", target: 0 },
   });
+  expect(reviews).toEqual([]);
+  expect(handedOver).toEqual([]);
+});
+
+// The selector check comes after the step's other checks, so a field they refuse keeps their reason.
+test("a card fill from a payment method refuses a switched-off card field as not editable", async ({
+  page,
+}) => {
+  const frame = await checkout(page, `${site}/checkout`, "https://js.stripe.com");
+  await frame.evaluate(() => document.querySelector("#payment-numberInput")?.setAttribute("disabled", ""));
+  const { outcome, reviews, handedOver } = await fillFromMethod(page, selectors.slice(0, 3));
+  expect(outcome).toMatchObject({ status: "refused", report: { reason: "not_editable", target: 0 } });
   expect(reviews).toEqual([]);
   expect(handedOver).toEqual([]);
 });
