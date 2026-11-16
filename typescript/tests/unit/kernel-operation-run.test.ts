@@ -137,6 +137,216 @@ describe("executeKernelOperation", () => {
     ]);
   });
 
+  // A commit's own call, the first after `enteringCommit`, is declared to its waits; when its wait
+  // read the site's refusal on the page, the step goes back unsent, as the script's own put-back.
+  it.each([
+    { error: "outcome_refused after 900 ms, no outcome showing, the page shows the site's refusal", state: "not_sent", said: [{ siteRefused: true, outcomeRefused: true }] },
+    { error: "OutcomeWaitFailure: outcome_refused after 900 ms: a native alert dialog opened", state: "not_sent", said: [{ siteRefused: true, outcomeRefused: true }] },
+    { error: "outcome_unknown after 900 ms, 8000 ms without progress, no outcome showing", state: "sent", said: [] },
+  ])("declares the call after enteringCommit and puts its step back on $error", async (expected) => {
+    const codes: string[] = [];
+    const kernel: KernelExecuteClient = {
+      browsers: {
+        playwright: {
+          execute: async (_session, body) => {
+            codes.push(body.code);
+            return body.code.includes("return 2;")
+              ? { success: false, error: expected.error }
+              : { success: true, result: null };
+          },
+        },
+      },
+    };
+    const write = defineOperation(
+      { input: Schema.Struct({}), output: Schema.String, write: { confirmation: "readback", commits: ["place-order"] } },
+      async ({ kernel, sessionId, enteringCommit, errors }) => {
+        await kernel.browsers.playwright.execute(sessionId, { code: "return 1;" });
+        enteringCommit("place-order");
+        const placed = await kernel.browsers.playwright.execute(sessionId, { code: "return 2;" });
+        await kernel.browsers.playwright.execute(sessionId, { code: "return 3;" });
+        if (!placed.success) throw new errors.OperationFailure(String(placed.error));
+        return "placed";
+      },
+    );
+    const said: unknown[] = [];
+    const journal = await Effect.runPromise(makeEffectJournal);
+    const notCommitted = journal.notCommitted;
+    if (notCommitted === undefined) throw new Error("core's journal puts a step back");
+    const { exit } = await run(
+      executeKernelOperation(write, {}, { kernel, sessionId: "s" }),
+      Effect.succeed({
+        ...journal,
+        notCommitted: (name: string, options?: Parameters<typeof notCommitted>[1]) => {
+          said.push(options);
+          return notCommitted(name, options);
+        },
+      }),
+    );
+    expect(codes.map((code) => /try \{const __pomeradoEffect = "write";(const __pomeradoCommitting = true;)?return \d;/u.exec(code)?.[1])).toEqual([
+      undefined,
+      "const __pomeradoCommitting = true;",
+      undefined,
+    ]);
+    expect(failureOf(exit)).toMatchObject(Option.some({ _tag: "OperationFailure", message: expected.error }));
+    expect(said).toEqual(expected.said);
+    expect(await Effect.runPromise(journal.commits)).toEqual([{ name: "place-order", state: expected.state }]);
+  });
+
+  /** A browser whose `return 2;` call failed because its outcome wait read the site's refusal. */
+  const refusingKernel = (codes: string[]): KernelExecuteClient => ({
+    browsers: {
+      playwright: {
+        execute: async (_session, body) => {
+          codes.push(body.code);
+          return body.code.includes("return 2;")
+            ? { success: false, error: "outcome_refused after 900 ms, no outcome showing" }
+            : { success: true, result: null };
+        },
+      },
+    },
+  });
+  /** Core's journal, recording what each put-back said. */
+  const sayingJournal = async () => {
+    const said: unknown[] = [];
+    const journal = await Effect.runPromise(makeEffectJournal);
+    const notCommitted = journal.notCommitted;
+    if (notCommitted === undefined) throw new Error("core's journal puts a step back");
+    return {
+      said,
+      journal: {
+        ...journal,
+        notCommitted: (name: string, options?: Parameters<typeof notCommitted>[1]) => {
+          said.push(options);
+          return notCommitted(name, options);
+        },
+      },
+    };
+  };
+
+  // The skill has a script put back a step the site refused, then return its refusal: after the
+  // runtime's own put-back, that finds the step put back. A step the journal can't put back again,
+  // entered again after its one put-back, stays sent, and the script's put-back still fails.
+  it.each([
+    { again: false, said: [{ siteRefused: true, outcomeRefused: true }], state: "not_sent" },
+    {
+      again: true,
+      said: [{ siteRefused: true }, { siteRefused: true, outcomeRefused: true }, { siteRefused: true }],
+      state: "sent",
+    },
+  ])("lets the script put back a step the runtime put back (entered again: $again)", async (expected) => {
+    const write = defineOperation(
+      { input: Schema.Struct({}), output: Schema.String, write: { confirmation: "readback", commits: ["place-order"] } },
+      async ({ kernel, sessionId, enteringCommit, notCommitted }) => {
+        if (expected.again) {
+          enteringCommit("place-order");
+          await kernel.browsers.playwright.execute(sessionId, { code: "return 1;" });
+          notCommitted("place-order", { siteRefused: true });
+        }
+        enteringCommit("place-order");
+        await kernel.browsers.playwright.execute(sessionId, { code: "return 2;" });
+        notCommitted("place-order", { siteRefused: true });
+        return "refused";
+      },
+    );
+    const { said, journal } = await sayingJournal();
+    const { exit } = await run(
+      executeKernelOperation(write, {}, { kernel: refusingKernel([]), sessionId: "s" }),
+      Effect.succeed(journal),
+    );
+    if (expected.again)
+      expect(failureOf(exit)).toMatchObject(Option.some({ _tag: "CommitAlreadySent", name: "place-order" }));
+    else expect(exit).toEqual(Exit.succeed("refused"));
+    expect(said).toEqual(expected.said);
+    expect(await Effect.runPromise(journal.commits)).toEqual([{ name: "place-order", state: expected.state }]);
+  });
+
+  // A hand-off after the runtime's put-back enters the step again without the script: the
+  // journal's one put-back a run then holds, so the step can't be clicked a second time.
+  it("lets a hand-off after the runtime's put-back keep the step sent", async () => {
+    const questions = { review: { type: "browser_handoff", prompt: "Check the order." } } as const;
+    const codes: string[] = [];
+    const write = defineOperation(
+      {
+        input: Schema.Struct({}),
+        output: Schema.String,
+        questions,
+        write: { confirmation: "readback", commits: ["place-order"] },
+      },
+      async ({ kernel, sessionId, enteringCommit, notCommitted, handOff }) => {
+        enteringCommit("place-order");
+        await kernel.browsers.playwright.execute(sessionId, { code: "return 2;" });
+        await handOff("review");
+        notCommitted("place-order");
+        enteringCommit("place-order");
+        await kernel.browsers.playwright.execute(sessionId, { code: "return 4;" });
+        return "placed";
+      },
+    );
+    const { said, journal } = await sayingJournal();
+    const scriptInput = makeScriptInput(questions, () => Effect.succeed({ review: { done: true } }));
+    const { exit } = await run(
+      executeKernelOperation(write, {}, { kernel: refusingKernel(codes), sessionId: "s" }).pipe(
+        Effect.provideService(ScriptInput, scriptInput),
+      ),
+      Effect.succeed(journal),
+    );
+    expect(failureOf(exit)).toMatchObject(Option.some({ _tag: "CommitAlreadySent", name: "place-order" }));
+    expect(said).toEqual([{ siteRefused: true, outcomeRefused: true }, undefined]);
+    expect(codes.filter((code) => code.includes("return 4;"))).toEqual([]);
+    expect(await Effect.runPromise(journal.commits)).toEqual([{ name: "place-order", state: "sent" }]);
+  });
+
+  // Only the script's own call after enteringCommit is that step's, even one held behind a sign-in:
+  // never the runtime's own, such as a challenge wait, nor one after a question, since a person may
+  // have sent the step meanwhile.
+  it("declares only the script's own call after enteringCommit, held or not, and none after a question", async () => {
+    const steps: string[] = [];
+    const kernel: KernelExecuteClient = {
+      browsers: {
+        playwright: {
+          execute: async (_session, body) => {
+            steps.push(body.code.includes("const __pomeradoCommitting = true;") ? "commit call" : "call");
+            return { success: true, result: body.code.includes("const started = Date.now();") ? { cleared: true, waitedMs: 0 } : null };
+          },
+        },
+      },
+    };
+    const questions = { note: { type: "text", prompt: "Anything to add?" } } as const;
+    const write = defineOperation(
+      {
+        input: Schema.Struct({}),
+        output: Schema.String,
+        questions,
+        write: { confirmation: "readback", commits: ["place-order", "confirm"] },
+      },
+      async ({ kernel, sessionId, enteringCommit, ensureSignedIn, waitPastChallenge, ask }) => {
+        enteringCommit("place-order");
+        await waitPastChallenge({ ready: "return true;" });
+        const signing = ensureSignedIn();
+        const held = kernel.browsers.playwright.execute(sessionId, { code: "return 1;" });
+        await signing;
+        await held;
+        enteringCommit("confirm");
+        await ask("note");
+        await kernel.browsers.playwright.execute(sessionId, { code: "return 3;" });
+        return "done";
+      },
+    );
+    const scriptInput = makeScriptInput(questions, () => Effect.succeed({ note: "none" }));
+    const { exit } = await run(
+      executeKernelOperation(write, {}, {
+        kernel,
+        sessionId: "s",
+        signIn: async () => {
+          steps.push("sign-in");
+          return { signedInAgain: false };
+        },
+      }).pipe(Effect.provideService(ScriptInput, scriptInput)),
+    );
+    expect(exit).toEqual(Exit.succeed("done"));
+    expect(steps).toEqual(["sign-in", "call", "sign-in", "commit call", "call"]);
+  });
+
   it("runs an offline script without a browser, and a call it makes fails unsent", async () => {
     const parser = defineOperation(
       { input: Schema.Struct({ text: Schema.String }), output: Schema.Number },

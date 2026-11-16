@@ -72,6 +72,15 @@ export interface NotCommittedOptions {
   readonly siteRefused?: true;
 }
 
+/** What a journal's `notCommitted` hears: the script's word, or the runtime's own put-back. */
+export interface JournalNotCommittedOptions extends NotCommittedOptions {
+  /**
+   * The runtime put the step back itself, with `siteRefused`: the step's own call failed because
+   * its outcome wait read the site's refusal on the page after the click (`outcome_refused`).
+   */
+  readonly outcomeRefused?: true;
+}
+
 export interface EffectJournal {
   readonly state: Effect.Effect<WebsiteEffect>;
   readonly enteringDispatch: Effect.Effect<void>;
@@ -99,11 +108,12 @@ export interface EffectJournal {
    * A host journal made before this existed has none, and a script's call then fails the same way.
    * `siteRefused` passes on the script's word that the site's own answer refused the click as a
    * whole with nothing created, for a host that checks which proof put a step back before it is
-   * entered again; core's own journal ignores it.
+   * entered again; core's own journal ignores it. `outcomeRefused` says the runtime put the step
+   * back itself; a script's own call never passes it.
    */
   readonly notCommitted?: (
     name: string,
-    options?: NotCommittedOptions,
+    options?: JournalNotCommittedOptions,
   ) => Effect.Effect<void, CommitAlreadySent>;
   /**
    * The operation's declared marks, in order, and those of them it declares settings;
