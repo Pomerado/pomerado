@@ -139,7 +139,9 @@ standard tier, ask the caller which to use.
 An "earliest" pickup or delivery time moves with the clock: pick it in the step that places the
 order, or right before the card fill when the host fills the card or picking it reloads the
 checkout. When the site says that time is gone and offers the next one, the next one is still
-the earliest.
+the earliest. After a save, re-check an approved delivery or pickup option by its service and day,
+check its fee against the caller's limits, and keep it when only its live arrival times moved, as
+the writes skill says for a re-check before a commit.
 
 In the step that places the order, name the site's reply to that order request and the order's
 ID shown on the page as that wait's answers, beside the site's refusal and error messages, as the
