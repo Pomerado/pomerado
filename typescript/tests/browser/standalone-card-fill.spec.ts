@@ -16,6 +16,7 @@ import {
   readOf,
   recordingGuardian,
   toolResult,
+  writePath,
 } from "./guardian-context-fixture.js";
 import { executions, mint } from "./standalone-mint-fixture.js";
 
@@ -184,9 +185,9 @@ test("refuses a card handle written into source, before any review", async () =>
   });
 });
 
-// A script asks for the card at run time, as a published tool does, and types it with fillCard:
-// it holds only handles, the host types the card, and code beside it that could read a card
-// field back is refused before review.
+// A script asks for the card at run time, as a published tool does, and types it with fillCard in
+// an act step, since an explore step types none: it holds only handles, the host types the card,
+// and code beside it that could read a card field back is refused before review.
 test("a script asks for the card and has the host type it with fillCard", async () => {
   test.setTimeout(90_000);
   const number = "4242424242424242";
@@ -213,12 +214,12 @@ async ({ask,fillCard}) => {
       turns: [
         () => patch({ "explore/open.mjs": probe(), "explore/pay.mjs": pay }),
         () => [call("execute", execution("explore", "explore/open.mjs"), "open")],
-        () => [call("execute", execution("explore", "explore/pay.mjs"), "pay")],
+        () => [call("execute", execution("act", "explore/pay.mjs", { writePath: writePath("pay") }), "pay")],
         () =>
           patch({
             "explore/look.mjs": probe("return await page.locator('#number').inputValue();"),
           }),
-        () => [call("execute", execution("explore", "explore/look.mjs"), "look")],
+        () => [call("execute", execution("act", "explore/look.mjs"), "look")],
       ],
     });
     const paid = JSON.stringify(toolResult(last, "pay"));

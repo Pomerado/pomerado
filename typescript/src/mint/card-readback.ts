@@ -7,7 +7,8 @@ import { sourceSyntax } from "../runtime/source-syntax.js";
  * would put the card in the result, the logs and, during a build, the model's context and traces,
  * so the host refuses source that could read a field back once a card is in play: before every
  * live step of a build that has the caller's card, and before a live step runs or a tool
- * publishes when some file calls `fillCard`.
+ * publishes when some file calls `fillCard`. An explore step, in which a host types no card, is
+ * refused only once the build has the caller's card: until then it may read the page.
  *
  * The check is a static scan of the authored files under src/, explore/, test/ and scratch/: of
  * every one Node could run, code strings and comments included, read with `\u`, `\x` and octal
@@ -117,21 +118,23 @@ export const cardReadback = (
 
 /** The rule a refusal states after its file, line and what the code does. */
 export const cardReadbackRule =
-  "a card stays with the host: fillCard types the caller's card from its handles, and once a build has the caller's card or its source calls fillCard, no source reads a field's value or the page's markup, runs or plants code in the page, opens a DevTools session, takes an accessibility snapshot, screenshot or PDF of the page, records the page, or reads a request body";
+  "a card stays with the host: fillCard types the caller's card from its handles, and once a build has the caller's card or its source calls fillCard, no source reads a field's value or the page's markup, runs or plants code in the page, opens a DevTools session, takes an accessibility snapshot, screenshot or PDF of the page, records the page, or reads a request body, except in an explore step before the build has the caller's card";
 
 /** How each refusal `cardReadbackRefusal` gives ends, after its file, line and what code does. */
 const refusalEnd = `: ${cardReadbackRule}. Nothing was executed.`;
 
 /**
  * Why a live step is refused before review for code that could read a typed card back, when the
- * build has the caller's card (`cardIssued`) or its source calls `fillCard`.
+ * build has the caller's card (`cardIssued`) or its source calls `fillCard`. A host types no card
+ * in an explore step, so one is refused only once the build has the caller's card. A step without
+ * its `purpose` is checked as any other.
  */
 export const cardReadbackRefusal = (
   files: ReadonlyMap<string, string>,
-  step: { readonly target: string },
+  step: { readonly target: string; readonly purpose?: string },
   cardIssued: boolean,
 ): string | undefined => {
-  if (step.target !== "liveBrowser") return undefined;
+  if (step.target !== "liveBrowser" || (step.purpose === "explore" && !cardIssued)) return undefined;
   const found = cardReadback(files, cardIssued);
   return found === undefined
     ? undefined

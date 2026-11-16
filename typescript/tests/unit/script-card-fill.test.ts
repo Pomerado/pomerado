@@ -368,6 +368,20 @@ describe("source that could read a typed card back", () => {
     );
   });
 
+  // The host types no card in an explore step, so one may read the page until the build has the
+  // caller's card, even importing the file that fills it.
+  it("lets an explore step read the page until the build has the caller's card", () => {
+    const files = new Map([
+      ["src/flow.mjs", `export const chooseStore = async () => {};\n${fills}`],
+      ["explore/look.mjs", `import { chooseStore } from "../src/flow.mjs";\nreturn await page.locator("main").ariaSnapshot();`],
+    ]);
+    const refusal = `explore/look.mjs line 2 reads an accessibility snapshot: ${rule}. Nothing was executed.`;
+    expect(cardReadbackRefusal(files, { target: "liveBrowser", purpose: "explore" }, false)).toBeUndefined();
+    expect(cardReadbackRefusal(files, { target: "liveBrowser", purpose: "explore" }, true)).toBe(refusal);
+    expect(cardReadbackRefusal(files, { target: "liveBrowser", purpose: "act" }, false)).toBe(refusal);
+    expect(cardReadbackRefusal(files, { target: "liveBrowser" }, false)).toBe(refusal);
+  });
+
   it("refuses nothing in source that never fills a card, or fills one and only acts", () => {
     expect(
       cardReadback(new Map([["src/tool.mjs", `await page.locator("#q").inputValue();`]]), false),

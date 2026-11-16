@@ -716,7 +716,11 @@ const authoredExecution = (
                       signIn: state.sessionSignIn.hook((failure) => {
                         signInFailure ??= failure;
                       }),
-                      cardFill: sessionCardFill(state.session, context.siteOrigin),
+                      // An explore step types no card, so it may read the page before one is
+                      // issued (cardReadbackRefusal).
+                      ...(execution.purpose === "explore"
+                        ? {}
+                        : { cardFill: sessionCardFill(state.session, context.siteOrigin) }),
                     }
                   : {}),
                 ...(runFiles === undefined ? {} : { files: runFiles }),
