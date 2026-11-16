@@ -638,11 +638,11 @@ const outcomeWaitCallRoomMs = 5000;
 // The site's messages as confirmCommit reads and judges them, for a commit's wait.
 const outcomeWaitSite = (() => {
 ${siteMessageCode}
-  // Whether a message reads as a success: words or styling of one, and no words of an error, a
-  // refusal or a decline.
+  // Whether a message says a success: words of one, and none of an error, a refusal, a decline
+  // or a negation. Styling alone never does.
   const succeeds = (message) =>
-    (message.successStyle === true || successWords.test(message.text)) &&
-    !(saysError(message.text) || saysRefusal(message.text) || openWords.test(message.text));
+    successWords.test(message.text) &&
+    !(saysError(message.text) || saysRefusal(message.text) || openWords.test(message.text) || /\b(?:not|no|never)\b|n't\b/i.test(message.text));
   return { saysError, succeeds, messages, messagesInPage, read: (page) => page.locator(messages).evaluateAll(messagesInPage), messageCounts, judgeMessages };
 })();
 // Whether this call already began a wait: in a commit's call only the first reads the site's
@@ -782,10 +782,10 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
       }));
     // Whether a request that may write leaves the commit unclear: one unanswered, or a server error.
     const writeOpen = () => state.serverError || state.unanswered.size > 0;
-    // Whether an outcome is the site's message, as a refusal is, unless it reads as a success:
-    // fields marked invalid, a native dialog, an announcement, or an element that is, holds or sits
-    // in a dialog or one of the site's messages as confirmCommit reads them. An element gone since
-    // the look, or one the page can't tell, counts.
+    // Whether an outcome is the site's message, as a refusal is, unless it says a success: fields
+    // marked invalid, a native dialog, an announcement, or an element with text that is, holds or
+    // sits in a dialog or one of the site's messages as confirmCommit reads them, never a control or
+    // a frame. An element gone since the look, or one the page can't tell, counts.
     const siteMessage = async (candidate) => {
       if (candidate.kind === "invalid") return true;
       if (candidate.kind === "dialog" || candidate.kind === "announced") {
@@ -795,14 +795,17 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
       if (candidate.kind !== "locator") return false;
       const elements = candidate.locator.filter({ visible: true });
       const read = (reading) => waitBounded(reading.catch(() => undefined), Math.min(1000, beforeStop()));
-      const inMessage = await read(elements.evaluateAll(
-        (elements, selector) =>
-          elements.length === 0 || elements.some((element) => element.closest(selector) !== null || element.querySelector(selector) !== null),
+      // The texts first: an element gone by the second read is gone from both.
+      const shown = await read(elements.evaluateAll(outcomeWaitSite.messagesInPage));
+      const placed = await read(elements.evaluateAll(
+        (elements, selector) => ({
+          count: elements.length,
+          inMessage: elements.some((element) => element.closest(selector) !== null || element.querySelector(selector) !== null),
+        }),
         outcomeWaitSite.messages + ', [role="dialog"], dialog',
       ));
-      if (inMessage === false) return false;
-      const shown = await read(elements.evaluateAll(outcomeWaitSite.messagesInPage));
-      return !(shown !== undefined && shown.length > 0 && shown.every(outcomeWaitSite.succeeds));
+      if (shown === undefined || placed === undefined || placed.count === 0) return true;
+      return placed.inMessage && shown.length > 0 && !shown.every(outcomeWaitSite.succeeds);
     };
     // When a site's message first showed while a request that may write left the commit unclear.
     let heldSince;
@@ -1476,10 +1479,10 @@ const waitForChange = async (fields, options = {}) => {
  *   challenge, the site's error or a layout the code does not handle, never slowness. Also, after a
  *   commit's click (below), when an outcome that is the site's message shows while a request that
  *   may write, to any host, sent since the click, has no answer: fields marked invalid, a dialog, an
- *   announcement, or an element that is, holds or sits in a dialog, an alert or an error-styled
- *   message, unless it reads as a success. Such an outcome waits up to `noProgressMs` for the
- *   answer and then decides as before, and fails so, with `outcome` naming it, when none comes in
- *   time, or at once after a server error to such a request.
+ *   announcement, or an element with text that is, holds or sits in a dialog, an alert or an
+ *   error-styled message, unless its words say a success. Such an outcome waits up to
+ *   `noProgressMs` for the answer and then decides as before, and fails so, with `outcome` naming
+ *   it, when none comes in time, or at once after a server error to such a request.
  * - `outcome_refused`, in place of `outcome_unknown`, when the wait's `action` is a commit's click
  *   (the call's first wait, with an `action`, in the call the script sends right after its
  *   `enteringCommit`, which the runtime declares as `__pomeradoCommitting`) and the page shows a

@@ -633,8 +633,8 @@ test("in a commit's call, a request that may write still unanswered keeps the si
 // A paying step names the site's alert or dialog as an outcome beside the order's response. Its
 // error, shown on a timer of the page's own while a request that may write has no answer, waits
 // for that answer: once it comes, the outcomes decide as before. With none in time, or after a
-// server error, the commit is unclear, even once the error left. A success, even in an alert, or any
-// wait outside a commit's call, decides at once.
+// server error, the commit is unclear, even once the error left. A success its words say, even in an
+// alert, a control in a dialog, or any wait outside a commit's call, decides at once.
 test("in a commit's call, the site's alert, dialog or field errors named as an outcome wait for an unanswered request that may write", async ({
   page,
 }) => {
@@ -644,6 +644,8 @@ test("in a commit's call, the site's alert, dialog or field errors named as an o
     ["/orders", "none", "field errors", true, "outcome_unknown"],
     ["/orders", "none", "a modal", true, "outcome_unknown"],
     ["/orders", "none", "an alert that leaves once read", true, "outcome_unknown"],
+    ["/orders", "none", "an alert that negates a success", true, "outcome_unknown"],
+    ["/orders", "none", "an error in a success-styled alert", true, "outcome_unknown"],
     ["/orders", 503, "alert", true, "outcome_unknown"],
     ["/orders", 402, "alert", true, "declined"],
     ["", "none", "alert", true, "declined"],
@@ -651,6 +653,7 @@ test("in a commit's call, the site's alert, dialog or field errors named as an o
     ["/collect", "204 after 300 ms", "alert", true, "declined"],
     ["/orders", "none", "a success", true, "placed"],
     ["/orders", "none", "a success in an alert", true, "placed"],
+    ["/orders", "none", "a button in a dialog", true, "upsell"],
     ["/orders", "none", "alert", false, "declined"],
   ] as const) {
     await page.unrouteAll();
@@ -673,7 +676,10 @@ test("in a commit's call, the site's alert, dialog or field errors named as an o
         Object.defineProperty(alert, "innerText", { get() { setTimeout(() => alert.remove()); return "Payment failed. Please try again."; } });
         document.querySelector("#answer").append(alert);`,
       "a success": `document.querySelector("#answer").innerHTML = '<p class="placed">Order placed</p>';`,
-      "a success in an alert": `document.querySelector("#answer").innerHTML = '<div role="alert" class="placed alert alert-success">Order placed</div>';`,
+      "an alert that negates a success": `document.querySelector("#answer").innerHTML = '<div role="alert">Your payment was not successful.</div>';`,
+      "an error in a success-styled alert": `document.querySelector("#answer").innerHTML = '<div role="alert" class="alert alert-success">Something went wrong</div>';`,
+      "a success in an alert": `document.querySelector("#answer").innerHTML = '<div role="alert" class="placed alert alert-success">Order confirmed. Thank you!</div>';`,
+      "a button in a dialog": `document.querySelector("#answer").innerHTML = '<div role="dialog" aria-modal="true"><button type="button" class="upsell">No thanks</button></div>';`,
     }[shows];
     await site(
       page,
@@ -694,6 +700,7 @@ test("in a commit's call, the site's alert, dialog or field errors named as an o
         const result = await waitForOutcomeResult({
           order: { response: (response) => response.url().endsWith("/orders") && response.status() < 400 },
           placed: page.locator(".placed"),
+          upsell: page.locator(".upsell"),
           declined: page.getByRole("alert"),
           modal: page.getByRole("dialog"),
           notice: { dialog: true },
