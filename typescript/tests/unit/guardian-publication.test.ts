@@ -1066,7 +1066,7 @@ describe("the publication policy", () => {
   // back, beside the rule on the last question before a commit.
   it("finds a re-check before a commit that refuses an approved choice on a moved time alone", () => {
     const rule =
-      "A re-check before a commit that refuses the choice the caller approved, or asks the caller again, when only a time it shows that moves with the clock changed, instead of matching it by what stays fixed, such as its kind or name, its id and its price, is a confirmation finding at that check.";
+      "A re-check before a commit that refuses the choice the caller approved, or asks the caller again, when only a time it shows that moves with the clock changed, instead of matching it by its kind or name and its price, is a confirmation finding at that check.";
     expect(publicationApprovedChoicePolicy).toBe(rule);
     expect(guardianPublicationPolicy.split(rule)).toHaveLength(2);
     expect(guardianPublicationPolicy).toContain(
