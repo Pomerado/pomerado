@@ -105,7 +105,10 @@ pays or whether the action can be cancelled or refunded (each paid add-on and pr
 option within the tool's purpose, a rate, fare or plan tier, a refundable or non-refundable
 option, shipping speed, how much of a balance to pay, the payment method and the delivery
 address), and any other option only when
-the request's purpose clearly depends on it. An unasked optional field keeps the page's
+the request's purpose clearly depends on it. When the write must take one of a service's tiers
+of speed, class or service level that the caller's input does not settle, take the tier the site
+presents as standard instead of asking and list it in `finish_build` `assumptions`; ask only
+when the site shows no standard tier. An unasked optional field keeps the page's
 default and is still an optional input of the script. Prefer keeping the value the page
 already shows in an optional field that adds no cost over asking the caller to confirm or
 correct it, and list it in `finish_build` `assumptions`. Ask only about options the site
@@ -131,7 +134,11 @@ During the session:
   exists. A check that can only run after an earlier
   marked step, such as a total that shows only once a saved address step has run, runs before
   the later step's mark; its refusal then reports a possible change, because the earlier step
-  may have saved something, and that is honest. Still mark that earlier step.
+  may have saved something, and that is honest. Still mark that earlier step. Mark a commit
+  step as a setting in `write.settings` when its click only changes a choice on the way to the
+  final commit and cannot place, buy, book, send or charge anything by itself. An `InvalidInput`
+  or a declared refusal after only such steps, the caller's no included, ends with nothing
+  applied.
 - When one of those checks rules the task out, such as a total over the caller's limit, an
   item out of stock or a variant the page does not offer, the script refuses before the mark
   with `InvalidInput` (the caller-input skill, "Throw the error that matches what happened"),
@@ -356,6 +363,9 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   error and a fresh read of the same view you read before the mark shows each field whose sent
   value differs from that read unchanged, prefer the same put-back and ending as above; never on
   silence or a missing element.
+- In a paying commit step, name the site's alert or dialog as an outcome beside the order's
+  response, and return the site's decline as a refusal the output schema declares, with the
+  site's words.
 - A quote the site issued earlier, such as a fare, rate, delivery time, cart price or hold, can
   expire before the commit, for example while the step waits for review, and selecting it again
   can send back the quote the page already holds. So have the commit step go to the checkout
@@ -656,7 +666,7 @@ asks with a declared question before the commit mark (the caller-input skill), o
 saved payment or address as an account-specific choice. The same holds for any choice that
 changes what the caller buys or pays, or whether the action can be cancelled or refunded, such
 as a rate, fare or plan tier, a refundable option, shipping speed or how much of a balance to pay.
-When the site requires choosing one of a service's tiers of speed, class or service level, that
+When the write must take one of a service's tiers of speed, class or service level, that
 choice's optional input defaults to the tier the site presents as standard, and the script asks
 only when the site shows no standard tier. An owner's answer may make only declining such an
 option, turning it off or the option that adds no cost and keeps the action cancellable the
@@ -758,9 +768,10 @@ mark. A write may instead declare its refusals in its output schema: a branch th
 no other branch whose `status` could be `"refused"`. Prefer declaring each refusal as its own
 branch of the output's top-level union, and prefer a listed `status` on every other branch, such
 as `Schema.Literal("rated")`, so the host can tell a refusal from any other output. Returned
-before the first commit mark, a declared refusal completes the run with that output and reports
-the write not applied. A refusal returned in a shape the schema does not declare, or returned or
-thrown after a mark, reports a possible change.
+before the first commit mark, or after only steps named in `write.settings`, a declared refusal
+completes the run with that output and reports the write not applied. A refusal returned in a
+shape the schema does not declare, or returned or thrown after a mark outside `write.settings`,
+reports a possible change.
 pomerado:section writes.declared-refusal:end -->
 
 See `references/write-session.ts` for two steps and the composed script, and

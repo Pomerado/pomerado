@@ -556,6 +556,7 @@ const namedStepReasons: ReadonlySet<string> = new Set([
   "contract_output_mismatch",
   "confirmation_undeclared",
   "commit_marks_undeclared",
+  "commit_settings_invalid",
   "write_path_undeclared",
   "confirm_action_unmatched",
   "refusal_unreadable",
@@ -3596,6 +3597,13 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             error.reason,
             { writePathMarks: error.writePathMarks ?? [] },
             "Not published: the composed script leaves out commit marks of the session's recorded write path from write.commits; writePathMarks names them. Run every step of the path in the composed script, marked by the same helper the session used, declare every mark in order, and call finish_build again with the same executionId. Never run the write again.",
+          );
+        if (error.reason === "commit_settings_invalid")
+          return reply(
+            error.code,
+            error.reason,
+            {},
+            "Not published: write.settings names each setting step of write.commits once, and a step of write.commits that is not a setting comes after the last of them. Correct write.settings, then call finish_build again with the same executionId. The host reads the contract offline, so the write need not run again.",
           );
         if (error.reason === "refusal_unreadable")
           return reply(

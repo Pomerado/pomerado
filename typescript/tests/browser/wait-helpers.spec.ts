@@ -349,6 +349,261 @@ test("a review step that counts down, then sends on its own behind a spinner, ke
   expect(answer.report?.[0]?.summary).toMatch(/progress seen: .*countdown/u);
 });
 
+// A checkout like a hosted ordering page's: Place order shows a spinner, then a countdown, then
+// sends the order to the site's API on another registrable domain, which declines it, and the page
+// shows its error dialog. The tool's wait names only a new page and fields marked invalid.
+const declinePage = (page: Page) =>
+  Promise.all([
+    page.route("https://orders.example-api.test/**", async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      await route.fulfill({
+        contentType: "application/json",
+        headers: { "access-control-allow-origin": "*" },
+        body: JSON.stringify({ error: "declined" }),
+      });
+    }),
+    site(
+      page,
+      `<form id="checkout" aria-label="Checkout" novalidate>
+        <input aria-label="Phone" value="555-0100">
+        <button type="button" id="place">Place order</button>
+      </form>
+      <div id="status" aria-live="polite"></div>
+      <script>
+        document.querySelector("#place").onclick = () => {
+          document.querySelector("#status").textContent = "Placing order...";
+          document.body.insertAdjacentHTML("beforeend", '<span class="spinner">.</span>');
+          setTimeout(() => {
+            document.querySelector(".spinner").remove();
+            document.body.insertAdjacentHTML("beforeend", '<p id="hold">Sending in 0:05</p>');
+            let left = 5;
+            const timer = setInterval(async () => {
+              left -= 1;
+              document.querySelector("#hold").textContent = "Sending in 0:0" + left;
+              if (left > 0) return;
+              clearInterval(timer);
+              document.querySelector("#hold").remove();
+              await fetch("https://orders.example-api.test/graphql", { method: "POST", body: "{}" });
+              document.body.insertAdjacentHTML("beforeend",
+                '<div role="alertdialog" aria-modal="true"><h2>We could not place your order.</h2>' +
+                '<p>Please try again.</p></div>');
+            }, 150);
+          }, 300);
+        };
+      </script>`,
+    ),
+  ]);
+
+// The place step's wait, with the reason, message and evidence of how it failed.
+const placeWait = `
+  try {
+    return { shown: await waitForOutcome({
+      changed: { url: (url) => url.pathname === "/confirmation" },
+      invalid: { invalid: page.locator("#checkout") },
+    }, { action: () => page.locator("#place").click(), noProgressMs: 600, timeout: 5000 }) };
+  } catch (error) {
+    return { reason: error.reason, message: error.message, evidence: error.evidence };
+  }`;
+
+// What the runtime declares ahead of a commit's own call, the first after `enteringCommit`.
+const commitCall = "const __pomeradoCommitting = true;";
+
+test("a commit whose site shows its error dialog after a spinner, a countdown and an order call to another host fails as the site's refusal", async ({
+  page,
+}) => {
+  await declinePage(page);
+  const refused = await call(page, placeWait, `${commitCall}${waitCode}`);
+  expect(refused.result).toMatchObject({
+    reason: "outcome_refused",
+    evidence: {
+      messages: [
+        "We could not place your order. Please try again.",
+      ],
+    },
+  });
+  expect((refused.result as { message: string }).message).toMatch(
+    /^outcome_refused after \d+ ms, no outcome showing, the page shows the site's refusal "We could not place your order\. Please try again\.": changed URL not matched, invalid 0 invalid fields; progress seen: .*countdown/u,
+  );
+  // Any other call's wait, a read's or one before the commit, still ends outcome_unknown.
+  await declinePage(page);
+  expect(await call(page, placeWait)).toMatchObject({ result: { reason: "outcome_unknown" } });
+});
+
+test("after a commit's click, only a new message confirmCommit judges not done ends the wait as the site's refusal", async ({
+  page,
+}) => {
+  const cases = [
+    { name: "an error-styled message that says the payment failed", before: "", after: '<p class="error">Payment failed</p>', reason: "outcome_refused" },
+    { name: "an alert that says neither error nor success", before: "", after: '<div role="alert">Your order is being reviewed</div>', reason: "outcome_unknown" },
+    { name: "a message that only says declined", before: "", after: '<div role="alert">Your card was declined</div>', reason: "outcome_unknown" },
+    { name: "an error beside a success", before: "", after: '<div role="alert">Order submitted. We could not send the receipt, please try again later</div>', reason: "outcome_unknown" },
+    { name: "an error banner shown before the click", before: '<div role="alert">Payment failed</div>', after: "", reason: "outcome_unknown" },
+  ];
+  for (const each of cases) {
+    await page.setContent(`
+      <form id="checkout" novalidate><button type="button" id="place">Place order</button></form>
+      ${each.before}
+      <section id="answer"></section>
+      <script>
+        document.querySelector("#place").onclick = () =>
+          setTimeout(() => { document.querySelector("#answer").innerHTML = ${JSON.stringify(each.after)}; }, 100);
+      </script>`);
+    const answer = await call(
+      page,
+      `try {
+        return await waitForOutcome({ placed: page.locator(".placed") }, {
+          action: () => page.locator("#place").click(), noProgressMs: 300, timeout: 2000,
+        });
+      } catch (error) {
+        return error.reason;
+      }`,
+      `${commitCall}${waitCode}`,
+    );
+    expect(answer.result, each.name).toBe(each.reason);
+  }
+});
+
+test("after a commit's click, a native dialog no outcome names that says the order failed is the site's refusal", async ({
+  page,
+}) => {
+  // With a status, the order first goes to another host, which answers so.
+  for (const [said, commit, reason, status] of [
+    ["Placing your order failed", true, "outcome_refused", undefined],
+    ["Your order is being prepared", true, "outcome_unknown", undefined],
+    ["Placing your order failed", false, "outcome_unknown", undefined],
+    ["Placing your order failed", true, "outcome_unknown", 503],
+    ["Placing your order failed", true, "outcome_refused", 402],
+  ] as const) {
+    await page.unrouteAll();
+    await page.route("https://orders.example-api.test/**", (route) =>
+      route.fulfill({ status: status ?? 200, headers: { "access-control-allow-origin": "*" }, body: "{}" }),
+    );
+    await site(
+      page,
+      `<button type="button" id="place">Place order</button>
+      <script>document.querySelector("#place").onclick = async () => {
+        ${status === undefined ? "" : 'await fetch("https://orders.example-api.test/orders", { method: "POST" });'}
+        setTimeout(() => alert(${JSON.stringify(said)}), 50);
+      };</script>`,
+    );
+    const answer = await call(
+      page,
+      `try {
+        await waitForOutcome({ placed: page.locator(".placed"), notice: { dialog: "confirm" } }, {
+          action: () => page.locator("#place").click(), noProgressMs: 300, timeout: 2000,
+        });
+      } catch (error) {
+        await error.dialog?.dismiss();
+        return { reason: error.reason, evidence: error.evidence };
+      }`,
+      commit ? `${commitCall}${waitCode}` : waitCode,
+    );
+    expect(answer.result, `${said}, ${commit ? "a commit" : "no commit"}, ${status ?? "no order call"}`).toEqual({
+      reason,
+      ...(reason === "outcome_refused" ? { evidence: { type: "alert", message: said } } : {}),
+    });
+  }
+});
+
+// The commit's answer came with the call's first wait, whether its click was the wait's action or
+// came before it. A later wait's click, such as one that opens the receipt, shows errors of its own,
+// never the commit's.
+test("in a commit's call, a wait after the first never reads the site's refusal", async ({ page }) => {
+  for (const placing of [
+    `await waitForOutcome({ placed: page.locator(".placed") }, {
+      action: () => page.locator("#place").click(), noProgressMs: 300, timeout: 2000,
+    })`,
+    `await page.locator("#place").click(),
+    await waitForOutcome({ placed: page.locator(".placed") }, { noProgressMs: 300, timeout: 2000 })`,
+  ]) {
+    await page.setContent(`
+      <button type="button" id="place">Place order</button>
+      <button type="button" id="receipt">View receipt</button>
+      <section id="answer"></section>
+      <script>
+        document.querySelector("#place").onclick = () =>
+          setTimeout(() => { document.querySelector("#answer").innerHTML = '<p class="placed">Order placed</p>'; }, 100);
+        document.querySelector("#receipt").onclick = () =>
+          setTimeout(() => { document.querySelector("#answer").insertAdjacentHTML("beforeend", '<p class="error">Loading the receipt failed</p>'); }, 100);
+      </script>`);
+    const answer = await call(
+      page,
+      `const placed = (${placing});
+      try {
+        return [placed, await waitForOutcome({ receipt: page.locator(".receipt") }, {
+          action: () => page.locator("#receipt").click(), noProgressMs: 300, timeout: 2000,
+        })];
+      } catch (error) {
+        return [placed, error.reason];
+      }`,
+      `${commitCall}${waitCode}`,
+    );
+    expect(answer.result, placing).toEqual(["placed", "outcome_unknown"]);
+  }
+});
+
+// A server error may come after the order saved, as confirmCommit reads one: the site's error then
+// leaves the commit unclear. Only a request that may write counts, from any host.
+test("in a commit's call, a server error to a request that may write keeps the site's error unclear", async ({ page }) => {
+  for (const [method, status, reason] of [
+    ["POST", 503, "outcome_unknown"],
+    ["GET", 503, "outcome_refused"],
+    ["POST", 402, "outcome_refused"],
+  ] as const) {
+    await page.unrouteAll();
+    await page.route("https://orders.example-api.test/**", (route) =>
+      route.fulfill({ status, contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: "{}" }),
+    );
+    await site(
+      page,
+      `<button type="button" id="place">Place order</button>
+      <section id="answer"></section>
+      <script>
+        document.querySelector("#place").onclick = async () => {
+          await fetch("https://orders.example-api.test/orders", { method: ${JSON.stringify(method)} });
+          document.querySelector("#answer").innerHTML = '<div role="alert">Payment failed. Please try again.</div>';
+        };
+      </script>`,
+    );
+    const answer = await call(
+      page,
+      `try {
+        return await waitForOutcome({ placed: page.locator(".placed") }, {
+          action: () => page.locator("#place").click(), noProgressMs: 300, timeout: 2000,
+        });
+      } catch (error) {
+        return error.reason;
+      }`,
+      `${commitCall}${waitCode}`,
+    );
+    expect(answer.result, `${method} ${status}`).toBe(reason);
+  }
+});
+
+test("a write whose commit the site declined behind its own dialog reports the step unsent, with the site's words", async ({
+  page,
+}) => {
+  await declinePage(page);
+  const tool = defineOperation(
+    { input: Schema.Struct({}), output: Schema.Unknown, write: { confirmation: "readback", commits: ["place-order"] } },
+    async ({ kernel, sessionId, errors, enteringCommit }) => {
+      enteringCommit("place-order");
+      const answer = await kernel.browsers.playwright.execute(sessionId, { timeout_sec: 8, code: `${waitCode}
+        await waitForOutcome({
+          changed: { url: (url) => url.pathname === "/confirmation" },
+          invalid: { invalid: page.locator("#checkout") },
+        }, { action: () => page.locator("#place").click(), noProgressMs: 600, timeout: 5000 });` });
+      if (!answer.success) throw new errors.OperationFailure(String(answer.error), { stderr: answer.stderr });
+      return answer.result;
+    },
+  );
+  const run = await runExample(page, tool, {});
+  expect((failure(run.result) as { message: string }).message).toMatch(
+    /outcome_refused after \d+ ms, no outcome showing, the page shows the site's refusal "We could not place your order\./u,
+  );
+  expect(run.commits).toEqual([{ name: "place-order", state: "not_sent" }]);
+});
+
 test("after an action, a timer already counting down before it is not progress, however long the look before it takes", async ({
   page,
 }) => {

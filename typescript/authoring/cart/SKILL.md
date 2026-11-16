@@ -131,8 +131,8 @@ mark, as the caller-input skill says for a page's state that rules the task out.
 An example item that is out of stock doesn't end the build. The tool returns that as the site's
 refusal for the item, and the build publishes on it as the writes skill says.
 
-When the site requires choosing one of a service's tiers of speed, class or service level, take
-the caller's choice from an optional input and keep it as given. Without one, choose the tier
+When the order must take one of a service's tiers of speed, class or service level, take the
+caller's choice from an optional input and keep it as given. Without one, choose the tier
 the site presents as standard, not one sold as faster, larger or premium; when the site shows no
 standard tier, ask the caller which to use.
 

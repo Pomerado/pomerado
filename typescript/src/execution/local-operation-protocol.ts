@@ -120,13 +120,18 @@ const JournalFields = {
   effect: Schema.Literal("not_started", "may_have_dispatched", "verified"),
   confirmation: Schema.optionalWith(Schema.Literal("message", "readback"), { exact: true }),
   commits: Schema.Array(
-    Schema.Struct({ name: Schema.String, state: Schema.Literal("not_sent", "sent", "confirmed") }),
+    Schema.Struct({
+      name: Schema.String,
+      state: Schema.Literal("not_sent", "sent", "confirmed"),
+      setting: Schema.optionalWith(Schema.Literal(true), { exact: true }),
+    }),
   ),
 };
 const WriteDeclaration = Schema.Struct({
   confirmation: Schema.Literal("message", "readback", "unverifiable"),
   commits: Schema.optionalWith(Schema.Array(Schema.String), { exact: true }),
   commitsUnproven: Schema.optionalWith(Schema.Array(Schema.String), { exact: true }),
+  settings: Schema.optionalWith(Schema.Array(Schema.String), { exact: true }),
 });
 export const LocalOperationMessage = Schema.Union(
   Schema.Struct({
