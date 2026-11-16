@@ -658,12 +658,18 @@ const openAIMinter = (
               const name = skillPagePath.exec(path)?.[1];
               if (name !== undefined && skillNames.includes(name)) skillsRead.add(name);
             };
-            /** The note after a compaction, naming the skills read so far; none when none were. */
+            /**
+             * The note after a compaction, naming the skills read so far. The minter's own note
+             * is sent only once some skill was read; a host's note is sent after every
+             * compaction, since it may carry the host's own standing instructions too.
+             */
             const skillsReadNote = (): AgentInputItem | undefined => {
               const read = skillNames.filter((name) => skillsRead.has(name));
-              if (read.length === 0) return undefined;
-              const content = (turn.compactionSkillsNote ?? compactionSkillsNote)(read);
-              return { role: "user", type: "message", content };
+              if (turn.compactionSkillsNote === undefined) {
+                if (read.length === 0) return undefined;
+                return { role: "user", type: "message", content: compactionSkillsNote(read) };
+              }
+              return { role: "user", type: "message", content: turn.compactionSkillsNote(read) };
             };
             /**
              * Each provider compaction's note, by its item. It is taken once, when the compaction
