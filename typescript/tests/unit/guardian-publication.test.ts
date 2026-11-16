@@ -11,6 +11,7 @@ import { answersForReview } from "../../src/guardian/question.js";
 import {
   decodePublicationDecision,
   guardianPublicationPolicy,
+  publicationApprovedChoicePolicy,
   publicationCallerDecisionPolicy,
   publicationCartPolicy,
   publicationDecisionPolicy,
@@ -1054,7 +1055,22 @@ describe("the publication policy", () => {
     expect(publicationPurchaseOrderPolicy).toBe(rule);
     expect(guardianPublicationPolicy.split(rule)).toHaveLength(2);
     expect(guardianPublicationPolicy).toContain(
-      `before that step's next enteringCommit. ${rule} A write that hands its browser to a person`,
+      `before that step's next enteringCommit. ${rule} A re-check before a commit`,
+    );
+    expect(publicationFindingCategories).toContain("confirmation");
+  });
+
+  // A choice the caller approved can show a time that moves with the clock, such as an
+  // as-soon-as-possible delivery window or a ride's pickup time, and a re-check before the commit that matched its exact text
+  // refused it once the time moved, though the site still offered it. The review sends that check
+  // back, beside the rule on the last question before a commit.
+  it("finds a re-check before a commit that refuses an approved choice on a moved time alone", () => {
+    const rule =
+      "A re-check before a commit, the marked call's re-read included, that stops the write or asks the caller again when the choice the caller approved changed only in a time it shows that moves with the clock, instead of matching it by its kind or name and any time it shows that stays fixed, is a confirmation finding at that check.";
+    expect(publicationApprovedChoicePolicy).toBe(rule);
+    expect(guardianPublicationPolicy.split(rule)).toHaveLength(2);
+    expect(guardianPublicationPolicy).toContain(
+      `${publicationPurchaseOrderPolicy} ${rule} A write that hands its browser to a person`,
     );
     expect(publicationFindingCategories).toContain("confirmation");
   });

@@ -16,6 +16,7 @@ import placeOrder from "../../authoring/examples/write-session.js";
 import { selectInvoiceLayout } from "../../authoring/examples/variants.js";
 import {
   guardianPublicationPolicy,
+  publicationApprovedChoicePolicy,
   publicationLiveTestsPolicy,
   publicationOutputPolicy,
   publicationWriteOutcomePolicy,
@@ -1246,6 +1247,21 @@ it("has a write retry an expired quote once, which Guardian's reviews accept", a
   );
 });
 
+// A choice the caller approved can show a time that moves with the clock, such as an
+// as-soon-as-possible delivery window or a ride's pickup time, so a re-check before the commit that matched its exact text
+// refused a choice the site still offered. The writes skill matches it by its kind or name and any
+// time that stays fixed, with its price checked against the caller's limits, in the commit step's
+// fresh quote and every other re-check before a commit, and Guardian's publication review says
+// the same.
+it("has a re-check before a commit match the approved choice by its kind or name and fixed time", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const writes = (texts.get("writes") ?? "").replace(/\s+/g, " ");
+  expect(writes).toContain(
+    "or right before the card fill when the host fills the card. There, and in any other re-check before a commit, match the choice the caller approved by its kind or name and any time it shows that stays fixed, not by a time that moves with the clock, check its price against the caller's limits as above, and keep it as approved when only that time changed. When the site answers the click",
+  );
+  expect(guardianPublicationPolicy).toContain(publicationApprovedChoicePolicy);
+});
+
 // A consent banner whose text also agrees to the site's own terms is still a consent banner, and a
 // prompt whose own purpose is accepting terms is not. The core skill and Guardian say the same.
 it("has the minter and Guardian treat a consent banner that bundles the site's terms as a banner", async () => {
@@ -1412,7 +1428,7 @@ it("renders the pinned standalone authoring", async () => {
     ["a08f1ef89cc10bf11e17b8d6086b6e37649b1d5d11b78c0542cc7db32460b7e3", "testing"],
     ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
     ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
-    ["fdd72482312f6ff96596a9765a1bf96aab637cbe637752795f3f6f489f2b183d", "writes"],
+    ["f09bea6d89de5c85cf8cbecc9326745c7bc72b8e67575363a0992961e2c81e24", "writes"],
     ["556b560d66d52790fcf3f187720c48627d22b4b0f562c6c7f691b8824694ef8c", "cart"],
     ["a956eaf7879b5f89ca80d96e6549c17203dab21423e92e31cec0027f12a13a05", "caller-input"],
     ["47cba18121554c05c379f6ac754de07e8bfa7515250055585e631a2eb88b7468", "publication"],

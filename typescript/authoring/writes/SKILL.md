@@ -363,7 +363,12 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   checkout again, right before its mark, then select the fresh quote, set again any earlier
   choice this may have reset, such as the tip or a declined add-on, and check the quote and those
   choices against the caller's limits, such as the cap and the same item or route, before the
-  mark as above, all in that one step, or right before the card fill when the host fills the card. When the site answers the click by saying the quote expired or the price changed, with
+  mark as above, all in that one step, or right before the card fill when the host fills the card.
+  There, and in any other re-check before a commit, match the choice the caller approved by its
+  kind or name and any time it shows that stays fixed, not by a time that moves with the clock,
+  check its price against the caller's limits as above, and keep it as approved when only that
+  time changed. When the site
+  answers the click by saying the quote expired or the price changed, with
   that proof that it created nothing, call `notCommitted` for the step with `{ siteRefused: true }`, refresh the quote the same way and check it again,
   then call `enteringCommit` again and click once more. A fresh quote that breaks a limit refuses
   before the mark, so the run reports nothing applied. Retry only once: a step goes back once a
