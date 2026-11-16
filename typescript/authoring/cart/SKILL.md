@@ -87,11 +87,12 @@ the page's default.
 Choosing the delivery address and payment method is part of a checkout's job, even when the
 account has saved ones the page pre-selects: take each from the input, such as which saved
 address or a new one, or ask before the commit mark which to use (the writes skill). Never use
-the page's selection silently. A paid add-on within the tool's purpose, such as a protection
-plan for the item bought, is an input or a question too. A paid membership, subscription or
-trial the checkout offers is outside its purpose: decline it without asking, never accept it
-without an input the caller set, and handle its pop-up as conditional (the forms skill), since
-it shows only to some accounts.
+the page's selection silently. Give each saved address and card option its masked label (the
+caller-input skill), and mark the one the page pre-selects. A paid add-on within the tool's
+purpose, such as a protection plan for the item bought, is an input or a question too. A paid
+membership, subscription or trial the checkout offers is outside its purpose: decline it without
+asking, never accept it without an input the caller set, and handle its pop-up as conditional
+(the forms skill), since it shows only to some accounts.
 
 ## Minimums and refusals
 
