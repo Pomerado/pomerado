@@ -219,8 +219,8 @@ pomerado:section publication.saved-files:end -->.
      outside the tool's purpose is declined;
    - a pop-up that shows only for some accounts, states or visits is handled when present and
      never required;
-   - a tool's checks reject no correct run, and one guarding what neither the caller asked for
-     nor the tool itself changes stops only for a problem the page shows;
+   - a tool's checks reject no run where the task went right, and one guarding what neither the
+     caller asked for nor the tool itself changes stops only for a problem the page shows;
    - declared questions ask only what the page or the caller uniquely knows, never a login;
    <!-- pomerado:section publication.declared-refusal:start
 - a write runs every check that can refuse, such as a limit on its total, before the mark of

@@ -129,9 +129,9 @@ During the session:
   from the input or an answer and decline an out-of-scope upsell, read the selected options
   and total from the current page or an available read-only summary, check the total against
   any limit the input sets, stop when the page shows a paid option selected that neither the
-  input nor an answer settles, and check the items, address and payment. Use a review page when the site has one; a separate
-  review page is not required, and submitting a form is never a way to discover whether one
-  exists. A check that can only run after an earlier
+  input nor an answer settles, and check the items, address and payment. Use a review page when
+  the site has one; a separate review page is not required, and submitting a form is never a way
+  to discover whether one exists. A check that can only run after an earlier
   marked step, such as a total that shows only once a saved address step has run, runs before
   the later step's mark; its refusal then reports a possible change, because the earlier step
   may have saved something, and that is honest. Still mark that earlier step. Mark a commit
