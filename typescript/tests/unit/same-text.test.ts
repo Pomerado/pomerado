@@ -470,6 +470,9 @@ it("leaves out times that move with the clock only when asked", () => {
     ["Nov 21 7pm", "Nov 22 7pm"],
     ["Nov 21-22 Amber Room", "Nov 20-22 Amber Room"],
     ["$10 min order", "$15 min order"],
+    ["$ 10 min order", "$ 15 min order"],
+    ["Nov 21 - 7:00 PM", "Nov 22 - 7:00 PM"],
+    ["Nov 5 - 7 PM", "Nov 6 - 7 PM"],
     ["Gate 12", "Gate 12 pm"],
   ] as const)
     expect(sameText(shown, wanted, { ignoreClockTimes: true }), `${shown} | ${wanted}`).toBe(false);
