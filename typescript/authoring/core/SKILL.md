@@ -759,8 +759,8 @@ delayed rendering can be intermittent: a fast exploration load does not establis
 that later executions will be immediately ready. Include a bounded wait for the
 expected page or control even when exploration never observed a delay. Derive
 that readiness condition from the intended page, not from having seen a particular
-challenge. Wait for a unique operation control or page state before testing absence
-or choosing a fallback. Use `locator.waitFor` for one expected state, `waitForOutcome`
+challenge. After navigation or any action, wait for a unique operation control or page state
+before testing absence or choosing a branch or fallback. Use `locator.waitFor` for one expected state, `waitForOutcome`
 (below) when the page can answer more than one way, `waitForRows`, `waitForValues` or
 `waitForChange` (below) for the values you return, or, only where none fits, a bounded loop of
 your own that reads every condition in one `evaluate` per pass;
