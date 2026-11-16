@@ -62,13 +62,23 @@ const inspected = {
   buttons: ["Sign in"],
   url: login,
 };
-/** How the field answers the host's focus: it takes the focus, or an overlay keeps it. */
+/**
+ * How the field answers the host's focus: it takes the focus, an overlay keeps it, or the page
+ * put back what the field held once the host emptied it.
+ */
 const focusAnswers = {
   focused: { focused: true, url: login },
   not_focused: { focused: false, unfocused: { activeTag: "DIV" }, url: login },
+  not_emptied: { focused: false, unfocused: { emptied: false }, url: login },
 } as const;
-/** A refusal the screen gives: the field never takes the focus, or its native insertion's cause. */
-type ScreenRefusal = "not_focused" | Exclude<InsertionRefusal, "question_changed">;
+/**
+ * A refusal the screen gives: the field never takes the focus, its page puts back what it held,
+ * or its native insertion's cause.
+ */
+type ScreenRefusal =
+  | "not_focused"
+  | "not_emptied"
+  | Exclude<InsertionRefusal, "question_changed">;
 
 /** The login the build already holds, so a password screen may come first. */
 const heldLogin = { username: "synthetic-owner", password: "synthetic-password" };
@@ -103,9 +113,13 @@ const recorderOn = (page: AutofillPage, keyboard: CredentialKeyboard) =>
 const passwordScreen = (refusals: readonly ScreenRefusal[], keyboard?: CredentialKeyboard) => {
   const answers = refusals.flatMap((refusal) => [
     inspected,
-    refusal === "not_focused" ? focusAnswers.not_focused : focusAnswers.focused,
+    refusal === "not_focused" || refusal === "not_emptied"
+      ? focusAnswers[refusal]
+      : focusAnswers.focused,
   ]);
-  const insertions = refusals.filter((refusal) => refusal !== "not_focused");
+  const insertions = refusals.filter(
+    (refusal) => refusal !== "not_focused" && refusal !== "not_emptied",
+  );
   const bindingKeys: string[] = [];
   const recorder = recorderOn(
     {
@@ -266,6 +280,34 @@ it("starts the count again when a different refusal breaks the run", async () =>
   expect(third).not.toHaveProperty("buildOutcome");
   expect(third["notice"]).toContain("did not take the focus");
   expect(outcome.recoveryReason).not.toBe("sign_in_unavailable");
+});
+
+// A screen the site shows again may keep what its field held, such as a remembered username, and
+// put it back once the host empties the field. The host types nothing after it, and the agent hears
+// that cause and the site's own way past it, not the advice for a field an overlay covers.
+it("tells the agent a field's page put back what it held, and how to get past it", async () => {
+  const screen = passwordScreen(["not_emptied"]);
+  const run = await fixture(
+    (_request, index) => (index === 0 ? authenticate("sign_in_1") : finalAnswer),
+    { autofillSignIn: true, reviewAndExecute: screen.reviewAndExecute },
+    { effect: "read", siteOrigin: site },
+  );
+  await run.run();
+  const answer = answerTo(run.requests[1], "sign_in_1");
+  expect(answer).toMatchObject({
+    code: "AutofillRefused",
+    nextStep: "authenticate",
+    credentialSent: false,
+    authentication: {
+      hostRefusal: { check: "change", cause: "not_emptied", field: 0, slot: "password" },
+    },
+  });
+  const notice = String(answer["notice"]);
+  expect(notice).toContain("put back what the field held");
+  expect(notice).toContain("Not you?");
+  expect(notice).not.toContain("did not take the focus");
+  expect(screen.bindingKeys).toEqual([]);
+  expect(JSON.stringify(answer)).not.toContain("synthetic-password");
 });
 
 // A native insertion that inserted nothing says why: the focus moved, the field or page was

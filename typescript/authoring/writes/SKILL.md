@@ -72,7 +72,27 @@ pickup location as a read (above), with `pickValue` and the site's own confirm c
 step. Never fill, select, add, save or submit anything else there, except one made-up key in
 the site's own format, with a
 serial past any the site lists, per input that takes a record's own key, looked up once in the
-site's own lookup to see what it shows for a key it has no record of (core skill).
+site's own lookup to see what it shows for a key it has no record of (core skill), and the
+rehearsal's choices below, which save nothing.
+
+**Rehearse on varied samples.** The session runs the caller's one input, so it never shows how
+the script handles the next caller's. Before the first `act` step, rehearse the steps ahead of
+the first save on three to five other public samples of what the tool's inputs pick, found and
+chosen to differ as the testing skill says ("Find varied samples"): such as an item with more
+option groups, or an option name that appears in two groups; a store whose name has punctuation
+or another script; a store that is closed, schedules orders or has a feature turned off; a
+record on another URL shape the site's own links use. For each, open it as the script will and
+read what the script reads up to the control before the first save: the option groups and their
+choices, the open or closed state, the controls the script waits for and what the page shows in
+their place. Prefer the page's own data, as for any read.
+
+Rehearsal stays a read, as everything before the session is (above). Never press a control
+that adds to a cart, holds, saves, sends or submits, and never fill a form whose requests
+save as you type. Go further, up to a draft that is never saved, only where an earlier fill on
+this site showed in its captured requests that filling saves nothing; when it is unclear
+whether a step saves, treat it as one that saves and stop before it. Write what the samples
+showed into the script before the session, so one session proves a script that already handles
+them, and list in `finish_build` `assumptions` each difference you saw but could not rehearse.
 
 Settle the whole path before the first `act` step, from the request and what read-only
 exploration shows, such as the form's list of pages or steps: every step that saves or submits

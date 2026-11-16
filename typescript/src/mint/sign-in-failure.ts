@@ -1,5 +1,4 @@
-import type { HostRefusal } from "../destinations/autofill-refusal.js";
-import type { InsertionRefusal } from "../destinations/credential-keyboard.js";
+import type { HostRefusal, RefusalCause } from "../destinations/autofill-refusal.js";
 import { MintFailure, type SessionLoss, type SpentSignIn } from "./contracts.js";
 import { signInOutcomeUnknown, type SignInDiagnostic } from "../execution/sign-in-diagnostics.js";
 
@@ -81,8 +80,16 @@ const bindingUnresolved = {
   why: "the host could not find the one field it focused when it went to insert: that control was gone, more than one control claimed to be it, or it no longer resolved, so nothing was inserted",
   next: "Inspect the field read-only and name it more precisely: the one control that holds the typed text itself, not a wrapper, a copy or a decoy, then send the signInStep again.",
 };
-/** Why a native insertion inserted nothing, by its cause, and what may get past it; value-free. */
-const insertionNotices: Readonly<Record<InsertionRefusal, RefusalNotice>> = {
+/** A `change` refusal whose cause is a field whose page put back what it held once emptied. */
+const notEmptied = {
+  why: "the page put back what the field held after the host emptied it, such as a remembered username or a password or code the site refused, and the host never types a value after what a field holds",
+  next: 'Use the site\'s own control to change or forget what the screen remembers, such as "Not you?", "Use another account" or "Change", in an explore, then read the screen again read-only and send the signInStep for the screen it shows. Nothing was typed into the field.',
+};
+/**
+ * Why a refusal's check refused, by the cause it found: why a native insertion inserted nothing,
+ * or that a field's page put back what it held; and what may get past it; value-free.
+ */
+const causeNotices: Readonly<Record<RefusalCause, RefusalNotice>> = {
   focus_moved: focusLeft,
   document_unfocused: focusLeft,
   detached: fieldReplaced,
@@ -95,6 +102,7 @@ const insertionNotices: Readonly<Record<InsertionRefusal, RefusalNotice>> = {
   binding_not_in_world: bindingUnresolved,
   insertion_rejected: insertionRejected,
   question_changed: questionChanged,
+  not_emptied: notEmptied,
 };
 
 /** What the host refused to type and where, value-free. */
@@ -254,7 +262,7 @@ const refusalFeedback = (failure: SignInDiagnostic, refusal: HostRefusal) => {
   const notice =
     refusal.cause === undefined
       ? (refusalNotices[refusal.check] ?? otherRefusal)
-      : insertionNotices[refusal.cause];
+      : causeNotices[refusal.cause];
   const field = refusedField(refusal);
   return {
     signInOutcome: "signed_out" as const,
