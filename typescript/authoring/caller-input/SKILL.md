@@ -215,7 +215,8 @@ already asked for, or to solve a CAPTCHA.
      code, such as a gate, door, alarm or lockbox code.
    - When the host says it fills the card from a payment method, never ask for card
      parts: call `fillCard({ fields: [{ selector, slot }], total })` with each card
-     field's own selector, even inside the payment processor's frame, its slot
+     field's own CSS selector, matching one editable field across the page's frames,
+     even inside the payment processor's frame, its slot
      (`card_number`, `card_expiry`, `card_cvc`) and the order total the checkout shows as
      `{ amount, currency }`. On a checkout the site opened in a pop-up, also pass
      `popup: { opener: "primary", origin }` as a sign-in step names it. The host fills

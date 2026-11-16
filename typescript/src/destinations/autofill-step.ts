@@ -450,6 +450,8 @@ const Located = Schema.Union(
     popupTargetId: Schema.optional(Schema.String),
     /** The other boxes of the row the step's one code field begins (`codeBoxRow`). */
     codeBoxRow: Schema.optional(Schema.Array(Schema.String)),
+    /** With `hostCardFill`: the first field whose selector the host's card fill can't take. */
+    hostFillUnsupported: Schema.optional(Schema.Number),
     url: Schema.String,
     /** When the primary page's document began loading (`performance.timeOrigin`). */
     document: Schema.optional(Schema.Number),
@@ -965,7 +967,8 @@ const carriedRedirect = (
  * (`judgedBeforeTyping` given), a refusal names only the origins `namedAfterTyping` allows.
  * A step with a part of a payment card (a card-fill step) is refused unless the primary tab's top
  * document is on the site or exactly on one of `checkoutOrigins`, and its card fields may sit in a
- * frame on `paymentFrameOrigins`.
+ * frame on `paymentFrameOrigins`. With `hostCardFill`, each field the host's own card fill types
+ * must also be a CSS selector that fill can take (`selector_unsupported` otherwise).
  * `trustSignInUrl` lets a sign-in step's controls and popup also sit on an address the host's own
  * predicate trusts, asked only about one core's own floor allows; the inspection keeps it, so each
  * fill call judges again by the same rule, and names the origin of each address it trusted
@@ -991,6 +994,14 @@ export const inspectAutofillStep = (input: {
    * again, without this, before it types there. Unset, every field must take typing.
    */
   readonly postalCodeAfterCard?: boolean | undefined;
+  /**
+   * For a card-fill step a host's own card fill types, from a payment method (`runCardFill`'s
+   * `fillVia`): once every field was found, each field that fill takes, every one but a billing
+   * postal code, which core types itself, must be a CSS selector that matches exactly one editable
+   * input or select across the tab's frames, itself or inside an element it matches, as that fill
+   * finds it. Any other is refused as `selector_unsupported`. Unset, any selector core finds.
+   */
+  readonly hostCardFill?: boolean | undefined;
   /**
    * The host's own trust of more sign-in addresses for a sign-in step, as when its user allowed the
    * sign-in to go wherever the site sends it: asked about each address of a control or popup off
@@ -1054,8 +1065,15 @@ export const inspectAutofillStep = (input: {
       return withCheck(refused("selector_unsupported", crossing), "selector_unsupported");
     // This call's code holds no value, so its failure keeps its full detail.
     const judgment = randomUUID();
+    // The fields a host's own card fill types: every card field but a billing postal code.
+    const hostFilled =
+      input.hostCardFill === true
+        ? step.fields.flatMap(({ slot }, index) =>
+            isCardSlot(slot) && slot !== "billing_postal_code" ? [index] : [],
+          )
+        : [];
     const inspected = yield* page
-      .execute(autofillStepCode(page.targetId, step, judgment), 15)
+      .execute(autofillStepCode(page.targetId, step, judgment, undefined, hostFilled), 15)
       .pipe(Effect.flatMap(Schema.decodeUnknown(Located)), Effect.either);
     if (inspected._tag === "Left")
       return {
@@ -1099,6 +1117,13 @@ export const inspectAutofillStep = (input: {
         part: "no_form",
         ...foundEvidence(found.url, foundFor(found.located, "submit"), named),
       });
+    // Last, so a field another check refuses keeps that check's reason.
+    if (found.hostFillUnsupported !== undefined)
+      return withCheck(
+        refused("selector_unsupported", found.hostFillUnsupported),
+        "selector_unsupported",
+        foundEvidence(found.url, foundFor(found.located, found.hostFillUnsupported), named),
+      );
     const at = URL.parse(found.url);
     const frame = (found.submit ?? found.fields[0])?.target.ownerUrl;
     return {
