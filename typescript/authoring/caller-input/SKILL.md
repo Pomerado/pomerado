@@ -215,7 +215,8 @@ already asked for, or to solve a CAPTCHA.
      code, such as a gate, door, alarm or lockbox code.
    - When the host says it fills the card from a payment method, never ask for card
      parts: call `fillCard({ fields: [{ selector, slot }], total })` with each card
-     field's own selector, even inside the payment processor's frame, its slot
+     field's own CSS selector, matching one editable field across the page's frames,
+     even inside the payment processor's frame, its slot
      (`card_number`, `card_expiry`, `card_cvc`) and the order total the checkout shows as
      `{ amount, currency }`. On a checkout the site opened in a pop-up, also pass
      `popup: { opener: "primary", origin }` as a sign-in step names it. The host fills
@@ -236,7 +237,8 @@ already asked for, or to solve a CAPTCHA.
    plain JSON. Each option has a `value` the script acts on and a `label` the caller
    reads. Values are unique within a question. Offer only options the page will accept:
    skip taken seats, disabled slots and sold-out items. The value never leaves the run;
-   the caller sees only the label.
+   the caller sees only the label. Mark an option that stops the write with
+   `declines: true`. Picking it is the caller's no, as a confirm's no is.
 3. Mark an option taken from the caller's own account (a saved traveler, address, card
    or account) with `accountSpecific: true` and a `maskedLabel` that keeps it
    recognizable without its numbers or email: a card's brand and last four digits, an

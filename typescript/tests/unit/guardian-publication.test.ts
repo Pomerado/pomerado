@@ -14,6 +14,7 @@ import {
   publicationApprovedChoicePolicy,
   publicationCallerDecisionPolicy,
   publicationCartPolicy,
+  publicationCostlyChoiceDefault,
   publicationDecisionPolicy,
   publicationPaidChoiceLimit,
   publicationLiveTestsPolicy,
@@ -1251,6 +1252,20 @@ describe("the publication policy", () => {
     );
   });
 
+  // A check that needs the page to show something a correct run may not show, or that stops on
+  // what neither the caller asked for nor the tool changes for anything but a problem the page
+  // shows, stops correct runs in every kind of tool. The rule sits in the output rules, which every
+  // host's review and the minter both read.
+  it("finds a check that can stop a run where the task went right", () => {
+    const wrongFailure = publicationOutputPolicy.slice(
+      publicationOutputPolicy.indexOf("Wrong failure:"),
+      publicationOutputPolicy.indexOf("Strict name check:"),
+    );
+    expect(wrongFailure).toContain(
+      "So is a check that can stop a run whose page shows the task went right, or one that stops for anything other than a problem the page shows while guarding what neither the caller asked for nor the tool itself changes.",
+    );
+  });
+
   // A site that quietly stops answering a data call can still show its no-results message while
   // another part of the same page shows results for the same inputs. Returning that as an honest
   // empty list hides the site's failure. The rule sits in the output rules, which the review and
@@ -1292,7 +1307,7 @@ describe("the publication policy", () => {
   // own picker, whose fix names the address resolver too, so the two rules ask for the same fix.
   it("finds a typed street address matched without the address resolver", () => {
     expect(publicationOutputPolicy).toContain(
-      "Own address match: source that matches a street address the caller typed against the site's suggestions with pickValue, rankChoices or matching of its own, instead of pickAddress, or resolveAddress over the site's own suggestion request. A choice among the account's saved addresses is not this finding.",
+      "Own address match: source that matches a street address the caller typed against the site's suggestions with pickValue, rankChoices or matching of its own, instead of pickerMatchAddress or pickAddress, or resolveAddress over the site's own suggestion request. A choice among the account's saved addresses is not this finding.",
     );
     expect(
       publicationOutputPolicy.slice(
@@ -1300,7 +1315,7 @@ describe("the publication policy", () => {
         publicationOutputPolicy.indexOf("Own address match:"),
       ),
     ).toContain(
-      "The fix is pickValue or pickValues, with their options for the site's quirks, such as query, answered, committed, commit or blur; for a street address the caller typed, it is pickAddress.",
+      "The fix is pickValue or pickValues, with their options for the site's quirks, such as query, answered, committed, commit or blur; for a street address the caller typed, it is pickerTypeAddress, then pickerMatchAddress, clicking the row it returns.",
     );
     expect(guardianPublicationPolicy).toContain(publicationOutputPolicy);
   });
@@ -1609,6 +1624,34 @@ describe("the OpenAI publication reviewer", () => {
       .split("\n")
       .find((line) => line.startsWith("Review the public input schema"));
     expect(inputReview).toContain(publicationPaidChoiceLimit);
+  });
+
+  // With no caller choice, a write takes the tier of speed, class or service level the site
+  // presents as standard whenever the action must take one, pre-selected or not, so such a
+  // choice's input may default to it. Every rule that judges a costly choice's default reads
+  // that one text.
+  it("lets a costly choice among tiers default to the site's standard tier", () => {
+    expect(publicationCostlyChoiceDefault).toContain(
+      "when the action must take one of a service's tiers of speed, class or service level, the tier the site presents as standard",
+    );
+    const inputReview = guardianPublicationPolicy
+      .split("\n")
+      .find((line) => line.startsWith("Review the public input schema"));
+    for (const rule of [inputReview, publicationOutputPolicy, publicationPaidChoiceLimit])
+      expect(rule).toContain(publicationCostlyChoiceDefault);
+  });
+
+  // A run that leaves such a choice's optional input unset takes its allowed default, such as
+  // the standard tier over a pre-selected faster one, so the live review counts that default as
+  // the caller's input instead of denying it as made up or escalating it as unsettled.
+  it("counts a costly choice's allowed default as the caller's input in the live review", () => {
+    const policy = guardianExecutionPolicy(nativeExecutionEnvironment);
+    expect(policy).toContain(
+      `including an optional input's default that settles a choice changing what the caller buys or pays as ${publicationCostlyChoiceDefault})`,
+    );
+    expect(policy).toContain(
+      `the caller's input includes an optional input's default that settles such an option as ${publicationCostlyChoiceDefault}.`,
+    );
   });
 
   it("gives an execution review no publication policy or index", async () => {

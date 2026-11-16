@@ -215,10 +215,13 @@ pomerado:section publication.saved-files:end -->.
      card or address, account ID) as an enum member, example or default; every input as general
      as the site's field, never narrowed to the example's value; on a write, every option the
      session met on the path is an input or a settled default, and a costly choice is an input
-     or a run-time question whose default may only decline it (writes skill); a paid upsell
+     or a run-time question whose default is one the writes skill allows; a paid upsell
      outside the tool's purpose is declined;
    - a pop-up that shows only for some accounts, states or visits is handled when present and
      never required;
+   - a tool's checks reject no run whose page shows the task went right, and one guarding what
+     neither the caller asked for nor the tool itself changes stops only for a problem the page
+     shows;
    - declared questions ask only what the page or the caller uniquely knows, never a login;
    <!-- pomerado:section publication.declared-refusal:start
 - a write runs every check that can refuse, such as a limit on its total, before the mark of
@@ -226,13 +229,13 @@ pomerado:section publication.saved-files:end -->.
      schema declares before its first mark, never in an undeclared output shape;
 pomerado:section publication.declared-refusal:end -->
    - a composed write reproduces the session's flow and returns the confirmation or read-back it
-     declares, without committing twice, and its checks reject no correct write: a
-     before-and-after comparison that compares whole objects or serialized text, reads through
-     another query after the commit than before it, or counts a field the site maintains as a
-     change, a branch the session did not run that confirms through its own code (its own commit
-     call is fine), a throw after a confirmed final commit once the read-back found the written
-     record, and a stop before it on free text a save rewrote, are findings too, as is a coverage
-     claim that a check passed offline over a body that was not saved whole.
+     declares, without committing twice; among its checks, a before-and-after comparison that
+     compares whole objects or serialized text, reads through another query after the commit
+     than before it, or counts a field the site maintains as a change, a branch the session did
+     not run that confirms through its own code (its own commit call is fine), a throw after a
+     confirmed final commit once the read-back found the written record, and a stop before it on
+     free text a save rewrote, are findings, as is a coverage claim that a check passed
+     offline over a body that was not saved whole.
 
 ## Never put these in published files
 
@@ -262,7 +265,7 @@ A Guardian denial comes back as `code` `ReviewDenied` with no top-level `reason`
 | `reason`                   | `host_owned`                                                                                                                           | Every finding is in a host-owned file                                              | The host ends the attempt as its own failure. Do not edit host files, repeat the action or call `finish_build` again.                                                                                                                                                                        |
 | `reason`                   | `input_feedback_unresolved`                                                                                                            | The feedback rounds are spent                                                      | End the attempt; do not execute again                                                                                                                                                                                                                                                        |<!-- pomerado:section publication.http-rejections -->
 | `reason`                   | `secret_handle`<!-- pomerado:section publication.token-codes -->                                                                  | A published file holds a handle<!-- pomerado:section publication.token-meaning -->                                         | Read the value at run time instead (a declared question<!-- pomerado:section publication.token-source -->), then call again.<!-- pomerado:section publication.token-retest -->                                                                                                                            |
-| `reason`                   | `confirmation_undeclared`, `commit_marks_undeclared`, `confirmation_unrecorded`, `confirm_action_unmatched`, `contract_input_mismatch` | The composed write's contract does not match its session                           | Fix the declaration the instruction names and call again with the same `executionId`. Never run the write again                                                                                                                                                                              |
+| `reason`                   | `confirmation_undeclared`, `commit_marks_undeclared`, `commit_settings_invalid`, `confirmation_unrecorded`, `confirm_action_unmatched`, `contract_input_mismatch` | The composed write's contract does not match its session                           | Fix the declaration the instruction names and call again with the same `executionId`. Never run the write again                                                                                                                                                                              |
 | `reason`                   | `commit_marks_unentered`                                                                                                               | The composed script declares a mark no session act step entered                    | Correct the declaration only to match marks the session actually entered, then call again with the same `executionId`. When the session stopped before later save steps because the caller's facts ran out, keep those steps in `write.commits` after the entered ones and list them again in `write.commitsUnproven`. A completed session that sent its write with no entered marks cannot publish: end and explain that its commit steps were not marked. Never repeat the write or enter a retrospective mark |
 | `reason`                   | `write_not_submitted`                                                                                                                  | The session did not demonstrate the requested write                                | Follow the instruction: read back first, continue the remaining work, or ask about revising inputs the site cannot take                                                                                                                                                                                                                                                     |
 | `reason`                   | `write_path_unfinished`                                                                                                                | The session has not settled every mark of its recorded write path                  | Read back first where a receipt says so, which settles only marks a lost step entered; run only steps that never ran, or declare a revised path when the site skips a step or a step saves nothing; never redo one that finished or may have. Then call again naming the step that confirmed the path's end                                                                                                                                          |

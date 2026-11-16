@@ -151,7 +151,7 @@ export default defineOperation(
           },
         );
         if (!shown) return { failure: "not_confirmed" };
-        return { reference: (await confirmation.getAttribute("data-reference")) ?? "" };
+        return { reference: (await confirmation.filter({ visible: true }).first().getAttribute("data-reference")) ?? "" };
       `,
     });
     // A failure after the click leaves the claim uncertain. Never submit again here.

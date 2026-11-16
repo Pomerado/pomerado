@@ -412,11 +412,14 @@ async ({ ask }) => ({ note: await ask("note") }));`,
 
 const approvalPrompt = "Do you approve the site terms for this booking?";
 const approvalQuestions = `{approve:{type:"confirm",prompt:${JSON.stringify(approvalPrompt)}}}`;
-/** A write step whose script asks the owner to approve the site's terms, then runs `then`. */
-const approvingStep = (then: string) => `import { Schema } from "effect";
+/** A write step `write` declares, whose script asks the owner to approve the site's terms, then runs `then`. */
+const approvingStep = (
+  then: string,
+  write = '{confirmation:"message",commits:["submit"]}',
+) => `import { Schema } from "effect";
 import { defineOperation } from "../runtime/index.js";
-export default defineOperation({name:"approve_terms",input:Schema.Unknown,output:Schema.Unknown,questions:${approvalQuestions},write:{confirmation:"message",commits:["submit"]}},
-async ({ ask, enteringCommit }) => { ${then} });`;
+export default defineOperation({name:"approve_terms",input:Schema.Unknown,output:Schema.Unknown,questions:${approvalQuestions},write:${write}},
+async ({ ask, enteringCommit, kernel, sessionId }) => { ${then} });`;
 const askThenFail = "await ask('approve'); throw new Error('Failed before its commit.');";
 /**
  * Mints a write whose first step asks and then runs `first`, after the turns `between` a later
@@ -424,6 +427,7 @@ const askThenFail = "await ask('approve'); throw new Error('Failed before its co
  */
 const laterAsk = async (steps: {
   readonly first: string;
+  readonly firstWrite?: string;
   readonly later: string;
   readonly between?: readonly Turn[];
 }) => {
@@ -440,7 +444,7 @@ const laterAsk = async (steps: {
       turns: [
         () =>
           patch({
-            "src/tool.mjs": approvingStep(steps.first),
+            "src/tool.mjs": approvingStep(steps.first, steps.firstWrite),
             "src/again.mjs": approvingStep(steps.later),
             "explore/look.mjs": probe(),
           }),
@@ -466,8 +470,8 @@ test("a later step reuses the owner's answer to its script's question", async ()
     later: "return { approve: await ask('approve') };",
   });
   expect(scriptAsks).toHaveLength(1);
-  // Guardian reviewed the later step's ask, and later reviews hold the owner's answer it reused.
-  expect(guardian.reviews.filter((review) => review.kind === "question")).toHaveLength(2);
+  // Guardian reviewed only the first ask, and later reviews hold the owner's answer reused.
+  expect(guardian.reviews.filter((review) => review.kind === "question")).toHaveLength(1);
   expect(authorityOf(executions(guardian.reviews).at(-1)!)["answeredQuestions"]).toEqual([
     { id: "approve", question: approvalPrompt, answer: { confirmed: true } },
   ]);
@@ -482,6 +486,37 @@ test("a later step reuses the owner's answer even after an earlier step entered 
   expect(scriptAsks).toHaveLength(1);
 });
 
+const orderAsk =
+  "await ask({ approve: { order: { currency: 'USD', items: [{ name: 'Synthetic drink', quantity: 1, price: '6.00' }], total: '6.00' } } })";
+
+test("a later step reuses the owner's yes to the same order only while no step may have placed it", async () => {
+  test.setTimeout(360_000);
+  // The later step's first confirm reuses the yes; its second, once it entered its commit, asks.
+  const reused = await laterAsk({
+    first: `${orderAsk}; throw new Error('Failed before its commit.');`,
+    later: `const first = ${orderAsk}; enteringCommit('submit'); return { first, second: ${orderAsk} };`,
+  });
+  expect(reused.scriptAsks).toHaveLength(2);
+  // A step that entered its commit before its first confirm may have placed the order already.
+  const entered = await laterAsk({
+    first: `${orderAsk}; throw new Error('Failed before its commit.');`,
+    later: `enteringCommit('submit'); const r = ${orderAsk}; enteringCommit('submit'); return { r };`,
+  });
+  expect(entered.scriptAsks).toHaveLength(2);
+  const placed = await laterAsk({
+    first: `${orderAsk}; enteringCommit('submit'); throw new Error('Failed after it.');`,
+    later: `return { approve: ${orderAsk} };`,
+  });
+  expect(placed.scriptAsks).toHaveLength(2);
+  // A step that declares no commit step, once it made a browser call, may have placed the order.
+  const undeclared = await laterAsk({
+    first: `${orderAsk}; await kernel.browsers.playwright.execute(sessionId, { code: 'return 1;', timeout_sec: 5 }); throw new Error('Failed after a browser call.');`,
+    firstWrite: '{confirmation:"message"}',
+    later: `return { approve: ${orderAsk} };`,
+  });
+  expect(undeclared.scriptAsks).toHaveLength(2);
+});
+
 test("a step reuses the owner's answer each time its script asks the same question", async () => {
   test.setTimeout(90_000);
   const { scriptAsks, guardian, last } = await laterAsk({
@@ -490,8 +525,8 @@ test("a step reuses the owner's answer each time its script asks the same questi
       "const first = await ask('approve'); enteringCommit('submit'); return { first, second: await ask('approve') };",
   });
   expect(scriptAsks).toHaveLength(1);
-  // Guardian reviewed each of the three asks.
-  expect(guardian.reviews.filter((review) => review.kind === "question")).toHaveLength(3);
+  // Guardian reviewed only the first of the three asks.
+  expect(guardian.reviews.filter((review) => review.kind === "question")).toHaveLength(1);
   // Both asks got the owner's yes.
   const observed: unknown = JSON.parse(String(toolResult(last, "later")?.["observations"]));
   expect(observed).toMatchObject({

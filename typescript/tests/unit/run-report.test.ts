@@ -25,6 +25,13 @@ const commitSent: LocalOperationJournal = {
   effect: "possible",
   commits: [{ name: "save", state: "sent" }],
 };
+const settingSent: LocalOperationJournal = {
+  effect: "possible",
+  commits: [
+    { name: "save-tip", state: "sent", setting: true },
+    { name: "place-order", state: "not_sent" },
+  ],
+};
 /** A write that recorded its confirmation before entering its declared commit. */
 const confirmedUnentered: LocalOperationJournal = {
   effect: "verified",
@@ -119,6 +126,27 @@ describe("a run that returned", () => {
       returned(commitSent, { confirmation: "message", commits: ["save"] }),
     );
     expect(failure.journal).toEqual(commitSent);
+  });
+
+  it("returns a declared refusal after only setting steps as its result", () => {
+    const refusal = { status: "refused", reason: "over_price_limit" };
+    const schema = {
+      anyOf: [
+        { type: "object", properties: { status: { const: "placed" } }, required: ["status"] },
+        {
+          type: "object",
+          properties: { status: { const: "refused" }, reason: { const: "over_price_limit" } },
+          required: ["status", "reason"],
+        },
+      ],
+    };
+    expect(
+      settle("write", {
+        ...returned(settingSent, { confirmation: "readback", commits: ["save-tip", "place-order"] }),
+        output: refusal,
+        schemas: { input: {}, output: schema },
+      }),
+    ).toEqual(Either.right(refusal));
   });
 
   it("fails an unverifiable write as possibly completed", () => {
@@ -279,6 +307,25 @@ describe("a run that failed in its operation", () => {
       },
     },
     {
+      case: "a refused input after only setting steps",
+      error: new LocalOperationFailure("The total is over the limit.", settingSent, "InvalidInput"),
+      outcome: {
+        code: "input_rejected",
+        details: {
+          possible_commit: false,
+          reason: "The total is over the limit.",
+          settings_changed: ["save-tip"],
+        },
+        writeStatus: "not_applied",
+        possibleCommit: false,
+      },
+    },
+    {
+      case: "a script error after only setting steps",
+      error: new LocalOperationFailure("Fixture failure", settingSent),
+      outcome: { code: "outcome_unknown", writeStatus: "may_have_applied", possibleCommit: true },
+    },
+    {
       case: "a refused input after its commit was sent",
       error: new LocalOperationFailure("InvalidInput", commitSent, "InvalidInput"),
       outcome: {
@@ -412,6 +459,13 @@ describe("a run that failed in its operation", () => {
         .message,
     ).toBe(
       "The tool or the website refused a value in the input. The date must be in the future. Nothing changed on the website. Correct the input and run it again.",
+    );
+  });
+
+  it("names the settings a refused input changed before it", () => {
+    const refused = new LocalOperationFailure("The total is over the limit.", settingSent, "InvalidInput");
+    expect(fail("write", refused).message).toBe(
+      "The tool or the website refused a value in the input. The total is over the limit. Only these settings changed on the website, and the final step was not sent: save-tip. Correct the input and run it again.",
     );
   });
 

@@ -373,14 +373,15 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
     "workspace/AGENTS.md",
     "ending, and the build goes on. Before ending blocked because a value the request gave is unavailable or invalid on the site, such as a time slot the site does not offer that day, a date outside its calendar or a name it does not list, ask the owner with `request_input` to revise it or stop, as the key rules say. End blocked only when they stop or their answer cannot be met either. A read whose bad value is its example's record proves the tool on another record first (\"Reads, writes and examples\"). In maintenance, follow the intake screen instead. Give the evidence in `intent`",
   ],
-  // Only what the caller asked for decides whether a tool books or refuses, every listed option
-  // gets read, a repair fixes a broken input but keeps a caller's documented design decision, a
-  // fix covers every required control the input has no value for rather than the one that
-  // failed, and a format read from one sample breaks on the next value, so the minter reads it
-  // off the page.
+  // Only what the caller asked for decides whether a tool books or refuses, each check guards the
+  // caller's request or the tool's own change and passes where the task went right, every listed
+  // option gets read, a repair fixes a broken input but keeps a caller's documented design
+  // decision, a fix covers every required control the input has no value for rather than the one
+  // that failed, and a format read from one sample breaks on the next value, so the minter reads
+  // it off the page.
   [
     "core",
-    "never just the example's value. The example's values are one case, never limits. - Prefer keying only on what the caller asked for. A detail that changes from one listing to the next, such as a seating label or a room name, shouldn't decide whether the tool books or refuses unless the caller chose it. - Read results for every option the schema lists. When an option leads to a page with a different structure (other fields or sections), handle that layout too, and on a read signed out run it live as a test case (testing skill); an option that only reorders or filters the same rows needs no case of its own. Never return results for another option in its place. - A repair that finds a declared input broken, never applied or always reported unsupported fixes it in the same repair, whether or not a caller is waiting. Keeping a tool's contract means every input and output it declares works, not leaving a broken one as it was. An input whose description starts \"By design:\" is applied in the use it records, a caller's decision: keep that use and its description word for word, and change them only after asking the same design question again (the input schema, \"Inputs that tailor the answer\"). - Prefer fixing the whole class of a failure over its one instance: when the page requires a control the input has no value for, prefer making every such control a declared caller question with the page's live options over throwing for it. - Never derive a format from one sample: not an input format, an element key, a selector, a URL path or a label. A key the page showed for the example's value says nothing about the next value, as when a calendar keyed December 3 as `12-3-2026` where the tool expected `12-03-2026`. Read the format off the page for the value you need, such as the day cell whose visible label or accessible name is the caller's date, or a key the page itself lists, never a key rebuilt from the one you saw. - Inputs are values a caller knows",
+    "never just the example's value. The example's values are one case, never limits. - Prefer keying only on what the caller asked for. A detail that changes from one listing to the next, such as a seating label or a room name, shouldn't decide whether the tool books or refuses unless the caller chose it. A tool's check guards what the caller asked for or what the tool itself changes: it proves the caller's request before the step it guards and the tool's own change after it, stops on anything else only for a problem the page shows, not for something it can't find, and passes on every page where the task went right. A repair narrows a check that stopped a run where the task went right, or removes it when it guards neither. - Read results for every option the schema lists. When an option leads to a page with a different structure (other fields or sections), handle that layout too, and on a read signed out run it live as a test case (testing skill); an option that only reorders or filters the same rows needs no case of its own. Never return results for another option in its place. - A repair that finds a declared input broken, never applied or always reported unsupported fixes it in the same repair, whether or not a caller is waiting. Keeping a tool's contract means every input and output it declares works, not leaving a broken one as it was. An input whose description starts \"By design:\" is applied in the use it records, a caller's decision: keep that use and its description word for word, and change them only after asking the same design question again (the input schema, \"Inputs that tailor the answer\"). - Prefer fixing the whole class of a failure over its one instance: when the page requires a control the input has no value for, prefer making every such control a declared caller question with the page's live options over throwing for it. - Never derive a format from one sample: not an input format, an element key, a selector, a URL path or a label. A key the page showed for the example's value says nothing about the next value, as when a calendar keyed December 3 as `12-3-2026` where the tool expected `12-03-2026`. Read the format off the page for the value you need, such as the day cell whose visible label or accessible name is the caller's date, or a key the page itself lists, never a key rebuilt from the one you saw. - Inputs are values a caller knows",
   ],
   // The minter reads the never-loosened needed values, the facts a caller could use, typed output
   // and kept rows before it writes the schema and the parser, so a fact the code could not read
@@ -610,7 +611,7 @@ it("lets a host replace when a write's declared refusal completes the run", asyn
     (texts.get(name) ?? "").replace(/\s+/g, " ");
   const local = await renderedTexts("typescript/authoring");
   expect(text(local, "writes")).toContain(
-    'with those choices. Before any commit mark is entered, the run reports that it changed nothing, so throw a refusal before the mark. A write may instead declare its refusals in its output schema: a branch that requires `status` `"refused"` and a `reason` from a listed set of stable lowercase codes, such as `over_price_limit`, beside the values the caller needs, such as the total and the limit, with no other branch whose `status` could be `"refused"`. Prefer declaring each refusal as its own branch of the output\'s top-level union, and prefer a listed `status` on every other branch, such as `Schema.Literal("rated")`, so the host can tell a refusal from any other output. Returned before the first commit mark, a declared refusal completes the run with that output and reports the write not applied. A refusal returned in a shape the schema does not declare, or returned or thrown after a mark, reports a possible change. See `references/write-session.ts`',
+    'with those choices. Before any commit mark is entered, the run reports that it changed nothing, so throw a refusal before the mark. A write may instead declare its refusals in its output schema: a branch that requires `status` `"refused"` and a `reason` from a listed set of stable lowercase codes, such as `over_price_limit`, beside the values the caller needs, such as the total and the limit, with no other branch whose `status` could be `"refused"`. Prefer declaring each refusal as its own branch of the output\'s top-level union, and prefer a listed `status` on every other branch, such as `Schema.Literal("rated")`, so the host can tell a refusal from any other output. Returned before the first commit mark, or after only steps named in `write.settings`, a declared refusal completes the run with that output and reports the write not applied. A refusal returned in a shape the schema does not declare, or returned or thrown after a mark outside `write.settings`, reports a possible change. See `references/write-session.ts`',
   );
   expect(text(local, "publication")).toContain(
     "never a login; - a write runs every check that can refuse, such as a limit on its total, before the mark of the commit it guards, and refuses with `InvalidInput`, or returns a refusal its output schema declares before its first mark, never in an undeclared output shape; - a composed write",
@@ -864,7 +865,7 @@ it("has a write take the site's rewrite of a typed value and note whether it cha
   const text = (name: string) =>
     (contents(skills)[skills.findIndex((skill) => skill.name === name)] ?? "").replace(/\s+/g, " ");
   expect(text("writes")).toContain(
-    "- Read each typed value back once its field settles, before the step's commit. When the site rewrote it as it was typed or on leaving the field, such as an address it standardized, or offered exactly one suggestion for it that matches it cleanly or that `pickAddress` accepted, take the site's version, as you would a picked option: later read-backs, such as a review page, summary or confirmation, compare against it, and the output returns it for that field. Ask about any other lone suggestion as about a looser match (core skill). The one suggestion counts only for a free-text value the caller typed, such as an address or a name in a text box the site completes, never for a picker that selects a record, such as a person, assignee, customer, linked record, store or account, which keeps the reference rules in \"Check the read-back\" and the caller-input skill's. Add an optional output field `<input>_note`, such as `address_note`, that reports the rewrite with what the caller sent and what the site kept. Check it once with `sameText(shown, typed, { rewrite: true })`, which only decides what the note says: when it holds, the site only reformatted the value, and the note says so; when it fails, the site dropped or changed part of what the caller gave, and the note says it changed. The write goes on either way: never throw `InputNotApplied` for such a rewrite. A value cut short by the field's length limit, digits an input mask dropped, or a field that cleared is a failed fill, not a rewrite: fill it again in the field's format, or refuse as today. A value the site replaces only when a step saves follows the read-back before committing, above.",
+    "- Read each typed value back once its field settles, before the step's commit. When the site rewrote it as it was typed or on leaving the field, such as an address it standardized, or offered exactly one suggestion for it that matches it cleanly or that `pickerMatchAddress` accepted, take the site's version, as you would a picked option: later read-backs, such as a review page, summary or confirmation, compare against it, and the output returns it for that field. Ask about any other lone suggestion as about a looser match (core skill). The one suggestion counts only for a free-text value the caller typed, such as an address or a name in a text box the site completes, never for a picker that selects a record, such as a person, assignee, customer, linked record, store or account, which keeps the reference rules in \"Check the read-back\" and the caller-input skill's. Add an optional output field `<input>_note`, such as `address_note`, that reports the rewrite with what the caller sent and what the site kept. Check it once with `sameText(shown, typed, { rewrite: true })`, which only decides what the note says: when it holds, the site only reformatted the value, and the note says so; when it fails, the site dropped or changed part of what the caller gave, and the note says it changed. The write goes on either way: never throw `InputNotApplied` for such a rewrite. A value cut short by the field's length limit, digits an input mask dropped, or a field that cleared is a failed fill, not a rewrite: fill it again in the field's format, or refuse as today. A value the site replaces only when a step saves follows the read-back before committing, above.",
   );
   expect(text("core")).toContain(
     "With no match, throw its `pickRefusal`, an `InvalidInput` with `field` and `available`, the entries the site showed, even when the site offered only one.",
@@ -880,6 +881,18 @@ it("has a write take the site's rewrite of a typed value and note whether it cha
     "A write's `<input>_note` reporting a value the site rewrote as it was typed, on leaving the field, or through its one suggestion is not unapplied input; the tool read the site's version back and returns it.";
   expect(publicationOutputPolicy).toContain(note);
   expect(text("publication")).toContain(note);
+});
+
+/*
+ * A search whose spelling the site fixed returned the site's rows for the fixed query as
+ * candidates, since the tool ranked them against the caller's text alone. A site that drops words
+ * from the query is left out, as the shorter query would match rows the caller did not ask for.
+ */
+it("has a search rank its results against the query the site applied as well as the caller's", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  expect((texts.get("search") ?? "").replace(/\s+/g, " ")).toContain(
+    "with that query as `applied_query` and a `query_corrected` boolean; when the site only fixed its spelling, a tool that ranks the results ranks them against that query as well as the caller's.",
+  );
 });
 
 /*
@@ -942,6 +955,56 @@ it("has a purchase confirm's order and a checkout's output give lines, fees and 
   );
   expect(text("cart")).toContain(
     "Prefer returning each line bought with its quantity, its unit when the site sells it by weight or measure, its price each and its line total (the core skill's output fields), and each fee as its own entry, by its name on the site and its amount, with the tip and any discount in their own fields. This output is a suggestion, separate from the `order` a purchase's final confirm passes (the caller-input skill), which has its own fixed fields.",
+  );
+});
+
+/*
+ * A cart tool given an item ID found the card by the item's name. On a menu where the same name
+ * appears under several IDs, it opened a copy with another ID, and its ID check stopped the add.
+ * The cart skill has the tool open each card with that name until one proves the ID, and refuse
+ * before the add when each shows another ID.
+ */
+it("has a cart tool find an item by its ID among cards that show only names", async () => {
+  const cart = ((await renderedTexts("typescript/authoring")).get("cart") ?? "").replace(
+    /\s+/g,
+    " ",
+  );
+  expect(cart).toContain(
+    "Where the page carries no item ID, open each card with the requested name in turn and keep the one whose own details prove the requested ID; when each card's details show another ID, refuse with `InvalidInput` before the add's commit mark, naming those IDs.",
+  );
+});
+
+/*
+ * An add-to-cart tool waited for the product page's add control. With the product already in
+ * the cart, the page showed that line's quantity control in its place, and the add timed out.
+ * The cart skill has the tool wait for either control and bring the line to the expected
+ * quantity with the one the page shows.
+ */
+it("has a cart tool add through the line's own quantity control when the product is in the cart", async () => {
+  const cart = ((await renderedTexts("typescript/authoring")).get("cart") ?? "").replace(
+    /\s+/g,
+    " ",
+  );
+  expect(cart).toContain(
+    "A product already in the cart can show that line's quantity control in place of its add control, so wait for either with `waitForOutcome` (the core skill), not for the add control alone.",
+  );
+  expect(cart).toContain(
+    "When the tool's inputs cover that change, as its quantity does for a line already in the cart (Quantity, above), continue, bringing a line whose quantity control shows in place of its add control to the earlier quantity plus the input, or to the input, with that control under the add's commit mark;",
+  );
+});
+
+/*
+ * Cart tools given a product the site had no page for waited on the product page for an add
+ * control, and timed out on the site's not-found page. The cart skill has every wait on the
+ * product page name that page and refuse with the site's words.
+ */
+it("has a cart tool refuse a product the site has no page for", async () => {
+  const cart = ((await renderedTexts("typescript/authoring")).get("cart") ?? "").replace(
+    /\s+/g,
+    " ",
+  );
+  expect(cart).toContain(
+    "A product identifier the site has no page for opens its not-found page or a search: name that page among the answers of every wait on the product page, and refuse with `InvalidInput` and the site's words, `field` that input, before any commit mark (the core skill).",
   );
 });
 
@@ -1076,7 +1139,7 @@ it("has a write confirm from its own commit request, and read back only when tha
   const texts = await renderedTexts("typescript/authoring");
   const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
   expect(text("writes")).toContain(
-    '- Prefer confirming the write from its commit request. Keep the click on the final commit control, such as Save, Send, Submit, Book or Pay, in its own step. In the same call as that click, wait for the site\'s response to the request it sends, matched by the method and path the session saw carry the commit on the site, and by its body where the body shows the caller\'s values, as `references/write-readback.ts` does: a `{ response }` answer of `waitForOutcomeResult`, beside every way the page can answer, listing the site\'s error or validation message (`{ invalid: form }`) first. The write went through when that response is 2xx or 3xx, a body the call can read shows no error, and the page shows no error or validation message after it. A 201 whose Location names the new record went through as soon as it arrives, with no wait for the page. A 200 whose body reports an error, as GraphQL can, did not go through. A 202, or a 2xx whose body says the work is queued, went through too; return that in the output as a status in the core notation, such as `queued`, with the site\'s own word in a `status_label` field. Then read what the output promises from that response or from the page the commit left, match it to the caller\'s values, and call `verified()` with no argument just before returning. Declare `write: { confirmation: "readback" }`. Prefer not opening another page, such as a list, a history or an account screen, only to prove the write: a commit that went through, with the new record\'s id, already proves it. Return the tool\'s whole output from the step that confirms the write, read from the commit\'s response or the page it left: the caller or the site may cancel, refund or delete the record soon after, and a later read-back then shows less. In the same call as the click, read a success message that disappears on its own. When a commit step returned without calling `verified()` and its `stateChangingRequests` list the commit request with a 2xx or 3xx status, prefer confirming it in the next step from that response, with no error in its body or on the page as it stands, over waiting for a message that may be gone. Make no execute call after `verified()`: a later call reopens the effect. After the confirming step, further `act` steps are refused.',
+    '- Prefer confirming the write from its commit request. Keep the click on the final commit control, such as Save, Send, Submit, Book or Pay, in its own step. In the same call as that click, wait for the site\'s response to the request it sends, matched by the method and path the session saw carry the commit on the site, and by its body where the body shows the caller\'s values, as `references/write-readback.ts` does: a `{ response }` answer of `waitForOutcomeResult`, beside every way the page can answer, listing the site\'s error or validation message (`{ invalid: form }`) first. The write went through when that response is 2xx or 3xx, a body the call can read shows no error, and the page shows no error or validation message after it. A 201 whose Location names the new record went through as soon as it arrives, with no wait for the page. A 200 whose body reports an error, as GraphQL can, did not go through. A 202, or a 2xx whose body says the work is queued, went through too; return that in the output as a status in the core notation, such as `queued`, with the site\'s own word in a `status_label` field. Then read what the output promises from that response or from the page the commit left, match it to the caller\'s values, and call `verified()` with no argument just before returning, also when the page shows no confirmation, since that response already confirms the write. Declare `write: { confirmation: "readback" }`. Prefer not opening another page, such as a list, a history or an account screen, only to prove the write: a commit that went through, with the new record\'s id, already proves it. Return the tool\'s whole output from the step that confirms the write, read from the commit\'s response or the page it left: the caller or the site may cancel, refund or delete the record soon after, and a later read-back then shows less. In the same call as the click, read a success message that disappears on its own. When a commit step returned without calling `verified()` and its `stateChangingRequests` list the commit request with a 2xx or 3xx status, prefer confirming it in the next step from that response, with no error in its body or on the page as it stands, over waiting for a message that may be gone. Make no execute call after `verified()`: a later call reopens the effect. After the confirming step, further `act` steps are refused.',
   );
   // Every case the request cannot settle keeps a read-back.
   expect(text("writes")).toContain(
@@ -1250,16 +1313,64 @@ it("has a write retry an expired quote once, which Guardian's reviews accept", a
 // A choice the caller approved can show a time that moves with the clock, such as an
 // as-soon-as-possible delivery window or a ride's pickup time, so a re-check before the commit that matched its exact text
 // refused a choice the site still offered. The writes skill matches it by its kind or name and any
-// time that stays fixed, with its price checked against the caller's limits, in the commit step's
-// fresh quote and every other re-check before a commit, and Guardian's publication review says
-// the same.
+// time that stays fixed, with the price it shows checked against the caller's limits, in the
+// commit step's fresh quote and every other re-check before a commit, and keeps it when the page
+// leaves out a value an earlier check read. Guardian's publication review says the same of the
+// moving time.
 it("has a re-check before a commit match the approved choice by its kind or name and fixed time", async () => {
   const texts = await renderedTexts("typescript/authoring");
   const writes = (texts.get("writes") ?? "").replace(/\s+/g, " ");
   expect(writes).toContain(
-    "or right before the card fill when the host fills the card. There, and in any other re-check before a commit, match the choice the caller approved by its kind or name and any time it shows that stays fixed, not by a time that moves with the clock, check its price against the caller's limits as above, and keep it as approved when only that time changed. For a choice whose shown time moves with the clock, `readBackMatches` and `sameText` from `pomerado/runtime` take `{ ignoreClockTimes: true }` to compare its kind or name without its times. When the site answers the click",
+    "or right before the card fill when the host fills the card. There, and in any other re-check before a commit, match the choice the caller approved by its kind or name and any time it shows that stays fixed, not by a time that moves with the clock, check the price it shows against the caller's limits as above, and keep it as approved when only that time changed, even when the page leaves out a value an earlier check read. For a choice whose shown time moves with the clock, `readBackMatches` and `sameText` from `pomerado/runtime` take `{ ignoreClockTimes: true }` to compare its kind or name without its times. When the site answers the click",
   );
   expect(guardianPublicationPolicy).toContain(publicationApprovedChoicePolicy);
+});
+
+// A screen right before the commit, such as a confirm screen, can leave out a value the write
+// already checked. The marked call re-reads only what its page shows, so that alone does not
+// stop the write.
+it("has the marked call re-read only what its page shows", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const writes = (texts.get("writes") ?? "").replace(/\s+/g, " ");
+  expect(writes).toContain(
+    "it re-reads only what a change since the checks would make wrong and its page shows, such as the total and items they read, and when one moved it returns before clicking",
+  );
+});
+
+// After an action, a page state can show for a moment and be gone before the tool reads it, while
+// the site's own reply to the action's request already settled the outcome. The tool prefers that
+// reply over what the page shows, apart from an error the page shows.
+it("has the site's reply to an action's request count over what the page shows", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const core = (texts.get("core") ?? "").replace(/\s+/g, " ");
+  expect(core).toContain(
+    "After navigation or any action, wait for a unique operation control or page state before testing absence or choosing a branch or fallback; after an action, prefer the site's own reply to the request the action sent over what the page shows, apart from an error the page shows.",
+  );
+});
+
+// A check for something neither the caller asked for nor the tool changes, or one that needs the
+// page to show something a correct run may not show, stops correct runs of every kind of tool. So
+// each check guards the caller's request or the tool's own change, a repair narrows one that
+// stopped a right page, a write's pre-commit option check stops only on a paid option the page
+// shows selected, and the publication skill says the review finds such a check in every tool.
+it("has every tool's checks guard only what the caller asked for or the tool changes", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
+  expect(text("core")).toContain(
+    "A tool's check guards what the caller asked for or what the tool itself changes: it proves the caller's request before the step it guards and the tool's own change after it, stops on anything else only for a problem the page shows, not for something it can't find, and passes on every page where the task went right. A repair narrows a check that stopped a run where the task went right, or removes it when it guards neither.",
+  );
+  expect(text("writes")).toContain(
+    "An add-on toggle, a pre-selected paid option or a lone saved payment method or address is still a choice to ask about.",
+  );
+  expect(text("writes")).toContain(
+    "check the total against any limit the input sets, stop when the page shows a paid option selected that neither the input nor an answer settles, and check the items, address and payment.",
+  );
+  expect(text("publication")).toContain(
+    "- a tool's checks reject no run whose page shows the task went right, and one guarding what neither the caller asked for nor the tool itself changes stops only for a problem the page shows;",
+  );
+  expect(text("publication")).toContain(
+    "- a composed write reproduces the session's flow and returns the confirmation or read-back it declares, without committing twice; among its checks, a before-and-after comparison",
+  );
 });
 
 // A consent banner whose text also agrees to the site's own terms is still a consent banner, and a
@@ -1356,9 +1467,9 @@ it("has a tool return the site's no to a valid request as a declared refusal quo
     "when it lists them. - When the site says no to a valid request, such as sold out, no availability, not eligible, not offered for these facts or not served in this area, that no is the task's answer. Prefer returning it as a refusal the output schema declares (below), with a `reason` code of the tool's own, listed in the tool's description, `site_message`, the site's own words exactly as the page shows them, and any alternatives the site offers, exactly as shown. Return it only from what the site shows in this run, never from a rule copied into the tool's own checks, and never from a challenge, block, access-denied, error or maintenance page, which is a failure (`OperationFailure`). After a commit mark, return it only where the declared-refusal rule below says one returned there completes the run; otherwise prefer throwing `InvalidInput` with the site's words. - When the site swaps the request for something the caller didn't ask for, such as another product, a later date or a higher amount, stop before the step that would confirm it and return the refusal as above, with the site's words and its offer, unless the caller's own task asks for whatever the site ends up with. - Report a confirm popup",
   );
   expect(text("writes")).not.toContain("naming the field the site refused");
-  // The standalone rule completes no refusal returned after a mark.
+  // The standalone rule completes no refusal returned after a mark outside write.settings.
   expect(text("writes")).toContain(
-    "A refusal returned in a shape the schema does not declare, or returned or thrown after a mark, reports a possible change.",
+    "A refusal returned in a shape the schema does not declare, or returned or thrown after a mark outside `write.settings`, reports a possible change.",
   );
   expect(text("caller-input")).toContain(
     "- A write that declines the task because the caller's own limit or the page's state rules it out, such as a total over the caller's price limit or a product number whose page names another item than the caller's: `InvalidInput`, thrown before the mark of the commit it guards (writes skill). Pass `field`, the input the caller would change, `kind`, the reason as a stable lowercase token such as `over_price_limit` or `item_mismatch`, and `available` where the page lists choices,",
@@ -1422,17 +1533,17 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["1702b73e1d00f4a068b649fe5a3d03e06df370027a56519e6977aac44e4444dd", "core"],
-    ["e854aa6b9fe22ea741598abcf0643c529211b643d6b9b400281948a117156224", "search"],
+    ["3636f13d8dffe45c3b794fac94ab0d328689eed37c1bc6f28ee075c2cce95b12", "core"],
+    ["7c3be765ee7c1c62b13a4876cc5453bbeb8acc7948b51511574f36f2aed09c4a", "search"],
     ["d6f0ed8446759ce44874a2cb7c7ee7251f92249673379b69439aaac2b5b7afb5", "auth"],
     ["a08f1ef89cc10bf11e17b8d6086b6e37649b1d5d11b78c0542cc7db32460b7e3", "testing"],
-    ["766044862bd09f581bd851335f5160f47b48f24c59fdf412becb5b60d69146b7", "pagination"],
+    ["d524204c6ed2dc0fa773d6e5cf0aef993e2b48ee9db3fcbf291e40ebe8c9913d", "pagination"],
     ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
-    ["aeaa7fcb92d236f9a473262f62b6b454927953c9a4f64601569f5205261ff033", "writes"],
-    ["b76018c4850f96622f3e735e6c03d4c990c1af914830d62ec6b912030acb839e", "cart"],
-    ["a956eaf7879b5f89ca80d96e6549c17203dab21423e92e31cec0027f12a13a05", "caller-input"],
-    ["47cba18121554c05c379f6ac754de07e8bfa7515250055585e631a2eb88b7468", "publication"],
-    ["7902e8d201bc5c0d86dd7ccd5a3669ce3b3dfedd731e589d1d06170df1fa3719", "workspace/AGENTS.md"],
+    ["83da0f9ded9c0fd0d758a0aaa3956560cde22254244c10236acb0331a0ebb56b", "writes"],
+    ["0ac33d5aa38356254425cc52904f8e6819052bd44e5e226b130a1795078f5439", "cart"],
+    ["4b1a24956cd8ebebcf8b9eaa3c755c80971c7b29c72446fdae5e03480b19580a", "caller-input"],
+    ["5e831bd1ba21d5ec4b1da3a96152f9d905144cbef58b9bd26381933f27faa97c", "publication"],
+    ["ba31a90dc5bf4b1f7e8be5e5145e99f6b4e2379e279be210c8537d9b93882d98", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);
 });
@@ -1552,8 +1663,8 @@ it("renders the search URL fast path only when a host turns it on", async () => 
     ...on.digests.filter(([, name]) => name === "search"),
     [sha256(on.agents), "workspace/AGENTS.md"],
   ]).toStrictEqual([
-    ["052712afaba095b3ef925f265b1b1a49e4cc3838eee0f7318dad4f82663a8da8", "search"],
-    ["9723608e00282cae860067efa8577c828d29d34a9091525d10c59adc52f00429", "workspace/AGENTS.md"],
+    ["e3c82530af60da937a450bd94be81e1fefea6ef2324d9cd54379a52fc1d7c930", "search"],
+    ["e7b57d9c1988e57c4e08485bcd795f2c0c0ab05a30a81504ce1f13dd5f47b193", "workspace/AGENTS.md"],
   ]);
   expect(on.digests.filter(([, name]) => name !== "search")).toStrictEqual(
     off.digests.filter(([, name]) => name !== "search"),
@@ -1628,10 +1739,10 @@ it("renders the pinned standalone input-feedback instructions", () => {
       ]),
     ),
   ).toStrictEqual([
-    ["10bfff2324305b9608cd2a153a0b90e8c6e28383d4f32d7bf09d10ec23479705", "read, 1 left"],
-    ["31cd716b81eca4aeb91fd2997f5cbcc6f110071b4488eab16435b184d3fae43a", "read, 0 left"],
-    ["95f8842b93f08b7e92092f5f5e8e2996688a587763299560caa770f7fe4828d8", "write, 1 left"],
-    ["971c876f338e973bce199c666d750ceaf1808d88911f7e5cbe87bb69c7433ec1", "write, 0 left"],
+    ["2c1dcf22008215d524a1661ed17b3d199501d9405284e8f9476fc5e155f8ab1b", "read, 1 left"],
+    ["1f15fe5b5c10971fe7d6c74f307e980124fbcd38783dba834c0475aa9000edf7", "read, 0 left"],
+    ["69251e38f92d913fa76481a0b64b8e1e7fdcc432343f7aee27f05d5c75854e61", "write, 1 left"],
+    ["aa9c3a9e371b8e866c38261effae2900476899a5f63d8bea12da3c15775c30f5", "write, 0 left"],
   ]);
 });
 

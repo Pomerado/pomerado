@@ -68,6 +68,7 @@ import type { DownloadCap } from "../runtime/files.js";
 import { trustedUrl } from "../runtime/sign-in-origins.js";
 import type { MintState } from "./mint-state.js";
 import {
+  forgetOrderAnswers,
   keptScriptAnswers,
   reusedScriptAnswers,
   scriptQuestionKeys,
@@ -204,39 +205,47 @@ const scriptQuestions = (
   let unanswered = false;
   const scriptAsk: InputAsker = (candidate, bounds) =>
     Effect.gen(function* () {
-      const question = yield* questionForReview(
-        candidate,
-        { credentialsAvailable: false, scriptAsk: true },
-        projection.text,
-      );
-      const review = yield* context.reviewQuestion(
-        { entrypoint: `operation/${entrypoint}`, sources: sourceMap, input },
-        question,
-      );
-      if (review.decision.outcome !== "allow_business") {
-        scriptQuestion = {
-          requestId: candidate.id,
-          outcome: review.decision.outcome,
-          rationale: review.decision.rationale,
-          reviewId: review.reviewId,
-        };
-        return yield* Effect.fail(new InputRequestFailure({ code: "Unauthorized" }));
-      }
-      // The same question asked again reuses the owner's answer, however long ago they gave it
-      // and whether or not a step entered a commit since. Guardian reviewed this ask all the same,
-      // and the reused answer reaches later reviews as a fresh one does. It is always the owner's
-      // latest answer to its prompt (`forgetScriptAnswers`), so it never replaces a newer one in
-      // Guardian's list.
+      // The same question asked again reuses the owner's answer before Guardian reviews it, which
+      // would refuse it as a repeat of an answer it already trusts, however long ago the owner
+      // gave it and whether or not a step entered a commit since. A purchase confirm reuses only
+      // the owner's yes to the same order, and only while no act step since that yes may have
+      // placed it: each made no browser call or left every commit step it declares unsent, by its
+      // own report once it ended (`forgetOrderAnswers` below) and, for the asking step, by its
+      // journal when it asked (`commitsUnsent`); an opened hand-off counts as a browser call. A
+      // save a script sends outside every commit step it declares is beyond this check, as it is
+      // for the commit fence; Guardian's source review looks for one. The reused answer reaches
+      // later reviews as a fresh one does. It is always the owner's latest answer to its prompt
+      // (`forgetScriptAnswers`), so it never replaces a newer one in Guardian's list.
       const keys = yield* scriptQuestionKeys(candidate, (text) => projection.text(text));
+      const kept =
+        bounds?.commitsUnsent === true
+          ? scriptAnswers.kept
+          : forgetOrderAnswers(scriptAnswers.kept);
       const answers =
-        reusedScriptAnswers(candidate, keys, scriptAnswers.kept) ??
-        (yield* mintAsk(candidate, bounds).pipe(
-          Effect.tap((fresh) =>
-            Effect.sync(() => {
-              scriptAnswers.kept = keptScriptAnswers(scriptAnswers.kept, keys, fresh);
-            }),
-          ),
-        ));
+        reusedScriptAnswers(candidate, keys, kept) ??
+        (yield* Effect.gen(function* () {
+          const question = yield* questionForReview(
+            candidate,
+            { credentialsAvailable: false, scriptAsk: true },
+            projection.text,
+          );
+          const review = yield* context.reviewQuestion(
+            { entrypoint: `operation/${entrypoint}`, sources: sourceMap, input },
+            question,
+          );
+          if (review.decision.outcome !== "allow_business") {
+            scriptQuestion = {
+              requestId: candidate.id,
+              outcome: review.decision.outcome,
+              rationale: review.decision.rationale,
+              reviewId: review.reviewId,
+            };
+            return yield* Effect.fail(new InputRequestFailure({ code: "Unauthorized" }));
+          }
+          const fresh = yield* mintAsk(candidate, bounds);
+          scriptAnswers.kept = keptScriptAnswers(scriptAnswers.kept, keys, fresh, candidate.order);
+          return fresh;
+        }));
       yield* context.answered(candidate, answers);
       return answers;
     }).pipe(
@@ -298,6 +307,7 @@ const actOutcome = (
       })
     : undefined;
   return {
+    commit,
     marks: {
       ...(journal.confirmation === undefined ? {} : { confirmation: journal.confirmation }),
       ...(action === undefined ? {} : { action }),
@@ -752,7 +762,14 @@ const authoredExecution = (
             writeSession,
             yield* acceptedConfirmsKept({ write: true, accepted, screen: secrets.assertAbsent }),
           );
-        if (act !== undefined) writeSession.steps.push({ executionId: id, ...act.marks });
+        if (act !== undefined) {
+          writeSession.steps.push({ executionId: id, ...act.marks });
+          // Unless the step made no browser call or its own report shows every commit step it
+          // declares unsent, it may have placed the order its owner said yes to, so that yes
+          // answers no later purchase confirm.
+          if (act.marks.possiblySent && act.commit !== "not_entered")
+            state.scriptAnswers.kept = forgetOrderAnswers(state.scriptAnswers.kept);
+        }
         // The marks of the session's recorded path not yet settled: until none is left, a
         // confirmation does not close the session. A declared refusal that ends the session
         // leaves none, since no step runs after it.

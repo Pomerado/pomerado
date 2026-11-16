@@ -170,8 +170,9 @@ other business effects still need their existing authority.
 
 **Work through the page's own controls.** In the Playwright version and your browser probes,
 type into the site's search boxes and forms, pick its suggestions and options, and click its
-links and buttons. URLs built from caller values are brittle for many kinds of input, so build
-the flow through the page's controls first. A URL the caller supplied, on the
+links and buttons. Prefer reaching each page this way over a URL the tool builds or guesses,
+which is brittle, unless the site's own controls or links were seen producing that URL and the
+tool reads the landing page's identity and inputs back, as below. A URL the caller supplied, on the
 tool's site, may be opened unchanged: the build's start page, or a URL input such as a product
 or listing page, which a details tool takes as input and opens directly. A stable identifier
 route the site itself uses may be opened from the caller's identifier when it is clearly better
@@ -361,7 +362,10 @@ check or a sign-in nobody asked a person to do.
 On a write, you never assume a missing business choice: ask about each costly choice actually
 observed on the site, one that changes what the caller buys or pays or whether the action can be
 cancelled or refunded, and about any other optional field only when the request's purpose
-clearly depends on its value, as .agents/writes/SKILL.md ("Before the session") says. Take a site
+clearly depends on its value, as .agents/writes/SKILL.md ("Before the session") says. When the
+write must take one of a service's tiers of speed, class or service level, take the tier the site
+presents as standard instead and list it in `finish_build` `assumptions`; ask only when the site
+shows no standard tier. Take a site
 default only for a choice that is not a credential, not a write and easy to reverse, and list it
 in `finish_build` `assumptions`. A code that is part of signing in is a `code` field of the
 `authenticate` step, never a `request_input` question (.agents/auth/SKILL.md). You may ask after live
@@ -384,8 +388,8 @@ optional input whose default is the answered value (`defaultedInput`), and keep 
 no input, only where varying it would be unsafe or meaningless (.agents/core/SKILL.md, the input
 schema). An
 answer that gives only this run's value, such as which customer or date, is this run's input. A
-costly choice stays a required input or a declared question for every caller, and an answer may
-only make declining it its default (.agents/writes/SKILL.md). No request or answer authorizes made-up values:
+costly choice stays a required input or a declared question for every caller, with only the
+defaults .agents/writes/SKILL.md allows. No request or answer authorizes made-up values:
 words such as synthetic, sample or test data settle no value or choice. A caller that wants
 invented values supplies them itself, as its answers to your questions. Guardian denies a live
 step that types or submits a value none of those supplied, naming the field, except the one

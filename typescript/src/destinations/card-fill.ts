@@ -127,6 +127,11 @@ const inspectionRefused = (
       refusal,
     );
   const field = typeof refusal.target === "number" ? refusal.target + 1 : undefined;
+  if (refusal.reason === "selector_unsupported" && field !== undefined)
+    return refusedWith(
+      `The host typed nothing: field ${field}'s selector is not a CSS selector that matches exactly one editable input or select across the page's frames. Give each card field's own CSS selector.`,
+      refusal,
+    );
   const allowed = origins.join(", ");
   const inFrame = (origin: string | undefined) =>
     refusedWith(
@@ -308,6 +313,7 @@ export const runCardFill = <E>(input: {
       // A card form may switch its postal field on only once it holds the host's card, and core
       // checks that field again before it types the code.
       postalCodeAfterCard: fillVia !== undefined,
+      hostCardFill: fillVia !== undefined,
     });
     if ("outcome" in inspected)
       return inspectionRefused(inspected, origins, input.checkoutOrigins);

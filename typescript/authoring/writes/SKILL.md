@@ -105,13 +105,16 @@ pays or whether the action can be cancelled or refunded (each paid add-on and pr
 option within the tool's purpose, a rate, fare or plan tier, a refundable or non-refundable
 option, shipping speed, how much of a balance to pay, the payment method and the delivery
 address), and any other option only when
-the request's purpose clearly depends on it. An unasked optional field keeps the page's
+the request's purpose clearly depends on it. When the write must take one of a service's tiers
+of speed, class or service level that the caller's input does not settle, take the tier the site
+presents as standard instead of asking and list it in `finish_build` `assumptions`; ask only
+when the site shows no standard tier. An unasked optional field keeps the page's
 default and is still an optional input of the script. Prefer keeping the value the page
 already shows in an optional field that adds no cost over asking the caller to confirm or
 correct it, and list it in `finish_build` `assumptions`. Ask only about options the site
 actually shows. A control with exactly one possible value (a select or radio group with a
 single option), or one the input or an earlier answer already settles, is no choice: never ask
-about it. An add-on toggle, a pre-selected checkbox or a lone saved payment method or address
+about it. An add-on toggle, a pre-selected paid option or a lone saved payment method or address
 is still a choice to ask about. Never keep, clear, accept or decline one of those unasked. A paid upsell
 outside the tool's purpose, such as a membership, subscription or trial offered during a
 checkout, is not a question: the script declines it, and never accepts one without an input
@@ -125,13 +128,17 @@ During the session:
   mark of the commit it guards: choose each option that changes the price, decide each add-on
   from the input or an answer and decline an out-of-scope upsell, read the selected options
   and total from the current page or an available read-only summary, check the total against
-  any limit the input sets, check that no option the input does not settle is selected, and
-  check the items, address and payment. Use a review page when the site has one; a separate
-  review page is not required, and submitting a form is never a way to discover whether one
-  exists. A check that can only run after an earlier
+  any limit the input sets, stop when the page shows a paid option selected that neither the
+  input nor an answer settles, and check the items, address and payment. Use a review page when
+  the site has one; a separate review page is not required, and submitting a form is never a way
+  to discover whether one exists. A check that can only run after an earlier
   marked step, such as a total that shows only once a saved address step has run, runs before
   the later step's mark; its refusal then reports a possible change, because the earlier step
-  may have saved something, and that is honest. Still mark that earlier step.
+  may have saved something, and that is honest. Still mark that earlier step. Mark a commit
+  step as a setting in `write.settings` when its click only changes a choice on the way to the
+  final commit and cannot place, buy, book, send or charge anything by itself. An `InvalidInput`
+  or a declared refusal after only such steps, the caller's no included, ends with nothing
+  applied.
 - When one of those checks rules the task out, such as a total over the caller's limit, an
   item out of stock or a variant the page does not offer, the script refuses before the mark
   with `InvalidInput` (the caller-input skill, "Throw the error that matches what happened"),
@@ -204,7 +211,7 @@ During the session:
   the option.
 - Read each typed value back once its field settles, before the step's commit. When the site
   rewrote it as it was typed or on leaving the field, such as an address it standardized, or
-  offered exactly one suggestion for it that matches it cleanly or that `pickAddress` accepted,
+  offered exactly one suggestion for it that matches it cleanly or that `pickerMatchAddress` accepted,
   take the site's version, as you would a picked
   option: later read-backs, such as a review page, summary or confirmation, compare against
   it, and the output returns it for that field. Ask about any other lone suggestion as about a
@@ -325,8 +332,8 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   execute call that can send that change, and declare the names in order as
   `write.commits`. Use the same marked helper in the session and the composed
   script. The marked call does the commit and nothing that can still refuse: it re-reads
-  only what a change since the checks would make wrong, such as the total and items they
-  read, and when one moved it returns before clicking and the script throws
+  only what a change since the checks would make wrong and its page shows, such as the total
+  and items they read, and when one moved it returns before clicking and the script throws
   `OperationFailure` naming the change, such as `total_changed`; otherwise it clicks once
   and waits for the confirmation. That guard is expected. Name the in-between state the site
   can show after the click, beside its final answers, in that wait's `pending`: it holds up to
@@ -356,6 +363,9 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   error and a fresh read of the same view you read before the mark shows each field whose sent
   value differs from that read unchanged, prefer the same put-back and ending as above; never on
   silence or a missing element.
+- In a paying commit step, name the site's alert or dialog as an outcome beside the order's
+  response, and return the site's decline as a refusal the output schema declares, with the
+  site's words.
 - A quote the site issued earlier, such as a fare, rate, delivery time, cart price or hold, can
   expire before the commit, for example while the step waits for review, and selecting it again
   can send back the quote the page already holds. So have the commit step go to the checkout
@@ -366,8 +376,8 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   mark as above, all in that one step, or right before the card fill when the host fills the card.
   There, and in any other re-check before a commit, match the choice the caller approved by its
   kind or name and any time it shows that stays fixed, not by a time that moves with the clock,
-  check its price against the caller's limits as above, and keep it as approved when only that
-  time changed. For a choice whose shown time moves with the clock, `readBackMatches` and
+  check the price it shows against the caller's limits as above, and keep it as approved when
+  only that time changed, even when the page leaves out a value an earlier check read. For a choice whose shown time moves with the clock, `readBackMatches` and
   `sameText` from `pomerado/runtime` take `{ ignoreClockTimes: true }` to compare its kind or name
   without its times. When the site
   answers the click by saying the quote expired or the price changed, with
@@ -398,7 +408,8 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   notation, such as `queued`, with the site's own word in a `status_label` field. Then read
   what the output promises from that response or from the page the commit
   left, match it to the caller's values, and call `verified()` with no argument just before
-  returning. Declare `write: { confirmation: "readback" }`. Prefer not opening another page,
+  returning, also when the page shows no confirmation, since that response already confirms
+  the write. Declare `write: { confirmation: "readback" }`. Prefer not opening another page,
   such as a list, a history or an account screen, only to prove the write: a commit that went
   through, with the new record's id, already proves it. Return the tool's whole output from the
   step that confirms the write, read from the commit's response or the page it left: the caller
@@ -655,10 +666,13 @@ explicit, so the script never keeps, clears, accepts or declines one the input l
 asks with a declared question before the commit mark (the caller-input skill), offering a
 saved payment or address as an account-specific choice. The same holds for any choice that
 changes what the caller buys or pays, or whether the action can be cancelled or refunded, such
-as a rate, fare or plan tier, a refundable option, shipping speed or how much of a balance to pay. An owner's
-answer may make declining such an option, turning it off or the option that adds no cost and
-keeps the action cancellable the default of its optional input, never accepting, keeping or
-choosing one. Choosing the address and payment is
+as a rate, fare or plan tier, a refundable option, shipping speed or how much of a balance to pay.
+When the write must take one of a service's tiers of speed, class or service level, that
+choice's optional input defaults to the tier the site presents as standard, and the script asks
+only when the site shows no standard tier. An owner's answer may make only declining such an
+option, turning it off or the option that adds no cost and keeps the action cancellable the
+default of its optional input.
+Choosing the address and payment is
 part of a checkout's job, so the page's pre-selected one is never used silently. The request
 and the owner's answers settle such a choice for the session only: the published tool serves
 other callers, so it takes the choice as an input or asks, never hard-codes the build's answer,
@@ -755,9 +769,10 @@ mark. A write may instead declare its refusals in its output schema: a branch th
 no other branch whose `status` could be `"refused"`. Prefer declaring each refusal as its own
 branch of the output's top-level union, and prefer a listed `status` on every other branch, such
 as `Schema.Literal("rated")`, so the host can tell a refusal from any other output. Returned
-before the first commit mark, a declared refusal completes the run with that output and reports
-the write not applied. A refusal returned in a shape the schema does not declare, or returned or
-thrown after a mark, reports a possible change.
+before the first commit mark, or after only steps named in `write.settings`, a declared refusal
+completes the run with that output and reports the write not applied. A refusal returned in a
+shape the schema does not declare, or returned or thrown after a mark outside `write.settings`,
+reports a possible change.
 pomerado:section writes.declared-refusal:end -->
 
 See `references/write-session.ts` for two steps and the composed script, and

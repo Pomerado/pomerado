@@ -194,7 +194,11 @@ exception: it is optional unless the task can't run without it (below).
   never just the example's value. The example's values are one case, never limits.
 - Prefer keying only on what the caller asked for. A detail that changes from one listing to
   the next, such as a seating label or a room name, shouldn't decide whether the tool books or
-  refuses unless the caller chose it.
+  refuses unless the caller chose it. A tool's check guards what the caller asked for or what the
+  tool itself changes: it proves the caller's request before the step it guards and the tool's
+  own change after it, stops on anything else only for a problem the page shows, not for
+  something it can't find, and passes on every page where the task went right. A repair narrows
+  a check that stopped a run where the task went right, or removes it when it guards neither.
 - Read results for every option the schema lists. When an option leads to a page with a
   different structure (other fields or sections), handle that layout too, and on a read signed
   out run it live as a test case (testing skill); an option that only reorders or filters the
@@ -252,12 +256,12 @@ exception: it is optional unless the task can't run without it (below).
   order and return the one it used, as the site labels it, or list those matches as the site
   labels them for the caller to choose one, each selecting exactly one, with a declared choice
   question (.agents/caller-input/SKILL.md) or `pickRefusal`, which lists them as `available`.
-  Resolve a typed address through the site's suggestions with `pickAddress` from `pickerCode`, or
-  `resolveAddress` from `pomerado/runtime` over the site's own suggestion request, with
-  `{ read: true }` after its `label` in a read; fill the site's unit field, or its second address
-  line, with the `unit` it returns, return the suggestion it accepted as the site's version of the
-  address, and throw its `pickRefusal` only when it accepts
-  none.
+  Resolve a typed address through the site's suggestions with `pickerTypeAddress`, then, once the
+  list shows every suggestion the site offers for it, `pickerMatchAddress` from `pickerCode`,
+  clicking the `row` it returns; or with `resolveAddress` from `pomerado/runtime` over the site's
+  own suggestion request, with `{ read: true }` after its `label` in a read. Fill the site's unit
+  field, or its second address line, with the `unit` it returns, return the suggestion it accepted
+  as the site's version of the address, and throw its `pickRefusal` only when it accepts none.
 - Match the caller's proper nouns, such as places, venues and company names, with a fuzzy
   match that accepts the usual forms of the same name, such as a name with or without its
   accents (Abaca for Abacá), or a city alone or with its state and country after a comma.
@@ -759,8 +763,10 @@ delayed rendering can be intermittent: a fast exploration load does not establis
 that later executions will be immediately ready. Include a bounded wait for the
 expected page or control even when exploration never observed a delay. Derive
 that readiness condition from the intended page, not from having seen a particular
-challenge. Wait for a unique operation control or page state before testing absence
-or choosing a fallback. Use `locator.waitFor` for one expected state, `waitForOutcome`
+challenge. After navigation or any action, wait for a unique operation control or page state
+before testing absence or choosing a branch or fallback; after an action, prefer the site's own
+reply to the request the action sent over what the page shows, apart from an error the page shows.
+Use `locator.waitFor` for one expected state, `waitForOutcome`
 (below) when the page can answer more than one way, `waitForRows`, `waitForValues` or
 `waitForChange` (below) for the values you return, or, only where none fits, a bounded loop of
 your own that reads every condition in one `evaluate` per pass;
@@ -855,7 +861,9 @@ choice the input asked for as "Configure, then read" says; ask the caller about 
 (.agents/caller-input/SKILL.md). It throws an
 `Error` named `OutcomeWaitFailure` whose message says what each outcome matched, which progress
 signs it saw and when progress stopped: `outcome_ambiguous` when the winning locator matches more
-than one element; `outcome_unknown` when the page stops progressing for `noProgressMs` (8 s)
+than one element, unless more than one is visible and the visible ones all read the same text (read
+such an answer's text from `waitForOutcomeResult`'s `evidence`, or scope the locator to one element before acting on it or reading inside it);
+`outcome_unknown` when the page stops progressing for `noProgressMs` (8 s)
 while showing none of the answers; and `outcome_timeout` when it is still progressing at
 `timeout` (30 s). An unknown page is a challenge, the site's error or a layout you have not
 handled: do not turn it into your own timeout; the host reports it as one. `references/navigation.ts` waits for a search's answer and
@@ -920,7 +928,7 @@ click it or to wait for readiness: collapsed menus often hold an earlier hidden
 match. Scope a role locator to its evidenced container and to visible elements,
 for example `nav.getByRole("link", { name: /log in/i }).filter({ visible: true })`,
 then check that exactly one element matches; `waitForOutcome` checks it for the outcome it
-returns. When several candidates remain, inspect them and choose by evidence such as
+returns unless its visible matches all read the same text. When several candidates remain, inspect them and choose by evidence such as
 section, accessible name and destination before clicking or waiting. A readiness wait targets one specific
 evidenced element or page state.
 
