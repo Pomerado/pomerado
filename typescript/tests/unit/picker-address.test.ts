@@ -153,6 +153,40 @@ describe("resolveAddress", () => {
     expect(await resolveAddress("1 Example St, 60000", () => ["1 Example St, Faraway, TX 75001, USA"], String, { read: true })).toMatchObject({ picked: false });
   });
 
+  test("takes a suggestion that leaves out one of the caller's ZIP, town and state, and none that shows another", async () => {
+    for (const shown of ["1 Example St, Exampleton", "1 Example St, IL", "1 Example St Exampleton"])
+      expect(await resolveAddress("1 Example St, Exampleton, IL", () => [shown])).toMatchObject({ picked: true, label: shown });
+    expect(await resolveAddress("1 Example Building, Exampleton, IL 60000", () => ["1 Example Bldg, Exampleton, IL"])).toMatchObject({ picked: true });
+    // Two left out, a ZIP beside the state counting as its own field, or another town, state or
+    // ZIP, a town the site ran on into the street's line included, is not taken.
+    for (const [wanted, shown] of [
+      ["1 Example St, Exampleton, IL 60000", "1 Example St, Exampleton"],
+      ["1 Example St, Exampleton, IL 60000", "1 Example St, IL"],
+      ["1 Example St, Exampleton, IL", "1 Example St, Sampleton, IL"],
+      ["1 Example St, Exampleton, IL", "1 Example St Sampleton, IL"],
+      ["1 Example St, Exampleton, IL", "1 Example St, Exampleton, WI"],
+      ["1 Example St, North Exampleton, IL", "1 Example St, Exampleton"],
+      ["1 Example Building, Exampleton, IL 60000", "1 Example Bldg, Exampleton, IL 60001"],
+      ["1 Example Building, Exampleton, IL 60000", "1 Example Bldg, Sampleton, IL"],
+    ])
+      expect(await resolveAddress(wanted ?? "", () => [shown ?? ""])).toMatchObject({ picked: false, reason: "option_unclear" });
+  });
+
+  test("lists suggestions that tie when each leaves out the caller's town or state and shows no caller's ZIP", async () => {
+    const items = [
+      { text: "1 Example St, Exampleton", id: "a" },
+      { text: "1 Example St, Exampleton", id: "b" },
+    ];
+    expect(await resolveAddress("1 Example St, Exampleton, IL", () => items.slice(0, 1), (item) => item.text)).toMatchObject({ picked: true, choice: { id: "a" } });
+    expect(await resolveAddress("1 Example St, Exampleton, IL", () => items, (item) => item.text)).toMatchObject({
+      picked: false,
+      reason: "option_unclear",
+      matches: ["1 Example St, Exampleton"],
+    });
+    const zips = ["1 Example St, Exampleton 60000", "1 Example St, Exampleton 70000"];
+    expect(await resolveAddress("1 Example St, Exampleton, IL", () => zips)).toMatchObject({ picked: false, reason: "option_unclear", matches: zips });
+  });
+
   test("takes the suggestion that matches the typed text among those that tie, and returns the site's own item", async () => {
     const items = [
       { description: "1 Example St, Exampleton Heights, IL, USA", id: "a" },
