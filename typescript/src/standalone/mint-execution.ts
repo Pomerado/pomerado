@@ -566,7 +566,7 @@ const authoredExecution = (
       secretHandleRefusal(handles, files, execution, context.siteOrigin) ??
       fileHandleRefusal(files, execution) ??
       fileReadbackRefusal(files, execution, state.fileHandles.files.length > 0) ??
-      cardReadbackRefusal(files, execution, handles.issuedCard()) ??
+      cardReadbackRefusal(files, execution, handles.issuedCard() || state.cardTyped.current) ??
       draftQuestionDeclarationFailure(execution.entrypoint, entrypointSource);
     if (refusal !== undefined) return unsupported(refusal);
     const selected = yield* stepInput(execution, {
@@ -716,7 +716,15 @@ const authoredExecution = (
                       signIn: state.sessionSignIn.hook((failure) => {
                         signInFailure ??= failure;
                       }),
-                      cardFill: sessionCardFill(state.session, context.siteOrigin),
+                      // Only an act or residual step types a card, as a hosted build's do, so
+                      // any other step may read the page until one is typed (cardReadbackRefusal).
+                      ...(execution.purpose === "act" || execution.purpose === "residual"
+                        ? {
+                            cardFill: sessionCardFill(state.session, context.siteOrigin, () => {
+                              state.cardTyped.current = true;
+                            }),
+                          }
+                        : {}),
                     }
                   : {}),
                 ...(runFiles === undefined ? {} : { files: runFiles }),
@@ -825,7 +833,10 @@ const executeCardFill = (
           Effect.flatMap(allowedOf),
           Effect.flatMap((allowed) => beforeDispatch?.(allowed) ?? Effect.void),
         ),
-      beforeTyping: () => Effect.void,
+      beforeTyping: () =>
+        Effect.sync(() => {
+          state.cardTyped.current = true;
+        }),
     });
     if (outcome.status !== "refused" && outcome.typed) signInTyping.typed = true;
     yield* context.observe;

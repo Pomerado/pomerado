@@ -8,10 +8,14 @@ import type { StandaloneSession } from "./session.js";
  * The local host's card fill for a script's `fillCard`, on the session's browser: the card-fill
  * step's checks on `siteOrigin`, with no review of its own, since Guardian reviewed the build step
  * that runs the script or the published script itself. Once a value was typed into the page, a
- * refusal names only the site's and the listed origins.
+ * refusal names only the site's and the listed origins. `typing` runs before the first value.
  */
 export const sessionCardFill =
-  (session: StandaloneSession, siteOrigin: string): NonNullable<LocalOperationOptions["cardFill"]> =>
+  (
+    session: StandaloneSession,
+    siteOrigin: string,
+    typing: () => void = () => {},
+  ): NonNullable<LocalOperationOptions["cardFill"]> =>
   ({ step, handles }) =>
     runCardFill({
       step,
@@ -24,5 +28,6 @@ export const sessionCardFill =
       beforeTyping: () =>
         Effect.sync(() => {
           session.signInTyping.typed = true;
+          typing();
         }),
     });

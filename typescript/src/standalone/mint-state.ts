@@ -234,6 +234,11 @@ export const mintState = (
     const refusedCallerExamples: unknown[] = [];
     /** Each one-time login URL publication already asked about, so finishing again publishes it. */
     const oneTimeLoginUrlsAsked = new Set<string>();
+    /**
+     * Whether the host began typing a card into the build's browser, whoever asked for it: from
+     * then on the page may hold the card (`cardReadbackRefusal`).
+     */
+    const cardTyped = { current: false };
     const afterSubmit = makeAfterSubmit({ workspace, screen: secrets.json });
     // The build's automatic sign-ins, counted for the whole attempt: a task update that moves
     // the build to another site starts no new allowance.
@@ -370,6 +375,7 @@ export const mintState = (
       scriptAnswers,
       refusedCallerExamples,
       oneTimeLoginUrlsAsked,
+      cardTyped,
       afterSubmit,
       get recorder() {
         return bound.recorder;
