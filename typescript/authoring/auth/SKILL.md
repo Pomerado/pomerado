@@ -103,11 +103,17 @@ When the entry offers mutually exclusive account or plan types, decide before cl
 the branch only when the request or input names or clearly implies it, otherwise ask with
 `request_input` right away. A preselected option says nothing about the caller.
 
-Pick a sign-in method in this order: the one the request or caller names, the one the login's
-saved preference names, the password, then a code or approval; when several channels remain and
-nothing names one, ask the caller which, and never prefer one yourself. Never list or pick a
-passkey, security key or biometric option, even when the caller asks: the host cannot use one.
-When a passkey is the only way in, end with `report_blocked` `site_lacks_capability`.
+Never pick a sign-in method yourself when a screen offers more than one, a password among them,
+since taking one can spend or void a code the site already sent. The one the request or caller
+names settles it, else the one the login's saved preference names, else the owner picks. List every
+method the screen offers in the step's `methods` (below) and send it: the host's method question
+asks the owner which to use before anything is clicked, and refuses a step that takes another,
+naming the owner's pick, so send the step again taking that one. Without that question, first ask
+the owner with one `request_input` choice listing every method the screen offers. Never switch to
+another method once the sign-in took one, such as after a code was sent, unless the owner asks for
+it. Never list or pick a passkey, security key or biometric option, even when the caller asks: the
+host cannot use one. When a passkey is the only way in, end with `report_blocked`
+`site_lacks_capability`.
 
 # One screen at a time
 
@@ -236,12 +242,12 @@ attribute.
   A two-factor method choice ("Text me a code", "Use my authenticator app") fills no field: list
   every method the screen offers in `methods` (`sms`, `call`, `email`, `totp`, `push` or
   `recovery_code` for "use a backup code", each with
-  the selector of the control that picks it) and name the one to pick now as `submit`, by the
-  method order above. The tool's runs pick again from that list. A method's selector
+  the selector of the control that picks it) and name as `submit` the one the request, the caller,
+  the saved preference or the owner picked, as above. The tool's runs pick again from that list. A method's selector
   publishes with the tool, so it never names the masked phone number or address the option shows
   (such as `***-1234`): use the method's own words or a stable attribute.
   A screen that offers a password route beside a code the site sends is a method choice too: list
-  `password` with each code method it offers, each with its own control, and name this login's
+  `password` with each code method it offers, each with its own control, and name the picked
   route as `submit`. So is a control that switches which identifier the screen asks for, when this
   login's identifier needs it: list it as `identifier_username`, `identifier_email`,
   `identifier_phone` or `identifier_account_number`, by the identifier it brings up. The tool's
