@@ -131,7 +131,10 @@ During the session:
   exists. A check that can only run after an earlier
   marked step, such as a total that shows only once a saved address step has run, runs before
   the later step's mark; its refusal then reports a possible change, because the earlier step
-  may have saved something, and that is honest. Still mark that earlier step.
+  may have saved something, and that is honest. Still mark that earlier step. Mark a commit
+  step as a setting in `write.settings` when its click only changes a choice on the way to the
+  final commit and cannot place, buy, book, send or charge anything by itself. A refusal or the
+  caller's no after only such steps ends with nothing applied.
 - When one of those checks rules the task out, such as a total over the caller's limit, an
   item out of stock or a variant the page does not offer, the script refuses before the mark
   with `InvalidInput` (the caller-input skill, "Throw the error that matches what happened"),
