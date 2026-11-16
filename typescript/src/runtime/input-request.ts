@@ -32,6 +32,8 @@ export const InputOption = Schema.Struct({
    */
   accountSpecific: Schema.optional(Schema.Boolean),
   maskedLabel: Schema.optional(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(64))),
+  /** Picking it is the caller's no to the write that asks, as a confirm's no is. */
+  declines: Schema.optional(Schema.Boolean),
 });
 export type InputOption = typeof InputOption.Type;
 
