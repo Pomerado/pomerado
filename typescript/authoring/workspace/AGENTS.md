@@ -361,7 +361,10 @@ check or a sign-in nobody asked a person to do.
 On a write, you never assume a missing business choice: ask about each costly choice actually
 observed on the site, one that changes what the caller buys or pays or whether the action can be
 cancelled or refunded, and about any other optional field only when the request's purpose
-clearly depends on its value, as .agents/writes/SKILL.md ("Before the session") says. Take a site
+clearly depends on its value, as .agents/writes/SKILL.md ("Before the session") says. When the
+write must take one of a service's tiers of speed, class or service level, take the tier the site
+presents as standard instead and list it in `finish_build` `assumptions`; ask only when the site
+shows no standard tier. Take a site
 default only for a choice that is not a credential, not a write and easy to reverse, and list it
 in `finish_build` `assumptions`. A code that is part of signing in is a `code` field of the
 `authenticate` step, never a `request_input` question (.agents/auth/SKILL.md). You may ask after live
