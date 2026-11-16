@@ -249,15 +249,15 @@ test("pickAddress takes the site's address under another ZIP only in a read", as
   expect(await submitted(page)).toEqual({ person: "a1" });
 });
 
-// An address field whose suggestions, every one for any text, show the street on one line and the
-// town on the next.
-const twoLines = (places: string) => `<form><label>Address <input id="address" role="combobox" aria-controls="places" autocomplete="off"></label>
+// An address field whose suggestions, every one for any text, show each of their lines in its own
+// element, such as the street on one line and the town on the next.
+const twoLines = (places: string, tag = "div") => `<form><label>Address <input id="address" role="combobox" aria-controls="places" autocomplete="off"></label>
 <ul id="places" role="listbox" hidden></ul><input type="hidden" name="address"></form>
 <script>
 const input = document.getElementById("address"), list = document.getElementById("places");
 const places = ${places};
 input.addEventListener("input", () => {
-  list.innerHTML = places.map(([value, street, town]) => '<li role="option" data-value="' + value + '"><div>' + street + "</div><div>" + town + "</div></li>").join("");
+  list.innerHTML = places.map(([value, ...lines]) => '<li role="option" data-value="' + value + '">' + lines.map((line) => "<${tag}>" + line + "</${tag}>").join("") + "</li>").join("");
   list.hidden = false;
 });
 list.addEventListener("mousedown", (event) => event.preventDefault());
@@ -283,8 +283,8 @@ test("pickAddress reads two-line suggestions whole, and lists them when none kee
       picked: false,
       reason: "option_unclear",
       wanted: "12 Example St, Otherton, TX",
-      available: ["12 Example St Sampleton, NY, USA", "12 Example St Exampleton, IL, USA"],
-      matches: ["12 Example St Sampleton, NY, USA", "12 Example St Exampleton, IL, USA"],
+      available: ["12 Example St, Sampleton, NY, USA", "12 Example St, Exampleton, IL, USA"],
+      matches: ["12 Example St, Sampleton, NY, USA", "12 Example St, Exampleton, IL, USA"],
       unit: "",
     },
   });
@@ -300,7 +300,47 @@ test("pickAddress takes only the suggestion with the caller's street direction",
   });
   expect(await submitted(page)).toEqual({ address: "a2" });
   expect(await call(page, `return await pickAddress(${field}, "1 Example St, Exampleton, IL", fast);`)).toMatchObject({
-    result: { picked: false, reason: "option_unclear", matches: ["1 S Example St Exampleton, IL, USA", "1 N Example St Exampleton, IL, USA"] },
+    result: { picked: false, reason: "option_unclear", matches: ["1 S Example St, Exampleton, IL, USA", "1 N Example St, Exampleton, IL, USA"] },
+  });
+});
+
+// A place's name on the line above its address stays out of its street, so the address keeps its
+// house number first; the site's other places, at another number or none, are not taken.
+test("pickAddress reads a suggestion's place name and address as separate lines", async ({ page }) => {
+  const places = [
+    ["Example Building", "1 Example Bldg, Example City, CA, US"],
+    ["Book Nook (Book Nook Example Building)", "1 Example Bldg, Example City, CA, US"],
+    ["Example City Ferry Terminal (Example Building Gate E)", "1 The Esplanade, Example City, CA, US"],
+    ["Sample Creamery (Sample Creamery One Example Building)", "1 The Esplanade, Example City, CA, US"],
+    ["Sample Creamery Example Building (Example Building)", "Example Plz, Example City, CA, US"],
+    ["Example Building", "301 Sample Trade Ctr, Example City, CA, US"],
+    ["Example City Example Building", "The Esplanade, Example City, CA, US"],
+    ["The Esplanade/Example Building", "The Esplanade, Example City, CA, US"],
+    ["Example City Federal Building", "90 7th St, Example City, CA, US"],
+    ["Sample Coffee (Sample Coffee - Example Building)", "7 Example Building, Example City, CA, US"],
+    ["Sample Building (Example City Building)", "601 Sample St, Example City, CA, US"],
+    ["Medical Building (Example City Medical Building)", "909 Sample St, Example City, CA, US"],
+    ["Central Tower (Central Tower (Formerly Sample Building))", "703 Market St, Example City, CA, US"],
+    ["Set location on map"],
+    ["Search in a different city"],
+  ].map((lines, index) => ["p" + (index + 1), ...lines]);
+  await serve(page, twoLines(JSON.stringify(places), "p"));
+  const field = 'page.getByRole("combobox", { name: "Address" })';
+  expect(await call(page, `return await pickAddress(${field}, "1 Example Building, Example City, CA 94000", fast);`)).toEqual({
+    result: {
+      picked: true,
+      kind: "typeahead",
+      label: "Example Building",
+      value: "p1",
+      rank: "exact",
+      refills: 0,
+      query: "1 Example Building, Example City, CA 94000",
+      unit: "",
+    },
+  });
+  expect(await submitted(page)).toEqual({ address: "p1" });
+  expect(await call(page, `return await pickAddress(${field}, "5 Example Building, Example City, CA 94000", fast);`)).toMatchObject({
+    result: { picked: false, reason: "option_missing", available: places.map(([, ...lines]) => lines.join(", ")) },
   });
 });
 

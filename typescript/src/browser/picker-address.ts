@@ -170,6 +170,9 @@ export const resolveAddressWith = async <T>(
   // A street's words but its house number's, numbers without their ordinal ending.
   const streetWords = (text: string) => words(text).filter((word) => !houseWords.includes(word)).map(numeral);
   const callerWords = streetWords(lines[lineStreet] ?? "");
+  // Whether a street holds a word of the caller's street name, its house number's aside.
+  const naming = (text: string) =>
+    names.some((forms) => forms.some((form) => words(text).some((word) => !houseWords.includes(word) && numeral(word) === form)));
   // A street's direction words in order, each as its letters (N for North, NW for N.W. or
   // Northwest), and its own number, its first but the house number's, read in its usual forms (5 for
   // Fifth), once its ZIP is left out and, from its end, the other side's places after its street,
@@ -228,18 +231,22 @@ export const resolveAddressWith = async <T>(
       name(two).some((word) => word.length > 2 && initials(one).includes(word))
     );
   };
-  // A suggestion's street; its parts after the street, as words (its whole text when it has no
-  // comma, and none in `beyond`) and each in its usual forms; its parts but the street; and the words
-  // of each of its parts after the street, ZIPs left out.
+  // A suggestion's street: of its parts opening with the caller's house number, the last that names
+  // the caller's street or is close to it, else the first, as a place's name or a distance may open
+  // with a number too; else its first part with a house number. Its parts after the street, as words
+  // (its whole text when it has no comma, and none in `beyond`) and each in its usual forms; its parts
+  // before and after the street, each as its words with their punctuation inside, as 1.2 is one; and
+  // the words of each of its parts after the street, ZIPs left out.
   const sides = (text: string) => {
     const split = text.split(",");
-    const at = streetOf(split);
+    const ours = split.flatMap((part, index) => (houseOf(part).some((each) => house.includes(each)) ? [index] : []));
+    const at = ours.findLast((index) => naming(split[index] ?? "") || close(callerWords, streetWords(split[index] ?? ""))) ?? ours[0] ?? streetOf(split);
     return {
       street: split[at] ?? "",
       after: phrase(split.length > 1 ? split.slice(at + 1).join(",") : text),
       beyond: phrase(split.slice(at + 1).join(" ")),
       beyondForms: split.slice(at + 1).map((part) => match.spellings(squash(part.replace(zipGroups, ""))).map(phrase)),
-      others: phrase(split.length > 1 ? split.filter((_, index) => index !== at).join(",") : ""),
+      beside: [split.slice(0, at), split.slice(at + 1)].map((list) => list.map(tokens)),
       rest: split.slice(at + 1).map((part) => words(part.replace(zipGroups, " "))),
     };
   };
@@ -294,11 +301,11 @@ export const resolveAddressWith = async <T>(
   // field it holds on the caller's street with no word of its street left over.
   // A clean one ranks above any other.
   const score = (text: string) => {
-    const theirs = houseOf(text);
+    const { after, street: own, beyond, beyondForms, rest } = sides(text);
+    const theirs = houseOf(own);
     const shown = zipOf(text);
     if (house.length > 0 ? !theirs.some((each) => house.includes(each)) : zip !== "" && theirs.includes(zip) && shown !== zip)
       return undefined;
-    const { after, street: own, beyond, beyondForms, rest } = sides(text);
     const ownWords = words(own);
     const other = zip !== "" && shown !== "" && shown !== zip;
     // Its street's words but its house number's and those the caller's street keeps, then the words
@@ -352,7 +359,7 @@ export const resolveAddressWith = async <T>(
         : first;
     const left = held.filter((kind) => kind === "none").length;
     const fit = !held.includes("part") && left + (zip !== "" && shown === "" ? 1 : 0) <= 1;
-    const named = names.some((forms) => forms.some((form) => ownWords.some((word) => !houseWords.includes(word) && numeral(word) === form)));
+    const named = naming(own);
     if (house.length > 0 && names.length > 0 && !named && (other || !close(callerWords, streetWords(own)))) return undefined;
     const share = Math.max(
       0,
@@ -436,10 +443,14 @@ export const resolveAddressWith = async <T>(
       matches: best === undefined ? [] : [...new Set(usable)].slice(0, 100),
       unit: next || (marker?.[2] ?? ""),
     };
-  // A unit-shaped part the suggestion keeps, its number outside the suggestion's own street, was a
-  // town and postcode or a street rather than a unit.
-  const number = phrase(next.split(" ").find((word) => /[\d#]/u.test(word)) ?? "");
-  const unit = next !== "" && !holds([number], sides(best.label).others) ? next : (marker?.[2] ?? "");
+  // A unit-shaped part the suggestion keeps, its number in one of the suggestion's parts on the same
+  // side of its street, alone there or after another word, was a town and postcode or a street
+  // rather than a unit; a place's name or a distance opening with that number keeps none.
+  const number = tokens(next.split(" ").find((word) => /[\d#]/u.test(word)) ?? "")[0] ?? "";
+  const kept = (sides(best.label).beside[unitAt < street ? 0 : 1] ?? []).some(
+    (each) => each.includes(number) && (each.length === 1 || each[0] !== number),
+  );
+  const unit = next !== "" && !kept ? next : (marker?.[2] ?? "");
   return { picked: true, choice: best.choice, label: best.label, query: best.query, unit };
 };
 
@@ -452,18 +463,22 @@ export const resolveAddressWith = async <T>(
  * right before it, when it has at most two words, one of them holding a digit or a #, no ZIP, and
  * no plain number opening it before another word; or a # and what follows it ending the street. It
  * asks for the rest, and returns the unit for the site's own unit field unless the suggestion
- * taken keeps its number outside its own street, as a town and postcode or a street would be; such
- * a part before the street or ending the address is asked for as typed first. For an address whose
- * street opens with its house number, a suggestion with another one (12A and 12 A alike) is
- * another address and never usable, and so is one whose street keeps none of the caller's street
- * name words: its street's words but the last, a street type such as Ave, when it has another, of
- * three letters or more, and every word holding a digit but the house number's own, as the 9 of
- * Route 9, each in any of its usual forms from `spellingsOf` (Fifth for 5th) and a number without
- * its ordinal ending (107 for 107th), unless it shows no other ZIP and its street's name is close
- * to the caller's: the numbers both show agree and, with their words joined, fewer edits than a
- * third of the shorter's letters, a swap of two letters one edit, turn one into the other (Exampel
- * or Mian for Example or Main, LaSalle for La Salle), or a word of three letters or more of one is
- * among the first letters of the other's words but the last (MLK for Dr Martin Luther King Jr Blvd).
+ * taken keeps its number in a part on the same side of its own street, alone there or after
+ * another word, as a town and postcode or a street would be; such a part before the street or
+ * ending the address is asked for as typed first. For an address whose street opens with its house
+ * number, a suggestion's street is its last part opening with that number whose name is the
+ * caller's street's or close to it (below), else its first opening with that number, else its first
+ * opening with a number, as a place's name or a distance may open with a number too; one whose
+ * street opens with another number (12A and 12 A alike) is another address and never usable, and
+ * so is one whose street keeps none of the caller's street name words: its street's words but the
+ * last, a street type such as Ave, when it has another, of three letters or more, and every word
+ * holding a digit but the house number's own, as the 9 of Route 9, each in any of its usual forms
+ * from `spellingsOf` (Fifth for 5th) and a number without its ordinal ending (107 for 107th),
+ * unless it shows no other ZIP and its street's name is close to the caller's: the numbers both
+ * show agree and, with their words joined, fewer edits than a third of the shorter's letters, a
+ * swap of two letters one edit, turn one into the other (Exampel or Mian for Example or Main,
+ * LaSalle for La Salle), or a word of three letters or more of one is among the first letters of
+ * the other's words but the last (MLK for Dr Martin Luther King Jr Blvd).
  * So St or Ave ending a street with a longer name word, or a direction letter, alone keeps none. So is one that reads a caller's ZIP as its house
  * number. Of the rest, it prefers one that keeps the address field by field (below), then the one
  * that shows the caller's ZIP while its own street keeps
