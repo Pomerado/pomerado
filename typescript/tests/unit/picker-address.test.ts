@@ -177,6 +177,29 @@ describe("resolveAddress", () => {
     expect(await resolveAddress("1 Example St, Exampleton, IL", () => streets)).toMatchObject({ picked: false, reason: "option_unclear", matches: [streets[1]] });
   });
 
+  test("takes a place by its name over other places named after it, and never the site's control that lists more results", async () => {
+    const asked = "Example International Airport (EXA), Exampleton, CA";
+    const place = "Example International Airport (EXA), 780 Sample Rd, Exampleton, CA";
+    const others = ["Terminal 2, EXA", "Sample Terminal 1", "Terminal 3 (Door 3-4)", "International Terminal (G gates)"];
+    const controls = ["See more results for " + asked, 'Search for "Example International Airport (EXA), Exampleton, CA"'];
+    for (const read of [false, true])
+      expect(await resolveAddress(asked, () => [others[0] ?? "", place, ...others.slice(1), ...controls], String, { read })).toMatchObject({
+        picked: true,
+        label: place,
+      });
+    // Without the place, a write lists the other places and no control, and a read takes the
+    // site's first place, past a control listed first.
+    expect(await resolveAddress(asked, () => [...others, ...controls])).toMatchObject({ picked: false, reason: "option_unclear", available: others, matches: others });
+    expect(await resolveAddress(asked, () => [...controls, ...others], String, { read: true })).toMatchObject({ picked: true, label: others[0] });
+    // A place showing the typed text after a house number or a part of its own, or as its own
+    // start, is no control.
+    expect(await resolveAddress("Example Rd, Exampleton, CA", () => ["Example Park, Example Rd, Exampleton, CA"])).toMatchObject({
+      matches: ["Example Park, Example Rd, Exampleton, CA"],
+    });
+    expect(await resolveAddress("Example St, Exampleton, IL", () => ["12 Example St, Exampleton, IL"])).toMatchObject({ matches: ["12 Example St, Exampleton, IL"] });
+    expect(await resolveAddress("Example St, Exampleton, IL", () => ["Example St, Exampleton, IL, USA"])).toMatchObject({ picked: true });
+  });
+
   test("in a read, takes a suggestion that keeps the house number, street and place but shows another ZIP", async () => {
     const wanted = "1 Example St, Exampleton, IL 60000";
     const shown = ["1 Example St, Exampleton, IL 60001, USA"];

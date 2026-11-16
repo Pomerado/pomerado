@@ -369,8 +369,9 @@ list.addEventListener("click", (event) => {
 });
 </script>`;
 
-// The address is typed with its unit split off; the short list is refused, and once the tool opens
-// the whole addresses, the row taken is the one the tool clicks.
+// The address is typed with its unit split off; the short list is refused, listing no control that
+// lists more results, and once the tool opens the whole addresses, the row taken is the one the
+// tool clicks.
 test("pickerTypeAddress types the address and pickerMatchAddress takes a row of the list open now", async ({ page }) => {
   await serve(page, shortPlaces);
   const address = "1 Example Building, Suite 5, Example City, CA 94000";
@@ -394,11 +395,7 @@ return { typed, short, whole };`,
         picked: false,
         reason: "option_unclear",
         wanted: address,
-        available: [
-          "Example Building, 1 Example Bldg, Example City",
-          "Example Building Garage, 5 Sample St, Example City",
-          "See more results for 1 Example Building, Example City, CA 94000",
-        ],
+        available: ["Example Building, 1 Example Bldg, Example City", "Example Building Garage, 5 Sample St, Example City"],
         matches: ["Example Building, 1 Example Bldg, Example City"],
         unit: "Suite 5",
       },
@@ -461,6 +458,17 @@ return match;`;
   expect(await call(page, match)).toMatchObject({
     result: { picked: false, reason: "option_unclear", matches: ["Example Park Ferry Terminal, Example City, CA, US"] },
   });
+  // Nor is the site's control that lists more results for the typed text, listed first.
+  const airport = "Example International Airport (EXA), Example City, CA";
+  await serve(page, twoLines(JSON.stringify([
+    ["m1", "See more results for " + airport],
+    ["t2", "Terminal 2", "EXA"],
+    ["a1", "Example International Airport (EXA)", "780 Sample Rd, Example City, CA, US"],
+  ])));
+  expect(await call(page, match.replaceAll(address, JSON.stringify(airport)))).toEqual({
+    result: { picked: true, label: "Example International Airport (EXA), 780 Sample Rd, Example City, CA, US", unit: "" },
+  });
+  expect(await submitted(page)).toEqual({ address: "a1" });
 });
 
 test("pickValue picks a native select's option by label, value or another spelling", async ({ page }) => {

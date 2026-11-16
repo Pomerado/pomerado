@@ -425,6 +425,21 @@ export const resolveAddressWith = async <T>(
   const base = lines.filter((_, index) => !asTyped || index !== unitAt).join(", ");
   const at = zip === "" ? -1 : base.lastIndexOf(zip);
   const tidied = tidy(at < 0 ? base : base.slice(0, at) + base.slice(at + zip.length).replace(/^-\d{4}/u, ""));
+  // A text's parts as words, joined by commas.
+  const sequence = (text: string) =>
+    text
+      .split(",")
+      .map((part) => words(part).join(" "))
+      .filter(Boolean)
+      .join(", ");
+  // The site's own control for the text typed, such as one listing more results for it, shows that
+  // whole text, of two parts or more, after words of its first part with no digit. It is no
+  // suggestion.
+  const echoes = (name: string, text: string) => {
+    const [typed, shown] = [sequence(text), sequence(name)];
+    const at = shown.indexOf(typed);
+    return typed.includes(",") && at > 0 && shown[at - 1] === " " && !/[\d,]/u.test(shown.slice(0, at));
+  };
   const seen: string[] = [];
   const usable: string[] = [];
   let best:
@@ -434,7 +449,7 @@ export const resolveAddressWith = async <T>(
   let first: { readonly choice: T; readonly label: string; readonly query: string } | undefined;
   for (const text of [...new Set([query, tidied])].filter((form) => form !== "")) {
     const items = [...(await suggest(text))];
-    const labels = items.map((item) => squash(label(item)));
+    const labels = items.map((item) => squash(label(item))).map((name) => (echoes(name, text) ? "" : name));
     seen.push(...labels.filter((name) => name !== ""));
     const shown = labels.findIndex((name) => name !== "");
     if (first === undefined && shown >= 0) first = { choice: items[shown] as T, label: labels[shown] ?? "", query: text };
@@ -543,7 +558,10 @@ export const resolveAddressWith = async <T>(
  * first, one that leaves out a place field only when none keeps them all. With `{ read: true }`, as
  * in a read, it also accepts another ZIP when the caller gave a house number and a town or state,
  * and when it accepts none, takes the site's first suggestion for the first text that brought any,
- * which the tool reports as the site's version. Otherwise it refuses, with
+ * which the tool reports as the site's version. A suggestion that shows the whole text typed, of
+ * two parts or more, after words of its own first part with no digit, as a site's control that lists
+ * more results for that text does, is not a suggestion: it is not accepted, listed or taken in a
+ * read. Otherwise it refuses, with
  * `picked: false` and every suggestion the site gave as `available`, for `pickRefusal`: as
  * `option_missing` when neither text brought a usable one, else as `option_unclear`, with the
  * usable ones as `matches`. It keeps no list of words or addresses of its own but the compass
