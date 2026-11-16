@@ -1290,6 +1290,17 @@ it("has the marked call re-read only what its page shows", async () => {
   );
 });
 
+// After an action, a page state can show for a moment and be gone before the tool reads it, while
+// the site's own reply to the action's request already settled the outcome. That reply counts over
+// what the page shows.
+it("has the site's reply to an action's request count over what the page shows", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const core = (texts.get("core") ?? "").replace(/\s+/g, " ");
+  expect(core).toContain(
+    "After navigation or any action, wait for a unique operation control or page state before testing absence or choosing a branch or fallback; after an action, the site's own reply to its request counts over what the page shows.",
+  );
+});
+
 // A consent banner whose text also agrees to the site's own terms is still a consent banner, and a
 // prompt whose own purpose is accepting terms is not. The core skill and Guardian say the same.
 it("has the minter and Guardian treat a consent banner that bundles the site's terms as a banner", async () => {
@@ -1450,7 +1461,7 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["cce1d31ee50b314dbd8337c6b719a54414d5102af99c3facf9e6deb1dc0741b1", "core"],
+    ["5d0a16b87c87b2838198daaf6f296fe38674e1e41163214c61706a6675be1dba", "core"],
     ["e854aa6b9fe22ea741598abcf0643c529211b643d6b9b400281948a117156224", "search"],
     ["d6f0ed8446759ce44874a2cb7c7ee7251f92249673379b69439aaac2b5b7afb5", "auth"],
     ["a08f1ef89cc10bf11e17b8d6086b6e37649b1d5d11b78c0542cc7db32460b7e3", "testing"],
