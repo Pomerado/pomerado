@@ -356,6 +356,9 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   error and a fresh read of the same view you read before the mark shows each field whose sent
   value differs from that read unchanged, prefer the same put-back and ending as above; never on
   silence or a missing element.
+- In a paying commit step, name the site's alert or dialog as an outcome beside the order's
+  response, and return the site's decline as a refusal the output schema declares, with the
+  site's words.
 - A quote the site issued earlier, such as a fare, rate, delivery time, cart price or hold, can
   expire before the commit, for example while the step waits for review, and selecting it again
   can send back the quote the page already holds. So have the commit step go to the checkout

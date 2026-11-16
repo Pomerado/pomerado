@@ -68,6 +68,12 @@ export interface NotCommittedOptions {
    * sent value differs from that read unchanged.
    */
   readonly siteRefused?: true;
+  /**
+   * The runtime put the step back itself, with `siteRefused`: the step's own call failed because
+   * its outcome wait read the site's refusal on the page after the click (`outcome_refused`). A
+   * script's own `notCommitted` never passes it.
+   */
+  readonly outcomeRefused?: true;
 }
 
 export interface EffectJournal {

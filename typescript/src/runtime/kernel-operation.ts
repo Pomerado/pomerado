@@ -869,6 +869,19 @@ export const withRunEffect = (code: string, effect: "read" | "write") =>
   `const __pomeradoEffect = ${JSON.stringify(effect)};${code}`;
 
 /**
+ * A commit's own call, the first a script sends after `enteringCommit`, with that declared ahead of
+ * its code on the same line (`__pomeradoCommitting`): an outcome wait its click starts then reads
+ * the site's refusal on the page before it ends `outcome_unknown` (`waitCode`).
+ */
+export const withCommitCall = (code: string) => `const __pomeradoCommitting = true;${code}`;
+
+/** A commit call that failed because its outcome wait read the site's refusal on the page. */
+const siteRefusedCall = (answer: { readonly success: boolean; readonly error?: string }) =>
+  answer.success === false &&
+  typeof answer.error === "string" &&
+  /^(?:OutcomeWaitFailure:\s*)?outcome_refused after \d+ ms\b/u.test(answer.error);
+
+/**
  * A call's code inside `clickNavigationWait`, which ends a second before its `timeout_sec`, with
  * that end declared as `__pomeradoCallEnds`, where a pending `waitForOutcome` ends its hold.
  */
@@ -892,6 +905,8 @@ export const runKernelScript = <Input, EncodedInput, Output, EncodedOutput>(
   Effect.suspend(() => {
     let actionTimeout: string | undefined;
     let calls = 0;
+    // The commit step the script entered last, until its own call goes out (`withCommitCall`).
+    let entering: string | undefined;
     const effect = browser.effect ?? (operation.write === undefined ? "read" : "write");
     // The host's sign-in under way. Every browser call the script starts meanwhile, from a timer
     // or an un-awaited promise too, waits for it and is only then sent, in order, so its own
@@ -905,6 +920,8 @@ export const runKernelScript = <Input, EncodedInput, Output, EncodedOutput>(
           execute: (sessionId, body, options) => {
             // Counted when made: a held call goes out later, even after the script ends.
             calls += 1;
+            const commit = entering;
+            entering = undefined;
             return afterSignIn(() =>
               settle(
                 Effect.sync(() => {
@@ -917,7 +934,10 @@ export const runKernelScript = <Input, EncodedInput, Output, EncodedOutput>(
                           sessionId,
                           {
                             ...body,
-                            code: withClickNavigationWait(withRunEffect(body.code, effect), body.timeout_sec),
+                            code: withClickNavigationWait(
+                              withRunEffect(commit === undefined ? body.code : withCommitCall(body.code), effect),
+                              body.timeout_sec,
+                            ),
                           },
                           options,
                         ),
@@ -928,6 +948,14 @@ export const runKernelScript = <Input, EncodedInput, Output, EncodedOutput>(
                   Effect.tap((answer) =>
                     Effect.sync(() => {
                       actionTimeout = nativeActionTimeout(answer);
+                      // The site refused the commit's click and its wait read that on the page:
+                      // the step goes back unsent, once, as the script's own put-back would. A
+                      // step the journal can't put back stays sent.
+                      const revert = browser.journal?.notCommitted;
+                      if (commit !== undefined && revert !== undefined && siteRefusedCall(answer))
+                        Effect.runSync(
+                          Effect.ignore(revert(commit, { siteRefused: true, outcomeRefused: true })),
+                        );
                     }),
                   ),
                 ),
@@ -978,6 +1006,11 @@ export const runKernelScript = <Input, EncodedInput, Output, EncodedOutput>(
         });
         const output = await operation.run({
           ...context,
+          // The next call is that step's own (`withCommitCall`).
+          enteringCommit: (name) => {
+            context.enteringCommit(name);
+            entering = name;
+          },
           decideDialog: (report) => afterSignIn(() => context.decideDialog(report)),
           // Typing a card is a browser call too.
           fillCard: (step) => {

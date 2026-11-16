@@ -137,6 +137,61 @@ describe("executeKernelOperation", () => {
     ]);
   });
 
+  // A commit's own call, the first after `enteringCommit`, is declared to its waits; when its wait
+  // read the site's refusal on the page, the step goes back unsent, as the script's own put-back.
+  it.each([
+    { error: "outcome_refused after 900 ms, no outcome showing, the page shows the site's refusal", state: "not_sent", said: [{ siteRefused: true, outcomeRefused: true }] },
+    { error: "OutcomeWaitFailure: outcome_refused after 900 ms: a native alert dialog opened", state: "not_sent", said: [{ siteRefused: true, outcomeRefused: true }] },
+    { error: "outcome_unknown after 900 ms, 8000 ms without progress, no outcome showing", state: "sent", said: [] },
+  ])("declares the call after enteringCommit and puts its step back on $error", async (expected) => {
+    const codes: string[] = [];
+    const kernel: KernelExecuteClient = {
+      browsers: {
+        playwright: {
+          execute: async (_session, body) => {
+            codes.push(body.code);
+            return body.code.includes("return 2;")
+              ? { success: false, error: expected.error }
+              : { success: true, result: null };
+          },
+        },
+      },
+    };
+    const write = defineOperation(
+      { input: Schema.Struct({}), output: Schema.String, write: { confirmation: "readback", commits: ["place-order"] } },
+      async ({ kernel, sessionId, enteringCommit, errors }) => {
+        await kernel.browsers.playwright.execute(sessionId, { code: "return 1;" });
+        enteringCommit("place-order");
+        const placed = await kernel.browsers.playwright.execute(sessionId, { code: "return 2;" });
+        await kernel.browsers.playwright.execute(sessionId, { code: "return 3;" });
+        if (!placed.success) throw new errors.OperationFailure(String(placed.error));
+        return "placed";
+      },
+    );
+    const said: unknown[] = [];
+    const journal = await Effect.runPromise(makeEffectJournal);
+    const notCommitted = journal.notCommitted;
+    if (notCommitted === undefined) throw new Error("core's journal puts a step back");
+    const { exit } = await run(
+      executeKernelOperation(write, {}, { kernel, sessionId: "s" }),
+      Effect.succeed({
+        ...journal,
+        notCommitted: (name: string, options?: Parameters<typeof notCommitted>[1]) => {
+          said.push(options);
+          return notCommitted(name, options);
+        },
+      }),
+    );
+    expect(codes.map((code) => /try \{const __pomeradoEffect = "write";(const __pomeradoCommitting = true;)?return \d;/u.exec(code)?.[1])).toEqual([
+      undefined,
+      "const __pomeradoCommitting = true;",
+      undefined,
+    ]);
+    expect(failureOf(exit)).toMatchObject(Option.some({ _tag: "OperationFailure", message: expected.error }));
+    expect(said).toEqual(expected.said);
+    expect(await Effect.runPromise(journal.commits)).toEqual([{ name: "place-order", state: expected.state }]);
+  });
+
   it("runs an offline script without a browser, and a call it makes fails unsent", async () => {
     const parser = defineOperation(
       { input: Schema.Struct({ text: Schema.String }), output: Schema.Number },
