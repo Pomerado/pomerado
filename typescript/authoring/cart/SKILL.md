@@ -41,8 +41,8 @@ order, and a checkout still chooses its address as below. Set the options as "Co
 read" in the core skill says before adding the product: a value the product does not offer
 throws `InvalidInput` with `field` and `available`. Opening an item's details or options from
 its own card, name or picture, not a control labelled add or plus, is a read. Prefer finding
-the item's row or card by the site's own item ID where the page carries one, over its picture,
-position or a search box, since a site's pages can differ in layout.
+the item's row or card by the site's own item ID where the page carries one, over its picture or
+position, since a site's pages can differ in layout.
 
 ## Quantity
 
@@ -124,14 +124,9 @@ completed the write, so it never publishes.
 
 An account's state can change the add or buy flow, so that its controls would change an open
 order or a line already in the cart instead. Read that state before the commit mark. When the
-request covers that change, continue; otherwise refuse with `InvalidInput` naming the site's
-state before the commit mark, as the caller-input skill says for a page's state that rules the
-task out.
-
-When the checkout's amounts still show only placeholders once the page has stopped progressing,
-prefer treating them as the site's own state, as the core skill treats a plain "unavailable"
-value, and refusing with `InvalidInput` naming that state before the order's commit mark, over
-waiting out a timeout.
+tool's inputs cover that change, as its quantity does for a line already in the cart (Quantity,
+above), continue; otherwise refuse with `InvalidInput` naming the site's state before the commit
+mark, as the caller-input skill says for a page's state that rules the task out.
 
 An example item that is out of stock doesn't end the build. The tool returns that as the site's
 refusal for the item, and the build publishes on it as the writes skill says.
@@ -147,8 +142,9 @@ the earliest.
 
 In the step that places the order, name the site's reply to that order request and the order's
 ID shown on the page as that wait's answers, beside the site's refusal and error messages, as the
-writes skill says for a commit, and read the ID from the reply or the page it leaves. Prefer not
-naming a sign of progress that can show before them as one of its answers.
+writes skill says for a commit, and read the ID from the reply or the page it leaves. Prefer
+passing a sign of progress that can show before them as that wait's `loading`, or naming it in
+`pending` as the writes skill says, over an answer that ends the wait.
 
 ## A checkout's inputs and output
 
