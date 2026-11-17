@@ -22,6 +22,7 @@ import {
 import { Unanswered } from "./login-field-asks.js";
 import { credentialUnavailable } from "./autofill-fresh-values.js";
 import type { ReplaySession } from "./autofill-replay-session.js";
+import { codeScreenOf } from "./autofill-unrecorded-code.js";
 import { isSecondFactor, type RejectedMarker } from "../destinations/autofill-recipe.js";
 import type { AutofillLogin } from "./autofill-values.js";
 import {
@@ -246,6 +247,9 @@ export const runReplayStep = <E extends YieldableError, V extends string, L exte
       progress.refilled.add("code");
       progress.codeRefilled = true;
     }
+    // A code box on a recorded emailed link's screen (`linkCodeScreen`).
+    const onLinkScreen =
+      progress.linkCodeScreen !== undefined && codeScreenOf(inspection) === progress.linkCodeScreen;
     const resolved = yield* valuesFor(
       input,
       values,
@@ -261,10 +265,12 @@ export const runReplayStep = <E extends YieldableError, V extends string, L exte
       inspection.screen.fields,
       // A code screen the recipe never recorded that refused a code may want one the site sent
       // rather than the host's generator's, so its retries never spend a try on that.
-      codeAgain !== "rejected" || progress.unrecordedCodeScreen === undefined,
+      !onLinkScreen && (codeAgain !== "rejected" || progress.unrecordedCodeScreen === undefined),
     );
     if (resolved instanceof Unanswered)
       if (corrected.size > 0) return "extra_rejected";
+      // Nothing was typed, so the link's own question still stands.
+      else if (onLinkScreen && codeAgain === undefined) return "link_code_unanswered";
       else
         return codeRejectedAgain(codeAgain, resolved)
           ? "code_rejected"
