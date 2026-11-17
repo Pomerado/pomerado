@@ -2,7 +2,7 @@ import { Effect } from "effect";
 import { expect, it } from "vitest";
 import { runLocalOperation } from "../../src/execution/local-operation.js";
 import { createLocalWorkspace } from "../../src/execution/local-workspace.js";
-import { operationErrors } from "../../src/runtime/operation-failure.js";
+import { boundedRefusalDetail, operationErrors } from "../../src/runtime/operation-failure.js";
 import { runOutcomeFailure } from "../../src/standalone/run-report.js";
 
 // A script that refuses its caller's value in the local operation child, against a browser that
@@ -78,7 +78,7 @@ it("keeps a true/false or number choice as its text", () => {
 });
 
 // A choice taken from the caller's own account, such as a saved address, is marked as a question's
-// option is. The refusal keeps it, bounded, for a host to mask; the local host shows its masked
+// option is. The refusal keeps it, bounded, for a host to mask; the local host shows its full
 // label, as it shows a question's.
 it("keeps a choice from the caller's own account marked", () => {
   const refusal = new operationErrors.InvalidInput("No saved address matches", {
@@ -94,16 +94,21 @@ it("keeps a choice from the caller's own account marked", () => {
     { label: "12 Example Rd, Springfield 99999", accountSpecific: true, maskedLabel: "Home" },
     { label: "14 Example Rd", accountSpecific: true },
   ]);
+  // A host that calls it without `fullLabels` still reads each by its mask.
+  expect(boundedRefusalDetail(refusal).available).toEqual([
+    "Pick up in store",
+    "Home",
+    "Saved option 3",
+  ]);
 });
 
-it("tells a local caller a choice from the caller's own account by its masked label", async () => {
+it("tells a local caller a choice from the caller's own account by its full label", async () => {
   const failure = await outcomeOf(
     `, { field: "size", available: ["One Size", { label: "Size 12 Example Rd", accountSpecific: true, maskedLabel: "Saved size" }, { label: "Size 14 Example Rd", accountSpecific: true }] }`,
   );
   expect(failure.outcome.details).toMatchObject({
-    available: ["One Size", "Saved size", "Saved option 3"],
+    available: ["One Size", "Size 12 Example Rd", "Size 14 Example Rd"],
   });
-  expect(failure.message).not.toContain("Example Rd");
 });
 
 // The local host repairs nothing, so its outcome for such a refusal is unchanged: the reason and
