@@ -567,12 +567,15 @@ describe("resolveAddress", () => {
     // With no area to place it, a read asks too, in either order.
     for (const rows of [[pin, venue], [venue, pin]])
       expect(await resolveAddress("example center", () => rows, String, { categorized, read: true })).toMatchObject({ picked: false, reason: "option_unclear" });
-    // The pin in another town is no same-name pin of this venue: a read takes neither.
+    // With the pin in another town, a read with no area takes neither, and a read in the caller's
+    // area takes the venue there, in either order.
     const away = "Example Center, Othertown, NY, USA";
     expect(await resolveAddress("example center", () => [away, venue], String, { categorized, read: true })).toMatchObject({
       picked: false,
       reason: "option_unclear",
     });
+    for (const rows of [[away, venue], [venue, away]])
+      expect(await resolveAddress(asked, () => rows, String, { categorized, read: true })).toMatchObject({ picked: true, label: venue });
     // A venue with the pin's own name, listed first, is taken in a read in the caller's area.
     const tower = "Example Tower, 5 Sample Ave, Exampleton, NY 10001, USA";
     expect(

@@ -286,9 +286,7 @@ exception: it is optional unless the task can't run without it (below).
   address's country. Or use `resolveAddress` from `pomerado/runtime` over the site's own
   suggestion request, with `{ read: true }` in a read. Fill the site's unit field, or its second
   address line, with the `unit` it returns, return the suggestion it accepted as the site's
-  version of the address, and throw its `pickRefusal` only when it accepts none. A hosted build
-  instead chooses the value of an address, pickup or drop-off field with the helper its workspace
-  guide names.
+  version of the address, and throw its `pickRefusal` only when it accepts none.
   Never write address normalization or matching of your own, in the tool or in a file beside it:
   no word lists, street-type or city tables, house-number, unit or postal-code comparisons,
   regular expressions that split an address, similarity scores or "contains" tests. When the
