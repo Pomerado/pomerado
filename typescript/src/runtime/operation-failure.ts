@@ -40,7 +40,7 @@ const maximumMaskedChoiceLength = 64;
 
 /**
  * A choice taken from the caller's own account, such as a saved address or card, marked as a
- * question's option is: anyone but the account's owner reads `maskedLabel`, or a host's own mask.
+ * question's option is: a host that masks shows `maskedLabel`, or its own mask.
  */
 export interface AccountChoice {
   readonly label: string;
@@ -126,13 +126,16 @@ const publicChoice = (choice: RefusalChoice, index: number) =>
 /**
  * The detail as a host may carry it: a bounded field name and up to the most choices, each bounded,
  * a true/false or finite number choice as its text, and one from the caller's own account as its
- * masked label, or "Saved option N" by its place without one.
+ * masked label, or "Saved option N" by its place without one, or with `fullLabels`, for a host that
+ * shows the account's own entries, as its label.
  */
-export const boundedRefusalDetail = (detail: unknown): InputRefusalDetail => {
+export const boundedRefusalDetail = (detail: unknown, fullLabels = false): InputRefusalDetail => {
   if (typeof detail !== "object" || detail === null) return {};
   const field: unknown = Reflect.get(detail, "field");
   const kind: unknown = Reflect.get(detail, "kind");
-  const choices = boundedChoices(detail).map(publicChoice);
+  const choices = boundedChoices(detail).map((choice, index) =>
+    fullLabels && typeof choice !== "string" ? choice.label : publicChoice(choice, index),
+  );
   return {
     ...(typeof field === "string" && field.trim() !== ""
       ? { field: field.slice(0, maximumRefusalChoiceLength) }

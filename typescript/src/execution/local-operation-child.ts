@@ -558,9 +558,10 @@ await Effect.runPromise(
             ...(error instanceof InvalidInput && error.issues !== undefined
               ? { inputIssues: error.issues }
               : {}),
-            // A script's refusal names its input and the choices the page offers, when it read them.
+            // A script's refusal names its input and the choices the page offers, when it read them,
+            // one from the caller's own account by its full label, as the local host shows it.
             ...("_tag" in error && error._tag === "InvalidInput"
-              ? refusalOf(boundedRefusalDetail(error))
+              ? refusalOf(boundedRefusalDetail(error, true))
               : {}),
             // An input the script could not apply, with what the page kept instead.
             ...(() => {

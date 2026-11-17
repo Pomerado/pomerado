@@ -78,7 +78,7 @@ it("keeps a true/false or number choice as its text", () => {
 });
 
 // A choice taken from the caller's own account, such as a saved address, is marked as a question's
-// option is. The refusal keeps it, bounded, for a host to mask; the local host shows its masked
+// option is. The refusal keeps it, bounded, for a host to mask; the local host shows its full
 // label, as it shows a question's.
 it("keeps a choice from the caller's own account marked", () => {
   const refusal = new operationErrors.InvalidInput("No saved address matches", {
@@ -96,14 +96,13 @@ it("keeps a choice from the caller's own account marked", () => {
   ]);
 });
 
-it("tells a local caller a choice from the caller's own account by its masked label", async () => {
+it("tells a local caller a choice from the caller's own account by its full label", async () => {
   const failure = await outcomeOf(
     `, { field: "size", available: ["One Size", { label: "Size 12 Example Rd", accountSpecific: true, maskedLabel: "Saved size" }, { label: "Size 14 Example Rd", accountSpecific: true }] }`,
   );
   expect(failure.outcome.details).toMatchObject({
-    available: ["One Size", "Saved size", "Saved option 3"],
+    available: ["One Size", "Size 12 Example Rd", "Size 14 Example Rd"],
   });
-  expect(failure.message).not.toContain("Example Rd");
 });
 
 // The local host repairs nothing, so its outcome for such a refusal is unchanged: the reason and
