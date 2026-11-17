@@ -645,9 +645,12 @@ ${siteMessageCode}
     successWords.test(message.text) &&
     !(saysError(message.text) || saysRefusal(message.text) || openWords.test(message.text) || /\b(?:not|no|never)\b|n't\b/i.test(message.text));
   // Whether a message refuses only as a form's own check of a field does, such as "required" or
-  // "please select": no words of an error, and none of a refusal once a field check's are left out.
+  // "please select": no words of an error, a decline or another choice, and none of a refusal once
+  // a field check's are left out.
   const fieldCheckWords = /${formControlMessageWords.source}/gi;
-  const fieldCheckOnly = (text) => !saysError(text) && !saysRefusal(words(text).replace(fieldCheckWords, " "));
+  const fieldCheckOnly = (text) =>
+    !saysError(text) && !openWords.test(text) && !/\b(?:another|different|later)\b/i.test(text) &&
+    !saysRefusal(words(text).replace(fieldCheckWords, " "));
   return { saysError, succeeds, fieldCheckOnly, messages, messagesInPage, read: (page) => page.locator(messages).evaluateAll(messagesInPage), messageCounts, judgeMessages };
 })();
 // Whether this call already began a wait: in a commit's call only the first reads the site's
@@ -1502,10 +1505,10 @@ const waitForChange = async (fields, options = {}) => {
  * - `outcome_refused`, in place of `outcome_unknown`, when the wait's `action` is a commit's click
  *   (the call's first wait, with an `action`, in the call the script sends right after its
  *   `enteringCommit`, which the runtime declares as `__pomeradoCommitting`) and the page shows a
- *   message new since the click that `confirmCommit` judges not done from, unless it refuses only
- *   as a form's own check of a field does, such as "required" or "please select", or, with a dialog
+ *   message new since the click that `confirmCommit` judges not done from, or, with a dialog
  *   outcome named, a native dialog no outcome names says the write failed, as `confirmCommit` reads
- *   one. A request that may write, to any host, sent since the click, keeps it `outcome_unknown`
+ *   one. A message that refuses only as a form's own check of a field does, such as "required" or
+ *   "please select", is not the site's refusal. A request that may write, to any host, sent since the click, keeps it `outcome_unknown`
  *   while it has no answer, or once it got a server error. Its `evidence` has the site's words:
  *   `messages`, or the dialog's `type` and `message`. The runtime then puts the step back unsent,
  *   as `notCommitted(name, { siteRefused: true })` does. The wait takes its `action` for the commit's

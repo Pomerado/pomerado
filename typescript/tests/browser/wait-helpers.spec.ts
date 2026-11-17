@@ -439,7 +439,7 @@ test("after a commit's click, only a new message confirmCommit judges not done e
     { name: "an error beside a success", before: "", after: '<div role="alert">Order submitted. We could not send the receipt, please try again later</div>', reason: "outcome_unknown" },
     { name: "an error banner shown before the click", before: '<div role="alert">Payment failed</div>', after: "", reason: "outcome_unknown" },
     { name: "a form's own check of a field", before: "", after: '<p class="error">Please select a tip. This field is required.</p>', reason: "outcome_unknown" },
-    { name: "a refusal beside a field check's words", before: "", after: '<p class="error">We could not place your order. Please select another card.</p>', reason: "outcome_refused" },
+    { name: "a decline that asks for another choice", before: "", after: '<p class="error">Your payment was declined. Please choose another payment method.</p>', reason: "outcome_refused" },
   ];
   for (const each of cases) {
     await page.setContent(`
