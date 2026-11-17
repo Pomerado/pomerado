@@ -555,9 +555,10 @@ export const batchRead = (
  *   2xx), `not_json`,
  *   `blocked`, `network` or `not_sent`. `stopped` is null, or `{ reason, index }` with `reason` `blocked`,
  *   `rate_limited` or `budget`.
- * - A fetch that fails without an answer after an earlier fetch in the call was answered, as a 429
- *   without the site's cross-origin header does in the page, counts as a throttle with no
- *   `Retry-After`, its `error` still `network`. A fetch past its `timeoutMs` does not.
+ * - In a batch whose fetches all fail without an answer, after an earlier fetch in the call was
+ *   answered, as 429s without the site's cross-origin header do in the page, each counts as a
+ *   throttle with no `Retry-After`, its `error` still `network`. A fetch past its `timeoutMs`
+ *   does not.
  *
  * When `stopped` is `blocked` or `rate_limited`, return it from the call and fail the read in the
  * script, after `waitPastChallenge` when the page shows a challenge, as the core skill's 429 rule
@@ -588,6 +589,7 @@ const batchFetch = async (requests, options = {}) => {
     const batchRateLimitResetMs = ${batchRateLimitResetMs.toString()};
     const snippetOf = (text) => text.replace(/\s+/g, " ").slice(0, 300);
     let answeredOnce = false;
+    let batch;
     const run = await adaptiveBatch(requests.length, async (index) => {
       const request = requests[index];
       const as = request.as === "text" ? "text" : "json";
@@ -595,6 +597,18 @@ const batchFetch = async (requests, options = {}) => {
       if (as === "json" && !headers.has("accept")) headers.set("accept", "application/json");
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), settings.timeoutMs);
+      // A batch's fetches all start before any settles, so one that finds none open starts a batch.
+      if (batch === undefined || batch.open === 0) {
+        let settle;
+        batch = { open: 0, answered: false, settled: new Promise((resolve) => (settle = resolve)) };
+        batch.settle = settle;
+      }
+      const own = batch;
+      own.open += 1;
+      const close = () => {
+        own.open -= 1;
+        if (own.open === 0) own.settle();
+      };
       try {
         let response;
         try {
@@ -605,9 +619,13 @@ const batchFetch = async (requests, options = {}) => {
             credentials: "include",
             signal: controller.signal,
           });
+          own.answered = true;
           answeredOnce = true;
+          close();
         } catch (error) {
-          return { kind: answeredOnce && !controller.signal.aborted ? "throttled" : "answered", value: { ok: false, error: "network", snippet: snippetOf(String(error?.message ?? error)) } };
+          close();
+          await own.settled;
+          return { kind: answeredOnce && !own.answered && !controller.signal.aborted ? "throttled" : "answered", value: { ok: false, error: "network", snippet: snippetOf(String(error?.message ?? error)) } };
         }
         const contentType = response.headers.get("content-type") ?? "";
         const text = await response.text();

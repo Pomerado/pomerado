@@ -490,7 +490,7 @@ describe("batchFetch in the page", () => {
     expect(answer?.results).toMatchObject([{ ok: false, error: "network" }]);
   });
 
-  it("halves and waits once fetches fail without an answer after 20 answered, as a 429 without CORS headers does", async () => {
+  it("halves and waits once a whole batch's fetches fail without an answer after 20 answered, as 429s without CORS headers do", async () => {
     vi.useFakeTimers();
     const sentAt: number[] = [];
     vi.stubGlobal("fetch", async (url: string) => {
@@ -501,9 +501,10 @@ describe("batchFetch in the page", () => {
     const pending = runBatchFetch(Array.from({ length: 40 }, (_, index) => ({ url: itemUrl(index) })));
     await vi.advanceTimersByTimeAsync(10_000);
     const answer = await pending;
-    expect(answer.batches).toEqual([16, 16, 8, 4]);
-    expect((sentAt[32] ?? 0) - (sentAt[31] ?? 0)).toBe(batchReadDefaults.backoffMs);
-    expect(answer.stopped).toEqual({ reason: "rate_limited", index: 20 });
+    // The second batch holds answers, so its failures stay network errors; the third fails whole.
+    expect(answer.batches).toEqual([16, 16, 8, 8]);
+    expect((sentAt[40] ?? 0) - (sentAt[39] ?? 0)).toBe(batchReadDefaults.backoffMs);
+    expect(answer.stopped).toEqual({ reason: "rate_limited", index: 32 });
   });
 
   it("returns a network error for each request, without stopping, when every fetch fails from the first", async () => {
@@ -516,19 +517,33 @@ describe("batchFetch in the page", () => {
     expect(answer.results.map((result) => result.error)).toEqual(Array.from({ length: 40 }, () => "network"));
   });
 
-  it("does not count a fetch past its own timeout as a throttle, after another was answered", async () => {
+  it("returns a network error, without slowing or stopping, for requests that always fail among answered ones", async () => {
+    const failing = new Set([5, 17, 35, 36, 37, 38, 39]);
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (failing.has(idOf(url))) throw new TypeError("Failed to fetch");
+      return new Response(JSON.stringify({ id: idOf(url) }), { headers: { "content-type": "application/json" } });
+    });
+    const answer = await runBatchFetch(Array.from({ length: 40 }, (_, index) => ({ url: itemUrl(index) })));
+    expect(answer.batches).toEqual([16, 16, 8]);
+    expect(answer.stopped).toBeNull();
+    expect(answer.results.map((result) => (result.ok ? "ok" : result.error))).toEqual(
+      Array.from({ length: 40 }, (_, id) => (failing.has(id) ? "network" : "ok")),
+    );
+  });
+
+  it("does not count a batch of fetches past their own timeout as a throttle, after others were answered", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("fetch", (url: string, init: RequestInit) =>
-      url === itemUrl(0)
-        ? Promise.resolve(new Response(JSON.stringify({ id: 0 }), { headers: { "content-type": "application/json" } }))
+      idOf(url) < 16
+        ? Promise.resolve(new Response(JSON.stringify({ id: idOf(url) }), { headers: { "content-type": "application/json" } }))
         : new Promise((_resolve, reject) => init.signal?.addEventListener("abort", () => reject(new Error("aborted")))),
     );
-    const pending = runBatchFetch([{ url: itemUrl(0) }, { url: itemUrl(1) }]);
+    const pending = runBatchFetch(Array.from({ length: 17 }, (_, index) => ({ url: itemUrl(index) })));
     await vi.advanceTimersByTimeAsync(60_000);
     const answer = await pending;
-    expect(answer.batches).toEqual([2]);
+    expect(answer.batches).toEqual([16, 1]);
     expect(answer.stopped).toBeNull();
-    expect(answer.results.map((result) => (result.ok ? "ok" : result.error))).toEqual(["ok", "network"]);
+    expect(answer.results[16]).toMatchObject({ ok: false, error: "network" });
   });
 
   it("returns results in input order and stops at a block, marking the rest not sent", async () => {
