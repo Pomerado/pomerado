@@ -804,6 +804,20 @@ it("lets the minter record a sign-in submit the page has not enabled yet", async
   expect(auth).not.toContain("enabled submit");
 });
 
+// The email-link step asks the owner to paste the newest link the site emailed, so a request that
+// rules out pasting one prefers its own fallback over that step.
+it("tells the minter the email-link step asks the owner to paste the emailed link", async () => {
+  const skills = await Effect.runPromise(loadAuthoringSkills("typescript/authoring"));
+  const auth = (contents(skills)[skills.findIndex((skill) => skill.name === "auth")] ?? "").replace(
+    /\s+/g,
+    " ",
+  );
+  expect(auth).toContain(
+    "After the identifier is submitted, the host asks the owner to approve a device, or to paste the newest link the site emailed. When the request rules out pasting a link or code, prefer its own fallback over the email-link step.",
+  );
+  expect(auth).not.toContain("protected confirmation");
+});
+
 // A local build asks for a username, email, phone or account number as text, which the terminal
 // shows, and records a verified sign-in's screens as a recipe that each run of the tool replays.
 it("tells the local minter how its sign-in values are asked, what it records and what a run does with it", async () => {
@@ -1623,7 +1637,7 @@ it("renders the pinned standalone authoring", async () => {
   ]).toStrictEqual([
     ["761c7ebfe3f6d6068cf97b266a4ba8350eb4e00bf16d44e7c323e47088846852", "core"],
     ["7c3be765ee7c1c62b13a4876cc5453bbeb8acc7948b51511574f36f2aed09c4a", "search"],
-    ["b64347efc8ee8a099cd2ac3f6550bdbe5425765f0b43d89011167a87b0c91151", "auth"],
+    ["5918d38595593c4dfbf5028322c5b678c3082d6c473573f454f53f511b2f5f53", "auth"],
     ["539abe36b602c8e2eff8745dd0462aea41837a20cc0b90cbef7a01cbad6fb89a", "testing"],
     ["d524204c6ed2dc0fa773d6e5cf0aef993e2b48ee9db3fcbf291e40ebe8c9913d", "pagination"],
     ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
