@@ -40,7 +40,7 @@ const { decodeKernelOperationInput } = await import("../runtime/kernel-operation
 const { contractJsonSchema, executeOperation } = await import("../runtime/operation.js");
 const { HttpFailure, HttpFailureCode, SiteHttp } = await import("../runtime/site-http.js");
 const { makeSiteHttp } = await import("../runtime/site-http-host.js");
-const { ExecutionContext, makeEffectJournal } = await import("../runtime/context.js");
+const { ExecutionContext, makeEffectJournalWith } = await import("../runtime/context.js");
 const { Deadline } = await import("../runtime/deadline.js");
 const { makeKernelCompatibility } = await import("../runtime/kernel-compatibility.js");
 const { InvalidInput, InvalidOutput } = await import("../runtime/errors.js");
@@ -54,7 +54,8 @@ const { InputAnswers } = await import("../runtime/input-request.js");
 const { DialogChoice, DialogFailure } = await import("../runtime/dialogs.js");
 const { SessionSignInAnswer } = await import("../runtime/session-sign-in.js");
 const { ScriptCardFillAnswer } = await import("../runtime/script-card-fill.js");
-const { FileOutput, FileRefusalReason, FileRefused, PlacedFile } = await import("../runtime/files.js");
+const { CollectedDownload, FileOutput, FileRefusalReason, FileRefused, PlacedFile } =
+  await import("../runtime/files.js");
 const refusalOf = (detail: {
   readonly field?: string;
   readonly available?: readonly string[];
@@ -156,7 +157,9 @@ const start = await Effect.runPromise(
     });
   }),
 );
-const baseJournal = await Effect.runPromise(makeEffectJournal);
+const baseJournal = await Effect.runPromise(
+  makeEffectJournalWith({ settledCommits: start.settledCommits ?? [] }),
+);
 const journalState = Effect.gen(function* () {
   const confirmation = yield* baseJournal.confirmation;
   return {
@@ -180,8 +183,8 @@ const journal: typeof baseJournal = {
   confirmed: (confirmation) =>
     baseJournal.confirmed(confirmation).pipe(Effect.tap(() => publishJournal)),
   verified: baseJournal.verified.pipe(Effect.tap(() => publishJournal)),
-  declareCommits: (names) =>
-    baseJournal.declareCommits(names).pipe(Effect.tap(() => publishJournal)),
+  declareCommits: (names, settings) =>
+    baseJournal.declareCommits(names, settings).pipe(Effect.tap(() => publishJournal)),
 };
 /** The script's `ask`: each question goes to the host, which asks only declared ones. */
 const childScriptInput = (
@@ -191,7 +194,16 @@ const childScriptInput = (
   makeScriptInput(
     questions,
     (request, opened) =>
-      call({ kind: "ask", request }, opened).pipe(
+      call({ kind: "ask", request }, () => {
+        // An opened browser hand-off puts the page in a person's hands, as a page call does,
+        // unless the write already recorded its confirmation (as `markHandOff` checks).
+        if (
+          request.questions.some((question) => question.type === "browser_handoff") &&
+          Effect.runSync(journal.confirmation) === undefined
+        )
+          Effect.runSync(journal.enteringDispatch);
+        opened();
+      }).pipe(
         Effect.flatMap((value) => Schema.decodeUnknown(InputAnswers)(value)),
         Effect.mapError(
           (error) =>
@@ -244,6 +256,7 @@ const executeLocally = (operation: Parameters<typeof executeKernelOperation>[0])
     };
     return yield* executeKernelOperation(operation, start.input, {
       kernel,
+      ...(start.effect === undefined ? {} : { effect: start.effect }),
       ...(start.files === true && start.offline !== true
         ? {
             files: {
@@ -268,6 +281,18 @@ const executeLocally = (operation: Parameters<typeof executeKernelOperation>[0])
                 ),
               collect: (request) =>
                 call({ kind: "file_collect", ...request }).pipe(
+                  Effect.flatMap((value) => Schema.decodeUnknown(FileOutput)(value)),
+                  Effect.mapError((error) => fileRefusal(localError(error))),
+                ),
+              collectAll: (request) =>
+                call({ kind: "file_collect_all", ...request }).pipe(
+                  Effect.flatMap((value) =>
+                    Schema.decodeUnknown(Schema.Array(CollectedDownload))(value),
+                  ),
+                  Effect.mapError((error) => fileRefusal(localError(error))),
+                ),
+              screenshot: (request) =>
+                call({ kind: "file_screenshot", ...request }).pipe(
                   Effect.flatMap((value) => Schema.decodeUnknown(FileOutput)(value)),
                   Effect.mapError((error) => fileRefusal(localError(error))),
                 ),

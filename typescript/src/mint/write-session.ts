@@ -60,12 +60,13 @@ const labelledWriteUncertainty = (commit: CommitEvidence | undefined) =>
 
 /**
  * The receipt of an act step that failed after it may have committed its write. The host never
- * blocks or resubmits a write; the minter verifies by reading back, then decides. A commit request
- * the site answered 2xx or 3xx lets that read be the write's own result, on the page as it stands
- * or looked up on another page such as a list.
+ * blocks or resubmits a write; the minter verifies by reading back, the page first and the account
+ * only when the page can't tell, then decides. A commit request the site answered 2xx or 3xx, with
+ * a readable body showing no error, lets that read be the write's own result, on the page as it
+ * stands or looked up on another page such as a list.
  */
 const labelledWriteNotice = (commit: CommitEvidence | undefined) =>
-  `This act step did not complete after ${labelledWriteUncertainty(commit)}, so the write may already be committed. Before any further write, verify: run an act step that only reads the page or the account and learns whether the write happened. When this step's stateChangingRequests shows its commit request to the site returned 2xx or 3xx, that step may read back the write's own result, the record it just created or changed: on the page as it stands, or looked up on another page such as a list. Check it shows no error or validation message, read what the output needs, and call verified() there. Reading is allowed; a second write is not. A 200 whose body reports an error, as GraphQL can, did not go through. Read the site's own proof for such a commit, as for an error status, since part of it may have applied. A 202, or a 2xx whose body says the work is queued, counts too: return the site's own status word for it, such as Queued, in the output. If the write happened, record it with verified() in that step and publish against it; never submit the write again. If the read-back shows nothing happened, you may submit the write again with the caller's values and read its confirmation. Either way, adjust the composed script to what actually works end to end. The host never resubmits a write for you.`;
+  `This act step did not complete after ${labelledWriteUncertainty(commit)}, so the write may already be committed. Before any further write, verify: run an act step that only reads the page, or the account only when the page can't tell, and learns whether the write happened. When this step's stateChangingRequests shows its commit request to the site returned 2xx or 3xx, with a body you can read showing no error, that step may read back the write's own result, the record it just created or changed: on the page as it stands, or looked up on another page such as a list. Check it shows no error or validation message, read what the output needs, and call verified() there. Reading is allowed; a second write is not. A 200 whose body reports an error, as GraphQL can, did not go through. Read the site's own proof for such a commit, as for an error status, since part of it may have applied. A 202, or a 2xx whose body says the work is queued, counts too: return the site's own status word for it, such as Queued, in the output. If the write happened, record it with verified() in that step and publish against it; never submit the write again. If the read-back shows nothing happened, you may submit the write again with the caller's values and read its confirmation. Either way, adjust the composed script to what actually works end to end. The host never resubmits a write for you.`;
 
 /**
  * What an act step Guardian labelled a write asks of the minter when it did not complete: read
@@ -120,6 +121,33 @@ export const sessionEnteredMarks = (steps: readonly WriteSessionMarks[]) => {
   });
   return entered;
 };
+
+/**
+ * The commit marks no later act step of the session may enter, with the steps that may have sent
+ * each: every mark a step entered, or streamed when its result was lost, unless the outcome review
+ * found that step's write `not_done`. A host runs each later act step with them settled
+ * (`makeEffectJournalWith`), so entering one fails with `CommitAlreadySent` before it sends,
+ * whatever file the step runs. A mark a step put back unsent (`notCommitted`) is not entered.
+ */
+export const fencedCommits = (
+  steps: readonly {
+    readonly executionId: string;
+    readonly enteredMarks: readonly string[];
+    readonly streamedMarks?: readonly string[] | undefined;
+    readonly assessment?: OutcomeAssessment["outcome"] | undefined;
+  }[],
+): ReadonlyMap<string, readonly string[]> => {
+  const fenced = new Map<string, string[]>();
+  for (const step of steps)
+    if (step.assessment !== "not_done")
+      for (const name of new Set([...step.enteredMarks, ...(step.streamedMarks ?? [])]))
+        fenced.set(name, [...(fenced.get(name) ?? []), step.executionId]);
+  return fenced;
+};
+
+/** What an act step hears when it stopped at commit step `mark`, which `writes` may have sent. */
+export const fencedCommitNotice = (mark: string, writes: readonly string[]) =>
+  `This step stopped at commit step \`${mark}\` before sending it: an earlier step may already have sent it (${writes.join(", ")}). A commit step that may have gone out is never entered again, from any file, unless an outcome review finds that write did not happen. Prefer reading back the page, or the account only when the page can't tell, in a step that changes nothing.`;
 
 /**
  * How many steps lead the path as setup steps: those before its first other step, and never its
@@ -201,7 +229,7 @@ export const writePathRefusal = (
       ? undefined
       : "A write build's first act step declares writePath before anything is sent: in steps, each step that saves or submits on the site through to the outcome the request asks for, by the commit mark its helper enters, in order, and none when the request ends before any save, never a step that saves nothing; in ends, what the last step leaves the caller with. Guardian reviews the path as publication will review the tool, and the session runs until every mark on it is entered. Add writePath and execute again. Nothing was executed.";
   if (submitted.writePath.steps.length === 0 && host.publishOnReadBack !== true)
-    return "writePath names no step, and this host publishes only a write that saves on the site. When the request ends before any save, end with report_blocked and say so. Nothing was executed.";
+    return "writePath names no step, and this host publishes only a write that saves on the site. When the request itself ends before any save, such as one that fills a form and stops before it submits, end with report_blocked, reason caller_input, with an intent quoting the words of the request that stop it there; no host check refused anything, so host_refused is not the reason. Nothing was executed.";
   const misplaced = setupMisplaced(submitted.writePath);
   if (misplaced.length > 0)
     return `A setup step only comes before every other step of writePath, and its last step, which reaches the outcome, is never one. Remove setup: ${misplaced.join(", ")}. Nothing was executed.`;

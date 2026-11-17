@@ -1,4 +1,5 @@
 import { Cause, Effect, Option } from "effect";
+import { timeoutDefaults } from "./deadline.js";
 import { OperationFailure } from "./operation-failure.js";
 import { answer, described } from "./http-operation.js";
 import type { HttpFailure, SiteHttpRequest, SiteHttpResult, SiteHttpService } from "./site-http.js";
@@ -9,13 +10,17 @@ import type { HttpFailure, SiteHttpRequest, SiteHttpResult, SiteHttpService } fr
  * version's `SiteHttp`; `batchFetchCode` declares `batchFetch`, which sends them with the page's
  * own `fetch` inside one `evaluate`. Both run the same loop:
  *
- * - Requests go out in batches, `start` (4) at once. After a batch with no throttle or block,
- *   the next batch is half as large again, rounded up, up to `max` (16, which no option raises).
- *   Once the site has throttled, it grows by one per clean batch instead.
- * - A throttle is a 429, a 503 or any other 5xx, such as a 529, or an answer whose rate-limit
- *   headers say no request remains: `RateLimit-Remaining: 0`, or a `RateLimit` header whose
- *   policy has `r=0`. A throttled batch never makes the next one larger: it halves the batch size
- *   (at least 1), waits the longest `Retry-After` in the batch, else the site's `RateLimit-Reset`,
+ * - Requests go out in batches, `start` (16, as many as a host's relay sends at once) at once.
+ *   After a batch with no throttle or block, the next batch is half as large again, rounded up,
+ *   up to `max` (16, which no option raises). Once the site has throttled, it grows by one per
+ *   clean batch instead.
+ * - Each request that names no `timeoutMs` of its own gets `timeoutDefaults.httpRead` (8 s), so
+ *   one the site never answers holds its batch for seconds, not a minute.
+ * - A throttle is a 429, a 503 or any other 5xx, such as a 529, a rate limit in another shape
+ *   (`classifyBatchAnswer`: a 418 or 420 naming its wait, a 2xx JSON answer saying 429), or an
+ *   answer whose rate-limit headers say no request remains: `RateLimit-Remaining: 0`, or a
+ *   `RateLimit` header whose policy has `r=0`. A throttled batch never makes the next one larger:
+ *   it halves the batch size (at least 1), waits the longest `Retry-After` in the batch, else the site's `RateLimit-Reset`,
  *   or a backoff that doubles from `backoffMs` without either, and sends the throttled requests
  *   again first, each at most `maxAttempts` times in all. A wait longer than `maxWaitMs` stops the
  *   batch as `rate_limited`, since waiting it out would outlast the call. So do two batches in a
@@ -33,14 +38,14 @@ import type { HttpFailure, SiteHttpRequest, SiteHttpResult, SiteHttpService } fr
  */
 
 /** The batch size: where it starts, the most it reaches and the least it falls to. */
-export const batchReadConcurrency = { start: 4, max: 16, min: 1 } as const;
+export const batchReadConcurrency = { start: 16, max: 16, min: 1 } as const;
 
 /** The loop's defaults: tries per request, the longest wait, the first backoff, a fetch's limit. */
 export const batchReadDefaults = {
   maxAttempts: 3,
   maxWaitMs: 10_000,
   backoffMs: 1_000,
-  timeoutMs: 15_000,
+  timeoutMs: timeoutDefaults.httpRead,
 } as const;
 
 /** How the site answered one send, as the loop sorts it. */
@@ -237,22 +242,70 @@ export async function adaptiveBatch<A>(
 
 /**
  * Sorts one answer: a block, a throttle or the site's answer. `challenge` is the host's finding;
- * `expectJson` says the request asked for JSON. Pasted into the page with `adaptiveBatch`.
+ * `expectJson` says the request asked for JSON; `retryAfter` is the answer's `Retry-After` and
+ * `body` its text, both empty when unknown. Besides a 429 and a 5xx, a throttle is a 418 or 420
+ * (statuses some edges send for a rate limit) that names its wait or says it is a rate limit, and
+ * a short 2xx JSON answer that holds only an error and no data, whose status is the number 429 or
+ * whose error is a rate limit. Self-contained: it is pasted into the page with `adaptiveBatch`.
  */
 export function classifyBatchAnswer(
   status: number,
   contentType: string,
   challenge: boolean,
   expectJson: boolean,
+  retryAfter = "",
+  body = "",
 ): BatchAnswerKind {
   const json = /json/i.test(contentType);
   const html = /html/i.test(contentType);
+  const limitWords = /\b(?:rate[\s_-]?limit(?:ed|s)?|too many requests|throttled)\b/i;
   if (challenge) return "blocked";
   if (status === 429) return "throttled";
+  if ((status === 418 || status === 420) && (retryAfter.trim() !== "" || limitWords.test(body.slice(0, 4096))))
+    return "throttled";
   if (status === 403 && !json) return "blocked";
   if (status === 503) return expectJson && html ? "blocked" : "throttled";
   if (status >= 500 && status < 600) return "throttled";
   if (status >= 200 && status < 300 && expectJson && html) return "blocked";
+  if (status >= 200 && status < 300 && json && body.length <= 16_384) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      return "answered";
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return "answered";
+    const record = parsed as Record<string, unknown>;
+    const keys = Object.keys(record);
+    const statusKey = /^(?:code|status|statuscode|status_code|httpstatus|http_status|errorcode)$/i;
+    const errorKey = /^(?:errors?|message|msg|detail|description)$/i;
+    const metaKey = /^(?:data|success|ok|request_?id|trace_?id|timestamp|path)$/i;
+    // Only an error answer, with no data beside it, is a rate limit: a record whose `code` holds
+    // "429", or a partial answer with an error beside its results, is the site's data.
+    const errorOnly =
+      keys.every((key) => statusKey.test(key) || errorKey.test(key) || metaKey.test(key)) &&
+      (record["data"] === undefined || record["data"] === null) &&
+      keys.some((key) => errorKey.test(key));
+    if (!errorOnly) return "answered";
+    if (keys.some((key) => statusKey.test(key) && record[key] === 429)) return "throttled";
+    const limitCode = /^(?:RATE_?LIMIT(?:ED|_EXCEEDED)?|TOO_MANY_REQUESTS|THROTTLED|429)$/i;
+    const errors = [record["errors"], record["error"], record["message"]].flatMap((value) =>
+      Array.isArray(value) ? value : value === undefined ? [] : [value],
+    );
+    const limitError = errors.some((error) => {
+      if (typeof error === "string") return limitWords.test(error);
+      if (typeof error !== "object" || error === null) return false;
+      const entry = error as Record<string, unknown>;
+      const extensions = (typeof entry["extensions"] === "object" && entry["extensions"] !== null
+        ? entry["extensions"]
+        : {}) as Record<string, unknown>;
+      return (
+        [entry["code"], extensions["code"]].some((code) => limitCode.test(String(code ?? ""))) ||
+        limitWords.test(String(entry["message"] ?? ""))
+      );
+    });
+    if (limitError) return "throttled";
+  }
   return "answered";
 }
 
@@ -324,7 +377,7 @@ const settingsOf = (options: BatchReadOptions, clock: BatchClock): BatchSettings
 export type BatchReadRequest = SiteHttpRequest & { readonly write?: boolean };
 
 export interface BatchReadOptions {
-  /** Requests in the first batch, from 1 to 16; 4 by default. */
+  /** Requests in the first batch, from 1 to 16; 16 by default. */
   readonly start?: number;
   /** The most in one batch, from 1 to 16; 16 by default. Lower it for a site that refuses more. */
   readonly max?: number;
@@ -348,7 +401,10 @@ export type BatchReadItem =
   | { readonly ok: true; readonly response: SiteHttpResult }
   | {
       readonly ok: false;
-      /** `throttled`: its last answer was a 429 or 5xx; `failed`: `SiteHttp` failed it; `not_sent`. */
+      /**
+       * `throttled`: its last answer was a 429, a 5xx or another rate limit; `failed`: `SiteHttp`
+       * failed it; `not_sent`.
+       */
       readonly reason: "throttled" | "failed" | "not_sent";
       readonly response?: SiteHttpResult;
       readonly failure?: HttpFailure;
@@ -399,7 +455,8 @@ export const batchRead = (
         async (index) => {
           const request = requests[index];
           if (request === undefined || signal.aborted) throw new Error("not sent");
-          const { write: _write, ...siteRequest } = request;
+          const { write: _write, ...named } = request;
+          const siteRequest = { ...named, timeoutMs: named.timeoutMs ?? timeoutDefaults.httpRead };
           const exit = await Effect.runPromiseExit(http.request(siteRequest), { signal });
           if (exit._tag === "Failure") {
             const failure = Option.getOrUndefined(Cause.failureOption(exit.cause));
@@ -422,6 +479,8 @@ export const batchRead = (
             contentType,
             response.challenge === true,
             /json/i.test(accept),
+            header("retry-after"),
+            response.body.byteLength <= 16_384 ? new TextDecoder().decode(response.body) : "",
           );
           return {
             kind,
@@ -488,11 +547,12 @@ export const batchRead = (
  *   `accept`) or `"text"`. A write refuses the whole batch with an `Error` named
  *   `BatchFetchRefused` before anything is sent.
  * - `options` takes `start`, `max`, `maxAttempts`, `maxWaitMs`, `backoffMs` and `timeoutMs` (each
- *   fetch's limit, 15 s by default), and `budgetMs`: pass the call's remaining time, less a
+ *   fetch's limit, 8 s by default), and `budgetMs`: pass the call's remaining time, less a
  *   margin, so it returns before the call's timeout with `not_sent` for what it kept back.
  * - `results` holds one entry per request, in input order: `{ ok: true, status, data }` (`data`
  *   the parsed JSON or the text), or `{ ok: false, status?, error, snippet? }` with `error` one
- *   of `throttled` (a 429 or 5xx), `http_status` (another status outside 2xx), `not_json`,
+ *   of `throttled` (a 429, a 5xx or another rate limit), `http_status` (another status outside
+ *   2xx), `not_json`,
  *   `blocked`, `network` or `not_sent`. `stopped` is null, or `{ reason, index }` with `reason` `blocked`,
  *   `rate_limited` or `budget`.
  *
@@ -546,7 +606,7 @@ const batchFetch = async (requests, options = {}) => {
         }
         const contentType = response.headers.get("content-type") ?? "";
         const text = await response.text();
-        const kind = classifyBatchAnswer(response.status, contentType, false, /json/i.test(headers.get("accept") ?? ""));
+        const kind = classifyBatchAnswer(response.status, contentType, false, /json/i.test(headers.get("accept") ?? ""), response.headers.get("retry-after") ?? "", text);
         const status = response.status;
         const limitResetMs = batchRateLimitResetMs(response.headers.get("ratelimit-remaining"), response.headers.get("ratelimit-reset"), response.headers.get("ratelimit"));
         if (kind !== "answered")

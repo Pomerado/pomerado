@@ -37,11 +37,18 @@ import { withListHost, type ListHost } from "./list-host.js";
  * first step when the session's read-back showed the request's end state already in place, and
  * reports them as unproven until a run reaches them. A host may also accept, in a replacement of a
  * published tool, an earlier step its session's input skipped. Runs ignore it.
+ *
+ * `settings` names commit steps of `commits` whose click only changes a choice on the way to a
+ * later commit, such as a tip or a delivery slot saved at checkout, and cannot place, buy, book,
+ * send or charge anything by itself. A step that is not one comes after the last of them. A run
+ * that entered only these steps changed only those choices, so its refusal settles as not applied,
+ * naming them (`settingsOnlyWrite`). A host or tool from before it treats every step as a commit.
  */
 export interface WriteDeclaration {
   readonly confirmation: "message" | "readback" | "unverifiable";
   readonly commits?: readonly string[];
   readonly commitsUnproven?: readonly string[];
+  readonly settings?: readonly string[];
 }
 
 /**
@@ -205,9 +212,11 @@ export const executeOperation = <Input, EncodedInput, Output, EncodedOutput, Err
   Effect.gen(function* () {
     const context = yield* ExecutionContext;
     // Declared first, so every exit reports which commit steps were never reached.
-    const declared: unknown = operation.write?.commits;
+    const names = (declared: unknown) =>
+      Array.isArray(declared) ? declared.filter((name) => typeof name === "string") : [];
     yield* context.journal.declareCommits(
-      Array.isArray(declared) ? declared.filter((name) => typeof name === "string") : [],
+      names(operation.write?.commits),
+      names(operation.write?.settings),
     );
     // Every rejected path, not only the first, so one correction can fix them all.
     const input = yield* Schema.decodeUnknown(operation.input, { errors: "all" })(rawInput).pipe(

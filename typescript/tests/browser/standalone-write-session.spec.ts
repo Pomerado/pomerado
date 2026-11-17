@@ -183,6 +183,41 @@ test("publication refuses a composed write whose listed refusals the host can't 
   }
 });
 
+// The session's one act step met the site's no to the example before its save and returned it as
+// a refusal its output schema declares. Fails when the local host refuses that session as
+// `write_not_submitted` instead of publishing the write with its save step unproven.
+test("a write whose example ended in its declared refusal before the save publishes on that refusal", async () => {
+  test.setTimeout(90_000);
+  const fixture = noteSite();
+  const site = await fixture.start();
+  const guardian = recordingGuardian();
+  try {
+    const refusing = refusingSaveNote('Schema.Literal("saved")');
+    const { built, last } = await mint({
+      effect: "write",
+      url: site.url,
+      guardian,
+      turns: [
+        () =>
+          patch({
+            "src/save.mjs": refusing,
+            "src/tool.mjs": refusing.replace('commits:["save"]', '$&,commitsUnproven:["save"]'),
+          }),
+        () => [call("execute", act("src/save.mjs", { note: "" }, savePath), "save")],
+        (request) => [finish("src/tool.mjs", executionIdOf(request, "save"), "publish")],
+      ],
+    });
+    expect(toolResult(last, "save")).toMatchObject({ status: "completed" });
+    expect(toolResult(last, "save")).not.toHaveProperty("writePath");
+    expect(built.build, JSON.stringify(built)).toBe("published");
+    const publication = guardian.reviews.find((review) => review.kind === "publication");
+    expect(String(publication?.input["untrusted_observations"])).toContain("note_empty");
+    expect(fixture.saved).toEqual([]);
+  } finally {
+    await site.close();
+  }
+});
+
 test("the first act step that passes exampleInput fixes the session's input after steps on the caller's empty input", async () => {
   test.setTimeout(90_000);
   const fixture = noteSite();

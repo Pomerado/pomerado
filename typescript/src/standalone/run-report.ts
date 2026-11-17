@@ -12,6 +12,7 @@ import {
   failedRunOutcome,
   returnedRefusal,
   runnerVerified,
+  settingsOnlyWrite,
   unconfirmedWrite,
   validatedWriteNeeds,
   unenteredWrite,
@@ -97,8 +98,9 @@ export const returnedRun = (
       ),
     );
   const commits = commitReportOf(result);
-  // A declared refusal returned before any commit step changed nothing, so the write did not apply.
-  // Only a validated output declares one.
+  const journaled = journalEffect(result, revision);
+  // A declared refusal returned before any commit step, or after only setting steps, changed
+  // nothing more, so the write did not apply. Only a validated output declares one.
   const refusal =
     revision.effect === "write" && !drift
       ? returnedRefusal({
@@ -106,9 +108,9 @@ export const returnedRun = (
           output: result.output,
           commits: commits.evidence,
           runnerEffect: result.effect === "verified" ? "verified" : "may_have_dispatched",
+          settingsOnly: settingsOnlyWrite(journaled, commits.marks) !== undefined,
         })
       : undefined;
-  const journaled = journalEffect(result, revision);
   // A read holds no write authority, so its validated return completes it.
   const effect =
     revision.effect === "read"
@@ -203,7 +205,10 @@ const operationEvidence = (
     error.reported &&
     reason !== "no_response" &&
     unenteredWrite(base, report.marks);
-  const effect = unsent || (refused && unentered) ? "rejected" : base;
+  // The tool's own refusal after only setting steps changed only those choices.
+  const settings =
+    error.reported && reason === "invalid_input" ? settingsOnlyWrite(base, report.marks) : undefined;
+  const effect = unsent || (refused && unentered) || settings !== undefined ? "rejected" : base;
   return {
     status: "completed",
     effect,
@@ -223,6 +228,7 @@ const operationEvidence = (
     ...(reason === "invalid_input" && error.refusal?.kind !== undefined
       ? { refusal_kind: error.refusal.kind }
       : {}),
+    ...(settings === undefined ? {} : { settings_changed: settings }),
     ...(reason === "input_not_applied" ? unappliedEvidence(error) : {}),
   };
 };

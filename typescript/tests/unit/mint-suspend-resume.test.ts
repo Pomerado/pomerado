@@ -611,6 +611,69 @@ it("offers the host a takeover's rejoined question that expired unanswered", asy
   expect(last?.harness.noResponse).toBeUndefined();
 });
 
+// A takeover never learns how Guardian's question review read a rejoined question, so a write
+// repair's rejoined question that expired unanswered counts as asking consent, whatever the
+// minter marked: it is never handed back as no answer.
+it("never hands back a write repair's rejoined question that expired unanswered", async () => {
+  const writeRepair = { mode: "maintenance", effect: "write" } as const;
+  const repairHost = {
+    handBackWriteRepairQuestions: true,
+    reviewQuestion: () =>
+      Effect.succeed({
+        outcome: "allow_business" as const,
+        rationale: "Synthetic question review.",
+        label: "ambiguous_request" as const,
+      }),
+  } as const;
+  const store = recoveryStore();
+  const unmarked = { ...question, asksConsent: false };
+  const model = scriptedModel((index) =>
+    index === 0 ? call("request_input", unmarked, "ask") : prose(),
+  );
+  const first = await fixture(
+    () => prose(),
+    {
+      model: makeOpenAIMinter(model.provider, "medium", {}, { recoveryFactory: store.factory() }),
+      agentRecovery: { save: store.save },
+      ...repairHost,
+      // The first attempt's host stops before the question's window ends.
+      askInput: () => Effect.never,
+    },
+    writeRepair,
+  );
+  const stopped = new AbortController();
+  const asking = first.run(stopped.signal).catch(() => undefined);
+  for (let tries = 0; tries < 200 && first.asked.length === 0; tries += 1)
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  stopped.abort();
+  await asking;
+  const checkpoint = store.checkpoints.at(-1);
+  if (checkpoint === undefined) throw new Error("No checkpoint");
+  expect(checkpoint.agent.tools).toEqual([expect.objectContaining({ callId: "ask", state: "started" })]);
+  const offered: UnansweredQuestion[] = [];
+  const resumed = await fixture(
+    () => prose(),
+    {
+      model: makeOpenAIMinter(
+        model.provider,
+        "medium",
+        {},
+        { recoveryFactory: store.factory(checkpoint.agent) },
+      ),
+      agentRecovery: { save: store.save, initial: checkpoint, recoverTool: expiredRejoin },
+      ...repairHost,
+      suspendUnanswered: (unanswered) =>
+        Effect.sync(() => {
+          offered.push(unanswered);
+          return "suspended" as const;
+        }),
+    },
+    writeRepair,
+  );
+  await resumed.run().catch(() => undefined);
+  expect(offered).toEqual([{ step: "question", possibleCommit: false }]);
+});
+
 const request = {
   mode: "mint",
   intent: "Read public data",

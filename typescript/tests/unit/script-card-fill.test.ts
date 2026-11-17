@@ -106,7 +106,7 @@ describe("a script's card questions and fillCard", () => {
     }[] = [];
     const { result, asked } = await run(booking, ({ step, handles }) =>
       Effect.sync(() => {
-        const named = step.fields.map((field) => field.handle);
+        const named = step.fields.flatMap((field) => ("handle" in field ? [field.handle] : []));
         seen.push({ step, kinds: named.map(handles.kindOf), values: handles.cardValues(named) });
         return filledOutcome(["card_number", "card_cvc"]);
       }),
@@ -118,6 +118,7 @@ describe("a script's card questions and fillCard", () => {
     expect(result.right.output).toEqual({
       answer: { card: "{{card.c1}}", cvc: "{{card.c2}}", code: "551204" },
       filled: {
+        outcome: "filled",
         fields: [
           { slot: "card_number", status: "filled" },
           { slot: "card_cvc", status: "filled" },
@@ -194,7 +195,7 @@ describe("a script's card questions and fillCard", () => {
     );
     expect(called).toBe(false);
     expect(Either.isLeft(result) && result.left.message).toBe(
-      "fillCard takes one to four fields, each its own selector and a card handle ask returned, each handle once",
+      "fillCard takes one to four fields, each its own selector and a card handle ask returned, each handle once, or card slots with the checkout's total",
     );
     const plain = booking.replace(`handle: answer.cvc`, `handle: answer.code`);
     const second = await run(plain, () =>
@@ -205,6 +206,55 @@ describe("a script's card questions and fillCard", () => {
     );
     expect(called).toBe(false);
     expect(Either.isLeft(second.result)).toBe(true);
+  });
+
+  const slots = {
+    fields: [
+      { selector: "#number", slot: "card_number" },
+      { selector: "#cvc", slot: "card_cvc" },
+    ],
+    total: { amount: "1234.56", currency: "USD" },
+  };
+  const filling = (request: unknown) =>
+    operation(
+      `{name:"pay",input:Schema.Unknown,output:Schema.Unknown}`,
+      `async ({ fillCard }) => fillCard(${JSON.stringify(request)})`,
+    );
+
+  it("passes a slot request with the checkout's total to the host as the script sent it", async () => {
+    const seen: ScriptCardFillRequest[] = [];
+    const { result } = await run(filling(slots), ({ step }) =>
+      Effect.sync(() => {
+        seen.push(step);
+        return filledOutcome(["card_number", "card_cvc"]);
+      }),
+    );
+    if (Either.isLeft(result)) throw result.left;
+    expect(result.right.output).toEqual({
+      outcome: "filled",
+      fields: [
+        { slot: "card_number", status: "filled" },
+        { slot: "card_cvc", status: "filled" },
+      ],
+    });
+    expect(seen).toEqual([slots]);
+  });
+
+  it.each([
+    ["mixes a handle with a slot", { ...slots, fields: [slots.fields[0], { selector: "#cvc", handle: "{{card.c1}}" }] }],
+    ["names slots without the total", { fields: slots.fields }],
+    ["names a slot twice", { ...slots, fields: [slots.fields[0], slots.fields[0]] }],
+    ["gives a total with a thousands separator", { ...slots, total: { amount: "1,234.56", currency: "USD" } }],
+  ])("refuses a request that %s, before the host", async (_, request) => {
+    let called = false;
+    const { result } = await run(filling(request), () =>
+      Effect.sync(() => {
+        called = true;
+        return filledOutcome(["card_number"]);
+      }),
+    );
+    expect(called).toBe(false);
+    expect(Either.isLeft(result)).toBe(true);
   });
 });
 
@@ -316,6 +366,20 @@ describe("source that could read a typed card back", () => {
     expect(cardReadbackRefusal(files, { target: "liveBrowser" }, true)).toBe(
       `explore/look.mjs line 1 reads a field's value: ${rule}. Nothing was executed.`,
     );
+  });
+
+  // The host types no card in an explore step, so one may read the page until a card may be on it,
+  // even importing the file that fills it.
+  it("lets an explore step read the page until a card may be on it", () => {
+    const files = new Map([
+      ["src/flow.mjs", `export const chooseStore = async () => {};\n${fills}`],
+      ["explore/look.mjs", `import { chooseStore } from "../src/flow.mjs";\nreturn await page.locator("main").ariaSnapshot();`],
+    ]);
+    const refusal = `explore/look.mjs line 2 reads an accessibility snapshot: ${rule}. Nothing was executed.`;
+    expect(cardReadbackRefusal(files, { target: "liveBrowser", purpose: "explore" }, false)).toBeUndefined();
+    expect(cardReadbackRefusal(files, { target: "liveBrowser", purpose: "explore" }, true)).toBe(refusal);
+    expect(cardReadbackRefusal(files, { target: "liveBrowser", purpose: "act" }, false)).toBe(refusal);
+    expect(cardReadbackRefusal(files, { target: "liveBrowser" }, false)).toBe(refusal);
   });
 
   it("refuses nothing in source that never fills a card, or fills one and only acts", () => {

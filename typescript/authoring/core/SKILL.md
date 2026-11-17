@@ -130,6 +130,21 @@ pomerado:section core.execute-calls:end -->
   challenge, or `waitPastChallenge` throws there, prefer letting the call fail over retrying or
   looping inside the tool, or over returning the rows read so far: a host may give a blocked
   read another browser or one rerun, and only a failed call reaches it.
+- An answer that lacks the data you read is not always a changed page. A bot check often answers
+  with its own page in place of the site's, sometimes with status 200: a few KB where the site's
+  page is far larger, answered faster, with little visible text and none of the site's layout.
+  Before you treat the data as missing, compare the answer's status, size and title with the
+  example's, and tell which kind of check it is by what the page holds, not by its title, since
+  sites give both kinds the same titles, such as "Security Check":
+  - A check that clears by itself, one that holds a captcha frame or a script that reloads into
+    the site, such as an interstitial titled "Just a moment": on a page, name it as one answer of
+    the same wait and call `waitPastChallenge`.
+  - A refusal, a page with only static text that says the visitor was refused, such as "Access
+    Denied", or a short 403 or 200 that only refuses: it never clears, so never wait on it. Fail
+    the call at once as the block above, with `new errors.OperationFailure(message)` whose
+    message names the answer's status, size and title.
+  For a request the tool sent, both kinds fail the call that way, never as missing data. A site
+  that changed lacks the data on a new browser too; test that before you change a parser.
 - Never repeat a call that may have run.
 - When the site itself refuses a caller's value, such as a past date, an unknown airport code
   or a party size over its limit, throw `new errors.InvalidInput(message, { field })` saying why,
@@ -146,6 +161,12 @@ pomerado:section core.execute-calls:end -->
   page does not offer the caller's value, the repair makes the code throw with `available`,
   shows it with the caller's own input, and the run ends with those choices. A write that throws it before entering a commit mark reports that it changed nothing. A page,
   control or response that changed is still `OperationFailure`.
+- Give every error you throw a message that says what failed: the step, the record and field,
+  what the code expected and what it found, such as `item 4521: the detail answer has no price`
+  rather than `fields did not match`, naming IDs, fields and statuses, never a personal value.
+  The caller and a repair see only that message. Check an answer's shape before reading into it,
+  so a changed answer fails with your message, not a `TypeError` such as `Cannot read properties
+  of undefined`.
 - Check every rule the input alone breaks before any site action, such as a check-out on or
   before its check-in, a count below one or a past date, and throw `InvalidInput` at once. Hold
   in the input schema every rule it can express. The caller-input skill, "Validate it, and
@@ -167,10 +188,12 @@ request and the flow, never from one caller's account or example.
 
 A value the request's text supplies, such as a code, a quantity or a choice, is the build's to
 use even when the caller's structured input is empty: pass the request's values as
-`exampleInput`, as `AGENTS.md` says (`execute`), never as a build-time question. Decide from the request and the site which inputs are
+`exampleInput`, as `AGENTS.md` says (`execute`), never as a build-time question. Prefer making
+each value or choice the request makes an input, with the request's value as its example, also
+when the request words it as a rule for choosing. Decide from the request and the site which inputs are
 required. An optional input plus a declared question the tool asks before any effect is only for
 a value the request genuinely leaves open; never make a required field optional with nothing
-that asks. A choice the request or the owner's answer settled as how the tool behaves, such as
+that asks. A choice the request or the owner's answer states for every call, such as
 sorting by price or which kind of record it creates, is the tool's default, never a required
 input or a question at run time. When a caller could reasonably want another value, declare it
 with `defaultedInput(schema, answeredValue)` from the runtime, an optional input whose published
@@ -192,7 +215,11 @@ exception: it is optional unless the task can't run without it (below).
   never just the example's value. The example's values are one case, never limits.
 - Prefer keying only on what the caller asked for. A detail that changes from one listing to
   the next, such as a seating label or a room name, shouldn't decide whether the tool books or
-  refuses unless the caller chose it.
+  refuses unless the caller chose it. A tool's check guards what the caller asked for or what the
+  tool itself changes: it proves the caller's request before the step it guards and the tool's
+  own change after it, stops on anything else only for a problem the page shows, not for
+  something it can't find, and passes on every page where the task went right. A repair narrows
+  a check that stopped a run where the task went right, or removes it when it guards neither.
 - Read results for every option the schema lists. When an option leads to a page with a
   different structure (other fields or sections), handle that layout too, and on a read signed
   out run it live as a test case (testing skill); an option that only reorders or filters the
@@ -217,29 +244,62 @@ exception: it is optional unless the task can't run without it (below).
   and finds the record another way, such as by name, only when the caller gives none. A closed
   list of options stays an enum of the site's options, as above. When the options come from a
   query, as in a search box, autocomplete, typeahead or searchable combobox, look the value
-  up the way a person would, with `pickValue` from `pickerCode` (forms skill). It types the
-  caller's value into the site's own search, reads every suggestion, matches names loosely
-  (case, accents, spacing, punctuation, whole words, then the same words with their
-  comma-separated parts in another order, so a name with a neighborhood or an airport code in
-  brackets, or a station the site lists as "Station, City", still matches, but never a name with
-  words the value lacks, except with `extraWords: true` below), tries the usual other forms of
-  the value's words, such as 5th
-  and Fifth, St and Street or Saint, or a state's code and name, with a whole-name or code match
-  outranking a partial one, and counts the matches at the best rank. A value it lacks lists the
-  site's closest options first. A read of a category or term passes `stem: true`
-  so a caller's word also matches an option word it begins or that begins it, such as Dentist and
-  Dentistry, and returns the option it used (forms skill). With none, throw its `pickRefusal`, an
-  `InvalidInput` with `field` and `available`, the entries the site showed, except on a write
-  whose site offered exactly one suggestion for a free-text value the caller typed, never a
-  picker that selects a record: take it as the writes skill says for a value the site
-  rewrites. With one, use it. With several, decide per tool: take the first in the site's own
+  up the way a person would, with `pickValue` from `pickerCode` (forms skill), or with
+  `rankChoices` and `spellingsOf` on options read as data, as in an HTTP version, never with
+  matching of your own. A tool that narrows a search's result rows to the caller's text ranks
+  them with `rankChoices` and `spellingsOf` too, never with matching of its own: it returns the
+  best matches, and with none, the site's rows in the site's order as candidates, saying so.
+  With `rankChoices` on options or rows read as data, as in an HTTP version, take the clean
+  ranks from `cleanRanks` in `pomerado/runtime` and follow `pickValue`'s rule: a read takes the
+  best match at any rank and returns the option it used, and a write asks the caller about a
+  looser one.
+  `pickValue` types the caller's value into the site's own search,
+  reads every suggestion, tries the usual other forms of the value's words, such as 5th
+  and Fifth, St and Street or Saint, or a state's code and name, and picks the best match. A
+  clean match is a name that is the value as written or differs only in case, spacing, accents,
+  punctuation, a leading "the", a word written short or a singular or plural, an option's name
+  before its comma, or an option's first line followed by parts of its other lines, in their
+  order. With `rankChoices` and `leading: true`, that is a rank in `cleanRanks`, and rank
+  `place` needs options read with their `lines`. A match on an option's
+  first line alone is a candidate, never a pick, when an option a typeahead lists before it
+  holds the value's text before its first comma, as whole words, in its first line, and the
+  value's later comma parts in its text. In a read, a looser best match, such as a name with
+  words the value lacks, or the site's first result that shares a word with the value, is
+  picked with `loose: true`: return the option it used, as the site labels it. In a write,
+  `pickValue` returns it as `option_unclear`, with the site's options, each by its full text:
+  before the first commit mark, ask the caller with a declared choice question with
+  `allowOther`, offering `pickChoices(outcome)`, then pick the answer with `query` set to the
+  caller's value. An answer of their own, or an ask that fails as `Unavailable`, throws its
+  `pickRefusal`. A value it lacks lists the site's closest options first. With no match, throw
+  its `pickRefusal`, an
+  `InvalidInput` with `field` and `available`, the entries the site showed, even when the site
+  offered only one. With one, use it. With several, decide per tool: take the first in the site's own
   order and return the one it used, as the site labels it, or list those matches as the site
   labels them for the caller to choose one, each selecting exactly one, with a declared choice
   question (.agents/caller-input/SKILL.md) or `pickRefusal`, which lists them as `available`.
+  Resolve a typed address through the site's suggestions with `pickerTypeAddress`, then, once the
+  list shows every suggestion the site offers for it, `pickerMatchAddress` from `pickerCode`,
+  clicking the `row` it returns; or with `resolveAddress` from `pomerado/runtime` over the site's
+  own suggestion request, with `{ read: true }` after its `label` in a read. Fill the site's unit
+  field, or its second address line, with the `unit` it returns, return the suggestion it accepted
+  as the site's version of the address, and throw its `pickRefusal` only when it accepts none.
+  Never write address normalization or matching of your own, in the tool or in a file beside it:
+  no word lists, street-type or city tables, house-number, unit or postal-code comparisons,
+  regular expressions that split an address, similarity scores or "contains" tests. When the
+  helper's answer looks wrong for a site, refuse with its `available`; the fix belongs in the
+  helper, not in the tool. A site that takes the address as typed, such as a search or form that
+  goes on with the caller's text without a pick from its list, needs no match: type the caller's
+  text and read back what the site kept. Compare an address read back, there or before and after
+  a commit as the writes skill asks, with `readBackMatches(shown, wanted)` or `sameText` from
+  `pomerado/runtime` (Confirm, below), and an address the site rewrote as it was typed with
+  `sameText(shown, typed, { rewrite: true })` as the writes skill says, never with normalization
+  of your own. When a hosted
+  build's workspace guide names its own address helper, use that one instead of these.
 - Match the caller's proper nouns, such as places, venues and company names, with a fuzzy
   match that accepts the usual forms of the same name, such as a name with or without its
-  accents (Abaca for Abacá), a city alone or with its state and country, or a company with
-  or without Ltd. or Inc. Never require an exact match. `sameText` from `pomerado/runtime`
+  accents (Abaca for Abacá), or a city alone or with its state and country after a comma.
+  Never require an exact match. A name with words added or dropped is a looser match, which a
+  read picks and a write asks about, as above. `sameText` from `pomerado/runtime`
   matches a name that differs only in case, accents, spacing, apostrophes, periods, commas or
   hyphens, or in a word the site writes short, such as St-Jean for Saint-Jean, but not one
   with a word added or dropped. Prefer it for confirming the pick, so the read-back agrees with
@@ -248,14 +308,11 @@ exception: it is optional unless the task can't run without it (below).
   When more than one option matches equally, decide per tool: take the first in the site's
   order and return the one it used, as the site labels it, or list them for the caller to
   choose one, each selecting exactly one.
-- In a product or catalog search, unlike a proper noun, a result whose name has every word of
-  the caller's value, in any order, each as written or in its singular or plural form, matches
-  even with words the value lacks, when it names the item itself rather than something made from
-  it or flavored with it. A value with a number in it gets no such match. Take the closest match
-  first, as `pickValue` ranks matches, then the first in the site's order, since the site's own
-  ranking already weighs relevance. Return the one it used, as the site labels it. With none,
-  throw `InvalidInput` with `field` and `available`, the closest names first. `pickValue` matches
-  such names with `extraWords: true`, and takes the first with `tie: "first"`.
+- In a product or catalog search, a result whose name has every word of the caller's value
+  among words the value lacks is a looser match, which a read picks and a write asks about, as
+  above: with no match, throw
+  `InvalidInput` with `field` and `available`, the closest names first. `pickValue` finds
+  such names with `extraWords: true`.
 - Look up anything the caller names that the site can search, such as a place, business,
   product, provider or record, through the site's own search, typeahead or picker, rather than
   matching only the options the page already shows, such as a menu of popular choices or the
@@ -375,9 +432,10 @@ exception: it is optional unless the task can't run without it (below).
   string", is no description. Annotate the field's own schema, inside `Schema.optional(...)`
   for an optional one. Callers see each beside its name.
 - Shape inputs and outputs like Pomerado's own API, so every tool reads alike. A notation the
-  request states, such as amounts as decimal strings or signed amounts, always wins; follow it
-  and say so in the field's description. Otherwise: field names in snake_case; dates as
-  `YYYY-MM-DD` and timestamps as ISO 8601 with an offset; money as an integer in minor units
+  request states, such as amounts as decimal strings or signed amounts, always wins, but a time
+  always keeps its zone; follow it and say so in the field's description. Otherwise: field names
+  in snake_case; dates as `YYYY-MM-DD` and every time as an ISO 8601 timestamp with its zone's
+  offset; money as an integer in minor units
   with the ISO 4217 `currency` the page shows beside it, such as `total_minor` 12999 and
   `currency` `"EUR"` read from "€129.99", and an amount that can go either way, such as a
   ledger entry, unsigned with a field that says its direction, such as `direction` `"debit"`
@@ -387,8 +445,9 @@ exception: it is optional unless the task can't run without it (below).
   booleans named as statements (`refundable`, not `is_refundable_flag`); lists named in the
   plural; and the unit in the field name or its description (`duration_minutes`). Convert
   between these and the site's own formats in code. The output check flags a date or timestamp
-  not in the form its field declares, a value in another notation than its description names
-  and a currency that is not an ISO 4217 code (`format_mismatch`), a field whose description
+  not in the form its field declares, a value in another notation than its description names,
+  a currency that is not an ISO 4217 code and a bare clock time in a record that names no
+  `time_zone` (`format_mismatch`), a field whose description
   promises such a notation that no `pattern` holds (`unheld_format`), and one value in two
   letter cases across a list (`case_variant`).
 - When `reference/site-tools.json` exists, you can view the site's other tools. Read
@@ -455,7 +514,8 @@ description says, except as below and for a write's record later cancelled, refu
 - Type each output field as strictly as its value: required text is non-empty and trimmed
   (`Schema.NonEmptyTrimmedString`), a date or time keeps its `pattern`, and a field that reports
   an input's value reuses that input's enum or pattern. Make one optional or nullable only where
-  the page may genuinely not show the value.
+  the page may genuinely not show the value. Trim every string you return from the site before
+  returning it.
 - The one exception is a record whose own page genuinely does not show the value, such as an
   item that is sold out and shows no amount, or a listing that shows no date yet. Then the value may be null only together with a
   field that says why, such as its availability, and both descriptions say so.
@@ -545,6 +605,9 @@ Then, for every field:
 - Prefer parsing what the page shows into typed fields over returning a result row, card or
   itinerary as one text blob or summary, and keep every result row of the main list the page
   shows, up to the call's `limit` (pagination skill).
+- A new tool's build sees only some of a list's rows, so type each row field that is neither the
+  row's key nor a needed value as `Schema.NullOr(...)` and pass it to `waitForRows` as
+  `optional`; a row that lacks one stays in the list with that field null.
 - Read every output from the page or response on every run, so every returned field has
   observable support: never a literal, a default you invented, or a constant `null`, `[]`,
   `false`, `0` or fixed label where the page can show the value.
@@ -555,8 +618,24 @@ Then, for every field:
 - One field per fact, as the page states it, and variants as the dimensions and values the page
   lists.
 - Prefer numbers for amounts and counts, ISO 8601 for dates and times and minutes for durations;
-  type a date-only value as the runtime's `CalendarDate` (forms skill). A value that does not
-  parse cleanly may be the site's own text.
+  type a date-only value as the runtime's `CalendarDate` (forms skill) and name its zone in its
+  description. A value that does not parse cleanly may be the site's own text; return each time
+  it holds as a timestamp too. Compare a site's date or time with today or now only in the
+  site's or the place's zone, never UTC's: `todayIn` and `zonedTime` from `pomerado/runtime`
+  give both.
+- Never return a clock time with no zone, such as "7:45 PM" or "12:38-12:59 AM" alone: a caller
+  cannot tell which moment it is. Return each time as a timestamp with its offset, with
+  `zonedClock` from `pomerado/runtime` for a clock time the page shows, and name the IANA zone
+  the site's text is in, such as `"America/New_York"`, in a `time_zone` field of the record or
+  of the whole output, beside any `*_label` field that keeps the site's wording:
+  `{ "eta_start": "2026-11-16T00:38:00-05:00", "eta_end": "2026-11-16T00:59:00-05:00",
+  "eta_label": "12:38-12:59 AM", "time_zone": "America/New_York" }`. A time the page shows with no zone beside it is in
+  the browser's own zone whenever the page computes it from a timestamp, as order trackers,
+  estimates and activity feeds do; read that zone in the same call as the times with
+  `browserTimeZoneCode`, never from the script's own clock, the caller's place or an address,
+  since the browser's clock can be in another zone than the caller's. Use the zone the page
+  names instead when it names one, such as a store's hours or a flight's local times, and a
+  timestamp in the page's own data, such as its embedded JSON, over its text.
 
 **Configure, then read.** Many pages show values that depend on choices made on the page: a
 record's options or variants, a plan or tier, dates, a party size or quantity, units, a
@@ -685,7 +764,9 @@ element. Prefer values the list page already holds, in its rows or its embedded 
 site's own data request<!-- pomerado:section core.data-request-reference -->, to opening each record's page. When the tool must open
 each record's detail page, keep each to a few calls (open, wait, one read), and consider whether
 the request is better served as two tools, a search and a details read by identifier; say so in
-`coverage`. Prefer opening those detail pages only for the rows the call returns, after
+`coverage`. A details read takes a list of identifiers, up to a bound its schema states, such as
+20, and reads them together in one run, not one identifier per run: a caller who needs ten items
+then waits for one run's start, not ten. Prefer opening those detail pages only for the rows the call returns, after
 `readList`, not inside the list reader (pagination skill). When a read opens item pages, pop-ups
 or new tabs to collect details, prefer the list data the page already loads, and close each page
 before opening the next. A browser whose memory fills stops answering, and the run fails. When a
@@ -693,8 +774,9 @@ call needs many independent
 lookups or detail reads, such as one for each returned row, prefer running them in parallel
 batches over one after another, such as the site's own data request for each row sent together
 in one `evaluate` with the runtime's `batchFetch` (paste `batchFetchCode`), or with `batchRead`
-in an HTTP version. They start at 4 at once, send more after clean batches, halve on a 429 or a 5xx
-and stop at a block. Send no more at once than the build showed the site handling without
+in an HTTP version. They start at 16 at once, halve on a 429 or a 5xx, grow again after clean
+batches and stop at a block, and give each read 8 s unless it names its own `timeoutMs`. Send no
+more at once than the build showed the site handling without
 refusing or challenging (their `max`), and fewer, spaced out, where it refused or challenged; a
 block at run time still fails the call, as the 429 rule above says.
 Prefer the page's own structured data, its embedded JSON or the data response it renders from,
@@ -730,8 +812,10 @@ delayed rendering can be intermittent: a fast exploration load does not establis
 that later executions will be immediately ready. Include a bounded wait for the
 expected page or control even when exploration never observed a delay. Derive
 that readiness condition from the intended page, not from having seen a particular
-challenge. Wait for a unique operation control or page state before testing absence
-or choosing a fallback. Use `locator.waitFor` for one expected state, `waitForOutcome`
+challenge. After navigation or any action, wait for a unique operation control or page state
+before testing absence or choosing a branch or fallback; after an action, prefer the site's own
+reply to the request the action sent over what the page shows, apart from an error the page shows.
+Use `locator.waitFor` for one expected state, `waitForOutcome`
 (below) when the page can answer more than one way, `waitForRows`, `waitForValues` or
 `waitForChange` (below) for the values you return, or, only where none fits, a bounded loop of
 your own that reads every condition in one `evaluate` per pass;
@@ -750,7 +834,7 @@ and reading the same twice (`waitForRows`); keeping every result row means every
 page size. A slot that is present but empty, a skeleton, `aria-busy` or reading "Loading…" is
 still loading, never absent; a slot with no identifier is not a result. A value still loading
 when the page stops progressing fails the run, optional or not: null is only for a field this
-record's markup lacks altogether, as the build saw on records without it, never for a slow one.
+record's markup lacks altogether, never for a slow one.
 When a list row shows the site's own plain "unavailable" state for a value, such as a price,
 prefer treating that row as settled in the readiness wait and returning that state in an output
 that can carry it, over waiting for a value the site will not show.
@@ -790,7 +874,8 @@ answer beside them (writes skill).
 For an unknown destination, inspect after the document transition; do not invent a
 selector or repeat the action in a follow-up read.
 Import `waitCode` from the runtime (`outcomeWaitCode` declares `waitForOutcome` alone, for code
-written before; paste one, never both), paste it once at the top of the call's code, and wait with `waitForOutcome({ refused, failed, unavailable, empty,
+written before; paste one, never both), paste it once at the top of the call's code, and each
+other shared code block once too, even in code joined from several parts, and wait with `waitForOutcome({ refused, failed, unavailable, empty,
 results }, { action, loading, region })`, one scoped locator per answer, each an element only
 that answer has and the step can cause, such as a results list that holds a
 row. Prefer closing a banner, tour or dialog that opens on its own with `waitForReady`'s
@@ -815,8 +900,8 @@ Prefer branching on that name over waiting again for the same answers or recheck
 page the answer appears in as `region`, and the context's `siteDomain`, so the sign counts for as
 long as it shows, changes in that part count as progress, and so do the site's own requests on
 every host of its domain. A generic sign, such as `aria-busy` or a spinner class, counts only
-while it is new, so a decoration holds a wait for at most the no-progress window; `waitForRows`
-also waits while one shows beside its rows, never inside one, and for the requests its `action`
+while it is new, so a decoration holds a wait for at most the no-progress window, though one a
+`waitForOutcome` action brought counts for as long as it shows; `waitForRows` also waits while one shows beside its rows, never inside one, and for the requests its `action`
 started. Without an `action`, a list beside a loader that never leaves costs about one
 no-progress window. A request already in flight when a wait starts is not seen: on a page still
 loading its list, name its loading sign as `loading`. Read results;
@@ -826,7 +911,9 @@ choice the input asked for as "Configure, then read" says; ask the caller about 
 (.agents/caller-input/SKILL.md). It throws an
 `Error` named `OutcomeWaitFailure` whose message says what each outcome matched, which progress
 signs it saw and when progress stopped: `outcome_ambiguous` when the winning locator matches more
-than one element; `outcome_unknown` when the page stops progressing for `noProgressMs` (8 s)
+than one element, unless more than one is visible and the visible ones all read the same text (read
+such an answer's text from `waitForOutcomeResult`'s `evidence`, or scope the locator to one element before acting on it or reading inside it);
+`outcome_unknown` when the page stops progressing for `noProgressMs` (8 s)
 while showing none of the answers; and `outcome_timeout` when it is still progressing at
 `timeout` (30 s). An unknown page is a challenge, the site's error or a layout you have not
 handled: do not turn it into your own timeout; the host reports it as one. `references/navigation.ts` waits for a search's answer and
@@ -841,8 +928,9 @@ Prefer the wait helpers' own settling over loops of your own that poll until val
 the same on two looks.
 `waitForChange(fields, { before, action, loading })` returns `{ values, changed }` after a choice:
 changed, or the same with no progress sign for `unchangedMs`. They throw a `ValueWaitFailure`:
-`values_loading` when a value is still loading as progress stops, `change_unknown` when the
-fields are missing, `values_timeout` at the cap. A host may retry a read once after
+`values_loading` when a value is still loading as progress stops, `page_mismatch` when a needed
+field is missing then, `change_unknown` when the fields are missing, `values_timeout` at the
+cap. A host may retry a read once after
 `outcome_timeout`, `outcome_unknown`, `values_loading`, `values_timeout` or `change_unknown`,
 so let them throw. `waitReport()` returns a one-line summary of how each wait in the call ended.
 A field is a Playwright locator, or `{ locator, attribute, optional, all }`, where `all` reads
@@ -890,7 +978,7 @@ click it or to wait for readiness: collapsed menus often hold an earlier hidden
 match. Scope a role locator to its evidenced container and to visible elements,
 for example `nav.getByRole("link", { name: /log in/i }).filter({ visible: true })`,
 then check that exactly one element matches; `waitForOutcome` checks it for the outcome it
-returns. When several candidates remain, inspect them and choose by evidence such as
+returns unless its visible matches all read the same text. When several candidates remain, inspect them and choose by evidence such as
 section, accessible name and destination before clicking or waiting. A readiness wait targets one specific
 evidenced element or page state.
 
@@ -996,12 +1084,18 @@ See the compiling `references/variants.ts` example.
 Whenever a cookie or tracking consent banner shows, or a privacy notice, consent dialog or survey
 pop-up, dismiss it before you do anything else on the page: in an `explore`, in each sign-in step as
 its `dismiss` (the auth skill), and in the tool's own code, which dismisses it on every run where it
-shows. Use its own control, in this order: its close or dismiss control, then one that rejects or
-declines what is not essential in one click, then accept. A control such as
+shows. In the tool's code, close one that opens on its own with a standing handler, `waitForReady`'s
+`dismiss` naming its close control, so one that opens later, after a page change or partway through
+a form, closes too; never with a one-time visibility check at the start, which misses a pop-up that
+opens after it, such as a survey a site shows a minute into a visit. Use its own control, in this
+order: its close or dismiss control, then one that rejects or declines what is not essential in one
+click, then accept. A control such as
 "I understand" or "OK" accepts too, so prefer its close or decline control whenever it has one.
 Never click anything else in it, such as its settings or partner lists. A request that says
-otherwise about cookies wins. This is only for such a banner or pop-up, never a marketing prompt or
-terms the site asks you to accept, other than the notices below.
+otherwise about cookies wins. Such a banner stays one even when its text says accepting it or using
+the site also agrees to the site's own terms. This is only for such a banner or pop-up, not a
+marketing prompt or a separate prompt whose own purpose is accepting terms, other than the notices
+below.
 
 A notice the site shows every visitor before it lets them use the page, such as a demo or
 test-environment warning, an age gate or a region notice, is page setup on a read. Prefer accepting

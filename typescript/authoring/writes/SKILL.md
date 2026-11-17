@@ -9,9 +9,10 @@ A write build changes something real on the caller's account: an order, a bookin
 a submitted form, a saved profile. There is no practice run. The write is the whole
 task the request asks for, done once, live, with the caller's values, as a series
 of `act` steps. When the caller's input is empty (`{}`), pass the request's values and
-the owner's answers as `exampleInput` (JSON text) on each act step that needs them. The
-first act step that passes it fixes it: later steps repeat it unchanged or omit it, and
-every step from then on runs that one input. Decide from the
+the owner's answers as `exampleInput` (JSON text) on each act step that needs them. When it
+leaves out values the request states, pass it with them added as `exampleInput`, keeping every
+value the caller sent as sent. The first act step that passes it fixes it: later steps repeat
+it unchanged or omit it, and every step from then on runs that one input. Decide from the
 request and the site which inputs are required, and keep them required. An optional
 input plus a declared question the tool asks before any effect is only for a value the
 request genuinely leaves open; never make a value the request states optional with
@@ -44,7 +45,9 @@ of a read too, unless the step's requests save an address-book entry, a default 
 preference; that is a write. While building,
 a live step, the example's or a test case's, that enters a name, email or phone asks the owner
 first, as the execution review requires; the answer keeps the build a read. Adding to a cart, a hold on inventory, a seat or a time slot, an upload and a draft stay writes,
-signed out too. Never click a control that can add to a cart in an explore to see what it opens; that click is a write. Read the item's options from the page or the item's own page instead.
+signed out too. Never click a control that can add to a cart in an explore to see what it opens; that click is a write. Read the item's options from the page or the item's own page instead;
+opening an item's details or options from its own card, name or picture, not a control labelled
+add or plus, is a read.
 
 ## When a read build finds it needs to write
 
@@ -71,7 +74,27 @@ pickup location as a read (above), with `pickValue` and the site's own confirm c
 step. Never fill, select, add, save or submit anything else there, except one made-up key in
 the site's own format, with a
 serial past any the site lists, per input that takes a record's own key, looked up once in the
-site's own lookup to see what it shows for a key it has no record of (core skill).
+site's own lookup to see what it shows for a key it has no record of (core skill), and the
+rehearsal's choices below, which save nothing.
+
+**Rehearse on varied samples.** The session runs the caller's one input, so it never shows how
+the script handles the next caller's. Before the first `act` step, rehearse the steps ahead of
+the first save on three to five other public samples of what the tool's inputs pick, found and
+chosen to differ as the testing skill says ("Find varied samples"): such as an item with more
+option groups, or an option name that appears in two groups; a store whose name has punctuation
+or another script; a store that is closed, schedules orders or has a feature turned off; a
+record on another URL shape the site's own links use. For each, open it as the script will and
+read what the script reads up to the control before the first save: the option groups and their
+choices, the open or closed state, the controls the script waits for and what the page shows in
+their place. Prefer the page's own data, as for any read.
+
+Rehearsal stays a read, as everything before the session is (above). Never press a control
+that adds to a cart, holds, saves, sends or submits, and never fill a form whose requests
+save as you type. Go further, up to a draft that is never saved, only where an earlier fill on
+this site showed in its captured requests that filling saves nothing; when it is unclear
+whether a step saves, treat it as one that saves and stop before it. Write what the samples
+showed into the script before the session, so one session proves a script that already handles
+them, and list in `finish_build` `assumptions` each difference you saw but could not rehearse.
 
 Settle the whole path before the first `act` step, from the request and what read-only
 exploration shows, such as the form's list of pages or steps: every step that saves or submits
@@ -82,7 +105,9 @@ with `request_input` for one that does not. Publication judges the finished tool
 (`reference/publication-review.md`). Declare it as `writePath` on the first `act` step: in
 `steps`, each step that saves or submits, in order, with the `commit` mark its helper will
 enter and what it saves (`does`); in `ends`, what the last step leaves the caller with. When the
-request ends before any save, `steps` is empty: never name a step that saves nothing. Mark
+request ends before any save, `steps` is empty: never name a step that saves nothing. On a host
+that publishes only a write that saves on the site, such a request ends the build with
+`report_blocked`, reason `caller_input`, quoting the words of the request that stop it there. Mark
 `setup: true` on a step that only makes state the site creates by itself as the session starts,
 such as an empty cart when the menu opens, and saves nothing of the caller's, or leave that step
 out.
@@ -104,13 +129,16 @@ pays or whether the action can be cancelled or refunded (each paid add-on and pr
 option within the tool's purpose, a rate, fare or plan tier, a refundable or non-refundable
 option, shipping speed, how much of a balance to pay, the payment method and the delivery
 address), and any other option only when
-the request's purpose clearly depends on it. An unasked optional field keeps the page's
+the request's purpose clearly depends on it. When the write must take one of a service's tiers
+of speed, class or service level that the caller's input does not settle, take the tier the site
+presents as standard instead of asking and list it in `finish_build` `assumptions`; ask only
+when the site shows no standard tier. An unasked optional field keeps the page's
 default and is still an optional input of the script. Prefer keeping the value the page
 already shows in an optional field that adds no cost over asking the caller to confirm or
 correct it, and list it in `finish_build` `assumptions`. Ask only about options the site
 actually shows. A control with exactly one possible value (a select or radio group with a
 single option), or one the input or an earlier answer already settles, is no choice: never ask
-about it. An add-on toggle, a pre-selected checkbox or a lone saved payment method or address
+about it. An add-on toggle, a pre-selected paid option or a lone saved payment method or address
 is still a choice to ask about. Never keep, clear, accept or decline one of those unasked. A paid upsell
 outside the tool's purpose, such as a membership, subscription or trial offered during a
 checkout, is not a question: the script declines it, and never accepts one without an input
@@ -124,13 +152,18 @@ During the session:
   mark of the commit it guards: choose each option that changes the price, decide each add-on
   from the input or an answer and decline an out-of-scope upsell, read the selected options
   and total from the current page or an available read-only summary, check the total against
-  any limit the input sets, check that no option the input does not settle is selected, and
-  check the items, address and payment. Use a review page when the site has one; a separate
-  review page is not required, and submitting a form is never a way to discover whether one
-  exists. A check that can only run after an earlier
+  any limit the input sets, stop when the page shows a paid option selected that neither the
+  input nor an answer settles, and check the items, address and payment. Use a review page when
+  the site has one; a separate review page is not required, and submitting a form is never a way
+  to discover whether one exists. A check that can only run after an earlier
   marked step, such as a total that shows only once a saved address step has run, runs before
   the later step's mark; its refusal then reports a possible change, because the earlier step
-  may have saved something, and that is honest. Still mark that earlier step.
+  may have saved something, and that is honest. Still mark that earlier step. Mark a commit
+  step as a setting in `write.settings` when its click only changes a choice that spends nothing
+  until the final commit and cannot place, buy, book, send or charge anything by itself. An
+  `InvalidInput` or a declared refusal after only such steps, the caller's no included, ends with
+  nothing applied. On the caller's no to the tool's own confirm, return a declared refusal
+  where one completes the run (below).
 - When one of those checks rules the task out, such as a total over the caller's limit, an
   item out of stock or a variant the page does not offer, the script refuses before the mark
   with `InvalidInput` (the caller-input skill, "Throw the error that matches what happened"),
@@ -144,11 +177,22 @@ During the session:
   throws `InvalidInput` with that field and the site's message. A
   report of the form's fields, its validation messages or the options to pick from is a
   refusal (`InvalidInput` with `available`) or a failure (`OperationFailure`), not the write's
-  output. While building, a limit the session meets is the
-  owner's to settle first: ask them to revise or stop, and end with `report_blocked` when they
-  stop, as the cart skill's "Minimums and refusals" says. When they stop, or the session cannot
-  reach the task's end, end with `report_blocked` (`site_declined` when the site refused this
-  example). A build whose session never reached the end publishes nothing.
+  output.
+- While building, when the site says no to the example's valid input before any save step, as
+  "The session" below describes, or shows a record already past the state the action needs when
+  the request says to stop and report it, prefer publishing the tool with that no as the
+  example's answer over asking the owner to revise or stop or ending the build with
+  `report_blocked`. The act step that meets the no, the session's first when exploring already
+  showed it, returns it right after reading it, without leaving the page and before entering any
+  commit mark, as a refusal its output schema declares (below). Run no other act step after it.
+  Compose the whole path `writePath` declares from the caller's input, returning the same
+  refusal at each point where the site may say no. List every save step in `write.commits` and
+  again in `write.commitsUnproven`, and call `finish_build` with that step's `executionId`.
+  Prefer keeping the caller's facts as given over changing them to get past the no. Any other
+  limit the session meets is the owner's to settle first: ask them to revise or stop, as the
+  cart skill's "Minimums and refusals" says. End with `report_blocked` when they stop, when the
+  session cannot reach the task's end, or when the site's no rules out every input the tool
+  could take (`site_declined`).
 - When the caller's own task asks for whatever the site ends up with, such as the product a
   quote ended up on, follow the site's preselected substitute and return the value the site
   used instead of throwing `InvalidInput`. Only the caller's task text counts this way; an
@@ -192,9 +236,11 @@ During the session:
   the option.
 - Read each typed value back once its field settles, before the step's commit. When the site
   rewrote it as it was typed or on leaving the field, such as an address it standardized, or
-  offered exactly one suggestion for it, take the site's version, as you would a picked
+  offered exactly one suggestion for it that matches it cleanly or that `pickerMatchAddress` accepted,
+  take the site's version, as you would a picked
   option: later read-backs, such as a review page, summary or confirmation, compare against
-  it, and the output returns it for that field. The one suggestion counts only for a
+  it, and the output returns it for that field. Ask about any other lone suggestion as about a
+  looser match (core skill). The one suggestion counts only for a
   free-text value the caller typed, such as an address or a name in a text box the site
   completes, never for a picker that selects a record, such as a person, assignee, customer,
   linked record, store or account, which keeps the reference rules in "Check the read-back"
@@ -303,18 +349,22 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   submit, save or confirm control, or a control whose handler sends the caller's change to
   the site. Opening a form and typing into its fields change only the page's own state, so
   leave them unmarked unless the site's requests show they save the caller's change, such as
-  an autosave; a lookup, suggestion, validation or analytics request saves nothing. Place
-  the first commit mark at the first step that saves on the site. Mark every such step other
+  an autosave; a lookup, suggestion, validation or analytics request saves nothing. A click
+  that only opens a checkout or review page is no commit unless that click can itself complete
+  the purchase. Place the first commit mark at the first step that saves on the site. Mark every such step other
   than a hold that expires on its own, including an autosave, a saved form step and a
   payment submission whose next screen is unknown. Call `enteringCommit("place-order")` right before the
   execute call that can send that change, and declare the names in order as
   `write.commits`. Use the same marked helper in the session and the composed
   script. The marked call does the commit and nothing that can still refuse: it re-reads
-  only what a change since the checks would make wrong, such as the total and items they
-  read, and when one moved it returns before clicking and the script throws
+  only what a change since the checks would make wrong and its page shows, such as the total
+  and items they read, and when one moved it returns before clicking and the script throws
   `OperationFailure` naming the change, such as `total_changed`; otherwise it clicks once
-  and waits for the confirmation. That guard is expected. An entered mark counts as possibly
-  sent even when its call stopped before the click, so a check that can refuse placed there
+  and waits for the confirmation. That guard is expected. Name the in-between state the site
+  can show after the click, beside its final answers, in that wait's `pending`: it holds up to
+  60 s from when that state shows, and `confirmCommit` reports one still showing then as
+  `pending`. An entered mark counts as possibly sent even when its call stopped before the
+  click, so a check that can refuse placed there
   reports a possible change and sends a write that never happened to maintenance. If the call
   returns an unexpected page or fails while waiting for an assumed review, read back before another submission: the task may already be
   complete. The host cannot see a commit sent as a GET link or over a websocket, so
@@ -338,12 +388,25 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   error and a fresh read of the same view you read before the mark shows each field whose sent
   value differs from that read unchanged, prefer the same put-back and ending as above; never on
   silence or a missing element.
-- A quote the site issued earlier, such as a fare, rate, cart price or hold, can expire before
-  the commit, for example while the step waits for review. Prefer having the commit step reload
-  or re-select it right before its mark, so the site issues a fresh one, and check that one
-  against the caller's limits, such as the cap and the same item or route, before the mark as
-  above. When the site answers the click by saying the quote expired or the price changed, with
-  that proof that it created nothing, call `notCommitted` for the step with `{ siteRefused: true }`, refresh the quote and check it again,
+- In a paying commit step, name the site's alert or dialog as an outcome beside the order's
+  response, and return the site's decline as a refusal the output schema declares, with the
+  site's words.
+- A quote the site issued earlier, such as a fare, rate, delivery time, cart price or hold, can
+  expire before the commit, for example while the step waits for review, and selecting it again
+  can send back the quote the page already holds. So have the commit step go to the checkout
+  page's URL again, since a reload can resend the form that loaded the page, or start the
+  checkout again, right before its mark, then select the fresh quote, set again any earlier
+  choice this may have reset, such as the tip or a declined add-on, and check the quote and those
+  choices against the caller's limits, such as the cap and the same item or route, before the
+  mark as above, all in that one step, or right before the card fill when the host fills the card.
+  There, and in any other re-check before a commit, match the choice the caller approved by its
+  kind or name and any time it shows that stays fixed, not by a time that moves with the clock,
+  check the price it shows against the caller's limits as above, and keep it as approved when
+  only that time changed, even when the page leaves out a value an earlier check read. For a choice whose shown time moves with the clock, `readBackMatches` and
+  `sameText` from `pomerado/runtime` take `{ ignoreClockTimes: true }` to compare its kind or name
+  without its times. When the site
+  answers the click by saying the quote expired or the price changed, with
+  that proof that it created nothing, call `notCommitted` for the step with `{ siteRefused: true }`, refresh the quote the same way and check it again,
   then call `enteringCommit` again and click once more. A fresh quote that breaks a limit refuses
   before the mark, so the run reports nothing applied. Retry only once: a step goes back once a
   run, so a second such answer ends the run with the site's words, returned where the
@@ -370,7 +433,8 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   notation, such as `queued`, with the site's own word in a `status_label` field. Then read
   what the output promises from that response or from the page the commit
   left, match it to the caller's values, and call `verified()` with no argument just before
-  returning. Declare `write: { confirmation: "readback" }`. Prefer not opening another page,
+  returning, also when the page shows no confirmation, since that response already confirms
+  the write. Declare `write: { confirmation: "readback" }`. Prefer not opening another page,
   such as a list, a history or an account screen, only to prove the write: a commit that went
   through, with the new record's id, already proves it. Return the tool's whole output from the
   step that confirms the write, read from the commit's response or the page it left: the caller
@@ -466,10 +530,10 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   state-changing request or opened a socket, after it entered a commit mark, or
   without returning a result at all (its page was lost), the write may already be
   committed; its receipt says so under `writeSession` (`verifyFirst`). Before any
-  further write, run an `act` step that only reads the page or the account. When
-  `stateChangingRequests` shows the failed step's commit request went through, that
-  step starts from the page as it stands: check it for an error or validation
-  message, read what the output needs, and call `verified()` there. When that page
+  further write, run an `act` step that only reads the page, or the account only when the
+  page can't tell. When `stateChangingRequests` shows the failed step's commit request went
+  through, with a body you can read showing no error, that step starts from the page as it
+  stands: check it for an error or validation message, read what the output needs, and call `verified()` there. When that page
   lacks something the output needs, such as the new record's ID, the same step may
   read it elsewhere on the site without changing anything, such as by finding the
   record in the site's list or search, then call `verified()`. If the
@@ -561,8 +625,8 @@ note.
   that read-back, prefer needing only what proves the change, the record's identity and the
   values the input sets, and passing every other field to `waitForRows` or `waitForValues` as
   `optional`. After `verified()`, return a field the request doesn't need as null when it read
-  nothing, and throw `OperationFailure` naming a value the request needs (core skill), so the run
-  fails as applied.
+  nothing, and throw `OperationFailure` naming a value the request needs, or one it can't tie to
+  the written record (core skill), so the run fails as applied.
   List each field the input sets that the site saved differently, from the commit response or
   the read-back, in an optional output field `saved_differences`: `{ field, wanted, shown }`,
   as `saveAndReadBack` returns it, with `shown` left out when the site shows none, and
@@ -617,7 +681,7 @@ Every option the session met on its path is an input of the script, add-ons and
 pre-selected defaults included: required only when the site requires a choice that neither
 the request nor an answer settled, optional otherwise. The script sets each option from its
 input. An unset optional input leaves the page's default, as in a read. An option the request
-or the owner's answer settled as how the tool behaves, such as which kind of record it
+or the owner's answer states for every call, such as which kind of record it
 creates, which line type a free-text line takes or whether a save runs the site's automation,
 is the tool's default: an optional input declared with `defaultedInput` and the answered value,
 whose description says so (core skill), never a required input or a question the script asks.
@@ -627,10 +691,13 @@ explicit, so the script never keeps, clears, accepts or declines one the input l
 asks with a declared question before the commit mark (the caller-input skill), offering a
 saved payment or address as an account-specific choice. The same holds for any choice that
 changes what the caller buys or pays, or whether the action can be cancelled or refunded, such
-as a rate, fare or plan tier, a refundable option, shipping speed or how much of a balance to pay. An owner's
-answer may make declining such an option, turning it off or the option that adds no cost and
-keeps the action cancellable the default of its optional input, never accepting, keeping or
-choosing one. Choosing the address and payment is
+as a rate, fare or plan tier, a refundable option, shipping speed or how much of a balance to pay.
+When the write must take one of a service's tiers of speed, class or service level, that
+choice's optional input defaults to the tier the site presents as standard, and the script asks
+only when the site shows no standard tier. An owner's answer may make only declining such an
+option, turning it off or the option that adds no cost and keeps the action cancellable the
+default of its optional input.
+Choosing the address and payment is
 part of a checkout's job, so the page's pre-selected one is never used silently. The request
 and the owner's answers settle such a choice for the session only: the published tool serves
 other callers, so it takes the choice as an input or asks, never hard-codes the build's answer,
@@ -640,7 +707,13 @@ An out-of-scope paid upsell is declined, as above. A safety default
 (core skill) is neither: never ask about it, and the script turns it off. An
 account-specific value, such as a passenger, loyalty number, saved card, address or
 account ID, is a free-form input, never an enum member, example or default in the
-public schema (core's input schema rules).
+public schema (core's input schema rules). The last choice or confirm asked before a commit that
+buys or pays, once the page shows that commit's items and total, passes `order` (the caller-input
+skill). When you change a script whose last such question passes none, add it, whatever the change
+is for. Fill `order` as the checkout shows it: each item's real quantity, its `unit` when sold by
+weight or measure, and its price each, its line total or both; fees, a tip and a discount go in
+their own fields. When an item's measure is in a unit `unit` does not list, give
+it quantity 1 and its line total, with the measure as the checkout shows it in its name.
 
 The composed script publishes without ever running end to end, so it ends with a check that
 tells whether its action succeeded: its commit response checked as above, the site's
@@ -721,9 +794,10 @@ mark. A write may instead declare its refusals in its output schema: a branch th
 no other branch whose `status` could be `"refused"`. Prefer declaring each refusal as its own
 branch of the output's top-level union, and prefer a listed `status` on every other branch, such
 as `Schema.Literal("rated")`, so the host can tell a refusal from any other output. Returned
-before the first commit mark, a declared refusal completes the run with that output and reports
-the write not applied. A refusal returned in a shape the schema does not declare, or returned or
-thrown after a mark, reports a possible change.
+before the first commit mark, or after only steps named in `write.settings`, a declared refusal
+completes the run with that output and reports the write not applied. A refusal returned in a
+shape the schema does not declare, or returned or thrown after a mark outside `write.settings`,
+reports a possible change.
 pomerado:section writes.declared-refusal:end -->
 
 See `references/write-session.ts` for two steps and the composed script, and
@@ -734,7 +808,7 @@ See `references/write-session.ts` for two steps and the composed script, and
 
 Perform the authorized task once through live `act` steps, preserving the shared effect journal and caller choices. Wait for actual confirmation, from the commit request's response or the page, and read back committed state only when neither confirms it. Declare `verified`, `unverifiable`, and their confirmation behavior accurately using the existing SDK; a missing result alone never proves the write absent.
 
-Keep steps small and read the actual state after each submission. A button named Continue, Next or Save may save a draft, persist that page, or finish the task immediately; its label does not establish that another review or final submit follows. Place a commit mark only on the step that sends the change to the site, such as a submit, save or confirm control, or a control whose handler sends the caller's change to the site. Opening a form and typing into its fields change only the page's own state, so leave them unmarked unless the site's requests show they save the caller's change, such as an autosave; a lookup, suggestion, validation or analytics request saves nothing. Mark every such step, including autosaves, saved form steps and payment submissions whose next screen is unknown: call `enteringCommit("place-order")` right before the execute call that can send the change and declare the names in order as `write.commits`. Use the same marked helper in the session and the composed script. Finish every check that can refuse, such as a price limit, availability or the items, address and payment, before the mark of the commit it guards, and refuse there with `InvalidInput`; the marked call only re-reads what a change would make wrong, clicks once and confirms. If a call returns an unexpected page or fails while waiting for an assumed review, read back before another submission: the task may already be complete.
+Keep steps small and read the actual state after each submission. A button named Continue, Next or Save may save a draft, persist that page, or finish the task immediately; its label does not establish that another review or final submit follows. Place a commit mark only on the step that sends the change to the site, such as a submit, save or confirm control, or a control whose handler sends the caller's change to the site. Opening a form and typing into its fields change only the page's own state, so leave them unmarked unless the site's requests show they save the caller's change, such as an autosave; a lookup, suggestion, validation or analytics request saves nothing. A click that only opens a checkout or review page is no commit unless that click can itself complete the purchase. Mark every such step, including autosaves, saved form steps and payment submissions whose next screen is unknown: call `enteringCommit("place-order")` right before the execute call that can send the change and declare the names in order as `write.commits`. Use the same marked helper in the session and the composed script. Finish every check that can refuse, such as a price limit, availability or the items, address and payment, before the mark of the commit it guards, and refuse there with `InvalidInput`; the marked call only re-reads what a change would make wrong, clicks once and confirms. If a call returns an unexpected page or fails while waiting for an assumed review, read back before another submission: the task may already be complete.
 
 Compose `src/tool.mjs` from the original reviewed steps and confirming observation. Design no tests for it beyond an offline check of its read-back and comparison over what the session read, and never run the composed write live again. Call `finish_build` with its confirming `executionId`, declared entrypoint and honest coverage. It returns integration files/schemas. When a write's outcome remains uncertain, report that uncertainty and preserve the no-replay rule.
 

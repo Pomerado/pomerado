@@ -128,6 +128,14 @@ const notRunAfterFailure = JSON.stringify({
     "Not run, nothing was sent. An earlier call in this response did not succeed, and the host runs no call that follows it in the same response. Read that call's result, then send this call again if it is still the next step.",
 });
 
+/** An execute whose patch did not apply: the step did not run. Nothing was sent. */
+const patchNotApplied = {
+  status: "not_run",
+  effect: "not_sent",
+  instruction:
+    "Not run, nothing was sent: a step runs only once every operation of its patch applies. Each operation in patch applied except the last, which failed; any after it were not tried.",
+};
+
 /**
  * Whether a step's result is a completed receipt. An execute or a command that failed, was
  * refused by review, timed out or may have dispatched returns any other result.
@@ -434,13 +442,37 @@ const splitIntent = (input: unknown): { intent: string; request: Record<string, 
   return { intent, request };
 };
 
+/** One edit of execute's `patch`, in the shape of a native apply_patch call's operation. */
+const PatchOperation = Schema.Union(
+  Schema.Struct({
+    type: Schema.Literal("create_file", "update_file"),
+    path: Schema.String,
+    diff: Schema.String,
+  }),
+  Schema.Struct({ type: Schema.Literal("delete_file"), path: Schema.String }),
+);
+const Patch = Schema.Array(PatchOperation).pipe(
+  Schema.minItems(1),
+  Schema.annotations({
+    description:
+      "Edits applied before the step is reviewed and run, as apply_patch operations. If one does not apply, nothing runs.",
+  }),
+);
+
 /**
  * The execute tool's one model-facing schema, for every build: strict, with each optional field
  * required and nullable. `signInStep` is null on a build whose site signs in by the host's
- * managed sign-in, and the host refuses one sent there.
+ * managed sign-in, and the host refuses one sent there. `patch` is the minter's own: it is applied
+ * here and never reaches the host.
  */
 const executeSchema = (() => {
-  const strict = strictToolSchema(inlineReferences(JSONSchema.make(withIntent(ExecutionRequest))));
+  const strict = strictToolSchema(
+    inlineReferences(
+      JSONSchema.make(
+        withIntent(Schema.Struct({ ...ExecutionRequest.fields, patch: Schema.optional(Patch) })),
+      ),
+    ),
+  );
   const properties = strict.parameters["properties"];
   const required = strict.parameters["required"];
   return {
@@ -658,12 +690,18 @@ const openAIMinter = (
               const name = skillPagePath.exec(path)?.[1];
               if (name !== undefined && skillNames.includes(name)) skillsRead.add(name);
             };
-            /** The note after a compaction, naming the skills read so far; none when none were. */
+            /**
+             * The note after a compaction, naming the skills read so far. The minter's own note
+             * is sent only once some skill was read; a host's note is sent after every
+             * compaction, since it may carry the host's own standing instructions too.
+             */
             const skillsReadNote = (): AgentInputItem | undefined => {
               const read = skillNames.filter((name) => skillsRead.has(name));
-              if (read.length === 0) return undefined;
-              const content = (turn.compactionSkillsNote ?? compactionSkillsNote)(read);
-              return { role: "user", type: "message", content };
+              if (turn.compactionSkillsNote === undefined) {
+                if (read.length === 0) return undefined;
+                return { role: "user", type: "message", content: compactionSkillsNote(read) };
+              }
+              return { role: "user", type: "message", content: turn.compactionSkillsNote(read) };
             };
             /**
              * Each provider compaction's note, by its item. It is taken once, when the compaction
@@ -838,22 +876,38 @@ const openAIMinter = (
                     },
                     run,
                   );
+            /** Workspace edits tried so far, native or a patch's, applied or not. */
+            let edits = 0;
+            /**
+             * The operations execute's last patch applied, and `edits` once it had. The next patch
+             * that starts with them, with no edit since, finds them applied.
+             */
+            let applied:
+              | { readonly operations: readonly string[]; readonly edits: number }
+              | undefined;
+            /** A workspace edit's awaited call and result records, as apply_patch's operation. */
+            const recordEdit = <A>(
+              callId: string | undefined,
+              operation: ApplyPatchOperation,
+              apply: () => Promise<A>,
+            ) =>
+              diagnostics === undefined
+                ? apply()
+                : diagnostics.tool(
+                    {
+                      name: "apply_patch",
+                      ...(callId === undefined ? {} : { callId }),
+                      arguments: JSON.stringify(operation),
+                    },
+                    apply,
+                  );
             // Native apply_patch keeps its own protocol and needs no intent, but each operation
             // still gets awaited call and result records around the host editor.
             const traceEditor = (editor: Editor): Editor => {
               const record = <A>(operation: ApplyPatchOperation, apply: () => Promise<A>) => {
+                edits += 1;
                 const callId = diagnostics?.takeNativeCall();
-                const run = () =>
-                  diagnostics === undefined
-                    ? apply()
-                    : diagnostics.tool(
-                        {
-                          name: "apply_patch",
-                          ...(callId === undefined ? {} : { callId }),
-                          arguments: JSON.stringify(operation),
-                        },
-                        apply,
-                      );
+                const run = () => recordEdit(callId, operation, apply);
                 if (recovery === undefined) return run();
                 if (callId === undefined) throw new MintFailure({ code: "Unavailable" });
                 return turn.runTool(
@@ -1058,11 +1112,54 @@ const openAIMinter = (
               errorFunction: (_context: unknown, error: unknown) =>
                 toolFailure(error, failureInstruction),
             });
+            /**
+             * Applies execute's patch through the editor the native apply_patch tool is built
+             * from, each operation recorded as a native edit is, under the execute's call. At the
+             * first operation that does not apply it returns the step not run; the ones before it
+             * stay applied, as separate apply_patch calls would. A step sent again with its patch,
+             * such as after an unavailable review or the owner's yes, finds the operations the last
+             * patch applied already applied when no edit came since, and they are not applied again.
+             */
+            const applyPatch = async (patch: unknown, callId: string | undefined) => {
+              const decoded = Schema.decodeUnknownEither(Patch)(patch);
+              if (decoded._tag === "Left") throw new MintFailure({ code: "InvalidRequest" });
+              const operations = decoded.right;
+              const editor = turn.session.createEditor?.();
+              if (editor === undefined) throw new MintFailure({ code: "Unavailable" });
+              const keys = operations.map((operation) => JSON.stringify(operation));
+              const done = applied?.edits === edits ? applied.operations : [];
+              let kept = 0;
+              while (kept < keys.length && done[kept] === keys[kept]) kept += 1;
+              const tried: { path: string; status: string; output?: string }[] = operations
+                .slice(0, kept)
+                .map((operation) => ({ path: operation.path, status: "completed" }));
+              for (const operation of operations.slice(kept)) {
+                edits += 1;
+                const result = await recordEdit(callId, operation, () =>
+                  operation.type === "delete_file"
+                    ? editor.deleteFile(operation)
+                    : operation.type === "create_file"
+                      ? editor.createFile({ ...operation, type: operation.type })
+                      : editor.updateFile({ ...operation, type: operation.type }),
+                );
+                tried.push({
+                  path: operation.path,
+                  status: result?.status ?? "completed",
+                  ...(result?.output === undefined ? {} : { output: result.output }),
+                });
+                if (result?.status === "failed") {
+                  applied = { operations: keys.slice(0, tried.length - 1), edits };
+                  return JSON.stringify({ ...patchNotApplied, patch: tried });
+                }
+              }
+              applied = { operations: keys, edits };
+              return undefined;
+            };
             // Every build sends the same descriptions; what differs per build is in its tools
             // message (buildToolsMessage).
             const executeTool = hostTool(
               "execute",
-              `Review then run authored code using host-bound input and the selected execution/test scaffold. For authenticated work, use explore/liveBrowser to discover the public login controls, then authenticate/liveBrowser for trusted host credentials, with a signInStep for each sign-in screen when the build's tools message says signIn host_autofill (when this invocation has no login yet, the host signs in with the saved login for the site, asking the caller which one when several could, or asks the caller for a login, in the same call); business work waits for a successful sign-in. fixtureRefs contains host-published capture paths: savedHTTP response bodies or a session capture.json to replay through SiteHttp, or savedDOM first a DOM snapshot then selected asset response bodies; never an input or operation reference; consult the workspace README's reference sections for available facilities. Reads explore, then run one example; when the host-bound input is empty ({}), pass the tool's input you wrote from the request and the owner's answers as exampleInput (JSON text), and the example runs it; once the tool refused the caller's own input with InvalidInput, an example may pass another record of the same kind as exampleInput in its place. A read runs live tests on inputs you choose: where the build offers live_tests, it plans its cases in test/cases.json and runs them in batches with live_tests, on src/tool.mjs and on src/tool-http.mjs; otherwise it runs them one at a time (testInput), a read signed out a wide, varied first batch of about 10 to 20 cases, and the host may limit how many. A signed-in read runs at most four distinct inputs. It tests src/tool-http.mjs on the same inputs too. A signed-in read runs no test on an input you choose: its example proves the tool, and it checks src/tool-http.mjs once with the caller's input. Run the example last, after your last edit. Writes perform the action once as act steps after sign-in, the first of which claims the write; when the host-bound input is empty, an act step passes exampleInput the same way, and each act step that passes it runs it. A write's act session is its one run; a write build runs no tests beyond it, except one savedHTTP replay of the session for its HTTP version. intent states what this execution should establish; it never authorizes the execution. Prefer sending a step's apply_patch and the execute that runs it in one response: the host applies the edit before it reviews and runs the step. A response's calls other than reads run one at a time in your order, each after the calls before it returned, so send a later call in the same response only when it does not depend on an earlier call's result.`,
+              `Review then run authored code using host-bound input and the selected execution/test scaffold. For authenticated work, use explore/liveBrowser to discover the public login controls, then authenticate/liveBrowser for trusted host credentials, with a signInStep for each sign-in screen when the build's tools message says signIn host_autofill (when this invocation has no login yet, the host signs in with the saved login for the site, asking the caller which one when several could, or asks the caller for a login, in the same call); business work waits for a successful sign-in. fixtureRefs contains host-published capture paths: savedHTTP response bodies or a session capture.json to replay through SiteHttp, or savedDOM first a DOM snapshot then selected asset response bodies; never an input or operation reference; consult the workspace README's reference sections for available facilities. Reads explore, then run one example; when the host-bound input is empty ({}), pass the tool's input you wrote from the request and the owner's answers as exampleInput (JSON text), and the example runs it; once the tool refused the caller's own input with InvalidInput, an example may pass another record of the same kind as exampleInput in its place. A read runs live tests on inputs you choose: where the build offers live_tests, it plans its cases in test/cases.json and runs them in batches with live_tests, on src/tool.mjs and on src/tool-http.mjs; otherwise it runs them one at a time (testInput), a read signed out a wide, varied first batch of about 10 to 20 cases, and the host may limit how many. A signed-in read runs at most four distinct inputs. It tests src/tool-http.mjs on the same inputs too. A signed-in read runs no test on an input you choose: its example proves the tool, and it checks src/tool-http.mjs once with the caller's input. Run the example last, after your last edit. Writes perform the action once as act steps after sign-in, the first of which claims the write; when the host-bound input is empty or leaves out values the request states, an act step passes exampleInput the same way, keeping every value of that input as sent, and each act step that passes it runs it. A write's act session is its one run; a write build runs no tests beyond it, except one savedHTTP replay of the session for its HTTP version. intent states what this execution should establish; it never authorizes the execution. When you edit a step and run it, send the edit as this call's patch: the host applies it before it reviews and runs the step. A response's calls other than reads run one at a time in your order, each after the calls before it returned, so send a later call in the same response only when it does not depend on an earlier call's result.`,
               "Execution did not succeed. Diagnose the root cause and retained evidence. Correct request/source errors within existing authority; preserve prior effects. Another example read requires explicit host repeatableRead:true; never replay a nonrepeatable example or a write that may have committed. After a failed authenticate, fix its cause and call authenticate again.",
               // The step's intent reaches Guardian as the agent's own, untrusted note on it.
               (request, intent) => turn.actions.execute(request, intent),
@@ -1073,17 +1170,21 @@ const openAIMinter = (
               parameters: executeSchema.parameters,
               execute: (input: unknown, context: unknown, details: ToolCallDetails) => {
                 const restored = executeSchema.restore(input);
+                if (typeof restored !== "object" || restored === null)
+                  return executeTool.execute(restored, context, details);
+                // The host gets the request without its patch, and reviews the files it left.
+                const { patch, ...request }: { readonly patch?: unknown } = restored;
                 // Only an autofill site takes a signInStep; the harness decodes the request itself.
-                if (
-                  !turn.autofillSignIn &&
-                  typeof restored === "object" &&
-                  restored !== null &&
-                  "signInStep" in restored
-                )
-                  return dispatch("execute", input, details, undefined, () =>
-                    Promise.resolve(managedSignInStep),
-                  );
-                return executeTool.execute(restored, context, details);
+                const run = () =>
+                  !turn.autofillSignIn && "signInStep" in request
+                    ? dispatch("execute", input, details, undefined, () =>
+                        Promise.resolve(managedSignInStep),
+                      )
+                    : executeTool.execute(request, context, details);
+                if (patch === undefined) return run();
+                return applyPatch(patch, details?.toolCall?.callId).then(
+                  (refused) => refused ?? run(),
+                );
               },
             });
             const retainCapture = tool({
@@ -1108,7 +1209,7 @@ const openAIMinter = (
             const blocked = tool({
                     ...hostTool(
                       "report_blocked",
-                      "End this build as blocked when the requested task is impossible as asked: site_lacks_capability when the site does not offer what the task needs; site_declined when the site offers what the task needs but declines this example's own facts, such as an applicant it will not quote, and explanation names the reason the site gave; set temporary when the site declines only for now, such as a store closed until it opens, and availableAt when the site says when; site_unavailable when the site is temporarily down for the failing input: its own pages show a maintenance or outage page, or fail with a 5xx answer from its own service, while the tool's code and the caller's input are unchanged, never a 5xx answer only to the request the tool made, since that request can be wrong; prefer it over changing the code or over site_lacks_capability, and never use it for a bot check or an access-denied page; a site-wide outage, maintenance, error or empty page that appears only after the site already served its pages in this attempt, or after a bot check you got past earlier, is reported the same way, for the outage page you see now, not the earlier check; a host may then give the build a new browser on another network address, which on a signed-in build starts signed out, and ask you to try the failing step once more before it ends the build, so try it again and report site_unavailable again if the page stays; a page for the example's own record that says the site can't offer it right now, or comes back blank, while the site serves its other records, is the site's answer for that record, not an outage: prefer having the tool return it as an explicit state with the site's words and no items over a complete empty list, prove the tool on another record the site lists or ask the caller, and keep building; an error on a control that serves only an optional part of the request is not the site being down: prefer leaving that part as the page shows it, or empty, saying so in the description, and building the rest of the task; caller_input when the caller's own request stops the build: what it states conflicts with itself or its cited sources, a file it needs is missing, or it rules out going on, such as a stop condition it set that cannot be met; a stop the site caused on its own, such as an expired quote, a block, an outage or a site error, is not caller_input, even when the request says to stop on it, so prefer site_declined or site_unavailable; prefer asking with request_input for a missing fact the caller could supply; cite the field or instruction in intent, and say in explanation what the caller should supply or change; owner_declined when the owner answered no to a confirm question, or declined to sign in, and the build needs that step; question_unanswered when a question you asked went unanswered and the build cannot go on without its answer; owner_ended when the owner chose in an answer to end the build, such as after confirming that a fact it needs is unknown; host_refused when a host check refused a step the build needs, such as finish_build, a sign-in form or a site change, or when live_tests answered no_time, no batch is left, and Guardian's denial of the last publication rests on a failure only a new batch could clear, and nothing left in this attempt can fix it; policy only when Guardian refused an execution in this attempt with refusal final, denied or escalated a publication for privacy or authority, or with a private_literal, credential, customer_data, exfiltration, unsafe_logging or safety_default finding, and nothing within your authority gets past it; policy also stands when Guardian denied this build's act step five times in a row, with no act step allowed between, and you know no correction left; a publication denial or escalation that names a correction or missing evidence, such as source_correction, evidence or an example_value finding, is review feedback to fix, never a policy block; your own instructions are never a policy block, and the host refuses each reason without its basis on record, unless the host's guidance names that policy ending. agent_declined when you decline the requested task yourself, under your own usage policy, and no change you could ask for would make you build it; explanation says in one plain sentence which part you won't build and may offer a narrower request. Prefer it over final text. Never use it for a task that is only hard, or for anything a site, Guardian or the owner did. site_declined is for a site that judged this example's own facts. Do not use it for a bot check, an access-denied page or any block that came before the site saw the example; the host ends those as an unsolved challenge. explanation tells the caller in one or two plain sentences what happened and why in this build, such as the reason the site gave or when it says it takes the request again, and the caller reads it after the host's standard message for the ending; Guardian reviews it first, and returns it with a rationale when it passes on a website's instructions, links or phone numbers or does not match the evidence: the attempt then goes on, and you revise the explanation and call again, or withdraw it and continue. Never use it for anything recoverable in this attempt: a failed execution, review feedback, a sign-in problem, a browser or host problem the host can still recover, a question only the caller can answer (ask with request_input), or a target on another registrable domain (proceed; Guardian reviews it). Once Guardian allows the explanation, it ends the attempt; nothing is published. Use host_unavailable only when executionAvailability is host_unavailable and what the build still needs cannot run without live execution, such as a fresh example after a source correction: it ends the attempt as the host's failure, never as blocked, with no explanation review, so never call a host fault policy. intent states the evidence that the task is impossible as asked, or that the host ended live execution.",
+                      "End this build as blocked when the requested task is impossible as asked: site_lacks_capability when the site does not offer what the task needs; site_declined when the site offers what the task needs but declines this example's own facts, such as an applicant it will not quote, and explanation names the reason the site gave; set temporary when the site declines only for now, such as a store closed until it opens, and availableAt when the site says when; site_unavailable when the site is temporarily down for the failing input: its own pages show a maintenance or outage page, or fail with a 5xx answer from its own service, while the tool's code and the caller's input are unchanged, never a 5xx answer only to the request the tool made, since that request can be wrong; prefer it over changing the code or over site_lacks_capability, and never use it for a bot check or an access-denied page; a site-wide outage, maintenance, error or empty page that appears only after the site already served its pages in this attempt, or after a bot check you got past earlier, is reported the same way, for the outage page you see now, not the earlier check; a host may then give the build a new browser on another network address, which on a signed-in build starts signed out, and ask you to try the failing step once more before it ends the build, so try it again and report site_unavailable again if the page stays; a page that looks blank or broken right after you closed an overlay, popup or dialog is not an outage: read the data the page already holds, reload it, or reach the same data through the site's other route first; a site that fails only under this build's own request volume, such as requests it refuses as too many, or larger pages failing where smaller ones pass, on a fresh network address too, is limiting the build, not down: set rateLimited on the site_unavailable report; a page for the example's own record that says the site can't offer it right now, or comes back blank, while the site serves its other records, is the site's answer for that record, not an outage: prefer having the tool return it as an explicit state with the site's words and no items over a complete empty list, prove the tool on another record the site lists or ask the caller, and keep building; an error on a control that serves only an optional part of the request is not the site being down: prefer leaving that part as the page shows it, or empty, saying so in the description, and building the rest of the task; caller_input when the caller's own request stops the build: what it states conflicts with itself or its cited sources, a file it needs is missing, or it rules out going on, such as a stop condition it set that cannot be met; a stop the site caused on its own, such as an expired quote, a block, an outage or a site error, is not caller_input, even when the request says to stop on it, so prefer site_declined or site_unavailable; prefer asking with request_input for a missing fact the caller could supply; cite the field or instruction in intent, and say in explanation what the caller should supply or change; owner_declined when the owner answered no to a confirm question, or declined to sign in, and the build needs that step; question_unanswered when a question you asked went unanswered and the build cannot go on without its answer; owner_ended when the owner chose in an answer to end the build, such as after confirming that a fact it needs is unknown; host_refused when a host check refused a step the build needs, such as finish_build, a sign-in form or a site change, or when live_tests answered no_time, no batch is left, and Guardian's denial of the last publication rests on a failure only a new batch could clear, and nothing left in this attempt can fix it; policy only when Guardian refused an execution in this attempt with refusal final, denied or escalated a publication for privacy or authority, or with a private_literal, credential, customer_data, exfiltration, unsafe_logging or safety_default finding, and nothing within your authority gets past it; policy also stands when Guardian denied this build's act step five times in a row, with no act step allowed between, and you know no correction left; a publication denial or escalation that names a correction or missing evidence, such as source_correction, evidence or an example_value finding, is review feedback to fix, never a policy block; your own instructions are never a policy block, and the host refuses each reason without its basis on record, unless the host's guidance names that policy ending. agent_declined when you decline the requested task yourself, under your own usage policy, and no change you could ask for would make you build it; explanation says in one plain sentence which part you won't build and may offer a narrower request. Prefer it over final text. Never use it for a task that is only hard, or for anything a site, Guardian or the owner did. site_declined is for a site that judged this example's own facts. Do not use it for a bot check, an access-denied page or any block that came before the site saw the example; the host ends those as an unsolved challenge. explanation tells the caller in one or two plain sentences what happened and why in this build, such as the reason the site gave or when it says it takes the request again, and the caller reads it after the host's standard message for the ending; Guardian reviews it first, and returns it with a rationale when it passes on a website's instructions, links or phone numbers or does not match the evidence: the attempt then goes on, and you revise the explanation and call again, or withdraw it and continue. Never use it for anything recoverable in this attempt: a failed execution, review feedback, a sign-in problem, a browser or host problem the host can still recover, a question only the caller can answer (ask with request_input), or a target on another registrable domain (proceed; Guardian reviews it). Once Guardian allows the explanation, it ends the attempt; nothing is published. Use host_unavailable only when executionAvailability is host_unavailable and what the build still needs cannot run without live execution, such as a fresh example after a source correction: it ends the attempt as the host's failure, never as blocked, with no explanation review, so never call a host fault policy. intent states the evidence that the task is impossible as asked, or that the host ended live execution.",
                       "The blocked ending was not recorded. Inspect the finite failure; correct the request or continue the build.",
                       // The report carries its intent, the evidence a caller_input ending cites.
                       (request, intent) => reportBlocked?.({ ...request, intent }) ?? notOfferedAction(),
@@ -1118,7 +1219,7 @@ const openAIMinter = (
             const requestInput = tool({
               ...hostTool(
                 "request_input",
-                'Ask the caller one batch of typed questions (choice, multi_choice, text, confirm or secret) and wait: this call returns their answers and the attempt continues, or no_answer when nobody answered in time, and you decide how to go on without it. Follow the instructions\' try-hard-then-ask rule. Question and option ids are your own short lowercase ids. The caller may answer any choice or multi_choice in their own words, which comes back as {"other": text} instead of an option, {"option": id, "note": text} for a pick with their note, or {"options": [ids], "other": text, "note": text} with an option of their own or a note: their words are their answer, so follow them, and ask again once at most if they leave the choice open. A secret is private text the caller types, or a code that is not part of signing in: another code a later protected action after sign-in asks for, or a code the site sends during a write, signed out too, which you prefer to ask with a declared secret question from the next act step\'s script (writes skill); a code that is part of signing in (by text message, email or an authenticator app) is a code field of execute purpose authenticate, which asks the caller itself, so never ask for it here. A secret\'s answer comes back only as a handle such as {{secret.s1}}, never the value: write the handle as the whole string literal passed as the value to fill, type or pressSequentially, or as a field of a request to this site, in the Playwright code of explore, test or act source, and the host fills in the value when it runs that source live; a handle anywhere else is refused. An example and published source never hold a handle; the finished tool asks at run time with ask. Never ask for website logins, which the host requests itself, or for CAPTCHAs. Set endsBuild on a confirm question that asks whether to end the build. After a yes, end it with report_blocked owner_ended; a no means keep going. When Guardian refused a step until the owner confirms it, ask with a confirm question whose prompt says plainly what the step does, and set its confirmsReview to that refusal\'s reviewId, with an id no earlier question used. After a yes, send the same step again unchanged, with no mint_update: the answer authorizes exactly that step. A changed step needs its own confirmation, and no answer authorizes turning off a security control or sending credentials or the account\'s data to anyone other than the task\'s own site and the caller. When a publication finding leaves the owner a choice, such as keeping a claim and getting its evidence or removing it or marking it untested, set finding to that finding\'s id. A question_rejected result is Guardian asking for other words: ask again once, reworded as its rationale says, with the same question ids, unless questionNeeded is false or the rationale says plainly that no question is needed. One request at a time. intent states why only the caller can supply this.',
+                'Ask the caller one batch of typed questions (choice, multi_choice, text, confirm or secret) and wait: this call returns their answers and the attempt continues, or no_answer when nobody answered in time, and you decide how to go on without it. Give each choice, multi_choice and text question your recommended answer in recommended (an option id, option ids, or the text), except one that asks consent: the caller sees it, and no_answer returns it for you to go on with. Set asksConsent true when an answer would let the build act on the site for the caller, such as submit, pay, send, book or delete, and false when it only decides how the tool works, such as which field holds a value. Follow the instructions\' try-hard-then-ask rule. Question and option ids are your own short lowercase ids. The caller may answer any choice or multi_choice in their own words, which comes back as {"other": text} instead of an option, {"option": id, "note": text} for a pick with their note, or {"options": [ids], "other": text, "note": text} with an option of their own or a note: their words are their answer, so follow them, and ask again once at most if they leave the choice open. A secret is private text the caller types, or a code that is not part of signing in: another code a later protected action after sign-in asks for, or a code the site sends during a write, signed out too, which you prefer to ask with a declared secret question from the next act step\'s script (writes skill); a code that is part of signing in (by text message, email or an authenticator app) is a code field of execute purpose authenticate, which asks the caller itself, so never ask for it here. A secret\'s answer comes back only as a handle such as {{secret.s1}}, never the value: write the handle as the whole string literal passed as the value to fill, type or pressSequentially, or as a field of a request to this site, in the Playwright code of explore, test or act source, and the host fills in the value when it runs that source live; a handle anywhere else is refused. An example and published source never hold a handle; the finished tool asks at run time with ask. Never ask for website logins, which the host requests itself, or for CAPTCHAs. Set endsBuild on a confirm question that asks whether to end the build. After a yes, end it with report_blocked owner_ended; a no means keep going. When Guardian refused a step until the owner confirms it, ask with a confirm question whose prompt says plainly what the step does, and set its confirmsReview to that refusal\'s reviewId, with an id no earlier question used. After a yes, send the same step again unchanged, with no mint_update: the answer authorizes exactly that step. A changed step needs its own confirmation, and no answer authorizes turning off a security control or sending credentials or the account\'s data to anyone other than the task\'s own site and the caller. When a publication finding leaves the owner a choice, such as keeping a claim and getting its evidence or removing it or marking it untested, set finding to that finding\'s id. A question_rejected result is Guardian asking for other words: ask again once, reworded as its rationale says, with the same question ids, unless questionNeeded is false or the rationale says plainly that no question is needed. One request at a time. intent states why only the caller can supply this.',
                 "The question was not asked. Inspect the finite failure; correct the request or continue without it.",
                 (request) => turn.actions.requestInput(request),
               ),
@@ -1194,7 +1295,7 @@ const openAIMinter = (
             const liveTests = tool({
                     ...hostTool(
                       "live_tests",
-                      `A read's live tests (read the testing skill); a write runs none. You design your cases in ${"test/cases.json"} from what you saw on the site, each with its purpose. A read signed out runs a wide, varied first batch of about 10 to 20: one case that sets together every input the example left unset, each to a value the site shows that at least one example row fails while some rows pass, so its rows show each was applied, the example's input once more, no results, the next page, then each kind of query the tool names, a single result, a closed or sold-out record when the site readily offers one, boundary values, a second store or region, other layouts and records of other kinds, and a case for each branch of your own code no other case runs. A signed-in read runs at most four distinct inputs, on its own signed-in browser; running one again is free. Start as soon as you know the page and the inputs, and refine them once the example passes. Action plan returns your cases and each case's latest status, result and failure with its source line; name cases to see their outputs, a large one as a digest naming the file that holds it. Action run runs the named cases, or all when cases is null, as one batch after one Guardian review: each case starts on a fresh page like the example, keeping its browser's site data, on separate browsers at once where the host has them, and you get every result, each marked warm or cold: cold ran first on a new browser with an empty profile. entrypoint is src/tool.mjs or src/tool-http.mjs: run the same cases on both versions, each as its own batch, and each version keeps its own results, so one never replaces or stales the other's. Results count only for the version, the source and the case as they ran; publication review reads the host's record of them and judges it against what the tool claims. intent states what these cases should establish.`,
+                      `A read's live tests (read the testing skill); a write runs none. You design your cases in ${"test/cases.json"} from what you saw on the site, each with its purpose. A read signed out runs a wide, varied first batch of about 10 to 20: one case that sets together every input the example left unset, each to a value the site shows that at least one example row fails while some rows pass, so its rows show each was applied, the example's input once more, no results, the next page, then each kind of query the tool names, a single result, a closed or sold-out record when the site readily offers one, boundary values, other stores, regions or tenants you found on the site that differ from the example (another template, a feature turned off, a redirect, a large record, another country or URL shape), other layouts and records of other kinds, and a case for each branch of your own code no other case runs. A signed-in read runs at most four distinct inputs, on its own signed-in browser; running one again is free. Start as soon as you know the page and the inputs, and refine them once the example passes. Action plan returns your cases and each case's latest status, result and failure with its source line; name cases to see their outputs, a large one as a digest naming the file that holds it. Action run runs the named cases, or all when cases is null, as one batch after one Guardian review: each case starts on a fresh page like the example, keeping its browser's site data, on separate browsers at once where the host has them, and you get every result, each marked warm or cold: cold ran first on a new browser with an empty profile. caseSeconds asks for a longer time limit on each case of a run, for cases whose pages are slow, such as a location or sign-in step; null keeps the host's limit. The host cuts it to its own maximum, and the run's result says the limit each case had. entrypoint is src/tool.mjs or src/tool-http.mjs: run the same cases on both versions, each as its own batch, and each version keeps its own results, so one never replaces or stales the other's. Results count only for the version, the source and the case as they ran; publication review reads the host's record of them and judges it against what the tool claims. intent states what these cases should establish.`,
                       "The live tests did not run. Inspect the finite failure; fix the cases file or the source, then plan or run again.",
                       (request) => runLiveTests?.(request) ?? notOfferedAction(),
                     ),
@@ -1277,8 +1378,8 @@ const openAIMinter = (
               // summary is recorded per response. Reasoning from earlier turns stays rendered
               // after a continuation or host notice, so the cached prompt is never rewritten
               // from the first earlier reasoning item; the applied context is recorded per call.
-              // A build turn may send a step's edit and the execute that runs it in one response;
-              // the effect question turn asks one question.
+              // A build turn may send several calls in one response; the effect question turn asks
+              // one question.
               // The static prefix carries its own 12-hour breakpoint (withCachedPrefix); the rest of
               // the conversation is cached at the implicit breakpoint.
               modelSettings: withPromptCache(

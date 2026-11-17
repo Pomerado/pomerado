@@ -71,7 +71,10 @@ const firstInput = (request: ModelRequest | undefined) => {
   throw new Error("Missing first input");
 };
 
-const attempt = async (overrides: Partial<MintDependencies>) => {
+const attempt = async (
+  overrides: Partial<MintDependencies>,
+  request: Readonly<Record<string, unknown>> = {},
+) => {
   const workspace = await portableJobSession({ "src/tool.ts": "export {};" });
   cleanups.push(async () => {
     await workspace.close();
@@ -109,6 +112,7 @@ const attempt = async (overrides: Partial<MintDependencies>) => {
       intent: "Submit the synthetic form",
       businessInput: {},
       observations: [],
+      ...request,
     }).pipe(Effect.provideService(MintServices, dependencies)),
   );
   return firstInput(requests[0]);
@@ -143,4 +147,22 @@ it("gives no earlier-attempt reason for an entry page that failed to load", asyn
   const input = await attempt({ entryNavigation: () => failed });
   expect(input.hostEntryNavigation).toMatchObject({ state: "not_opened", outcome: "failed" });
   expect(input.hostEntryNavigation?.reason).toBeUndefined();
+});
+
+// Fails while the request drops the caller's other example inputs: the agent then never sees
+// them, so it can neither test them nor prove the tool on one when the first is refused.
+it("shows the agent the other example inputs the caller sent with its first", async () => {
+  const others = [{ city: "Synthetic Two" }, { city: "Synthetic Three" }];
+  const input = await attempt(
+    {},
+    { businessInput: { city: "Synthetic One" }, otherExampleInputs: others },
+  );
+  const request: unknown =
+    typeof input.screenedRequest === "string"
+      ? JSON.parse(input.screenedRequest)
+      : input.screenedRequest;
+  expect(request).toMatchObject({
+    businessInput: { city: "Synthetic One" },
+    otherExampleInputs: others,
+  });
 });

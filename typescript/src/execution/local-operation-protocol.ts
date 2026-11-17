@@ -3,7 +3,12 @@ import { InputRequest } from "../runtime/input-request.js";
 import { DialogReport } from "../runtime/kernel-operation.js";
 import { maximumInputIssuePath, maximumInputIssues } from "../runtime/errors.js";
 import { ScriptQuestionDeclarations } from "../runtime/script-input.js";
-import { FileField, fileReferenceMaxLength, SiteFileLimits } from "../runtime/files.js";
+import {
+  FileField,
+  fileReferenceMaxLength,
+  ScreenshotTarget,
+  SiteFileLimits,
+} from "../runtime/files.js";
 import {
   maximumRefusalChoiceLength,
   maximumRefusalChoices,
@@ -76,6 +81,10 @@ export const LocalOperationStart = Schema.Struct({
   offline: Schema.optionalWith(Schema.Literal(true), { exact: true }),
   /** A mint step: it counts as possibly sent from its first browser call, not from its start. */
   dispatchAtFirstCall: Schema.optionalWith(Schema.Literal(true), { exact: true }),
+  /** Whether the run reads or writes, for its pickers (`ScriptBrowser.effect`). */
+  effect: Schema.optionalWith(Schema.Literal("read", "write"), { exact: true }),
+  /** Commit steps the run may not enter (`makeEffectJournalWith`). */
+  settledCommits: Schema.optionalWith(Schema.Array(Schema.String), { exact: true }),
   /** The host signs the page in again when the script's `ensureSignedIn` finds it signed out. */
   signIn: Schema.optionalWith(Schema.Literal(true), { exact: true }),
   /** The host types the run's card answers for the script's `fillCard`. */
@@ -111,13 +120,18 @@ const JournalFields = {
   effect: Schema.Literal("not_started", "may_have_dispatched", "verified"),
   confirmation: Schema.optionalWith(Schema.Literal("message", "readback"), { exact: true }),
   commits: Schema.Array(
-    Schema.Struct({ name: Schema.String, state: Schema.Literal("not_sent", "sent", "confirmed") }),
+    Schema.Struct({
+      name: Schema.String,
+      state: Schema.Literal("not_sent", "sent", "confirmed"),
+      setting: Schema.optionalWith(Schema.Literal(true), { exact: true }),
+    }),
   ),
 };
 const WriteDeclaration = Schema.Struct({
   confirmation: Schema.Literal("message", "readback", "unverifiable"),
   commits: Schema.optionalWith(Schema.Array(Schema.String), { exact: true }),
   commitsUnproven: Schema.optionalWith(Schema.Array(Schema.String), { exact: true }),
+  settings: Schema.optionalWith(Schema.Array(Schema.String), { exact: true }),
 });
 export const LocalOperationMessage = Schema.Union(
   Schema.Struct({
@@ -146,13 +160,28 @@ export const LocalOperationMessage = Schema.Union(
     timeoutSec: Schema.Int.pipe(Schema.between(1, 300)),
     ...SiteFileLimits.fields,
   }),
-  /** `files.collect`, before its trigger: the host starts capturing downloads. */
+  /** `files.collect` or `files.collectAll`, before its trigger: the host starts a capture. */
   Schema.Struct({ kind: Schema.Literal("file_arm"), id: Id }),
   /** `files.collect`, after its trigger: the host keeps the slot's download. */
   Schema.Struct({
     kind: Schema.Literal("file_collect"),
     id: Id,
     slot: Id,
+    timeoutMs: Schema.Number.pipe(Schema.between(0, 300_000)),
+  }),
+  /** `files.collectAll`, after its trigger: the host keeps every download in the slot. */
+  Schema.Struct({
+    kind: Schema.Literal("file_collect_all"),
+    id: Id,
+    slot: Id,
+    timeoutMs: Schema.Number.pipe(Schema.between(0, 300_000)),
+    max: Schema.optionalWith(Schema.Int.pipe(Schema.positive()), { exact: true }),
+  }),
+  /** `files.screenshot`: the host keeps a picture of the page or one element. */
+  Schema.Struct({
+    kind: Schema.Literal("file_screenshot"),
+    id: Id,
+    ...ScreenshotTarget.fields,
     timeoutMs: Schema.Number.pipe(Schema.between(0, 300_000)),
   }),
   /** One `SiteHttp` request the child validated, for the host's transport to send. */

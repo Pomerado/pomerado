@@ -14,6 +14,7 @@ import {
   runOutcomeCodes,
   runOutcomeRetry,
   runnerVerified,
+  settingsOnlyWrite,
   unconfirmedWrite,
   unenteredWrite,
   unreadableRefusal,
@@ -107,6 +108,21 @@ describe("a write that entered none of its declared commit steps", () => {
     { case: "a recorded confirmation", effect: "verified", marks: [notSent], unentered: false },
   ] as const)("is $unentered with $case", ({ effect, marks, unentered }) => {
     expect(unenteredWrite(effect, marks)).toBe(unentered);
+  });
+});
+
+describe("a write that entered only its setting steps", () => {
+  const tip = { name: "save-tip", state: "sent", setting: true } as const;
+  const order = { name: "place-order", state: "not_sent" } as const;
+  const dispatched = "may_have_dispatched";
+  it.each([
+    { case: "a setting entered", effect: dispatched, marks: [tip, order], settings: ["save-tip"] },
+    { case: "the final step entered too", effect: dispatched, marks: [tip, { ...order, state: "sent" }] },
+    { case: "no other step declared", effect: dispatched, marks: [tip] },
+    { case: "nothing entered", effect: dispatched, marks: [{ ...tip, state: "not_sent" }, order] },
+    { case: "a recorded confirmation", effect: "verified", marks: [tip, order] },
+  ] as const)("names $settings with $case", ({ effect, marks, ...named }) => {
+    expect(settingsOnlyWrite(effect, marks)).toEqual("settings" in named ? named.settings : undefined);
   });
 });
 
@@ -859,11 +875,18 @@ describe("a refusal a write declares in its output", () => {
     { commits: "unreported", runnerEffect: "may_have_dispatched", refusal: undefined },
     // A write that recorded its confirmation applied, whatever it returned.
     { commits: "not_entered", runnerEffect: "verified", refusal: undefined },
+    // Setting steps alone changed only those choices.
+    {
+      commits: "entered",
+      runnerEffect: "may_have_dispatched",
+      settingsOnly: true,
+      refusal: "over_price_limit",
+    },
   ] as const)(
     "counts a refusal with $commits commit steps and a $runnerEffect runner: $refusal",
-    ({ commits, runnerEffect, refusal }) => {
+    ({ commits, runnerEffect, refusal, ...rest }) => {
       expect(
-        returnedRefusal({ outputSchema: schema, output, commits, runnerEffect })?.reason,
+        returnedRefusal({ outputSchema: schema, output, commits, runnerEffect, ...rest })?.reason,
       ).toBe(refusal);
     },
   );

@@ -52,7 +52,12 @@ separately are both applied as given, even when they're far apart.
    - `InvalidInput`: the caller's value is wrong or the site does not offer it. It breaks a rule
      above, or is not among the options the page lists, such as a store missing from its
      picker. Pass `field`, and `available`, every option the page offers
-     as selectable, exactly as shown, whenever the page lists them. When the page refuses the
+     as selectable, exactly as shown, whenever the page lists them. `available` lists only values
+     the caller could send back in that field, and a range goes in the message. When a refusal
+     lists choices, list the site's standalone named options before entries from a broader list
+     or picker. An option taken from the
+     caller's own account goes in `available` as `{ label, accountSpecific: true, maskedLabel }`,
+     marked as a question's option is ("Declare, read, ask", step 3). When the page refuses the
      value with an error of its own, prefer passing as `field` the input that error belongs to,
      matched by where the page puts it, such as the field or label it sits under, or the field
      whose `aria-describedby` points at it, even when its words don't name the field. An error
@@ -124,9 +129,8 @@ separately are both applied as given, even when they're far apart.
 
    Never pick another value for the caller, such as a near match, the page's default or the
    first option, except a value that matches several site entries equally, where the tool may
-   take the first and return the one it used (core skill), or the stem match a read of a
-   category or term takes with
-   `stem: true`, returning the option it used (forms skill), and never report a refused or
+   take the first and return the one it used, or a read's looser match, returning the option it
+   used (core skill), and never report a refused or
    unapplied value in the output instead of throwing, such as a `sort_applied: false` flag or a
    "best-effort" or "lookup-only" description. The cases above that return results with what
    applied, and a declared refusal, are the only exceptions.
@@ -212,33 +216,55 @@ already asked for, or to solve a CAPTCHA.
      site (core skill); the published script never holds a handle and asks for the value
      with `ask` instead. Prefer a `secret` question of kind `private_text` for an access
      code, such as a gate, door, alarm or lockbox code.
-   - For a payment card the checkout requires, ask for every part its card form shows
-     at once, in one request with one `secret` question for each part: `card_number`,
-     `card_expiry`, `card_cvc` and `billing_postal_code`. Those handles go only into a
-     card-fill step, never into source.
-   - A published script asks for a card the same way: declare a `secret` question with
-     a card `secretKind` for each part and ask them all in one `ask`, which returns a
-     card handle for each, such as `{{card.c1}}`, never the card. Pass the handles to
-     the context's `fillCard`, as in
-     `await fillCard({ fields: [{ selector: "#cardNumber", handle: answer.card }] })`,
-     with each field's own selector, even inside the payment processor's frame. The
-     host types the card and clicks nothing, so submit the payment in a later call
-     under the write's commit rules. Once you have the caller's card, and wherever source
-     calls `fillCard`, no source reads a field's value or the page's markup, runs or
-     plants code in the page, opens a DevTools session, takes an accessibility snapshot,
-     screenshot or PDF of the page, records the page, or reads a request body, so delete
-     such probes before you ask for the card.
+   - When the host says it fills the card from a payment method, never ask for card
+     parts: call `fillCard({ fields: [{ selector, slot }], total })` with each card
+     field's own CSS selector, matching one editable field across the page's frames,
+     even inside the payment processor's frame, its slot
+     (`card_number`, `card_expiry`, `card_cvc`) and the order total the checkout shows as
+     `{ amount, currency }`. On a checkout the site opened in a pop-up, also pass
+     `popup: { opener: "primary", origin }` as a sign-in step names it. The host fills
+     the card and clicks nothing, so submit the payment in a later call under the
+     write's commit rules. Fill the card last: first settle and read back everything that
+     can change the order, such as the pickup or delivery time, quantities and options, and
+     every pre-checked box, such as one that saves the payment details, with any question
+     about them answered; then fill the card and press pay in the next step, with no step
+     or question between them unless the checkout itself requires one. The filled card
+     lasts only minutes, a step that leaves or reloads the checkout clears it, and a host
+     may refuse to fill it again once a request that may have charged went out. So never
+     leave the checkout once the card is in: when something must change after that, such
+     as a pickup time that moved from 12:15 to 12:30, don't go back to change it. Report
+     it instead: a build ends with `report_blocked` naming what changed, and a run fails
+     before the order's commit mark saying so. Wherever source calls `fillCard`, no source reads a
+     field's value or the page's markup, runs or plants code in the page, opens a
+     DevTools session, takes an accessibility snapshot, screenshot or PDF of the page,
+     records the page, or reads a request body, except in an explore step before the
+     card is filled, so delete such probes before any other step. A ZIP or postal-code
+     field in the card form is slot `billing_postal_code`,
+     named in the same call as the card's other fields: the host fills it from the
+     payer's billing address.
 2. For a choice, read the options in the execute call that reaches it and return them as
    plain JSON. Each option has a `value` the script acts on and a `label` the caller
    reads. Values are unique within a question. Offer only options the page will accept:
    skip taken seats, disabled slots and sold-out items. The value never leaves the run;
-   the caller sees only the label.
+   the caller sees only the label. Mark an option that stops the write with
+   `declines: true`. Picking it is the caller's no, as a confirm's no is.
 3. Mark an option taken from the caller's own account (a saved traveler, address, card
    or account) with `accountSpecific: true` and a `maskedLabel` that keeps it
-   recognizable without its numbers or email, such as `"Jane D. •••• 7890"`. The API
-   and MCP show the masked label with a notice; only the owner's protected page shows
-   the full label. A masked label that still shows five or more digits or an email
-   address is replaced by the label's last four digits or a numbered placeholder.
+   recognizable without its numbers or email: a card's brand and last four digits, an
+   address's saved label name without its recipient, street, city or ZIP, or a numbered
+   placeholder for an address with no label name. The API and MCP show the masked label
+   with a notice; only the owner's protected page shows the full label. A masked label
+   that still shows five or more digits or an email address is replaced by the label's
+   last four digits or a numbered placeholder. Prefer taking the saved entry the caller
+   can name as an optional input, matching each entry whose full label contains it as
+   whole words or whose masked label it is, and ask only when the input is empty or
+   matches no entry or several,
+   offering only the matches when several match.
+   A purchase's final confirm, a choice or a confirm, also passes `order` with the
+   checkout's `currency`, its `items` (each `name`, `quantity`, `unit` for an item sold by
+   weight or measure, and `price` each, `lineTotal` or both), `fees` (each `name` and
+   `amount`), `discount`, `shipping`, `tax`, `tip` and `total`, amounts as decimal text,
+   which everyone sees unmasked, so never the address or card.
 4. Ask once for everything the step needs, between two execute calls:
    - `await ask("code")` returns that question's answer;
    - `await ask(["seat", "note"])` returns one answer per id;

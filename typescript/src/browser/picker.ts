@@ -3,7 +3,8 @@ import { timeoutDefaults } from "../runtime/deadline.js";
 import { operationErrors } from "../runtime/operation-failure.js";
 import { foldChoiceText, rankByWords, spellingsOf } from "../runtime/text.js";
 import { typeKeys, typingPauses } from "../runtime/typing-pace.js";
-import { closestFirst, pickerRanks, rankChoices } from "./picker-rank.js";
+import { resolveAddressWith } from "./picker-address.js";
+import { cleanRanks, closestFirst, pickerRanks, rankChoices } from "./picker-rank.js";
 
 /**
  * The page's state for one picker, read in the control's own frame: every `phase` runs this one
@@ -292,7 +293,18 @@ const pickerPageCode = String.raw`(element, args) => {
       }
       return null;
     }
+    // A list read as it already shows, with no snapshot from before it opened: a popup by its role
+    // first, then the list closest to the control.
+    const reach = new Map();
+    if (args.opened)
+      for (const node of pool) {
+        let steps = 0;
+        for (let at = element; at && !holds(at, node); at = up(at)) steps++;
+        reach.set(node, steps);
+      }
     pool.sort((a, b) => {
+      const closer = args.opened ? Math.min(rankOf(a), 3) - Math.min(rankOf(b), 3) || reach.get(a) - reach.get(b) : 0;
+      if (closer !== 0) return closer;
       const order = rankOf(a) - rankOf(b);
       if (order !== 0) return order;
       if (kindOf(a) === "dialog" && kindOf(b) === "dialog") return holds(a, b) ? 1 : holds(b, a) ? -1 : 0;
@@ -419,6 +431,8 @@ const pickerPageCode = String.raw`(element, args) => {
       tag,
       key: base + "\u0000" + seen,
       label: lines[0] || clean(node.getAttribute("aria-label")) || clean(node.getAttribute("title")) || value,
+      text,
+      lines,
       names,
       value,
       disabled,
@@ -508,9 +522,28 @@ const pickerPageCode = String.raw`(element, args) => {
  *   `"add"` (default: keep the chips already there) or `"replace"` (remove the others), and
  *   `options.create` types a value the list lacks and presses Enter to make a free-entry tag.
  * - `pickerOptions(control, options?)` opens the picker (typing `options.query` when given) and
- *   returns `{ kind, options: [{ label, value, disabled }] }`, every option it lists, scrolled
+ *   returns `{ kind, options: [{ label, text, value, disabled }] }` (`text` the option's whole text,
+ *   every line of it), every option it lists, scrolled
  *   through when the list renders as it scrolls, then closes it: the page's live options for a
  *   caller question or an `available` list.
+ * - `pickAddress(control, address, options?)` resolves an address the caller typed through the
+ *   field's suggestions as `resolveAddress` does, with `read` in a read, reading each by its whole
+ *   text with `pickerOptions`, its lines as comma parts, as a refusal lists it, then picks the one
+ *   it accepted with `pickValue`, typing the text that brought it and taking the first of copies.
+ *   It returns `pickValue`'s outcome with that text as `query`
+ *   and the unit it split off as `unit`, for the site's own unit field, or, when it accepts none,
+ *   `resolveAddress`'s refusal, `option_missing` or `option_unclear`, with every suggestion the
+ *   field gave as `available` and `unit`.
+ * - `pickerTypeAddress(control, address, options?)` types the address into the field as
+ *   `resolveAddress` first asks for it, key by key as `pickValue` types, and returns that text as
+ *   `query`. It reads and picks nothing.
+ * - `pickerMatchAddress(control, address, options?)` reads the options the field's list shows now
+ *   (the list the field names, else an ARIA popup, else the list closest to the field, unless
+ *   `listbox` names it), without typing, scrolling or opening more, and resolves the address
+ *   against them as `resolveAddress` does for that text, with no tidied retry. It returns
+ *   `{ picked: true, row, label, unit }`, `row` the element of the option it accepted, for the tool
+ *   to click in the same call, and `label` that option as a refusal lists it, or `pickAddress`'s
+ *   refusal.
  *
  * The kind is detected from the control, or set as `options.kind`: `select`, `datalist`,
  * `typeahead` (an editable field: type, then choose a suggestion), `dropdown` (a button or div
@@ -520,12 +553,23 @@ const pickerPageCode = String.raw`(element, args) => {
  * leaves the dialog open).
  *
  * Matching (see `rankChoices`): a name or value as written, then ignoring case and spacing, then
- * accents and punctuation, then, only for `pickValue` with `tie: "first"`, a name whose text
- * before its first comma (not one between digits) is the value, ignoring the same (rank `leading`:
- * York, UK for York), then a name holding the value as whole words (New York for York), then a
+ * accents and punctuation, then a name whose text
+ * before one of its commas (not one between digits) is the value, ignoring the same (rank
+ * `leading`: York, UK for York, or Austin, TX, USA for Austin, TX), then an option whose first line
+ * is the value's text before one of its commas and whose other lines' comma parts hold each of the
+ * value's later parts, in their order, any of them left out (rank `place`: Example Square,
+ * Exampleton, CA for a row Example Square above Main St, Exampleton, CA, US), then the same name
+ * written another way, word for word, each word as written, a ZIP for its own ZIP+4, a singular or
+ * plural, or an abbreviation of the other with no vowel either way, such as Sq for Square, or with
+ * one as the first or last of its three letters or more before a unit's number (rank `alike`),
+ * then a
+ * name holding the value as whole words (New York for York), then a
  * name made of the value's words, no more and no fewer, with the parts its or the value's commas or
  * spaced dashes separate in another order and the numbers in the value's order (rank `allWords`:
- * Harbor Street Station, Example City for Example City Harbor Street Station), then, only with `options.stem` set to true (as a read sets it; `pickValues` takes it too), a name with
+ * Harbor Street Station, Example City for Example City Harbor Street Station), then a name some of
+ * whose whole parts, each keeping its words' order, hold the value's words one for one, each
+ * equal or written short in the name, such as Plz for Plaza (rank `anyOrder`: Transit - Lakeside
+ * Station, 12 Main St for Lakeside Transit Station), then, only with `options.stem` set to true (`pickValues` takes it too), a name with
  * as many words as the value whose words each equal the value's in order or, for words of Latin
  * letters only, begin the value's or begin with them, the shorter of five or more letters, such as
  * Dentistry for Dentist (rank `stem`), then, only with `options.extraWords` set to true and a
@@ -538,8 +582,19 @@ const pickerPageCode = String.raw`(element, args) => {
  * St and Street or Saint, Ave and Avenue, a state's code and name where a place ends the value
  * (as whole words, only after the value's other words and ending the name or one of its parts),
  * and the like) are tried against names, so Fifth Avenue for 5th Avenue outranks an option with
- * the same words in another order. Two options at the best rank are ambiguous; an "Add ..." or "Create
- * ..." row is never matched.
+ * the same words in another order. In a typeahead's or search box's list, when no rank matches,
+ * the site's first enabled result is the match when it shares a word with the value (rank
+ * `searched`). A best match as written, ignoring case and spacing, ignoring accents and
+ * punctuation (from here on a leading "the" makes no other name), at `leading`, at `place` or at
+ * `alike` is clean (`cleanRanks`), unless, in a typeahead's results, it matched an option of
+ * several lines by its first line alone and an enabled option listed before it holds the value's
+ * text before its first comma as whole words in its first line and the value's later comma parts in
+ * its text: a search lists the place it means first, so those options tie loosely. In a read, as the
+ * runtime declares it for each call, the best match at any rank is picked; in a write, or in code
+ * run without the runtime, only a clean one, and one at a looser rank is refused as
+ * `option_unclear`, alone or tied. Two options at the best rank are ambiguous, unless they are
+ * copies with one label, text and a value, such as a country listed twice, which are one option, so
+ * the first enabled copy is picked; an "Add ..." or "Create ..." row is never matched.
  *
  * The query is typed key by key, as a person types it, never filled at once, after clearing any
  * text the field holds. Waits follow the page, never a fixed pause: after typing, the options count once no loading
@@ -557,8 +612,9 @@ const pickerPageCode = String.raw`(element, args) => {
  * scroll caused have ended and held quiet for `settleMs`. A list with a search box is read up to 50
  * options instead: when it may hold more, the search box narrows it and the narrowed list is read to
  * its end, so options that tie show there, unless `tie: "first"` takes one of those 50 that matches
- * as written or ignoring case and spacing. A narrowed list that lacks the value leaves a match among
- * the options first read, so a tie the search box does not show can then be missed. A list without
+ * as written or ignoring case and spacing. A narrowed list that lacks the value, or matches it only
+ * at a looser rank, leaves a match among the options first read, shown again once the search box is
+ * emptied, so a tie the search box does not show can then be missed. A list without
  * a search box that is not read to its end within two thirds of the budget fails as
  * `options_loading`, never as `option_missing`.
  * Requests count only when the action caused them: a repeat of an earlier identical request, such
@@ -585,7 +641,10 @@ const pickerPageCode = String.raw`(element, args) => {
  * marked selected or active), so it never submits a form with nothing chosen.
  *
  * Hooks for a site's quirks: `query` (text to type, when the site searches by something other
- * than the value), `open()` (open the picker instead of clicking the control), `type(field,
+ * than the value), `more` (a typeahead's control that lists more results, clicked when it shows, or
+ * a function that opens them: the list shown for the typed text is ranked first, and more is
+ * opened only when that list has no clean match, after which both lists count, the shown one
+ * first), `open()` (open the picker instead of clicking the control), `type(field,
  * query, step)` (type instead of the helper), `answered(popup, query)` (true once the popup shows
  * the answer to this query, such as a site's query marker), `listbox` (the popup's locator),
  * `option` (a CSS selector for its options), `search` (the search box's locator), `confirm` (the
@@ -595,16 +654,23 @@ const pickerPageCode = String.raw`(element, args) => {
  *
  * A caller's value the picker lacks is not an error of the page: they return
  * `{ picked: false, reason, wanted, available, matches }`, where `reason` is `option_missing`,
- * `option_ambiguous` (`matches` lists the options that tie) or `option_disabled`, and
- * `available` every enabled option it listed, up to 100, for `option_missing` those closest to the
- * value first (`rankByWords`). Decode with `PickOutcome` and throw
+ * `option_ambiguous` (`matches` lists the options that tie), `option_disabled` or
+ * `option_unclear` (in a write, `matches` lists the options that match only loosely), and
+ * `available` every enabled option it listed, up to 100, for `option_missing` and
+ * `option_unclear` those closest to the value first (`rankByWords`), and for `option_unclear`
+ * each option by its whole text, its lines joined with commas, as `matches` lists them. A
+ * typeahead value with no clean match whose text before its first comma is shorter, as such a text
+ * passed back is, is typed once, then as that text alone while more than a third of the budget is
+ * left, unless `query` is set, and that list ranked against the whole value, so the option is found
+ * by its first line, where its text as listed matches as written; that second typing failing
+ * leaves the first one's answer. Decode with `PickOutcome` and throw
  * `pickRefusal(outcome, field)` (`InvalidInput` with `field` and `available`, which for options
  * that tie is `matches`), or ask the caller to choose among `matches`. In a tool that takes the
  * first of options that tie instead (each tool decides), pass `tie: "first"`, so the picker takes
  * the first of them in the site's order and returns the one it used, which the tool returns in
  * its output. Success is
  * `{ picked: true, kind, label, value, rank, refills }`, plus `tied`, the options that tied, when
- * `tie: "first"` took one.
+ * `tie: "first"` took one, and `loose: true` when a read took a match looser than `cleanRanks`.
  * Everything else throws an Error named `PickerFailure` whose message is a fixed reason, never a
  * value: `wanted_missing`, `popup_missing` (the control opened nothing), `options_loading` (still
  * loading, or more list to read, at the timeout), `not_committed` (the field never kept the
@@ -622,7 +688,13 @@ const pickerRankChoices = ${String(rankChoices)};
 const pickerSpellings = ${String(spellingsOf)};
 const pickerRankByWords = ${String(rankByWords)};
 const pickerClosestFirst = ${String(closestFirst)};
-const pickerRank = (s, list, wanted) => pickerRankChoices(list, wanted, pickerFold, { leading: s.tie === true, stem: s.options.stem === true, extraWords: s.options.extraWords === true, spellings: pickerSpellings });
+// A typeahead lists its results by how well they match, so a place it lists first is the one it means.
+// searched says the list is the site's answer to typed text.
+const pickerRank = (s, list, wanted, listedFirst = s.kind === "typeahead", searched = false) =>
+  pickerRankChoices(list, wanted, pickerFold, { leading: true, stem: s.options.stem === true, extraWords: s.options.extraWords === true, listedFirst, searched, spellings: pickerSpellings });
+// The run's effect, which the runtime declares around each call: a read takes its best match at
+// any rank; a write, or code run without the runtime, only a clean one.
+const pickerReads = () => typeof __pomeradoEffect === "string" && __pomeradoEffect === "read";
 const pickerPage = ${pickerPageCode};
 const pickerLimits = Object.freeze(${JSON.stringify({
   timeout: 10_000,
@@ -851,7 +923,7 @@ const pickerLoadingFailure = (s, scan, since, answered, listRead) => {
   return failure;
 };
 const pickerTag = (s, name, value) => s.frame.locator("[" + name + "=" + JSON.stringify(value) + "]");
-const pickerChoices = (options) => options.map((option) => ({ names: option.names, value: option.value, disabled: option.disabled, key: option.key }));
+const pickerChoices = (options) => options.map((option) => ({ names: option.names, value: option.value, disabled: option.disabled, key: option.key, lines: option.lines }));
 // Waits for the picker's options to answer an action: no loading sign, no request the action
 // started in flight, the author's answered() true, and the list unchanged for settleMs (or for
 // idleMs when nothing reacted at all), counted from the action's end, so typing a long query
@@ -890,8 +962,8 @@ const pickerSettle = async (s, since, before, query) => {
 // Every option the list holds, up to cap: a list that renders or loads as it scrolls is scrolled a
 // page at a time to its end, remembering where each option showed, so a tie further down is never
 // missed. complete says the whole list was read; scrolling stops at cap, or with a third of the
-// budget left, for the pick itself.
-const pickerCollect = async (s, scan, wanted, cap = Infinity) => {
+// budget left, for the pick itself. searched says the list is the site's answer to typed text.
+const pickerCollect = async (s, scan, wanted, cap = Infinity, searched = false) => {
   const seen = new Map();
   const add = (found) => {
     for (const option of found.options) if (!seen.has(option.key)) seen.set(option.key, option);
@@ -927,31 +999,56 @@ const pickerCollect = async (s, scan, wanted, cap = Infinity) => {
     else if (latest.scroll.end || latest.scroll.top === at || ++stuck >= 3) complete = settled();
   }
   const list = [...seen.values()].filter((option) => !option.creation);
-  const ranking = wanted ? pickerRank(s, pickerChoices(list), wanted) : { status: "missing" };
+  const ranking = wanted ? pickerRank(s, pickerChoices(list), wanted, undefined, searched) : { status: "missing" };
   return { list, ranking, scan: latest, complete };
 };
 // The enabled options as shown, never a native select's empty-valued prompt such as "Choose...".
 // For a value it lacks (wanted given), those closest to it first, so they survive the cap.
 const pickerClosest = (labels, wanted) => pickerClosestFirst([...new Set(labels)], wanted?.[0] ?? "", pickerRankByWords).slice(0, 100);
-const pickerAvailable = (list, wanted) =>
-  pickerClosest(list.filter((option) => !option.disabled && !(option.native && option.value === "")).map((option) => option.label).filter(Boolean), wanted);
-// Options that tie, each as the caller can tell it apart: its label, else its whole text, else
-// that and its value.
+const pickerAvailable = (list, wanted, name = (option) => option.label) =>
+  pickerClosest(list.filter((option) => !option.disabled && !(option.native && option.value === "")).map(name).filter(Boolean), wanted);
+// An option's whole text, every line of it.
+const pickerText = (option) => option.text || option.label;
+// An option as a refusal lists it: its whole text with its lines joined by commas, so a caller who
+// passes it back matches it and its first line is its first comma part.
+const pickerCandidate = (option) =>
+  option.lines?.length > 1 ? option.lines.map((line) => line.replace(/[\s,;]+$/u, "")).join(", ") : pickerText(option);
+// Ranks that match the value itself, written another way at most. A write picks no looser match.
+const pickerClean = ${JSON.stringify(cleanRanks)};
+// Every rank, the closest first.
+const pickerRankOrder = ${JSON.stringify(pickerRanks)};
+const pickerCleanly = (ranking) => ranking.status !== "missing" && pickerClean.includes(ranking.rank);
+// Options that tie, each as the caller can tell it apart: its label, else its whole text (its lines
+// joined with commas) or other name, else that and its value.
 const pickerMatches = (options) => {
   const labels = options.map((option) => option.label);
-  const texts = options.map((option, index) => (labels.indexOf(labels[index]) === labels.lastIndexOf(labels[index]) ? labels[index] : option.names?.[1] ?? labels[index]));
+  const texts = options.map((option, index) => (labels.indexOf(labels[index]) === labels.lastIndexOf(labels[index]) ? labels[index] : option.lines?.length > 1 ? pickerCandidate(option) : option.names?.[1] ?? labels[index]));
   return texts.map((text, index) => (texts.indexOf(text) === texts.lastIndexOf(text) || !options[index].value ? text : text + " [" + options[index].value + "]"));
 };
 // With tie "first", options that tie give the first enabled one in the list's order, kept by its
 // position (its key or index), never found again by a label another option may share; every
-// tied option greyed out is a value the site does not offer now.
-const pickerOutcome = (found, wanted, tie = false) => {
+// tied option greyed out is a value the site does not offer now. Options that tie as copies, with
+// one label, text and value, such as a country listed twice, are one option, taken the same way
+// without tie "first". Options with no value are never copies: what holds them, such as a group,
+// can tell them apart. A best match at a looser rank than pickerClean's is picked only in a read,
+// marked loose; in a write it is refused as option_unclear, alone or tied, with those options as
+// matches and every enabled option, closest first, as available, each by its whole text.
+const pickerOutcome = (found, wanted, tie = false, reads = false) => {
   const { ranking, list } = found;
-  if (ranking.status === "picked") return { status: "picked", option: list[ranking.index], rank: ranking.rank };
+  const loose = ranking.status !== "missing" && !pickerClean.includes(ranking.rank) ? { loose: true } : {};
+  if (loose.loose && !reads) {
+    const loose = ranking.status === "ambiguous" ? ranking.indexes.map((index) => list[index]) : [list[ranking.index]];
+    return {
+      status: "refused",
+      refusal: { picked: false, reason: "option_unclear", wanted: wanted[0], available: pickerAvailable(list, wanted, pickerCandidate), matches: [...new Set(loose.filter((option) => !option.disabled).map(pickerCandidate))] },
+    };
+  }
+  if (ranking.status === "picked") return { status: "picked", option: list[ranking.index], rank: ranking.rank, ...loose };
   const tied = ranking.status === "ambiguous" ? ranking.indexes.map((index) => list[index]) : [];
-  const first = tie ? tied.find((option) => !option.disabled) : undefined;
-  if (first) return { status: "picked", option: first, rank: ranking.rank, tied: pickerMatches(tied) };
-  const reason = ranking.status === "ambiguous" ? (tie ? "option_disabled" : "option_ambiguous") : ranking.status === "disabled" ? "option_disabled" : "option_missing";
+  const copies = new Set(tied.map((option) => JSON.stringify([option.label, option.names, option.value]))).size === 1 && tied[0].value !== "";
+  const first = tie || copies ? tied.find((option) => !option.disabled) : undefined;
+  if (first) return { status: "picked", option: first, rank: ranking.rank, ...(tie ? { tied: pickerMatches(tied) } : {}), ...loose };
+  const reason = ranking.status === "ambiguous" ? (tie || copies ? "option_disabled" : "option_ambiguous") : ranking.status === "disabled" ? "option_disabled" : "option_missing";
   return {
     status: "refused",
     refusal: {
@@ -972,6 +1069,7 @@ const pickerPicked = (kind, found, refills) => ({
   rank: found.rank,
   refills,
   ...(found.tied ? { tied: found.tied } : {}),
+  ...(found.loose ? { loose: true } : {}),
 });
 const pickerFieldValue = (field, s) =>
   field.evaluate((node) => (node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement ? node.value : node.textContent ?? ""), undefined, s.act());
@@ -986,7 +1084,10 @@ const pickerType = async (s, field, query, step, scan) => {
   if (s.options.type) return s.options.type(field, query, step);
   if ((await pickerFieldValue(field, s).catch(() => null)) !== "") await field.fill("", s.act());
   const text = query.replace(/\s+/g, " ");
-  await pickerTypeKeys(field, text, pickerPauses(text, s.left() / 3), s.act());
+  // The keys' own pauses add to the time one action may take, so a long value typed at a person's
+  // pace never times out for its length.
+  const pauses = pickerPauses(text, s.left() / 3);
+  await pickerTypeKeys(field, text, pauses, { timeout: Math.min(s.left(), pickerLimits.action + pauses.reduce((sum, pause) => sum + pause, 0)) });
   s.net.mark(Date.now());
   if (step === 1 && field !== s.control && scan?.go) return pickerTag(s, "data-pomerado-pick-go", s.token).click(s.act());
   if (step === 1 && field !== s.control && scan && !scan.inForm) return field.press("Enter", s.act());
@@ -1006,8 +1107,9 @@ const pickerPageQuiet = async (s, maxMs) => {
 // the field is typed once more key by key once the page's own requests go quiet (up to the quiet
 // limit), never with the Enter or Search button of step 1. Never for a free-entry field or the
 // author's own typing. Typing again that fails, such as out of time, refuses as the empty list did.
-const pickerQuery = async (s, field, wanted, seenAvailable = []) => {
-  const queries = s.options.query ? [String(s.options.query)] : wanted;
+// Typed once, a query is never typed again, as when another typing follows it.
+const pickerQuery = async (s, field, wanted, seenAvailable = [], typing = undefined, once = false) => {
+  const queries = typing ?? (s.options.query ? [String(s.options.query)] : wanted);
   let lastFound = null;
   const available = [...seenAvailable];
   for (const [index, query] of queries.entries()) {
@@ -1028,15 +1130,17 @@ const pickerQuery = async (s, field, wanted, seenAvailable = []) => {
           await field.pressSequentially(query.slice(-1).replace(/\s/, " "), s.act());
         } else await pickerType(s, field, query, step, snapshot);
         ({ scan, reacted } = await pickerSettle(s, since, before, query));
-        found = await pickerCollect(s, scan, wanted);
+        found = await pickerCollect(s, scan, wanted, Infinity, true);
         if (!found.complete) throw pickerLoadingFailure(s, found.scan, s.markedAt, undefined, found.list.length);
       } catch (error) {
         if (again) break;
         throw error;
       }
       lastFound = found;
-      if (found.ranking.status !== "missing") return { found, field };
+      // The site's first result alone may be a stale list's, so it is typed again first.
+      if (found.ranking.status !== "missing" && found.ranking.rank !== "searched") return { found, field };
       available.push(...pickerAvailable(found.list, wanted));
+      if (once) break;
       // A tag input that may create values and shows nothing for the text is a free-entry field.
       if (!reacted && s.options.create) break;
       if (!reacted && step < 1) continue;
@@ -1073,11 +1177,54 @@ const pickerOpen = async (s) => {
   if (!scan.popup && !scan.search) throw pickerFailure("popup_missing");
   return scan;
 };
+// With options.more, a list shown for the typed text that has no clean match is followed by the
+// site's further results, which more opens (a locator it clicks when visible, or a function), and
+// the two lists are ranked as one, the shown list first.
+const pickerMore = async (s, typed, wanted, query) => {
+  const more = s.options.more;
+  if (!more || pickerCleanly(typed.found.ranking)) return typed;
+  if (typeof more !== "function" && !(await more.isVisible().catch(() => false))) return typed;
+  const before = (await pickerEval(s, "snapshot", { near: false })).signature;
+  const since = pickerMark(s);
+  if (typeof more === "function") await more();
+  else await more.click(s.act());
+  const { scan } = await pickerSettle(s, since, before, query);
+  const further = await pickerCollect(s, scan, wanted);
+  if (!further.complete) throw pickerLoadingFailure(s, further.scan, s.markedAt, undefined, further.list.length);
+  const list = [...typed.found.list, ...further.list];
+  return { ...typed, found: { list, ranking: pickerRank(s, pickerChoices(list), wanted, undefined, true), scan: further.scan, complete: true } };
+};
+// Types the value, then, with no clean match for it and more than a third of the budget left, its
+// first comma part alone, as an option's first line that a refusal's candidate begins with, ranking
+// that list against the whole value; with no clean match then either, both lists are the
+// candidates. Each is typed once, the second typing standing for typing the value again, and the
+// second never fails the call: when it does, the first typing's answer stands. After the first list
+// withdrew a clean match, as an option listed before it names the place, only both lists ranked
+// together, the first list first, decide, since the site may list its results for the shorter text
+// in another order.
+const pickerTypeahead = async (s, wanted) => {
+  const value = String(wanted[0] ?? "").trim();
+  const head = value.split(/(?<!\p{N}),|,(?!\p{N})/u)[0].trim();
+  const retry = !s.options.query && head !== "" && head !== value;
+  const typed = await pickerMore(s, await pickerQuery(s, s.control, wanted, [], undefined, retry), wanted, String(s.options.query ?? value));
+  if (!retry || pickerCleanly(typed.found.ranking) || s.left() <= (s.until - s.started) / 3) return typed;
+  const withdrew = pickerCleanly(pickerRank(s, pickerChoices(typed.found.list), wanted, false));
+  let again;
+  try {
+    again = await pickerMore(s, await pickerQuery(s, s.control, wanted, [], [head], true), wanted, head);
+  } catch (error) {
+    if (pickerTimedOut(error, s)?.name === "PickerFailure") return typed;
+    throw error;
+  }
+  if (!withdrew && pickerCleanly(again.found.ranking)) return again;
+  const list = [...typed.found.list, ...again.found.list];
+  return { ...again, found: { ...again.found, list, ranking: pickerRank(s, pickerChoices(list), wanted, undefined, true) }, available: [...(typed.available ?? []), ...(again.available ?? [])] };
+};
 // Opens or types, then ranks: { status: "picked", option, rank, field } or { status: "refused" }.
 const pickerFind = async (s, wanted) => {
   if (s.kind === "typeahead") {
-    const { found, field, available } = await pickerQuery(s, s.control, wanted);
-    const outcome = pickerOutcome(found, wanted, s.tie);
+    const { found, field, available } = await pickerTypeahead(s, wanted);
+    const outcome = pickerOutcome(found, wanted, s.tie, pickerReads());
     if (outcome.status === "refused" && available && outcome.refusal.reason === "option_missing")
       outcome.refusal.available = pickerClosest([...outcome.refusal.available, ...available], wanted);
     return { ...outcome, field, scan: found.scan };
@@ -1092,13 +1239,20 @@ const pickerFind = async (s, wanted) => {
   const search = s.options.search ?? (found.scan.search || scan.search ? pickerTag(s, "data-pomerado-pick-search", s.token) : null);
   // A list too long to read whole is narrowed with its search box, or not judged at all.
   if (!found.complete && search === null) throw pickerLoadingFailure(s, found.scan, s.markedAt, undefined, found.list.length);
-  if (strong || search === null) return { ...pickerOutcome(found, wanted, s.tie), field: s.control, scan: found.scan, popupKind: scan.kind };
+  if (strong || search === null) return { ...pickerOutcome(found, wanted, s.tie, pickerReads()), field: s.control, scan: found.scan, popupKind: scan.kind };
   const queried = await pickerQuery(s, search, wanted, pickerAvailable(found.list, wanted));
-  // A search that finds nothing leaves the match the list's first read held.
-  const outcome = pickerOutcome(queried.found.ranking.status === "missing" && found.ranking.status !== "missing" ? found : queried.found, wanted, s.tie);
+  // A search that finds nothing, or only a looser match, such as a first result sharing a word,
+  // leaves the match the list's first read held, shown again once the search box is emptied.
+  const order = (ranking) => (ranking.status === "missing" ? Infinity : pickerRankOrder.indexOf(ranking.rank));
+  let chosen = queried.found;
+  if (order(found.ranking) < order(queried.found.ranking)) {
+    const emptied = await pickerQuery(s, search, wanted, [], [""], true).catch(() => null);
+    chosen = emptied && order(emptied.found.ranking) <= order(found.ranking) ? emptied.found : found;
+  }
+  const outcome = pickerOutcome(chosen, wanted, s.tie, pickerReads());
   if (outcome.status === "refused" && queried.available && outcome.refusal.reason === "option_missing")
     outcome.refusal.available = pickerClosest([...outcome.refusal.available, ...queried.available], wanted);
-  return { ...outcome, field: search, scan: queried.found.scan ?? found.scan, popupKind: scan.kind };
+  return { ...outcome, field: search, scan: chosen.scan ?? queried.found.scan ?? found.scan, popupKind: scan.kind };
 };
 // Brings the chosen option into the rendered list (a list that renders as it scrolls may have
 // dropped it) and returns its current tag.
@@ -1319,7 +1473,7 @@ const pickerNativeRead = async (s, lacks) => {
 const pickerLacks = (s, wanted) => (list) => ["missing", "disabled"].includes(pickerRank(s, list, wanted).status);
 const pickerNative = async (s, wanted) => {
   const list = await pickerNativeRead(s, pickerLacks(s, wanted));
-  const outcome = pickerOutcome({ ranking: pickerRank(s, list, wanted), list }, wanted, s.tie);
+  const outcome = pickerOutcome({ ranking: pickerRank(s, list, wanted), list }, wanted, s.tie, pickerReads());
   if (outcome.status === "refused") return outcome.refusal;
   const option = outcome.option;
   const force = !(await pickerEval(s, "select-shown"));
@@ -1336,7 +1490,7 @@ const pickerNative = async (s, wanted) => {
 };
 const pickerDatalist = async (s, wanted) => {
   const list = await pickerNativeRead(s, pickerLacks(s, wanted));
-  const outcome = pickerOutcome({ ranking: pickerRank(s, list, wanted), list }, wanted, s.tie);
+  const outcome = pickerOutcome({ ranking: pickerRank(s, list, wanted), list }, wanted, s.tie, pickerReads());
   if (outcome.status === "refused") return outcome.refusal;
   const option = outcome.option;
   for (let attempt = 0; attempt <= s.refills; attempt++) {
@@ -1396,11 +1550,11 @@ const pickValue = async (control, wanted, options = {}) => {
 };
 const pickerChips = (s) => pickerEval(s, "chips", { chips: s.options.chips ?? null });
 // A chip is the value only by its whole name (as written, or ignoring case, spacing, accents and
-// punctuation), never because its name holds the value as a word or shares its stem: "Blue Grey"
-// is not "Blue".
+// punctuation, or written another way), never because its name holds the value as a word or
+// shares its stem: "Blue Grey" is not "Blue".
 const pickerChipIs = (chips, wanted) => {
   const ranking = pickerRankChoices(chips, wanted, pickerFold, { spellings: pickerSpellings });
-  return ranking.status === "picked" && ["exact", "normalized", "folded"].includes(ranking.rank) ? ranking : null;
+  return ranking.status === "picked" && ["exact", "normalized", "folded", "alike"].includes(ranking.rank) ? ranking : null;
 };
 const pickValues = async (control, values, options = {}) => {
   const list = (Array.isArray(values) ? values : [values]).map(pickerWanted);
@@ -1412,9 +1566,9 @@ const pickValues = async (control, values, options = {}) => {
       const all = await pickerNativeRead(s, (options) => list.some((wanted) => pickerLacks(s, wanted)(options)));
       const picked = [];
       for (const wanted of list) {
-        const outcome = pickerOutcome({ ranking: pickerRank(s, all, wanted), list: all }, wanted);
+        const outcome = pickerOutcome({ ranking: pickerRank(s, all, wanted), list: all }, wanted, false, pickerReads());
         if (outcome.status === "refused") return { ...outcome.refusal, values: [] };
-        picked.push(outcome.option);
+        picked.push({ ...outcome.option, loose: outcome.loose });
       }
       const current = await s.control.evaluate((select) => [...select.selectedOptions].map((option) => option.index), undefined, s.act());
       const indexes = [...new Set([...(mode === "replace" ? [] : current), ...picked.map((option) => option.index)])];
@@ -1431,7 +1585,7 @@ const pickValues = async (control, values, options = {}) => {
       return {
         picked: true,
         kind: "select",
-        values: picked.map((option) => ({ label: option.label, value: option.value, added: !current.includes(option.index) })),
+        values: picked.map((option) => ({ label: option.label, value: option.value, added: !current.includes(option.index), ...(option.loose ? { loose: true } : {}) })),
         removed: mode === "replace" ? all.filter((option) => current.includes(option.index) && !indexes.includes(option.index)).map((option) => option.label) : [],
       };
     }
@@ -1448,9 +1602,9 @@ const pickValues = async (control, values, options = {}) => {
       for (let attempt = 0; attempt <= s.refills && !done; attempt++) {
         const { method } = pickerTry(options, attempt, attempt);
         let found = await pickerFind(s, wanted);
-        // A free-entry value is created rather than replaced by a suggestion that only holds it
-        // or shares its stem.
-        if (options.create && found.status === "picked" && ["leading", "words", "allWords", "stem", "extraWords"].includes(found.rank))
+        // A free-entry value is created rather than replaced by a suggestion that names it any
+        // other way than as written, ignoring case, spacing, accents and punctuation.
+        if (options.create && (found.status === "refused" ? found.refusal.reason === "option_unclear" : !["exact", "normalized", "folded"].includes(found.rank)))
           found = { status: "refused", field: found.field, refusal: { picked: false, reason: "option_missing", wanted: wanted[0], available: [], matches: [] } };
         const since = pickerMark(s);
         const showsChip = (label) => async () => {
@@ -1458,14 +1612,14 @@ const pickValues = async (control, values, options = {}) => {
           return pickerChipIs(now.map(chipNames), [label]) !== null;
         };
         if (found.status === "refused") {
-          // A site that stops suggesting a chosen option no longer lists a chip an earlier call
-          // picked by stem or as whole words, so the chips are ranked as the options were.
-          if (!options.create && found.refusal.reason === "option_missing") {
+          // A read's site that stops suggesting a chosen option no longer lists a chip an earlier
+          // call picked loosely, so the chips are ranked as the options were.
+          if (!options.create && found.refusal.reason === "option_missing" && pickerReads()) {
             const chips = await pickerChips(s);
             const chosen = pickerRank(s, chips.map(chipNames), wanted);
             if (chosen.status === "picked") {
               await pickerClose(s, found.field);
-              results.push({ label: chips[chosen.index].label, value: chips[chosen.index].value, added: false });
+              results.push({ label: chips[chosen.index].label, value: chips[chosen.index].value, added: false, ...(pickerClean.includes(chosen.rank) ? {} : { loose: true }) });
               done = true;
               continue;
             }
@@ -1484,7 +1638,7 @@ const pickValues = async (control, values, options = {}) => {
         }
         if (await pickerCommit(s, found, method)) {
           if ((await pickerConfirm(s, found.option, since, showsChip(found.option.label))) === "kept") {
-            results.push({ label: found.option.label, value: found.option.value, added: true });
+            results.push({ label: found.option.label, value: found.option.value, added: true, ...(found.loose ? { loose: true } : {}) });
             done = true;
           }
         }
@@ -1495,7 +1649,7 @@ const pickValues = async (control, values, options = {}) => {
     if (mode === "replace") {
       for (let round = 0; round < 50 && Date.now() < s.until; round++) {
         const chips = await pickerChips(s);
-        // A chip this call chose stays, even one it picked by stem or as whole words.
+        // A chip this call chose stays, found by its value or by the label of the option it chose.
         const chosen = [...list, ...results.map((result) => [result.label])];
         const extra = chips.find((chip) => !chosen.some((wanted) => pickerChipIs([chipNames(chip)], wanted)));
         if (!extra) break;
@@ -1520,13 +1674,14 @@ const pickValues = async (control, values, options = {}) => {
     await s.handle?.dispose().catch(() => undefined);
   }
 };
-const pickerOptions = async (control, options = {}) => {
+// The options a picker lists, each with its lines, for pickerOptions and pickAddress.
+const pickerList = async (control, options = {}) => {
   const s = await pickerStart(control, options);
   try {
     s.kind = await pickerDetect(s);
     if (["select", "select-multiple", "datalist"].includes(s.kind)) {
       const list = await pickerNativeRead(s, (options) => pickerAvailable(options).length === 0);
-      return { kind: s.kind, options: list.map((option) => ({ label: option.label, value: option.value, disabled: option.disabled })) };
+      return { kind: s.kind, list: list.map((option) => ({ label: option.label, text: option.label, value: option.value, disabled: option.disabled })) };
     }
     let scan;
     let field = s.control;
@@ -1550,7 +1705,64 @@ const pickerOptions = async (control, options = {}) => {
     const found = await pickerCollect(s, scan, null);
     if (!found.complete) throw pickerLoadingFailure(s, found.scan, s.markedAt, undefined, found.list.length);
     await pickerClose(s, field);
-    return { kind: s.kind, options: found.list.map((option) => ({ label: option.label, value: option.value, disabled: option.disabled })) };
+    return { kind: s.kind, list: found.list };
+  } catch (error) {
+    throw pickerTimedOut(error, s);
+  } finally {
+    s.net.stop();
+    await pickerEval(s, "cleanup").catch(() => undefined);
+    await s.handle?.dispose().catch(() => undefined);
+  }
+};
+const pickerOptions = async (control, options = {}) => {
+  const { kind, list } = await pickerList(control, options);
+  return { kind, options: list.map((option) => ({ label: option.label, text: pickerText(option), value: option.value, disabled: option.disabled })) };
+};
+const pickerResolveAddress = ${String(resolveAddressWith)};
+const pickerAddressRules = { fold: pickerFold, spellings: pickerSpellings, rank: pickerRankChoices };
+// Each suggestion is read with its lines as comma parts, as a refusal lists it, so a place's name on
+// the line above its address stays out of its street.
+const pickAddress = async (control, address, options = {}) => {
+  const suggest = async (query) => (await pickerList(control, { ...options, query })).list.filter((option) => !option.disabled);
+  const found = await pickerResolveAddress(String(address ?? ""), suggest, pickerCandidate, pickerAddressRules, { read: pickerReads() });
+  if (!found.picked) return found;
+  const picked = await pickValue(control, pickerText(found.choice), { ...options, query: found.query, tie: "first" });
+  return picked.picked ? { ...picked, query: found.query, unit: found.unit } : { ...picked, wanted: String(address ?? "").replace(/\s+/g, " ").trim(), unit: found.unit };
+};
+// Types the text the resolver asks the site for first, which it hands to suggest before any other.
+const pickerTypeAddress = async (control, address, options = {}) => {
+  let query = "";
+  const first = (text) => {
+    query ||= text;
+    return [];
+  };
+  await pickerResolveAddress(String(address ?? ""), first, String, pickerAddressRules);
+  const s = await pickerStart(control, options);
+  try {
+    await pickerType(s, s.control, query, 0);
+    return { query };
+  } catch (error) {
+    throw pickerTimedOut(error, s);
+  } finally {
+    s.net.stop();
+  }
+};
+// Resolves the address against the list open now, read once as it shows, as the only suggestions,
+// and returns the element of the one it accepted (its one link or button when it has one).
+const pickerMatchAddress = async (control, address, options = {}) => {
+  const s = await pickerStart(control, options);
+  try {
+    let rows = (await pickerEval(s, "scan", { opened: true })).options.filter((option) => !option.disabled && !option.creation);
+    const once = () => {
+      const read = rows;
+      rows = [];
+      return read;
+    };
+    const found = await pickerResolveAddress(String(address ?? ""), once, pickerCandidate, pickerAddressRules, { read: pickerReads() });
+    if (!found.picked) return found;
+    const hit = pickerTag(s, "data-pomerado-pick-hit", found.choice.tag);
+    const row = await ((await hit.count()) > 0 ? hit : pickerTag(s, "data-pomerado-pick", found.choice.tag)).elementHandle(s.act());
+    return { picked: true, row, label: found.label, unit: found.unit };
   } catch (error) {
     throw pickerTimedOut(error, s);
   } finally {
@@ -1563,17 +1775,24 @@ const pickerOptions = async (control, options = {}) => {
 
 const NotPicked = Schema.Struct({
   picked: Schema.Literal(false),
-  reason: Schema.Literal("option_missing", "option_ambiguous", "option_disabled"),
+  reason: Schema.Literal("option_missing", "option_ambiguous", "option_disabled", "option_unclear"),
   wanted: Schema.String,
   available: Schema.Array(Schema.String),
   matches: Schema.Array(Schema.String),
 });
 
-const PickedValue = Schema.Struct({ label: Schema.String, value: Schema.String, added: Schema.Boolean });
+const PickedValue = Schema.Struct({
+  label: Schema.String,
+  value: Schema.String,
+  added: Schema.Boolean,
+  // Only when a read took a match looser than `cleanRanks`.
+  loose: Schema.optional(Schema.Literal(true)),
+});
 
 /**
- * What `pickValue` returns, for decoding a call's result: the option it committed, or why the
- * caller's value is not among the options (`pickRefusal` turns that into `InvalidInput`).
+ * What `pickValue` and `pickAddress` return, for decoding a call's result: the option it
+ * committed, or why the caller's value is not among the options (`pickRefusal` turns that into
+ * `InvalidInput`).
  */
 export const PickOutcome = Schema.Union(
   Schema.Struct({
@@ -1585,8 +1804,13 @@ export const PickOutcome = Schema.Union(
     refills: Schema.Number,
     // Only after `tie: "first"` took the first of several: the options that tied, as `matches` lists them.
     tied: Schema.optional(Schema.Array(Schema.String)),
+    // Only when a read took a match looser than `cleanRanks`: the option is not the value itself.
+    loose: Schema.optional(Schema.Literal(true)),
+    // Only from `pickAddress`: the text that brought the suggestion, and the unit split off.
+    query: Schema.optional(Schema.String),
+    unit: Schema.optional(Schema.String),
   }),
-  NotPicked,
+  Schema.extend(NotPicked, Schema.Struct({ unit: Schema.optional(Schema.String) })),
 );
 export type PickOutcome = typeof PickOutcome.Type;
 
@@ -1607,6 +1831,19 @@ export const PickManyOutcome = Schema.Union(
 export type PickManyOutcome = typeof PickManyOutcome.Type;
 
 /**
+ * The options of a choice question that asks the caller which of the site's options a write's
+ * loose match means: the refusal's `matches` first, then the rest of `available`, each by the
+ * site's text, which `pickValue` matches as written when the answer is passed back, at most 50.
+ * Ask it with `ask` or `askOne` (caller-input skill): `askOne("pickup", pickChoices(outcome))`.
+ */
+export const pickChoices = (outcome: Pick<typeof NotPicked.Type, "available" | "matches">) => ({
+  options: [...new Set([...outcome.matches, ...outcome.available])]
+    .filter((text) => text.trim() !== "")
+    .slice(0, 50)
+    .map((text) => ({ value: text, label: text })),
+});
+
+/**
  * The `InvalidInput` for a value a picker does not offer, naming the input `field` and listing
  * what the picker offered as `available` (for an ambiguous value, the options that tie), with the
  * reason as its `kind`. Throw it: `throw pickRefusal(outcome, "store")`.
@@ -1623,7 +1860,9 @@ export const pickRefusal = (
       ? `Several ${field} options match ${quoted}; choose one of: ${(outcome.matches ?? []).join("; ")}`
       : outcome.reason === "option_disabled"
         ? `The site lists ${field} ${quoted} but does not offer it now`
-        : `The site offers no ${field} matching ${quoted}`;
+        : outcome.reason === "option_unclear"
+          ? `The site offers no ${field} that clearly matches ${quoted}`
+          : `The site offers no ${field} matching ${quoted}`;
   const available =
     outcome.reason === "option_ambiguous" ? (outcome.matches ?? []) : (outcome.available ?? []);
   return new operationErrors.InvalidInput(message, { field, available, kind: outcome.reason });

@@ -29,6 +29,7 @@ it("refuses in a file build an input's files, but not a list a JSON value calls 
     "return data.files.map((file) => file.name);",
     "return data.files?.filter(Boolean).length;",
     "if (node.files.length !== 1) throw new Error();",
+    "return { map: await context.files.screenshot({ selector: '#map' }) };",
   ])
     expect(scan(source, true), source).toBeUndefined();
 });
@@ -52,4 +53,17 @@ it("lets a build without files set an input from base64 input, deprecated, and r
   expect(scan(`${source}\nconst unused = FileInput;`, false)).toBe(
     "sets a file input itself (use files.place)",
   );
+  expect(scan(`${source}\nreturn await files.screenshot();`, false)).toBe(
+    "sets a file input itself (use files.place)",
+  );
+});
+
+it("counts files.collectAll as the file API, never as reading an input's files", () => {
+  expect(scan("const all = await context.files.collectAll(() => click());", true)).toBeUndefined();
+  expect(
+    scan(
+      "await files.collectAll(() => click());\nawait page.getByLabel('Receipt').setInputFiles(path);",
+      false,
+    ),
+  ).toBe("sets a file input itself (use files.place)");
 });

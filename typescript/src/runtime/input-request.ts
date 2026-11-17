@@ -23,7 +23,8 @@ const maximumQuestions = 8;
 export const maximumAnswerLength = 16_384;
 const Length = Schema.Int.pipe(Schema.between(1, maximumAnswerLength));
 
-export const InputOption = Schema.Struct({
+/** An option as the minting agent proposes it. */
+const ProposedOption = Schema.Struct({
   id: OptionId,
   label: Label,
   /**
@@ -32,6 +33,14 @@ export const InputOption = Schema.Struct({
    */
   accountSpecific: Schema.optional(Schema.Boolean),
   maskedLabel: Schema.optional(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(64))),
+});
+export const InputOption = Schema.Struct({
+  ...ProposedOption.fields,
+  /**
+   * Picking it is the caller's no to the write that asks, as a confirm's no is. Only a script
+   * marks it, never the minting agent's own question.
+   */
+  declines: Schema.optional(Schema.Boolean),
 });
 export type InputOption = typeof InputOption.Type;
 
@@ -70,22 +79,38 @@ export const optionsRepeatedBy = (options: readonly InputOption[], text: string)
   );
 };
 
+const distinctIds = (options: ReadonlyArray<{ readonly id: string }>) =>
+  new Set(options.map((option) => option.id)).size === options.length;
+const distinctIdsMessage = { message: () => "option ids must be unique" };
 const Options = Schema.Array(InputOption).pipe(
   Schema.minItems(1),
   Schema.maxItems(maximumOptions),
-  Schema.filter((options) => new Set(options.map((option) => option.id)).size === options.length, {
-    message: () => "option ids must be unique",
-  }),
+  Schema.filter(distinctIds, distinctIdsMessage),
+);
+const ProposedOptions = Schema.Array(ProposedOption).pipe(
+  Schema.minItems(1),
+  Schema.maxItems(maximumOptions),
+  Schema.filter(distinctIds, distinctIdsMessage),
 );
 
 const base = { id: QuestionId, prompt: Prompt };
-const choiceFields = { ...base, type: Schema.Literal("choice"), options: Options };
+/**
+ * The answer its asker recommends: the caller sees it, and an asker that goes on without an
+ * answer takes it. It is never the caller's answer, so it consents to nothing.
+ */
+const choiceFields = {
+  ...base,
+  type: Schema.Literal("choice"),
+  options: Options,
+  recommended: Schema.optional(OptionId),
+};
 const multiChoiceFields = {
   ...base,
   type: Schema.Literal("multi_choice"),
   options: Options,
   minSelections: Schema.Int.pipe(Schema.between(0, maximumOptions)),
   maxSelections: Schema.Int.pipe(Schema.between(1, maximumOptions)),
+  recommended: Schema.optional(Schema.Array(OptionId)),
 };
 const selectionsFitOptions = (question: {
   readonly minSelections: number;
@@ -95,6 +120,27 @@ const selectionsFitOptions = (question: {
   question.minSelections <= question.maxSelections &&
   question.maxSelections <= question.options.length;
 const selectionsMessage = { message: () => "selection bounds must fit the options" };
+/** A recommended choice names an offered option; a recommended multiple choice fits its bounds. */
+const recommendationOffered = (question: {
+  readonly options: readonly InputOption[];
+  readonly recommended?: string | readonly string[] | undefined;
+  readonly minSelections?: number | undefined;
+  readonly maxSelections?: number | undefined;
+}) => {
+  const { recommended } = question;
+  if (recommended === undefined) return true;
+  const picks = typeof recommended === "string" ? [recommended] : recommended;
+  return (
+    new Set(picks).size === picks.length &&
+    picks.every((id) => question.options.some((option) => option.id === id)) &&
+    (question.minSelections ?? 1) <= picks.length &&
+    picks.length <= (question.maxSelections ?? 1)
+  );
+};
+const recommendationMessage = {
+  message: () => "recommended must name offered options within the selection bounds",
+};
+
 /**
  * What the caller may write in their own words on a choice or a multiple choice. Every question
  * the minting agent asks allows both (`withOwnWords`); a script's choice allows its own text only
@@ -111,23 +157,33 @@ const ownWords = {
   /** The caller may add `note`, their own clarification, beside the options they pick. */
   allowNote: Schema.optional(Schema.Boolean),
 };
-export const ChoiceQuestion = Schema.Struct({ ...choiceFields, ...ownWords });
-export const MultiChoiceQuestion = Schema.Struct({ ...multiChoiceFields, ...ownWords }).pipe(
+const ChoiceFields = Schema.Struct({ ...choiceFields, ...ownWords });
+export const ChoiceQuestion = ChoiceFields.pipe(Schema.filter((question) => recommendationOffered(question), recommendationMessage));
+const MultiChoiceFields = Schema.Struct({ ...multiChoiceFields, ...ownWords });
+export const MultiChoiceQuestion = MultiChoiceFields.pipe(
   Schema.filter(selectionsFitOptions, selectionsMessage),
+  Schema.filter((question) => recommendationOffered(question), recommendationMessage),
 );
 /**
  * A choice as the minting agent proposes it: whether the caller may answer in their own words is
  * the host's to say, never the agent's.
  */
-export const ProposedChoiceQuestion = Schema.Struct(choiceFields);
+const ProposedChoiceFields = Schema.Struct({ ...choiceFields, options: ProposedOptions });
+export const ProposedChoiceQuestion = ProposedChoiceFields.pipe(
+  Schema.filter((question) => recommendationOffered(question), recommendationMessage),
+);
 /** A multiple choice as the minting agent proposes it (see `ProposedChoiceQuestion`). */
-export const ProposedMultiChoiceQuestion = Schema.Struct(multiChoiceFields).pipe(
+const ProposedMultiChoiceFields = Schema.Struct({ ...multiChoiceFields, options: ProposedOptions });
+export const ProposedMultiChoiceQuestion = ProposedMultiChoiceFields.pipe(
   Schema.filter(selectionsFitOptions, selectionsMessage),
+  Schema.filter((question) => recommendationOffered(question), recommendationMessage),
 );
 export const TextQuestion = Schema.Struct({
   ...base,
   type: Schema.Literal("text"),
   maxLength: Schema.optional(Length),
+  /** The text its asker recommends (see `choiceFields`). */
+  recommended: Schema.optional(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(maximumAnswerLength))),
 });
 export const ConfirmQuestion = Schema.Struct({
   ...base,
@@ -250,6 +306,110 @@ export const Question = Schema.Union(
 );
 export type Question = typeof Question.Type;
 
+/** An amount as the checkout shows it, in the order's currency, never a long number. */
+const Amount = Schema.String.pipe(Schema.pattern(/^\d{1,9}(?:\.\d{1,3})?$/u));
+/** The longest item name an order shows, in UTF-16 code units. */
+export const longestItemName = 200;
+const ItemName = Schema.String.pipe(Schema.pattern(/\S/u), Schema.maxLength(longestItemName));
+/**
+ * One line of an order: the item as the checkout names it, how many, its price each and the
+ * line's total, as the checkout shows them. An item sold by weight or measure gives its `unit`,
+ * its quantity in that unit and its price per unit.
+ */
+export const OrderItem = Schema.Struct({
+  name: ItemName,
+  /**
+   * A whole number unless the item gives its `unit`; then up to three decimal places (checked in
+   * OrderFacts).
+   */
+  quantity: Schema.Number.pipe(
+    Schema.between(0.001, 99_999),
+    Schema.filter((quantity) => Number(quantity.toFixed(3)) === quantity),
+  ),
+  unit: Schema.optional(
+    Schema.Literal(
+      "g",
+      "kg",
+      "mg",
+      "oz",
+      "lb",
+      "ml",
+      "L",
+      "fl oz",
+      "pt",
+      "qt",
+      "gal",
+      "mm",
+      "cm",
+      "m",
+      "in",
+      "ft",
+      "yd",
+    ),
+  ),
+  /** At least one of `price` and `lineTotal` (checked in OrderFacts). */
+  price: Schema.optional(Amount),
+  lineTotal: Schema.optional(Amount),
+});
+/** A fee the checkout charges, by its name there. */
+export const OrderFee = Schema.Struct({ name: ItemName, amount: Amount });
+/**
+ * The facts of the order a purchase confirm asks about. Everyone who sees the request sees them,
+ * so they hold nothing from the caller's own account, such as an address or a card. Fees, a
+ * discount and a tip go in their own fields.
+ */
+export const OrderFacts = Schema.Struct({
+  currency: Schema.String.pipe(Schema.pattern(/^[A-Z]{3}$/u)),
+  items: Schema.Array(OrderItem).pipe(
+    Schema.minItems(1),
+    Schema.maxItems(20),
+    Schema.filter(
+      (items) =>
+        items.every(
+          (item) =>
+            (item.unit !== undefined || Number.isInteger(item.quantity)) &&
+            (item.price !== undefined || item.lineTotal !== undefined),
+        ),
+      { message: () => "each item has a price or line total, and a whole quantity unless a unit" },
+    ),
+  ),
+  discount: Schema.optional(Amount),
+  fees: Schema.optional(Schema.Array(OrderFee).pipe(Schema.maxItems(10))),
+  shipping: Schema.optional(Amount),
+  tax: Schema.optional(Amount),
+  tip: Schema.optional(Amount),
+  total: Amount,
+});
+export type OrderFacts = typeof OrderFacts.Type;
+
+/**
+ * An order's facts in the host's own words, as a request's notice shows them. Each item and fee
+ * name is quoted, so no name reads as the host's words. An order with none of the later fields
+ * (`unit`, `lineTotal`, `discount`, `fees`, `tip`) reads exactly as it did before them.
+ */
+export const orderNotice = (order: OrderFacts) => {
+  const money = (amount: string) => `${amount} ${order.currency}`;
+  const items = order.items.map((item) =>
+    [
+      `${item.quantity}${item.unit === undefined ? "" : ` ${item.unit}`} × ${JSON.stringify(item.name)}`,
+      ...(item.price === undefined
+        ? []
+        : [`at ${money(item.price)} ${item.unit === undefined ? "each" : `per ${item.unit}`}`]),
+      ...(item.lineTotal === undefined ? [] : [`(${money(item.lineTotal)})`]),
+    ].join(" "),
+  );
+  const fees = (order.fees ?? []).map((fee) => `${JSON.stringify(fee.name)} ${money(fee.amount)}`);
+  return [
+    `Order: ${items.join("; ")}.`,
+    ...(order.discount === undefined ? [] : [`Discount: ${money(order.discount)}.`]),
+    ...(fees.length === 0 ? [] : [`Fees: ${fees.join("; ")}.`]),
+    ...(order.shipping === undefined ? [] : [`Shipping: ${money(order.shipping)}.`]),
+    ...(order.tax === undefined ? [] : [`Tax: ${money(order.tax)}.`]),
+    ...(order.tip === undefined ? [] : [`Tip: ${money(order.tip)}.`]),
+    `Total: ${money(order.total)}.`,
+  ].join(" ");
+};
+
 /** Who raised the request; it decides deterministically where the answer goes. */
 export const InputSource = Schema.Literal("kernel_auth", "agent", "script", "system");
 export type InputSource = typeof InputSource.Type;
@@ -268,6 +428,8 @@ export const InputRequest = Schema.Struct({
     }),
   ),
   notice: Schema.optional(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(16_384))),
+  /** A script's purchase confirm: its order's facts, which its notice shows (`orderNotice`). */
+  order: Schema.optional(OrderFacts),
   questions: Schema.Array(Question).pipe(
     Schema.minItems(1),
     Schema.maxItems(maximumQuestions),
@@ -659,6 +821,12 @@ export interface AskBounds {
     readonly expiresAt: string;
     readonly rejoined: boolean;
   }) => Effect.Effect<void>;
+  /**
+   * A script's step had, by its journal when it asked, made no browser call or left every commit
+   * step it declares unsent, so it can't have placed an order yet. Absent when it may have, or the
+   * source can't tell; an owner's yes to an order then answers no purchase confirm it asks.
+   */
+  readonly commitsUnsent?: true;
 }
 
 export class InputSuperseded extends Data.TaggedError("InputSuperseded")<{}> {}

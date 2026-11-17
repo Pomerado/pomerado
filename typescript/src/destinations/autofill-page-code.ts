@@ -32,6 +32,12 @@ import { pageControlsCode } from "./page-controls.js";
  * its name, else its `aria-label`. A row with a box none of those name alone, or with more than
  * `maximumCodeBoxes` boxes, has none.
  */
+/**
+ * The slots whose field must hold nothing at all before the host types into it: a secret that may
+ * hold symbols alone, so any remnant may be part of one.
+ */
+const strictSlots: ReadonlySet<string> = new Set(["password", "private_answer"]);
+
 const codeBoxesCode = `const codeBoxes = [];
 const codeFields = codeSlots.filter(Boolean).length;
 for (const [index, field] of fields.entries()) {
@@ -104,8 +110,9 @@ for (const [index, codeBox] of codeBoxes.entries())
 /**
  * Page code: the step's controls and visible native and ARIA actions, for the host and Guardian.
  * The page keeps the controls as found, with every form destination as found, under `observed`.
+ * With `hostFillChecked`, it also answers the first field `hostFillSelectorsCode` found unsupported.
  */
-const inspectCode = `await keep(observed, {
+const inspectCode = (hostFillChecked: boolean) => `await keep(observed, {
   questions: fields.map(({ described }) => described.questionText ?? null),
   targets: { fields: fields.map(({ target }) => target), submit: submit === null ? null : submit.target },
   destinations: [submit, ...fields].flatMap((found) => found?.destinations ?? []),
@@ -140,7 +147,7 @@ return {
   buttons,
   ...(submitKey === null || submit === null ? {} : { keySubmit: { submitControls: submit.submitControls } }),
   ...(popupTargetId === undefined ? {} : { popupTargetId }),
-  ...(codeBoxRow === undefined ? {} : { codeBoxRow }),
+  ...(codeBoxRow === undefined ? {} : { codeBoxRow }),${hostFillChecked ? "\n  ...(hostFillUnsupported === undefined ? {} : { hostFillUnsupported })," : ""}
   url: primary.url(),
   document: await documentStart(),
 };`;
@@ -801,10 +808,19 @@ ${
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(element, "");
       element.dispatchEvent(new Event("input", { bubbles: true }));
     }, undefined, { timeout: ${elementReadMs} }, true);
-  // Emptied only when it holds something: Playwright clears with a Delete key a page sees.
-  if (await field.evaluate((element) => typeof element.value === "string" && element.value.length > 0, undefined, { timeout: ${elementReadMs} }))
+  // Emptied only when it holds something: Playwright clears with a Delete key a page sees. A field
+  // that still holds something then, or once it took the focus, as one whose page puts back what it
+  // held (a remembered username, a refused password or code), takes no typing: the host never types
+  // a value after what a field holds (\`emptiedFields\`). Whether it holds something, never a value.
+  const holding = (rule) => field.evaluate((element, rule) => typeof element.value === "string" && (rule === "mask" ? /[\\p{L}\\p{N}]/u.test(element.value) : element.value.length > 0), rule, { timeout: ${elementReadMs} });
+  const emptied = emptiedFields[${call.index}];
+  const notEmptied = { focused: false, unfocused: { emptied: false }, located: fieldLocated, url: primary.url() };
+  if (await holding("any")) {
     await field.fill("", { timeout: 5000 });
+    if (emptied !== null && (await holding(emptied))) return notEmptied;
+  }
   ${call.row === undefined ? "await field.focus({ timeout: 5000 });" : "await field.click({ timeout: 5000 });"}
+  if (emptied !== null && (await holding(emptied))) return notEmptied;
   // Keep this original-node binding in Patchright's isolated world, inaccessible to page code.
   // The tag of the element that holds the focus instead, if another does: the deepest one, read
   // through open shadow roots; a closed root shows only its host.
@@ -1163,8 +1179,56 @@ const questionRead = (
     : null;
 
 /**
+ * Inspection page code, with `selectors` bound, once every control was found: each field at
+ * `checked`, the ones a host's own card fill types, must be a CSS selector that matches exactly one
+ * editable input or select across the tab's frames, itself or inside an element it matches, as
+ * that fill finds it. The first that isn't is `hostFillUnsupported`, which the host refuses after
+ * its own checks. It only reads each frame's document.
+ */
+const hostFillSelectorsCode = (checked: readonly number[]) =>
+  checked.length === 0
+    ? ""
+    : `const cssFields = ${JSON.stringify(checked)};
+// Each field's editable matches across the frames so far; null once a frame read it as no CSS.
+const editableMatches = cssFields.map(() => 0);
+for (const frame of primary.frames()) {
+  let counts;
+  // A frame the page took away mid-search, such as an ad slot, is skipped, as locate skips it. One
+  // that navigated mid-search is read again, up to three times.
+  for (let attempt = 1; counts === undefined && !frame.isDetached(); attempt++) {
+    try {
+      counts = await frame.evaluate((list) => list.map((selector) => {
+        let matched;
+        try {
+          matched = document.querySelectorAll(selector);
+        } catch {
+          return null;
+        }
+        const editable = "input:read-write, select:enabled";
+        const found = new Set();
+        for (const element of matched) {
+          if (element.matches(editable)) found.add(element);
+          for (const inside of element.querySelectorAll(editable)) found.add(inside);
+        }
+        return found.size;
+      }), cssFields.map((index) => selectors[index]));
+    } catch (error) {
+      if (attempt === 3 && !frame.isDetached()) throw error;
+    }
+  }
+  if (counts === undefined) continue;
+  counts.forEach((count, at) => {
+    const sum = editableMatches[at];
+    editableMatches[at] = count === null || sum === null ? null : sum + count;
+  });
+}
+const hostFillUnsupported = cssFields.find((_, at) => editableMatches[at] !== 1);
+`;
+
+/**
  * One host call for a step: its inspection, or with `fill`, one call of its fill. What it finds,
- * the page keeps under `observed`; a fill call compares against what it kept under `judged`.
+ * the page keeps under `observed`; a fill call compares against what it kept under `judged`. An
+ * inspection also checks the selectors of the fields at `hostFilled` (`hostFillSelectorsCode`).
  */
 export const autofillStepCode = (
   targetId: string,
@@ -1190,6 +1254,7 @@ export const autofillStepCode = (
     /** The fill's id for where the page was as each field was typed. */
     readonly typedAt: string;
   },
+  hostFilled: readonly number[] = [],
 ) => `${autofillPageCode(targetId, step.popup)}
 let popupTargetId;
 ${
@@ -1207,6 +1272,13 @@ const observed = ${JSON.stringify(observed)};
 const selectors = ${JSON.stringify(step.fields.map((field) => field.selector))};
 const questionSelectors = ${JSON.stringify(step.fields.map((field) => questionRead(field, fill === undefined)))};
 const codeSlots = ${JSON.stringify(step.fields.map((field) => field.slot === "code"))};
+// What a field may hold once emptied and focused, before the host types into it: a phone field
+// its own mask, such as a calling code, which its typing allows for (null); a password or private
+// answer nothing ("any"); every other field, whose value is letters and digits, a mask with no
+// letter or digit, such as "______" for a code or "__ / __" for a card expiry, which a mask script
+// may write once the field takes the focus and which holds no earlier value ("mask"). A mask with
+// letters, such as "mm/yy", counts as a value.
+const emptiedFields = ${JSON.stringify(step.fields.map((field) => (field.slot === "phone" ? null : strictSlots.has(field.slot ?? "") ? "any" : "mask")))};
 const submitSelector = ${JSON.stringify(step.submit ?? null)};
 const submitKey = ${JSON.stringify(step.submitKey ?? null)};
 const submitVia = ${JSON.stringify(step.submitVia ?? null)};
@@ -1249,7 +1321,7 @@ if (
 )
   return { error: "not_found", target: "submit", located: submit.located, url: primary.url() };
 const located = { fields: fields.map((field) => field.located), submit: submit === null ? null : submit.located };
-${fill === undefined ? inspectCode : fillCallCode(fill.call, fill.judged, fill.check, fill.typedAt)}`;
+${fill === undefined ? `${hostFillSelectorsCode(hostFilled)}${inspectCode(hostFilled.length > 0)}` : fillCallCode(fill.call, fill.judged, fill.check, fill.typedAt)}`;
 
 /** What named a control when the host inspected it, each as `clip` keeps it. */
 export interface ControlIdentity {
@@ -1268,6 +1340,7 @@ export const SignedInPage = Schema.Struct({
   indicator: Schema.NullOr(Schema.Boolean),
   passwordVisible: Schema.Boolean,
   challengeFormVisible: Schema.Boolean,
+  signInPopupOpen: Schema.optional(Schema.Literal(true)),
 });
 
 /**
@@ -1364,7 +1437,9 @@ const recordedChallengeVisible = async (fields) => {
  * (`challengeFields`, each with the identity the host inspected) still asks as
  * `signedInChallengeFormCode` reads it, on the site or one of `authenticationOrigins`. Both come
  * after `popups` and default to none, so a caller that passes no challenge fields gets no
- * challenge check.
+ * challenge check. A page the primary page opened that is still open on one of `popups`' origins
+ * answers `signInPopupOpen` while it shows one of `popupFields` (by selector), or any password
+ * field when they are none; otherwise its frames on the site count for the indicator too.
  */
 export const autofillSignedInCode = (
   targetId: string,
@@ -1377,14 +1452,16 @@ export const autofillSignedInCode = (
     readonly identity: ControlIdentity;
   }[] = [],
   authenticationOrigins: readonly string[] = [],
+  popupFields: readonly string[] = [],
 ) =>
   `${primaryPageCode(targetId)}
 const popupOrigins = ${JSON.stringify(popups.map((popup) => popup.origin))};
+const openPopups = [];
 for (const candidate of context.pages()) {
   if (candidate === primary || candidate.isClosed() || await candidate.opener() !== primary) continue;
   let origin;
   try { origin = new URL(candidate.url()).origin; } catch { continue; }
-  if (popupOrigins.includes(origin)) return { url: primary.url(), indicator: false, passwordVisible: false, challengeFormVisible: false };
+  if (popupOrigins.includes(origin)) openPopups.push(candidate);
 }
 const onSiteHost = ${hostOnSiteSource(siteHost)};
 const onSite = (frame) => {
@@ -1442,10 +1519,25 @@ const signInPasswordVisible = async (selectors) => {
 const selector = ${JSON.stringify(selector ?? null)};
 const signInFields = ${JSON.stringify(signInFields)};
 const challengeFields = ${JSON.stringify(challengeFields)};
+const popupFields = ${JSON.stringify(popupFields)};
+// A sign-in pop-up still open that still asks is a sign-in under way; otherwise its frames on the
+// site show the indicator as the primary page's do. One that closes as the host reads it shows
+// nothing.
+let popupIndicator = false;
+for (const popup of openPopups) {
+  try {
+    for (const fieldSelector of popupFields.length === 0 ? [password] : popupFields)
+      if (await visibleIn(fieldSelector, popup.frames()))
+        return { url: primary.url(), indicator: false, passwordVisible: false, challengeFormVisible: false, signInPopupOpen: true };
+    if (selector !== null && await visibleIn(selector, popup.frames().filter(onSite))) popupIndicator = true;
+  } catch {
+    continue;
+  }
+}
 const siteFrames = primary.frames().filter(onSite);
 return {
   url: primary.url(),
-  indicator: selector === null ? null : await visibleIn(selector, siteFrames),
+  indicator: selector === null ? null : popupIndicator || await visibleIn(selector, siteFrames),
   challengeFormVisible: await recordedChallengeVisible(challengeFields),
   // With no field of the sign-in's own to go by, any password field on the page still counts.
   passwordVisible:

@@ -761,13 +761,78 @@ describe("OpenAI reviewer policy and trusted authority", () => {
       makeGuardian(reviewer(markedUpstreamPolicy)).review(pending, readEntrypoint),
     );
     const sentence =
-      "When that write's step shows its commit request went through, with a 2xx or 3xx status and no error after it, reading the page as it stands is enough for the read-back, but it is never the only read-back allowed. Only a write the review found not_done may be done again.";
+      "When that write's step shows its commit request went through, with a 2xx or 3xx status and no error after it in a body it can read, reading the page as it stands is enough for the read-back, but it is never the only read-back allowed. Only a write the review found not_done may be done again.";
     for (const policy of [
       instructionsOf(requests[0]),
       guardianExecutionPolicy(otherHost),
       guardianExecutionPolicy(nativeExecutionEnvironment),
     ])
       expect(policy).toContain(sentence);
+  });
+
+  // A step that only opened an item's options, sending none of its commit marks, was listed done,
+  // so the first add after it was denied as a repeat. A host may say which marks each listed
+  // write's step sent; a write it says nothing about reaches Guardian as before.
+  it("gives Guardian each listed write's sent commit marks, and none for a write without them", async () => {
+    const requests = readThenDecide({
+      outcome: "allow",
+      rationale: "Controlled source was read.",
+      action: "read",
+    });
+    const writes: NonNullable<NonNullable<PendingExecution["mintContext"]>["writes"]> = [
+      {
+        executionId: "exec_open",
+        purpose: "act",
+        entrypoint: "operation/open.mjs",
+        outcome: "done",
+        sent: [],
+      },
+      { executionId: "exec_add", purpose: "act", outcome: "unknown", sent: ["add_item"] },
+      { executionId: "exec_save", purpose: "act", outcome: "done" },
+    ];
+    await Effect.runPromise(
+      makeGuardian(reviewer(markedUpstreamPolicy)).review(
+        {
+          ...pending,
+          mintContext: {
+            repeatableRead: false,
+            operationSources: [pending.entrypoint],
+            currentExecution: { purpose: "explore", target: "liveBrowser" },
+            browser: "active",
+            executions: [],
+            writes,
+          },
+        },
+        readEntrypoint,
+      ),
+    );
+    const input = modelInput(requests);
+    expect(input).toHaveProperty("trusted_execution_context.writes", writes);
+    expect(input).not.toHaveProperty("trusted_execution_context.writes.2.sent");
+  });
+
+  // A purchase build whose order click got a 200 it could not read and a page with no outcome
+  // was advised, on its read-only steps, to read the account's orders first. The write's own
+  // reply and the page it landed on come first; the account is the backstop when they can't tell.
+  it("reconciles an unclear write from its own reply and the page it landed on before the account", async () => {
+    const requests = readThenDecide({
+      outcome: "allow",
+      rationale: "Controlled source was read.",
+      action: "read",
+    });
+    await Effect.runPromise(
+      makeGuardian(reviewer(markedUpstreamPolicy)).review(pending, readEntrypoint),
+    );
+    for (const policy of [
+      instructionsOf(requests[0]),
+      guardianExecutionPolicy(otherHost),
+      guardianExecutionPolicy(nativeExecutionEnvironment),
+    ]) {
+      expect(policy).toContain(
+        "After a possible prior write or unresolved consequential effect, require current-state reconciliation from the write's own reply and the page it landed on, or the account only when they can't tell, and only justified residual work.",
+      );
+      expect(policy).not.toContain("require current-state reconciliation and only");
+    }
   });
 
   // Turning off a preselected partner comparison box read as an invented search choice, so an edit
@@ -840,6 +905,31 @@ describe("OpenAI reviewer policy and trusted authority", () => {
       expect(policy).toContain(
         `${safetyDefaultRule} ${requestedChangeSafetyDefault} ${safetyDefaultCovers}`,
       );
+  });
+
+  // Fails while Guardian sees only the request's intent: a substitute example or live test case on
+  // another example input the caller sent then reads as values the agent chose, and one naming a
+  // record the caller gave, such as an order number, is denied.
+  it("shows Guardian the other example inputs the caller sent with the request", async () => {
+    const requests = readThenDecide({
+      outcome: "allow",
+      rationale: "Controlled source was read.",
+      action: "read",
+    });
+    const others = [{ order: "SYNTHETIC-ORDER-2" }, { order: "SYNTHETIC-ORDER-3" }];
+    await Effect.runPromise(
+      makeGuardian(reviewer(markedUpstreamPolicy)).review(
+        {
+          ...pending,
+          screenedInput: JSON.stringify(others[0]),
+          screenedOtherExampleInputs: JSON.stringify(others),
+        },
+        readEntrypoint,
+      ),
+    );
+    expect(instructionsOf(requests[0])).toContain(
+      `trusted_request: ${JSON.stringify({ intent: pending.screenedIntent, otherExampleInputs: others })}`,
+    );
   });
 
   // A change on a site that refuses to submit with the option off may still keep it on: every
@@ -1032,15 +1122,17 @@ describe("OpenAI reviewer policy and trusted authority", () => {
     }
   });
 
-  it("gives every execution review the exact payment frame origins", async () => {
+  it("gives every execution review the exact payment frame origins, and the host's payment limit and checkout origins", async () => {
     const requests = readThenDecide({
       outcome: "allow",
       rationale: "Guarded on the site.",
       action: "read",
     });
+    const paymentLimit = { amount: "40.00", currency: "USD" };
+    const checkoutOrigins = ["https://shop.storefront.example"];
     await Effect.runPromise(
       makeGuardian(reviewer("Synthetic upstream {{ tenant_policy_config }}")).review(
-        pending,
+        { ...pending, paymentLimit, checkoutOrigins },
         readEntrypoint,
       ),
     );
@@ -1048,5 +1140,7 @@ describe("OpenAI reviewer policy and trusted authority", () => {
       "trusted_authority.paymentFrameOrigins",
       paymentFrameOrigins,
     );
+    expect(modelInput(requests)).toHaveProperty("trusted_authority.paymentLimit", paymentLimit);
+    expect(modelInput(requests)).toHaveProperty("trusted_authority.checkoutOrigins", checkoutOrigins);
   });
 });

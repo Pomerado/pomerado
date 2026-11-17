@@ -208,6 +208,41 @@ it("keeps a write whose result was lost unknown and never runs it again", async 
   expect(review.recorded).toMatchObject([{ outcome: "unknown" }]);
 });
 
+// A purchase whose reply was lost went first to the account's order history. The reviewer asks
+// for, and the refused repeat points at, the page the write landed on first, and the account only
+// when the page can't tell.
+it("points a lost write's read-back at the page it landed on before the account", async () => {
+  const reviewer = scriptedReviewer(() => respond(message("Nothing to settle yet.")));
+  const review = reviewHost(reviewer.provider);
+  const f = await fixture(
+    (_request, index) =>
+      [
+        minter("execute", step("src/book.ts"), "first"),
+        minter("execute", step("src/book.ts"), "again"),
+      ][index] ?? respond(message("The booking's outcome is unknown.")),
+    {
+      reviewAndExecute: allowedStep(() => Effect.fail(new MintFailure({ code: "Unavailable" }))),
+      outcomeReview: review.host,
+    },
+    { effect: "write" },
+  );
+  await f.run();
+
+  const refusal = JSON.stringify(toolOutput(f.requests[2] as ModelRequest, "again"));
+  expect(refusal).toContain(
+    "Read back the page, or the account only when the page can't tell, in a step that changes nothing",
+  );
+  expect(refusal).not.toContain("Read back the account or page");
+  const observation = reviewer.requests[0]?.tools.find(
+    (tool) => tool.type === "function" && tool.name === "request_observation",
+  );
+  expect(observation).toMatchObject({
+    description: expect.stringContaining(
+      "Ask the minter for a readback that would settle one write: the page it landed on, or the account only when the page can't tell.",
+    ),
+  });
+});
+
 // Fails when a step the host reports as never sent is tracked as a lost write: its resubmission
 // is refused as a repeat, and the build ends with a write that may have applied.
 it("runs a write step again after the host reports the first submission was never sent", async () => {
@@ -424,7 +459,7 @@ it("tracks a write's source by content when it imports the host runtime, and ref
   for (const [path, text] of Object.entries({
     "src/book.mjs": sdkStep,
     "src/book-copy.mjs": sdkStep,
-    "src/book-changed.mjs": `${sdkStep}// Changed.\n`,
+    "src/book-changed.mjs": `${sdkStep}void "changed";\n`,
   }))
     await writeFile(join(root, path), text);
   const outcome = await f.run();

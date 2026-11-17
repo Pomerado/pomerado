@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { inspectAutofillStep, untrustedTarget } from "../../src/destinations/autofill-step.js";
 import type { AutofillStep, FillSlot } from "../../src/destinations/autofill-step.js";
 import { makeRunCardHandles, runCardFill, scriptAnswers } from "../../src/destinations/card-fill.js";
-import type { CardFillReview } from "../../src/destinations/card-fill.js";
+import type { CardFillFields, CardFillReview } from "../../src/destinations/card-fill.js";
 import {
   isCardSlot,
   onPaymentFrameOrigin,
@@ -19,6 +19,7 @@ import { makeRunSecrets, registerSecretAnswer } from "../../src/inputs/secrets.j
 
 const site = "https://www.restaurant.example";
 const checkout = `${site}/reservations/checkout/?party_size=3`;
+const popup = { opener: "primary" as const, origin: site };
 const stripeFrame =
   "https://js.stripe.com/v3/elements-inner-accessory-target-0000.html#__shared_params__[version]=v3";
 
@@ -60,6 +61,10 @@ const stripeFields = [
  */
 const scriptedPage = (
   options: {
+    /** From this call on: the inspection of the last field alone, its focus, then the read. */
+    readonly lastAloneAt?: number;
+    /** The call from which the last field takes typing; before it, the field is disabled. */
+    readonly lastEditableAt?: number;
     readonly frameUrl?: string;
     readonly topUrl?: string;
     readonly ancestors?: readonly string[];
@@ -68,15 +73,20 @@ const scriptedPage = (
     readonly swappedAt?: number;
     readonly swappedTo?: string;
     readonly swappedActions?: readonly string[];
+    /** How many of Stripe's fields the page shows, from the first. */
+    readonly fields?: number;
+    /** The inspection's answer in place of the one the page gives. */
+    readonly inspected?: (answer: object) => object;
   } = {},
 ) => {
   const calls: string[] = [];
   const frameUrl = options.frameUrl ?? stripeFrame;
   const topUrl = options.topUrl ?? checkout;
   const targets = (url: string) =>
-    stripeFields.map((field) => ({
+    stripeFields.slice(0, options.fields).map((field, index, shown) => ({
       target: {
         ...target(url),
+        ...(index === shown.length - 1 && calls.length < (options.lastEditableAt ?? 0) ? { editable: false } : {}),
         ...(options.ancestors === undefined ? {} : { ancestors: options.ancestors }),
         ...(options.methods === undefined ? {} : { methods: options.methods }),
         ...(options.explicitGet === undefined ? {} : { explicitGet: options.explicitGet }),
@@ -90,6 +100,14 @@ const scriptedPage = (
       execute: (code: string) =>
         Effect.sync(() => {
           calls.push(code);
+          const alone = calls.length - (options.lastAloneAt ?? Infinity);
+          if (alone >= 0)
+            return (
+              [
+                { fields: targets(frameUrl).slice(-1), submit: null, buttons: [], url: topUrl },
+                { focused: true, url: topUrl },
+              ][alone] ?? { submit: "none", url: topUrl }
+            );
           if (calls.length === options.swappedAt)
             return {
               changed: {
@@ -101,8 +119,10 @@ const scriptedPage = (
               },
               url: topUrl,
             };
-          if (calls.length === 1)
-            return { fields: targets(frameUrl), submit: null, buttons: [], url: topUrl };
+          if (calls.length === 1) {
+            const answer = { fields: targets(frameUrl), submit: null, buttons: [], url: topUrl };
+            return options.inspected?.(answer) ?? answer;
+          }
           return calls.length <= 1 + stripeFields.length
             ? { focused: true, url: topUrl }
             : { submit: "none", url: topUrl };
@@ -146,6 +166,9 @@ const stripeStep = (handle: (id: keyof typeof cardAnswers) => string) => ({
 
 const run = (
   options: {
+    readonly lastAloneAt?: number;
+    readonly lastEditableAt?: number;
+    readonly billingPostalCode?: string;
     readonly frameUrl?: string;
     readonly topUrl?: string;
     readonly ancestors?: readonly string[];
@@ -154,25 +177,45 @@ const run = (
     readonly swappedAt?: number;
     readonly swappedTo?: string;
     readonly swappedActions?: readonly string[];
-    readonly step?: (handle: (id: keyof typeof cardAnswers) => string) => {
-      readonly fields: readonly { readonly selector: string; readonly handle: string }[];
-    };
+    readonly step?: (handle: (id: keyof typeof cardAnswers) => string) => CardFillFields;
+    readonly fillVia?: Parameters<typeof runCardFill>[0]["fillVia"];
+    readonly reviewDenies?: boolean;
+    readonly checkoutOrigins?: readonly string[];
+    readonly inspected?: (answer: object) => object;
   } = {},
 ) => {
   const { handles, handle } = issued();
-  const { page, calls } = scriptedPage(options);
+  const step = (options.step ?? stripeStep)(handle);
+  const { page, calls } = scriptedPage({ ...options, fields: step.fields.length });
   const typed: string[] = [];
+  // The target each value was typed into: a pop-up's, or none for the primary tab.
+  const typedInto: (string | undefined)[] = [];
   const reviews: CardFillReview[] = [];
   const fenced: string[] = [];
+  // Every card answer the step reads, by handle.
+  const read: string[] = [];
   const outcome = Effect.runPromise(
     runCardFill({
-      step: (options.step ?? stripeStep)(handle),
-      handles,
+      step,
+      handles: {
+        kindOf: (named) => {
+          read.push(named);
+          return handles.kindOf(named);
+        },
+        cardValues: (named) => {
+          read.push(...named);
+          return handles.cardValues(named);
+        },
+      },
+      ...(options.fillVia === undefined ? {} : { fillVia: options.fillVia }),
+      billingPostalCode: options.billingPostalCode,
+      ...(options.checkoutOrigins === undefined ? {} : { checkoutOrigins: options.checkoutOrigins }),
       page,
       keyboard: {
-        insertText: (_target, text) =>
+        insertText: (into, text) =>
           Effect.sync(() => {
             typed.push(text);
+            typedInto.push(into.targetId);
             return "inserted" as const;
           }),
       },
@@ -180,14 +223,16 @@ const run = (
       review: (source) =>
         Effect.sync(() => {
           reviews.push(source);
-        }),
+        }).pipe(
+          Effect.zipRight(options.reviewDenies === true ? Effect.fail(new Error("denied")) : Effect.void),
+        ),
       beforeTyping: () =>
         Effect.sync(() => {
           fenced.push("before typing");
         }),
     }),
   );
-  return { outcome, typed, reviews, calls, fenced };
+  return { outcome, typed, typedInto, reviews, calls, fenced, read };
 };
 
 describe("payment frame origins", () => {
@@ -204,6 +249,7 @@ describe("payment frame origins", () => {
   it.each([
     [stripeFrame, true],
     ["https://web.squarecdn.com/1.0/card.html", true],
+    ["https://checkout.pci.shopifyinc.com/build/0000000/number-ltr.html", true],
     ["https://m.stripe.network/inner.html", false],
     ["https://pay.google.com/gp/p/ui/pay", false],
     ["https://evil.js.stripe.com/v3/elements.html", false],
@@ -401,6 +447,257 @@ describe("a card-fill step", () => {
     expect(typed).toEqual([]);
     expect(reviews).toEqual([]);
   });
+
+  it.each([
+    ["in a payment frame", stripeFrame],
+    ["on its own page", "https://shop.storefront.example/checkout"],
+  ])("types the card on a checkout origin the owner approved, %s", async (_, frameUrl) => {
+    const { outcome, typed } = run({
+      topUrl: "https://shop.storefront.example/checkout",
+      frameUrl,
+      checkoutOrigins: ["https://shop.storefront.example"],
+    });
+    expect((await outcome).status).toBe("filled");
+    expect(typed).toEqual(["4242 4242 4242 4242", "12/34", "123", "94110"]);
+  });
+
+  it("refuses a top document on another origin of an approved checkout's registrable domain, naming the approved ones", async () => {
+    const { outcome, typed, reviews } = run({
+      topUrl: "https://other.storefront.example/checkout",
+      checkoutOrigins: ["https://shop.storefront.example"],
+    });
+    const result = await outcome;
+    expect(result.status).toBe("refused");
+    expect(JSON.parse(result.observations).message).toBe(
+      "The host typed nothing: the page's top document is not on this site or its approved checkout origins (https://shop.storefront.example). Card answers go only into this site's own page or a payment frame on it, never a provider's page or a pop-up or tab off this site.",
+    );
+    expect(typed).toEqual([]);
+    expect(reviews).toEqual([]);
+  });
+});
+
+describe("a card-fill step on a checkout the site opened in a pop-up", () => {
+  const inPopup = (handle: (id: keyof typeof cardAnswers) => string) => ({
+    ...stripeStep(handle),
+    popup,
+  });
+
+  it("inspects, rechecks and types on the pop-up's own page", async () => {
+    const { outcome, typed, typedInto, calls } = run({
+      step: inPopup,
+      inspected: (answer) => ({ ...answer, popupTargetId: "popup-1" }),
+    });
+    expect((await outcome).status).toBe("filled");
+    expect(typed).toEqual(["4242 4242 4242 4242", "12/34", "123", "94110"]);
+    expect(typedInto).toEqual(["popup-1", "popup-1", "popup-1", "popup-1"]);
+    // Every call finds the one page the primary tab opened on the pop-up's origin, and each call
+    // after the inspection refuses a page other than the one it inspected.
+    expect(calls.every((code) => code.includes(`const popupOrigin = ${JSON.stringify(site)};`))).toBe(true);
+    expect(calls.slice(1).every((code) => code.includes('if (popupTargetId !== "popup-1")'))).toBe(true);
+    // A step that names no pop-up stays on the primary tab.
+    const primary = run();
+    await primary.outcome;
+    expect(primary.calls.some((code) => code.includes("popupOrigin"))).toBe(false);
+    expect(primary.typedInto).toEqual([undefined, undefined, undefined, undefined]);
+  });
+
+  it("refuses a pop-up off the site before any page call", async () => {
+    const { outcome, calls, reviews } = run({
+      step: (handle) => ({
+        ...stripeStep(handle),
+        popup: { opener: "primary", origin: "https://pay.provider.example" },
+      }),
+    });
+    const result = await outcome;
+    expect(result.status).toBe("refused");
+    expect(JSON.parse(result.observations).message).toContain("top document is not on this site");
+    expect([calls, reviews]).toEqual([[], []]);
+  });
+
+  it("names the page and how many frames it searched when it finds no field", async () => {
+    const { outcome } = run({
+      inspected: () => ({ error: "not_found", target: 0, url: checkout, searched: { frames: 3, matches: [] } }),
+    });
+    expect(JSON.parse((await outcome).observations)).toEqual({
+      cardFill: "refused",
+      reason: "not_found",
+      field: 1,
+      pageOrigin: site,
+      framesSearched: 3,
+    });
+  });
+});
+
+describe("a card-fill step the host fills from a payment method", () => {
+  const total = { amount: "12.50", currency: "USD" };
+  const slotStep = () => ({
+    fields: [
+      { selector: "#payment-numberInput", slot: "card_number" as const },
+      { selector: "#payment-expiryInput", slot: "card_expiry" as const },
+      { selector: "#payment-cvcInput", slot: "card_cvc" as const },
+    ],
+    total,
+  });
+  const withPostal = () => ({
+    ...slotStep(),
+    fields: [...slotStep().fields, { selector: "#payment-postalCodeInput", slot: "billing_postal_code" as const }],
+  });
+  const hostFill = () => {
+    const filledBy: Parameters<NonNullable<Parameters<typeof runCardFill>[0]["fillVia"]>>[0][] = [];
+    const fillVia: Parameters<typeof runCardFill>[0]["fillVia"] = (checked) =>
+      Effect.sync(() => {
+        filledBy.push(checked);
+        return {
+          outcome: "filled" as const,
+          fields: checked.step.fields.map(({ slot }) => ({ slot, status: "filled" as const })),
+          submit: "none" as const,
+          url: checkout,
+          typed: true,
+        };
+      });
+    return { filledBy, fillVia };
+  };
+
+  it("hands the checked fields and the total to the host after review, reading no card answer", async () => {
+    const { filledBy, fillVia } = hostFill();
+    const { outcome, typed, reviews, fenced, read } = run({ step: slotStep, fillVia });
+    const result = await outcome;
+    expect(read).toEqual([]);
+    expect(result.status).toBe("filled");
+    expect(JSON.parse(result.observations)).toEqual({
+      cardFill: "filled",
+      fields: ["card_number", "card_expiry", "card_cvc"].map((slot) => ({ slot, status: "filled" })),
+    });
+    expect(typed).toEqual([]);
+    expect(fenced).toEqual(["before typing"]);
+    expect(reviews.map((review) => review.step)).toEqual([slotStep()]);
+    expect(filledBy).toHaveLength(1);
+    expect(filledBy[0]?.total).toEqual(total);
+    expect(filledBy[0]?.step).toEqual({ fields: slotStep().fields });
+    expect(filledBy[0]?.inspection.page).toBe(reviews[0]?.page);
+  });
+
+  it("hands the host a pop-up step with the pop-up page it inspected", async () => {
+    const { filledBy, fillVia } = hostFill();
+    const { outcome } = run({
+      step: () => ({ ...slotStep(), popup }),
+      fillVia,
+      inspected: (answer) => ({ ...answer, popupTargetId: "popup-1" }),
+    });
+    expect((await outcome).status).toBe("filled");
+    expect(filledBy[0]?.step.popup).toEqual(popup);
+    expect(filledBy[0]?.inspection).toMatchObject({ popupTargetId: "popup-1", url: checkout });
+  });
+
+  it("refuses card fields in a frame off the list before the host fills", async () => {
+    const { filledBy, fillVia } = hostFill();
+    const { outcome, reviews } = run({
+      step: slotStep,
+      fillVia,
+      frameUrl: "https://evil-pay.example/card.html",
+    });
+    expect((await outcome).status).toBe("refused");
+    expect(reviews).toEqual([]);
+    expect(filledBy).toEqual([]);
+  });
+
+  it("still types the caller's card for a step that names handles, even with fillVia", async () => {
+    const { filledBy, fillVia } = hostFill();
+    const { outcome, typed } = run({ fillVia });
+    expect((await outcome).status).toBe("filled");
+    expect(typed).toEqual(["4242 4242 4242 4242", "12/34", "123", "94110"]);
+    expect(filledBy).toEqual([]);
+  });
+
+  it("never has the host fill once the review denies the step", async () => {
+    const { filledBy, fillVia } = hostFill();
+    const { outcome, reviews, fenced } = run({ step: slotStep, fillVia, reviewDenies: true });
+    await expect(outcome).rejects.toThrow("denied");
+    expect(reviews).toHaveLength(1);
+    expect([fenced, filledBy]).toEqual([[], []]);
+  });
+
+  it("is refused by a host that doesn't fill payment methods", async () => {
+    const { outcome, typed, reviews, calls } = run({ step: slotStep });
+    const result = await outcome;
+    expect(result.status).toBe("refused");
+    expect(JSON.parse(result.observations).message).toBe("This host doesn't fill payment methods.");
+    expect([typed, reviews, calls]).toEqual([[], [], []]);
+  });
+
+  it("types the payer's billing postal code itself once the host filled the card", async () => {
+    const { filledBy, fillVia } = hostFill();
+    const { outcome, typed, reviews, calls } = run({ step: withPostal, fillVia, billingPostalCode: "94110", lastAloneAt: 2 });
+    const result = await outcome;
+    expect(JSON.parse(result.observations)).toEqual({
+      cardFill: "filled",
+      fields: ["card_number", "card_expiry", "card_cvc", "billing_postal_code"].map((slot) => ({ slot, status: "filled" })),
+    });
+    expect(reviews.map((review) => review.step)).toEqual([withPostal()]);
+    expect(filledBy[0]?.step).toEqual({ fields: slotStep().fields });
+    expect(typed).toEqual(["94110"]);
+    expect(calls).toHaveLength(4);
+    expect(JSON.stringify(reviews)).not.toContain("94110");
+
+    const unsaved = run({ step: withPostal, fillVia });
+    expect(JSON.parse((await unsaved.outcome).observations).message).toBe(
+      "The host typed nothing: it has no billing postal code to fill.",
+    );
+    expect([unsaved.calls, unsaved.reviews, filledBy.length]).toEqual([[], [], 1]);
+
+    // A postal field on another field's selector would type over what the host filled there.
+    const onCvc = run({
+      step: () => ({
+        ...slotStep(),
+        fields: [...slotStep().fields, { selector: "#payment-cvcInput", slot: "billing_postal_code" as const }],
+      }),
+      fillVia,
+      billingPostalCode: "94110",
+    });
+    expect(JSON.parse((await onCvc.outcome).observations).message).toBe(
+      "The host typed nothing: the billing postal code field's selector names another field too.",
+    );
+    expect([onCvc.calls, onCvc.reviews, filledBy.length]).toEqual([[], [], 1]);
+
+    // The caller's own postal code answer is typed once, never over by the payer's.
+    const answered = run({ billingPostalCode: "00000" });
+    expect((await answered.outcome).status).toBe("filled");
+    expect(answered.typed).toEqual(["4242 4242 4242 4242", "12/34", "123", "94110"]);
+  });
+
+  it("lets a postal field take typing only once the host filled the card", async () => {
+    const slots = ["card_number", "card_expiry", "card_cvc", "billing_postal_code"];
+    const { filledBy, fillVia } = hostFill();
+    const enabled = run({ step: withPostal, fillVia, billingPostalCode: "94110", lastAloneAt: 2, lastEditableAt: 2 });
+    expect(JSON.parse((await enabled.outcome).observations)).toEqual({
+      cardFill: "filled",
+      fields: slots.map((slot) => ({ slot, status: "filled" })),
+    });
+    expect(enabled.typed).toEqual(["94110"]);
+    expect(filledBy[0]?.step).toEqual({ fields: slotStep().fields });
+    // Guardian still reviews the postal field with the label the screen shows for it.
+    expect(enabled.reviews[0]?.screen.fields.map(({ label }) => label)).toEqual([
+      "Card number",
+      "Expiration date",
+      "Security code",
+      "ZIP code",
+    ]);
+
+    // A postal field still disabled after the fill gets nothing, and the card stays filled.
+    const disabled = run({ step: withPostal, fillVia, billingPostalCode: "94110", lastAloneAt: 2, lastEditableAt: Infinity });
+    const result = await disabled.outcome;
+    expect(result.status).toBe("failed");
+    expect(JSON.parse(result.observations)).toEqual({
+      cardFill: "failed",
+      fields: slots.map((slot) => ({ slot, status: slot === "billing_postal_code" ? "failed" : "filled" })),
+    });
+    expect(disabled.typed).toEqual([]);
+
+    // A step of card answers still needs every field to take typing before it types any.
+    const answered = run({ lastEditableAt: Infinity });
+    expect(JSON.parse((await answered.outcome).observations)).toMatchObject({ reason: "not_editable", field: 4 });
+    expect(answered.typed).toEqual([]);
+  });
 });
 
 describe("the execute request", () => {
@@ -427,6 +724,23 @@ describe("the execute request", () => {
     expect(Either.isRight(decoded)).toBe(true);
   });
 
+  it("takes a pop-up on either kind of card-fill step, on an exact https origin only", () => {
+    const decode = (popupOrigin: string, fields: object) =>
+      Either.isRight(
+        Schema.decodeUnknownEither(ExecutionRequest)({
+          ...request,
+          cardFillStep: { ...fields, popup: { opener: "primary", origin: popupOrigin } },
+        }),
+      );
+    const handled = { fields: [{ selector: "#payment-numberInput", handle: "{{secret.s1}}" }] };
+    const slotted = {
+      fields: [{ selector: "#payment-numberInput", slot: "card_number" }],
+      total: { amount: "12.50", currency: "USD" },
+    };
+    expect([decode(site, handled), decode(site, slotted)]).toEqual([true, true]);
+    expect(decode(`${site}/checkout`, handled)).toBe(false);
+  });
+
   it("refuses a step that names one handle twice", () => {
     const decoded = Schema.decodeUnknownEither(ExecutionRequest)({
       ...request,
@@ -438,6 +752,20 @@ describe("the execute request", () => {
       },
     });
     expect(Either.isLeft(decoded)).toBe(true);
+  });
+
+  it("takes a billing postal code slot only beside a card slot", () => {
+    const decode = (slots: readonly string[]) =>
+      Either.isRight(
+        Schema.decodeUnknownEither(ExecutionRequest)({
+          ...request,
+          cardFillStep: {
+            fields: slots.map((slot, index) => ({ selector: `#field-${index}`, slot })),
+            total: { amount: "12.50", currency: "USD" },
+          },
+        }),
+      );
+    expect([decode(["card_number", "billing_postal_code"]), decode(["billing_postal_code"])]).toEqual([true, false]);
   });
 });
 

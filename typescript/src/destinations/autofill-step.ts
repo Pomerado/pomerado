@@ -450,6 +450,8 @@ const Located = Schema.Union(
     popupTargetId: Schema.optional(Schema.String),
     /** The other boxes of the row the step's one code field begins (`codeBoxRow`). */
     codeBoxRow: Schema.optional(Schema.Array(Schema.String)),
+    /** With `hostCardFill`: the first field whose selector the host's card fill can't take. */
+    hostFillUnsupported: Schema.optional(Schema.Number),
     url: Schema.String,
     /** When the primary page's document began loading (`performance.timeOrigin`). */
     document: Schema.optional(Schema.Number),
@@ -700,6 +702,7 @@ export type AutofillSignedInCheck =
       readonly signedIn: false;
       readonly failed:
         | "indicator_not_visible"
+        | "sign_in_popup_open"
         | "path_mismatch"
         | "password_field_visible"
         | "challenge_form_visible"
@@ -784,7 +787,8 @@ const isScriptAddress = (url: string) => URL.parse(url)?.protocol === "javascrip
  * A card-fill step's never is, nor any other script action or link. A step whose every field takes
  * a code, one code split across boxes, needs only the field at `from` to take typing: a page may
  * switch each box on only once the one before it holds a digit, and the fill waits for each later
- * box before it types there.
+ * box before it types there. With `postalCodeAfterCard`, a billing postal code field need not take
+ * typing either.
  */
 export const untrustedTarget = (
   targets: typeof Targets.Type,
@@ -795,6 +799,7 @@ export const untrustedTarget = (
     readonly paymentFrameOrigins?: readonly string[] | undefined;
     readonly trustSignInUrl?: ((url: URL) => boolean) | undefined;
     readonly judgedBeforeTyping?: readonly string[] | undefined;
+    readonly postalCodeAfterCard?: boolean | undefined;
   },
   from: number,
   named?: ReadonlySet<string>,
@@ -868,7 +873,9 @@ export const untrustedTarget = (
       step.fields[index]?.slot === "date_of_birth" &&
       (target.control === "select" || target.control === "combobox");
     const toType = splitCode ? index === from : index >= from;
-    if (toType && !target.editable && !choosable)
+    const later =
+      trust.postalCodeAfterCard === true && step.fields[index]?.slot === "billing_postal_code";
+    if (toType && !target.editable && !choosable && !later)
       return withCheck(refused("not_editable", index), "not_editable", {
         control: target.control,
         ...targetEvidence(target, named),
@@ -959,7 +966,9 @@ const carriedRedirect = (
  * land in a URL that stays byte-exact. Once the host typed into the page
  * (`judgedBeforeTyping` given), a refusal names only the origins `namedAfterTyping` allows.
  * A step with a part of a payment card (a card-fill step) is refused unless the primary tab's top
- * document is on the site, and its card fields may sit in a frame on `paymentFrameOrigins`.
+ * document is on the site or exactly on one of `checkoutOrigins`, and its card fields may sit in a
+ * frame on `paymentFrameOrigins`. With `hostCardFill`, each field the host's own card fill types
+ * must also be a CSS selector that fill can take (`selector_unsupported` otherwise).
  * `trustSignInUrl` lets a sign-in step's controls and popup also sit on an address the host's own
  * predicate trusts, asked only about one core's own floor allows; the inspection keeps it, so each
  * fill call judges again by the same rule, and names the origin of each address it trusted
@@ -971,7 +980,28 @@ export const inspectAutofillStep = (input: {
   readonly siteOrigin: string;
   readonly authenticationOrigins: readonly string[];
   readonly paymentFrameOrigins?: readonly string[] | undefined;
+  /**
+   * For a card-fill step only: the exact https origins of the site's own checkout that the host's
+   * owner approved. The top document may be on one, and the step's controls may sit and submit
+   * there as on a configured sign-in origin, which each fill call trusts too. Unset, none.
+   */
+  readonly checkoutOrigins?: readonly string[] | undefined;
   readonly judgedBeforeTyping?: readonly string[] | undefined;
+  /**
+   * For a card-fill step whose host types the billing postal code only after it filled the card:
+   * a `billing_postal_code` field may take no typing yet, since some card forms switch it on only
+   * once they hold a card. Every other check still applies to it, and the host must inspect it
+   * again, without this, before it types there. Unset, every field must take typing.
+   */
+  readonly postalCodeAfterCard?: boolean | undefined;
+  /**
+   * For a card-fill step a host's own card fill types, from a payment method (`runCardFill`'s
+   * `fillVia`): once every field was found, each field that fill takes, every one but a billing
+   * postal code, which core types itself, must be a CSS selector that matches exactly one editable
+   * input or select across the tab's frames, itself or inside an element it matches, as that fill
+   * finds it. Any other is refused as `selector_unsupported`. Unset, any selector core finds.
+   */
+  readonly hostCardFill?: boolean | undefined;
   /**
    * The host's own trust of more sign-in addresses for a sign-in step, as when its user allowed the
    * sign-in to go wherever the site sends it: asked about each address of a control or popup off
@@ -1015,7 +1045,9 @@ export const inspectAutofillStep = (input: {
 }): Effect.Effect<AutofillRefusal | AutofillInspection> =>
   Effect.gen(function* () {
     const { step, page, siteOrigin } = input;
-    let { authenticationOrigins } = input;
+    const card = step.fields.some((field) => isCardSlot(field.slot));
+    const checkout = card ? (input.checkoutOrigins ?? []) : [];
+    let authenticationOrigins = [...input.authenticationOrigins, ...checkout];
     const predicate = signInUrlTrust(input, step);
     const trustedByHost = new Set<string>();
     const asking = notingHostTrust(predicate, trustedByHost);
@@ -1033,8 +1065,15 @@ export const inspectAutofillStep = (input: {
       return withCheck(refused("selector_unsupported", crossing), "selector_unsupported");
     // This call's code holds no value, so its failure keeps its full detail.
     const judgment = randomUUID();
+    // The fields a host's own card fill types: every card field but a billing postal code.
+    const hostFilled =
+      input.hostCardFill === true
+        ? step.fields.flatMap(({ slot }, index) =>
+            isCardSlot(slot) && slot !== "billing_postal_code" ? [index] : [],
+          )
+        : [];
     const inspected = yield* page
-      .execute(autofillStepCode(page.targetId, step, judgment), 15)
+      .execute(autofillStepCode(page.targetId, step, judgment, undefined, hostFilled), 15)
       .pipe(Effect.flatMap(Schema.decodeUnknown(Located)), Effect.either);
     if (inspected._tag === "Left")
       return {
@@ -1048,10 +1087,7 @@ export const inspectAutofillStep = (input: {
     const named = namedAfterTyping(input);
     if ("error" in found) return locatedRefusal(found, named);
     const top = URL.parse(found.url);
-    if (
-      step.fields.some((field) => isCardSlot(field.slot)) &&
-      (top === null || !sameSite(siteOrigin, top))
-    )
+    if (card && (top === null || !(sameSite(siteOrigin, top) || checkout.includes(top.origin))))
       return withCheck(refused("credential_target_refused"), "top_document", {
         part: "top_document",
         ...foundEvidence(found.url, undefined, named),
@@ -1060,7 +1096,13 @@ export const inspectAutofillStep = (input: {
       fields: found.fields.map(({ target }) => target),
       submit: found.submit === null ? null : found.submit.target,
     };
-    const untrusted = untrustedTarget(targets, step, { ...input, trustSignInUrl: asking }, 0, named);
+    const untrusted = untrustedTarget(
+      targets,
+      step,
+      { ...input, authenticationOrigins, trustSignInUrl: asking },
+      0,
+      named,
+    );
     const carried =
       untrusted === undefined ? undefined : yield* carriedRedirect(input, found, targets, named);
     if (untrusted && carried === undefined)
@@ -1075,6 +1117,13 @@ export const inspectAutofillStep = (input: {
         part: "no_form",
         ...foundEvidence(found.url, foundFor(found.located, "submit"), named),
       });
+    // Last, so a field another check refuses keeps that check's reason.
+    if (found.hostFillUnsupported !== undefined)
+      return withCheck(
+        refused("selector_unsupported", found.hostFillUnsupported),
+        "selector_unsupported",
+        foundEvidence(found.url, foundFor(found.located, found.hostFillUnsupported), named),
+      );
     const at = URL.parse(found.url);
     const frame = (found.submit ?? found.fields[0])?.target.ownerUrl;
     return {
@@ -1204,7 +1253,10 @@ export type AutofillScreens = readonly {
  * detaches during the check, do not count. It does not classify unrecorded controls or infer a
  * challenge from the page route. Callers must inspect and record each authentication screen
  * before checking completion. Another form's password field does not count unless a recorded
- * selector matches in it. Screens with no field leave any visible password field failing it.
+ * selector matches in it. Screens with no field leave any visible password field failing it. A
+ * sign-in pop-up the page opened that is still open fails it as `sign_in_popup_open` while it
+ * shows one of its screens' fields, or any password field when they recorded none; otherwise the
+ * indicator counts in its frames on the site too.
  */
 export const checkAutofillSignedIn = (input: {
   readonly indicator: AutofillSignedIn;
@@ -1223,10 +1275,11 @@ export const checkAutofillSignedIn = (input: {
     const opened = yield* openAccountPage(indicator.openPath, page, input.siteOrigin);
     if (opened !== undefined) return opened;
     // A screen with a frame-crossing selector never ran, so it holds none of the sign-in's fields.
-    const signInFields = input.screens
-      .filter((screen) => screen.popup === undefined)
-      .flatMap((screen) => screen.fields.map((field) => field.selector))
-      .filter((selector) => !frameCrossing(selector));
+    const fieldsOf = (popup: boolean) =>
+      input.screens
+        .filter((screen) => (screen.popup !== undefined) === popup)
+        .flatMap((screen) => screen.fields.map((field) => field.selector))
+        .filter((selector) => !frameCrossing(selector));
     const challengeFields = (input.challengeScreens ?? input.screens)
       .filter((screen) => screen.popup === undefined)
       .flatMap((screen) => screen.fields)
@@ -1244,10 +1297,11 @@ export const checkAutofillSignedIn = (input: {
           page.targetId,
           indicator.selector,
           siteHost(input.siteOrigin),
-          signInFields,
+          fieldsOf(false),
           input.screens.flatMap((screen) => (screen.popup === undefined ? [] : [screen.popup])),
           challengeFields,
           input.authenticationOrigins ?? [],
+          fieldsOf(true),
         ),
         15,
       )
@@ -1265,6 +1319,8 @@ export const checkAutofillSignedIn = (input: {
     const parsed = URL.parse(url);
     if (parsed === null || !sameSite(input.siteOrigin, parsed))
       return { signedIn: false as const, failed: "off_site" as const, url };
+    if (read.right.signInPopupOpen === true)
+      return { signedIn: false as const, failed: "sign_in_popup_open" as const, url };
     const form = passwordVisible ? { passwordFieldVisible: true as const } : {};
     if (visible === false)
       return { signedIn: false as const, failed: "indicator_not_visible" as const, url, ...form };

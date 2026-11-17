@@ -8,6 +8,7 @@ import type { InputAsker } from "../runtime/input-request.js";
 import type { DialogDecider } from "../runtime/kernel-operation.js";
 import type { WriteDeclaration } from "../runtime/operation.js";
 import type { CommitMark } from "../runtime/context.js";
+import { commitEvidenceOf } from "../runtime/run-outcome.js";
 import type { InputIssue } from "../runtime/errors.js";
 import type {
   InputRefusalDetail,
@@ -63,6 +64,13 @@ export interface LocalOperationOptions {
    * stopped before one reads `not_sent`. Without it, a live run counts from its start.
    */
   readonly dispatchAtFirstCall?: boolean;
+  /** Commit steps the run may not enter: entering one fails with `CommitAlreadySent`. */
+  readonly settledCommits?: readonly string[];
+  /**
+   * Whether the run reads or writes, for its pickers (`ScriptBrowser.effect`): a mint step passes
+   * its build's effect. Absent, a script that declares `write` writes and any other reads.
+   */
+  readonly effect?: "read" | "write";
   readonly ask?: InputAsker;
   /**
    * The questions the host read itself: a build step's literal declarations, or the ones
@@ -220,6 +228,8 @@ const handleRequest = (
   deadline: Deadline,
   message: Exclude<LocalOperationMessage, { kind: "result" | "error" | "cancel" | "journal" }>,
   cardHandles: RunCardHandles,
+  /** The child's journal as it last streamed it, which it does on each change. */
+  journal: LocalOperationJournal,
   /** Tells the child that its request opened to the caller, as the asker says (`AskBounds`). */
   opened: Effect.Effect<void> = Effect.void,
 ): Effect.Effect<unknown, Error> =>
@@ -236,7 +246,9 @@ const handleRequest = (
     if (
       message.kind === "file_place" ||
       message.kind === "file_arm" ||
-      message.kind === "file_collect"
+      message.kind === "file_collect" ||
+      message.kind === "file_collect_all" ||
+      message.kind === "file_screenshot"
     ) {
       const files = options.files;
       if (files === undefined || options.mode === "contract" || options.target === "pureFiles")
@@ -246,7 +258,14 @@ const handleRequest = (
           ? files.place(message)
           : message.kind === "file_arm"
             ? files.arm()
-            : files.collect(message);
+            : message.kind === "file_collect"
+              ? files.collect(message)
+              : message.kind === "file_collect_all"
+                ? files.collectAll === undefined
+                  ? Effect.fail(new FileRefused({ reason: "unavailable" }))
+                  : files.collectAll(message)
+                : (files.screenshot?.(message) ??
+                  Effect.fail(new FileRefused({ reason: "unavailable" })));
       // The refusal's reason crosses to the script as its code; nothing of the file does.
       return answer.pipe(
         Effect.mapError((refused) =>
@@ -292,7 +311,15 @@ const handleRequest = (
           }),
         );
       // The child marks a browser hand-off's commit steps sent once the asker opens it.
-      return suspended(deadline, options.ask(message.request, { opened: () => opened })).pipe(
+      const commitsUnsent =
+        journal.effect === "not_sent" || commitEvidenceOf(journal.commits) === "not_entered";
+      return suspended(
+        deadline,
+        options.ask(message.request, {
+          opened: () => opened,
+          ...(commitsUnsent ? { commitsUnsent } : {}),
+        }),
+      ).pipe(
         // ScriptInput validates raw answers in the child; the host has already typed them.
         Effect.map((answers) => scriptAnswers(message.request, answers, cardHandles)),
       );
@@ -411,6 +438,7 @@ const receiveOperation = (
         deadline,
         message,
         cardHandles,
+        current,
         Effect.ignore(sendToChild(process, { kind: "opened", id: message.id })),
       ).pipe(
         Effect.exit,
@@ -564,6 +592,10 @@ export const runLocalOperation = (
           ? { offline: true }
           : {}),
         ...(options.dispatchAtFirstCall === true ? { dispatchAtFirstCall: true } : {}),
+        ...(options.effect === undefined ? {} : { effect: options.effect }),
+        ...(options.settledCommits === undefined || options.settledCommits.length === 0
+          ? {}
+          : { settledCommits: options.settledCommits }),
         ...(options.siteOrigin === undefined ? {} : { siteOrigin: options.siteOrigin }),
         ...(options.siteDomain === undefined ? {} : { siteDomain: options.siteDomain }),
         ...(options.files !== undefined ? { files: true } : {}),

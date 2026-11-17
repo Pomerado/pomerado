@@ -380,3 +380,36 @@ for (const [name, script] of [
       url: `${site}/account`,
     });
   });
+
+// A sign-in pop-up the page opened that stays open: while it shows its sign-in screen the sign-in
+// is under way, and once it shows the site signed in, as where the pop-up becomes the site, the
+// check reads the marker there too.
+test("the signed-in check with the sign-in pop-up still open", async ({ page }) => {
+  const login = "https://login.bank.example.test";
+  const bodies: Readonly<Record<string, string>> = {
+    "/account": "<h1>Account</h1>",
+    "/password": `<form action="/dashboard"><label>Password<input id="password" type="password"></label><button>Sign in</button></form>`,
+    "/dashboard": marker,
+  };
+  await page.context().route(/^https:\/\//u, (route) =>
+    route.fulfill({ contentType: "text/html", body: bodies[new URL(route.request().url()).pathname] ?? "" }),
+  );
+  await page.goto(`${site}/account`);
+  const opened = page.waitForEvent("popup");
+  await page.evaluate((url) => window.open(url), `${login}/password`);
+  const popup = await opened;
+  await popup.waitForLoadState();
+  const check = async () =>
+    Effect.runPromise(
+      checkAutofillSignedIn({
+        indicator: { selector: "#identity" },
+        page: await hostPage(page),
+        siteOrigin: site,
+        screens: screens.map((screen) => ({ ...screen, popup: { opener: "primary" as const, origin: login } })),
+      }),
+    );
+  expect(await check()).toEqual({ signedIn: false, failed: "sign_in_popup_open", url: `${site}/account` });
+  await popup.locator("button").click();
+  await popup.waitForURL(/\/dashboard/u);
+  expect(await check()).toEqual({ signedIn: true, url: `${site}/account` });
+});

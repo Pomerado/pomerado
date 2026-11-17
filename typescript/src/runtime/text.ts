@@ -87,13 +87,30 @@ export const foldChoiceText = (text: unknown): string => {
  * a country code the caller typed where the site shows none. An email, domain or file name, or a
  * `wanted` with no letter or digit, compares as it does without the option.
  *
+ * With `{ ignoreClockTimes: true }`, each time of day written with a colon or with am or pm, such
+ * as 7:21pm, 7 p.m. or 19:21, and each count of minutes or hours, such as 6 min or 25–40 minutes,
+ * leaves both texts first, ranges included, so a choice whose time moved with the clock still
+ * matches when every other word and number is the same. A number after a currency sign stays,
+ * and a range's first number leaves only as an hour from 1 to 12 joined to the second by a dash
+ * with no space, so a date before a time stays. Use it only for a choice whose shown time moves
+ * with the clock, since two times of day, or two lengths of time, the caller chose between match
+ * too.
+ *
  * It is pure and self-contained, so page code can embed it.
  */
 export const sameText = (
   shown: string,
   wanted: string,
-  options: { readonly rewrite?: boolean } = {},
+  options: { readonly rewrite?: boolean; readonly ignoreClockTimes?: boolean } = {},
 ): boolean => {
+  if (options?.ignoreClockTimes === true) {
+    // The same times readBackMatches leaves out: a time of day, an hour before am or pm, the
+    // first hour of such a range, and a count of minutes or hours.
+    const times =
+      /(?<![\p{N}\p{Sc}:.,])(?<!\p{Sc}\s)(?:\p{N}{1,2}(?::\p{N}{2}){1,2}(?:\s*[ap]\.?\s?m\.?)?|\p{N}{1,2}\s*[ap]\.?\s?m\.?|(?:1[0-2]|0?[1-9])(?=[-\u2010-\u2014]\p{N}{1,2}(?::\p{N}{2})?\s*[ap]\.?\s?m\.?(?![\p{L}\p{N}]))|\p{N}+(?:\s*[-\u2010-\u2014]\s*\p{N}+)?\s*(?:minutes?|mins?|hours?|hrs?)\.?)(?![\p{L}\p{N}:])/giu;
+    shown = String(shown ?? "").replace(times, " ");
+    wanted = String(wanted ?? "").replace(times, " ");
+  }
   // One period or comma between a number's digits is its decimal mark: the number reads with a
   // point and without the zeros after it, so 1,50 reads 1.5 and 28,0 reads 28. Three digits after
   // a lone mark may be thousands, as in 1,250, and a number right after a letter is a code, as in
@@ -469,10 +486,24 @@ export const rankByWords = (query: string, texts: readonly string[]): number[] =
  * order: dates, phone numbers, amounts and decimals as `rankByWords` reads them, so 1,875 confirms
  * 1875 and a site's 1,50 confirms a caller's 1.5, and other numbers the same, so 125 Main St never
  * confirms 123 Main St, 1,5 never confirms 15 and "5 15" never confirms 5.
+ * With `{ ignoreClockTimes: true }`, the times `sameText` leaves out with that option leave both
+ * texts first, for both steps.
  * It calls `sameText` and `rankByWords`, so page code that embeds it embeds those two first.
  */
-export const readBackMatches = (shown: string, wanted: string): boolean =>
-  sameText(shown, wanted) || (rankByWords(wanted, [shown])[0] ?? 0) >= 0.7;
+export const readBackMatches = (
+  shown: string,
+  wanted: string,
+  options: { readonly ignoreClockTimes?: boolean } = {},
+): boolean => {
+  if (options?.ignoreClockTimes === true) {
+    // The same times sameText leaves out with ignoreClockTimes.
+    const times =
+      /(?<![\p{N}\p{Sc}:.,])(?<!\p{Sc}\s)(?:\p{N}{1,2}(?::\p{N}{2}){1,2}(?:\s*[ap]\.?\s?m\.?)?|\p{N}{1,2}\s*[ap]\.?\s?m\.?|(?:1[0-2]|0?[1-9])(?=[-\u2010-\u2014]\p{N}{1,2}(?::\p{N}{2})?\s*[ap]\.?\s?m\.?(?![\p{L}\p{N}]))|\p{N}+(?:\s*[-\u2010-\u2014]\s*\p{N}+)?\s*(?:minutes?|mins?|hours?|hrs?)\.?)(?![\p{L}\p{N}:])/giu;
+    shown = String(shown ?? "").replace(times, " ");
+    wanted = String(wanted ?? "").replace(times, " ");
+  }
+  return sameText(shown, wanted) || (rankByWords(wanted, [shown])[0] ?? 0) >= 0.7;
+};
 
 /**
  * The ways people commonly write `value`, itself first: each word or phrase that has a usual other

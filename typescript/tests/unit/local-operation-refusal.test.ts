@@ -67,6 +67,45 @@ it.each([
   expect(refusal.available).toEqual(kept);
 });
 
+// A script may list a true/false or number choice as the value itself, so the refusal keeps it as
+// its text rather than listing no choices.
+it("keeps a true/false or number choice as its text", () => {
+  const refusal = new operationErrors.InvalidInput("Out of stock items are not offered", {
+    field: "include_out_of_stock",
+    available: [false, 2, null] as never,
+  });
+  expect(refusal.available).toEqual(["false", "2"]);
+});
+
+// A choice taken from the caller's own account, such as a saved address, is marked as a question's
+// option is. The refusal keeps it, bounded, for a host to mask; the local host shows its masked
+// label, as it shows a question's.
+it("keeps a choice from the caller's own account marked", () => {
+  const refusal = new operationErrors.InvalidInput("No saved address matches", {
+    field: "address",
+    available: [
+      "Pick up in store",
+      { label: "12 Example Rd, Springfield 99999", accountSpecific: true, maskedLabel: "Home" },
+      { label: "14 Example Rd", accountSpecific: true, maskedLabel: "a".repeat(65) },
+    ],
+  });
+  expect(refusal.available).toEqual([
+    "Pick up in store",
+    { label: "12 Example Rd, Springfield 99999", accountSpecific: true, maskedLabel: "Home" },
+    { label: "14 Example Rd", accountSpecific: true },
+  ]);
+});
+
+it("tells a local caller a choice from the caller's own account by its masked label", async () => {
+  const failure = await outcomeOf(
+    `, { field: "size", available: ["One Size", { label: "Size 12 Example Rd", accountSpecific: true, maskedLabel: "Saved size" }, { label: "Size 14 Example Rd", accountSpecific: true }] }`,
+  );
+  expect(failure.outcome.details).toMatchObject({
+    available: ["One Size", "Saved size", "Saved option 3"],
+  });
+  expect(failure.message).not.toContain("Example Rd");
+});
+
 // The local host repairs nothing, so its outcome for such a refusal is unchanged: the reason and
 // the field, with no list of choices.
 it("tells a local caller the reason and field, with no choices, when a script refuses with an empty list", async () => {

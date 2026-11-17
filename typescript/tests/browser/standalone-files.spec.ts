@@ -9,7 +9,13 @@ import { Effect, Exit, Schema, Scope } from "effect";
 import { makeIntegrationMcp } from "../../src/standalone/mcp-server.js";
 import { contractJsonSchema } from "../../src/runtime/operation.js";
 import { FileInput, FileOutput, type FileLimits } from "../../src/runtime/files.js";
-import { receiptTool, startFileSite, statement, statementSha256 } from "./file-fixture.js";
+import {
+  monthStatement,
+  receiptTool,
+  startFileSite,
+  statement,
+  statementSha256,
+} from "./file-fixture.js";
 
 const receipt = "Receipt 1042\nTotal 12.50\n";
 
@@ -147,6 +153,64 @@ test("an MCP tool call uploads the caller's file and returns the downloaded stat
     const url = String(output.statement.$file["download_url"]);
     expect(fileURLToPath(url).startsWith(downloads)).toBe(true);
     expect(await readFile(fileURLToPath(url), "utf8")).toBe(statement);
+  } finally {
+    await served.close();
+    await site.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("an MCP tool call returns screenshots of the page and of one element as files", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "One native run that takes four screenshots through Chromium",
+  });
+  const site = await startFileSite();
+  const directory = await mkdtemp(join(tmpdir(), "pomerado-files-qa-"));
+  const served = await serve(
+    site.url,
+    join(directory, "downloads"),
+    {
+      source: `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"send_receipt",input:Schema.Struct({}),output:Schema.Unknown},
+async ({files}) => ({
+  page: await files.screenshot({ fullPage: true }),
+  link: await files.screenshot({ selector: "a[href='/statement.csv']" }),
+  viewport: await files.screenshot({ selector: undefined, fullPage: undefined }),
+  missing: await files.screenshot({ selector: "#missing", timeoutMs: 500 }).then(() => null, (error) => error.message),
+  positional: await files.screenshot("a[href='/statement.csv']").then(() => null, (error) => error.message),
+}));`,
+    },
+    contractJsonSchema(Schema.Struct({})),
+  );
+  try {
+    const result = await settled(
+      served.client,
+      served.client.callTool({ name: "send_receipt", arguments: { input: {} } }),
+    );
+    expect(result.isError, JSON.stringify(result)).toBeFalsy();
+    const output = result.structuredContent as Record<string, { $file: Record<string, unknown> }>;
+    // Each picture comes back as a PNG file object; its bytes wait at its URL, not in the result.
+    const png = async (file: { $file: Record<string, unknown> } | undefined) => {
+      expect(file?.$file, JSON.stringify(result)).toMatchObject({
+        name: "screenshot.png",
+        media_type: "image/png",
+      });
+      const bytes = await readFile(fileURLToPath(String(file?.$file["download_url"])));
+      expect(bytes.subarray(1, 4).toString()).toBe("PNG");
+      expect(file?.$file["sha256"]).toBe(createHash("sha256").update(bytes).digest("hex"));
+      return { width: bytes.readUInt32BE(16), base64: bytes.toString("base64") };
+    };
+    const page = await png(output["page"]);
+    const link = await png(output["link"]);
+    expect(link.width).toBeLessThan(page.width);
+    // An option a tool leaves undefined, such as an absent input passed on, is no option.
+    expect((await png(output["viewport"])).width).toBe(page.width);
+    expect(JSON.stringify(result)).not.toContain(page.base64.slice(0, 64));
+    expect(String(output["missing"])).toContain("field_not_found");
+    // A selector passed alone, as to page.locator, names no target, never the viewport.
+    expect(String(output["positional"])).toContain("field_not_found");
   } finally {
     await served.close();
     await site.close();
@@ -432,6 +496,73 @@ test("a run refuses a caller's file over the limit its tool declares for the inp
     // The run reached nothing on the site: no page load, no download, no upload.
     expect(site.requested).toEqual([]);
     expect(site.received).toEqual([]);
+  } finally {
+    await served.close();
+    await site.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("one execute call's downloads from pages in two browser contexts all come back from files.collectAll", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "One native run that opens a second browser context and downloads in both",
+  });
+  const site = await startFileSite();
+  const directory = await mkdtemp(join(tmpdir(), "pomerado-files-qa-"));
+  const file = join(directory, "receipt.txt");
+  await writeFile(file, receipt);
+  const downloads = join(directory, "downloads");
+  // The trigger reads two months at once, each in its own isolated context, as a list read does.
+  const source = `import { Schema } from "effect";
+import { defineOperation, FileInput } from "../runtime/index.js";
+export default defineOperation({name:"statements",input:Schema.Struct({receipt:FileInput}),output:Schema.Unknown},
+async ({kernel,sessionId,files}) => {
+  const downloads = await files.collectAll(() => kernel.browsers.playwright.execute(sessionId,{code:${JSON.stringify(
+    `const other = await browser.newContext();
+const second = await other.newPage();
+await second.goto(page.url());
+await Promise.all([
+  page.getByRole('link', { name: 'January statement' }).click(),
+  second.getByRole('link', { name: 'February statement' }).click(),
+]);
+return true;`,
+  )},timeout_sec:10}), { max: 2 });
+  return { downloads };
+});`;
+  const served = await serve(site.url, downloads, { source });
+  try {
+    const result = await settled(
+      served.client,
+      served.client.callTool({
+        name: "send_receipt",
+        arguments: { input: { receipt: pathToFileURL(file).href } },
+      }),
+    );
+    expect(result.isError, JSON.stringify(result)).toBeFalsy();
+    const collected = (
+      result.structuredContent as {
+        downloads: { file: { $file: Record<string, unknown> }; url: string }[];
+      }
+    ).downloads;
+    // Both pages' downloads come back, each with the address that tells its month apart.
+    expect(collected.map((download) => download.url).toSorted()).toEqual([
+      `${site.url}statement.csv?month=1`,
+      `${site.url}statement.csv?month=2`,
+    ]);
+    for (const download of collected) {
+      const month = new URL(download.url).searchParams.get("month") ?? "";
+      const content = monthStatement(month);
+      expect(download.file.$file).toMatchObject({
+        name: `statement-${month}.csv`,
+        media_type: "text/csv",
+        size: content.length,
+        sha256: createHash("sha256").update(content).digest("hex"),
+      });
+      expect(await readFile(fileURLToPath(String(download.file.$file["download_url"])), "utf8")).toBe(
+        content,
+      );
+    }
   } finally {
     await served.close();
     await site.close();

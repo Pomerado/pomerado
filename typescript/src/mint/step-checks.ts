@@ -50,7 +50,7 @@ export const preflightTestInput = (
      * read signed out. Kept so existing callers compile; it will be removed.
      */
     readonly executionHistory?: readonly {
-      readonly input?: "agent_chosen" | "agent_chosen_batch";
+      readonly input?: "agent_chosen" | "agent_chosen_batch" | "recent_inputs_batch";
       readonly entrypoint?: string;
     }[];
   },
@@ -58,11 +58,11 @@ export const preflightTestInput = (
   if (submitted.testInput === undefined) return undefined;
   if (submitted.purpose !== "test" || submitted.target !== "liveBrowser")
     return refused(
-      "testInput is only for a read's live test: purpose test, target liveBrowser. An example or a write's act step runs the caller's input (or exampleInput when that input is empty, or on a read's example once the tool refused it with InvalidInput), and an offline test and every other purpose run the caller's input. Nothing was executed.",
+      "testInput is only for a read's live test: purpose test, target liveBrowser. An example or a write's act step runs the caller's input (or exampleInput when that input is empty, on a write's act step to add values the request states to it, or on a read's example once the tool refused it with InvalidInput), and an offline test and every other purpose run the caller's input. Nothing was executed.",
     );
   if (scope.buildEffect !== "read")
     return refused(
-      "A write build never runs a live test or an input you chose; its session runs the caller's input, or, when that input is empty, the exampleInput that the first act step to pass one fixed. Nothing was executed.",
+      "A write build never runs a live test or an input you chose; its session runs the caller's input, or the exampleInput that the first act step to pass one fixed, in place of an empty input or adding values the request states to it. Nothing was executed.",
     );
   if (Option.isNone(Schema.decodeUnknownOption(JsonText)(submitted.testInput)))
     return refused(testInputNotJson);
@@ -75,10 +75,10 @@ export const preflightTestInput = (
 type InputObject = Readonly<Record<string, unknown>>;
 const ExampleInput = Schema.parseJson(Schema.Record({ key: Schema.String, value: Schema.Unknown }));
 /**
- * The input a step runs in place of the caller's empty one: the agent's `exampleInput`, a JSON
- * object it wrote from the request and the owner's answers. A read's example runs it, and so does
- * a write's act session from the step that first passes it. Undefined when the step carries
- * none, or text that is not a JSON object, which preflight refuses.
+ * The input a step runs in place of the caller's: the agent's `exampleInput`, a JSON object it
+ * wrote from the request and the owner's answers. A read's example runs it, and so does a write's
+ * act session from the step that first passes it. Undefined when the step carries none, or text
+ * that is not a JSON object, which preflight refuses.
  */
 const intentDerivedInput = (submitted: ExecutionRequest): InputObject | undefined =>
   submitted.exampleInput === undefined
@@ -106,14 +106,21 @@ interface ExampleInputScope {
    * beside. A host that never sets it keeps the caller's input as the only example.
    */
   readonly callerExampleRefused?: boolean;
+  /**
+   * Host fact: the host tells Guardian which keys of a write session's input the caller sent
+   * (`currentExecution.callerKeys`), so an act step's `exampleInput` may add values the request
+   * states to the caller's input, keeping every value the caller sent as sent. A host that never
+   * sets it runs the caller's input as it is.
+   */
+  readonly extendsCallerInput?: boolean;
 }
+
+const inputObject = (input: unknown): input is InputObject =>
+  typeof input === "object" && input !== null && !Array.isArray(input);
 
 /** Whether a caller's input is the empty object a build with no structured input gets. */
 export const emptyCallerInput = (callerInput: unknown) =>
-  typeof callerInput === "object" &&
-  callerInput !== null &&
-  !Array.isArray(callerInput) &&
-  Object.keys(callerInput).length === 0;
+  inputObject(callerInput) && Object.keys(callerInput).length === 0;
 
 /** Why this purpose, build or caller input takes no `exampleInput`, if it takes none. */
 const exampleInputPlaceRefusal = (
@@ -130,12 +137,27 @@ const exampleInputPlaceRefusal = (
       ? "exampleInput is valid on act steps only in a write build."
       : "A write build passes exampleInput on its act steps, never on an example.";
   if (emptyCallerInput(scope.callerInput)) return undefined;
-  if (act) return "The caller supplied input, and the session runs it as it is.";
+  if (act)
+    return scope.extendsCallerInput === true && inputObject(scope.callerInput)
+      ? undefined
+      : "The caller supplied input, and the session runs it as it is.";
   if (scope.callerExampleRefused !== true)
     return "The caller supplied input, and the example runs it as it is. Run the example on it first: only once the tool refuses it with InvalidInput may an example run another input in its place.";
   return target === "liveBrowser"
     ? undefined
     : "An example in place of the caller's refused input runs live, with target liveBrowser.";
+};
+
+/** Why an act step's `exampleInput` changes or leaves out a value the caller sent, if it does. */
+const callerValuesRefusal = (decoded: InputObject, callerInput: unknown) => {
+  const changed = inputObject(callerInput)
+    ? Object.keys(callerInput).filter(
+        (key) => !Object.hasOwn(decoded, key) || !isDeepStrictEqual(decoded[key], callerInput[key]),
+      )
+    : [];
+  return changed.length === 0
+    ? undefined
+    : `An act step's exampleInput keeps every value the caller sent as sent and only adds values the request states; this one changes or leaves out ${changed.map((key) => JSON.stringify(key)).join(", ")}.`;
 };
 
 /** Why an act step's `exampleInput` differs from the one input its session runs, if it does. */
@@ -146,9 +168,11 @@ const sessionInputRefusal = (decoded: InputObject, session: SessionInput) =>
 
 /**
  * Preflight's refusal of a step's `exampleInput`, if any: the agent's reading of the request runs
- * only where the caller gave it nothing to run, as a read's example or a write's act session. A
- * session runs one input: the first act step that passes it fixes it, whichever step that is, and
- * a later step repeats it unchanged or omits it. Act steps before it run the caller's empty input.
+ * only where the caller gave it nothing to run, as a read's example or a write's act session. On a
+ * host that opts in (`extendsCallerInput`), a write's act session may also run the caller's input
+ * with values the request states added, every value the caller sent kept as sent. A session runs
+ * one input: the first act step that passes it fixes it, whichever step that is, and a later step
+ * repeats it unchanged or omits it. Act steps before it run the caller's own input.
  * A read's example also runs one in place of the caller's own input once the host records the
  * tool refusing that input with `InvalidInput` (`callerExampleRefused`): a substitute example,
  * another record of the same kind on the site, which Guardian reviews as one.
@@ -164,7 +188,8 @@ export const exampleInputRefusal = (
     (decoded === undefined
       ? "exampleInput must be JSON text of the tool's input object."
       : submitted.purpose === "act"
-        ? sessionInputRefusal(decoded, scope.writeSession)
+        ? (callerValuesRefusal(decoded, scope.callerInput) ??
+          sessionInputRefusal(decoded, scope.writeSession))
         : undefined);
   return refusal === undefined
     ? undefined
@@ -177,14 +202,19 @@ export const exampleInputRefusal = (
  * reading of an empty caller input is `intent_derived`, and an act step that omits it runs the
  * one its session fixed, if an earlier step fixed one; a read's example on an `exampleInput` in
  * place of the caller's own input is `substitute`; every other step runs the caller's input
- * unmarked. Preflight already refused a misplaced input.
+ * unmarked. An `intent_derived` act step names the keys whose values it holds as the caller's
+ * input has them (`callerKeys`). Preflight already refused a misplaced input.
  */
 export const stepInput = (
   submitted: ExecutionRequest,
   scope: { readonly callerInput: unknown; readonly sessionInput: InputObject | undefined },
 ): Effect.Effect<
   | { readonly input: unknown; readonly mark?: "agent_chosen" }
-  | { readonly input: InputObject; readonly mark: "intent_derived" | "substitute" },
+  | {
+      readonly input: InputObject;
+      readonly mark: "intent_derived" | "substitute";
+      readonly callerKeys?: readonly string[];
+    },
   MintFailure
 > => {
   if (submitted.testInput !== undefined)
@@ -208,6 +238,15 @@ export const stepInput = (
       : submitted.purpose === "act"
         ? (scope.sessionInput ?? intentDerivedInput(submitted))
         : undefined;
+  const { callerInput } = scope;
+  // Only a key whose value is the caller's current one, so a value the agent added, or one an
+  // update since changed, is never named as the caller's.
+  const callerKeys =
+    submitted.purpose === "act" && derived !== undefined && inputObject(callerInput)
+      ? Object.keys(callerInput).filter(
+          (key) => Object.hasOwn(derived, key) && isDeepStrictEqual(derived[key], callerInput[key]),
+        )
+      : [];
   return Effect.succeed(
     derived === undefined
       ? { input: scope.callerInput }
@@ -217,6 +256,7 @@ export const stepInput = (
             submitted.purpose === "example" && !emptyCallerInput(scope.callerInput)
               ? ("substitute" as const)
               : ("intent_derived" as const),
+          ...(callerKeys.length === 0 ? {} : { callerKeys }),
         },
   );
 };
@@ -225,15 +265,6 @@ export const stepInput = (
 export const sourceDigest = (files: ReadonlyMap<string, string>) =>
   createHash("sha256")
     .update(JSON.stringify([...files].sort(([left], [right]) => left.localeCompare(right))))
-    .digest("hex");
-
-/**
- * The sha256 digest of what a set of source files holds, without their paths, so the same step
- * copied under another name has the same digest.
- */
-export const contentDigest = (files: ReadonlyMap<string, string>) =>
-  createHash("sha256")
-    .update(JSON.stringify([...files.values()].sort()))
     .digest("hex");
 
 /** Why a write build refuses this step now; undefined when it may run. */

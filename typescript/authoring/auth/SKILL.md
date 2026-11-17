@@ -23,6 +23,14 @@ remember-this-device box with its checked state. Then send the code step at once
 minutes, so send that step before any other probing.
 
 Sign in only when the task needs it, as `AGENTS.md` says; try a public task signed out first.
+When the task turns out to need a sign-in after steps you ran signed out, decide which case it is,
+and ask the caller with request_input when you can't tell. (1) The steps are separate tools, such
+as a search that works signed out and an add to cart that needs the account; signed-out reads stay
+their own tool so they can run in parallel. Build the one the request names and suggest the other
+as a new build. (2) The whole task needs the account: sign in first and run it from its start
+signed in; once a write went out signed out, suggest that as a new build instead. (3) Rarely, one write needs a signed-out part and then a signed-in part: go on signed
+in after it, and follow the host's notice for where its runs sign in. A write already sent signed
+out never runs again.
 Signing in opens the task's own pages only: never browse orders, rewards, messages, saved payment
 or settings the task does not concern.
 
@@ -95,11 +103,17 @@ When the entry offers mutually exclusive account or plan types, decide before cl
 the branch only when the request or input names or clearly implies it, otherwise ask with
 `request_input` right away. A preselected option says nothing about the caller.
 
-Pick a sign-in method in this order: the one the request or caller names, the password, then a
-code or approval; when several channels remain and nothing names one, ask the caller which, and
-never prefer one yourself. Never list or pick a passkey, security key or biometric option, even
-when the caller asks: the host cannot use one. When a passkey is the only way in, end with
-`report_blocked` `site_lacks_capability`.
+Never pick a sign-in method yourself when a screen offers more than one, a password among them,
+since taking one can spend or void a code the site already sent. The one the request or caller
+names settles it, else the one the login's saved preference names, else the owner picks. List every
+method the screen offers in the step's `methods` (below) and send it: the host's method question
+asks the owner which to use before anything is clicked, and refuses a step that takes another,
+naming the owner's pick, so send the step again taking that one. Without that question, first ask
+the owner with one `request_input` choice listing every method the screen offers. Never switch to
+another method once the sign-in took one, such as after a code was sent, unless the owner asks for
+it. Never list or pick a passkey, security key or biometric option, even when the caller asks: the
+host cannot use one. When a passkey is the only way in, end with `report_blocked`
+`site_lacks_capability`.
 
 # One screen at a time
 
@@ -228,12 +242,12 @@ attribute.
   A two-factor method choice ("Text me a code", "Use my authenticator app") fills no field: list
   every method the screen offers in `methods` (`sms`, `call`, `email`, `totp`, `push` or
   `recovery_code` for "use a backup code", each with
-  the selector of the control that picks it) and name the one to pick now as `submit`, by the
-  method order above. The tool's runs pick again from that list. A method's selector
+  the selector of the control that picks it) and name as `submit` the one the request, the caller,
+  the saved preference or the owner picked, as above. The tool's runs pick again from that list. A method's selector
   publishes with the tool, so it never names the masked phone number or address the option shows
   (such as `***-1234`): use the method's own words or a stable attribute.
   A screen that offers a password route beside a code the site sends is a method choice too: list
-  `password` with each code method it offers, each with its own control, and name this login's
+  `password` with each code method it offers, each with its own control, and name the picked
   route as `submit`. So is a control that switches which identifier the screen asks for, when this
   login's identifier needs it: list it as `identifier_username`, `identifier_email`,
   `identifier_phone` or `identifier_account_number`, by the identifier it brings up. The tool's
@@ -369,12 +383,22 @@ number in the owner's confirmation. The host asks the caller through a protected
 after the identifier was submitted. Never ask an ordinary question for this approval or request
 the link, code or device contents. After confirmation, explore the account page and submit its
 signed-in indicator; confirmation alone does not verify the session.
+When the request asks for a person to sign in, prefer a hand-off sign-in: send
+`signInStep: { approval: "handoff" }`, with no popup or `matchSelector`, on the site's sign-in
+page, even when that page also shows a password form. The host hands the browser to a person
+there, who signs in and marks it done. No login is typed or saved, and no identifier screen comes
+first. Then explore the account page and submit its signed-in indicator, as after an approval.
 
 Never accept optional setup the site offers during or right after sign-in, such as creating a
 passkey, adding a phone number or turning on two-factor. Record its decline control ("Not now",
 "Skip") as its own `signInStep` with no fields and that control as `submit`, before the signed-in
 check, so runs pass it too; a run where it does not show skips it once the check verifies the
 session.
+
+When the page right after a sign-in step is optional setup and shows no decline control after one
+bounded wait, prefer loading the site's own start page and checking the signed-in indicator there
+before anything else. Record no step for that page: a run skips it once the check verifies the
+session. A setup page that never loads is not the site being unavailable.
 
 When a sign-in screen asks to sign out another device or session, or to trust this browser,
 before the site goes on, send it as a `signInStep` with no fields, its control as `submit`, and
@@ -401,8 +425,9 @@ checks there; never guess a protected route.
 pomerado:section auth.signed-in-page:end --> The host checks that the submitted
 sign-in's recorded controls/form no longer show a password entry awaiting sign-in; unrelated
 password controls on the account page do not fail this check. It also checks that this sign-in
-submitted the login's identifier with its password, code or protected approval, then marks it
-verified; a Personal login locks to this site then. The marker is part of the published tool.
+submitted the login's identifier with its password, code or protected approval (after a hand-off,
+that the person marked it done), then marks it verified; a Personal login locks to this site then.
+The marker is part of the published tool.
 Business work waits for a verified sign-in.
 
 # Popup sign-in

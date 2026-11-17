@@ -204,6 +204,23 @@ it("confirms the wanted words among a few words more, and refuses them among mor
   expect(readBackMatches(`${wanted} ${words(12)}`, wanted)).toBe(false);
 });
 
+// An approved choice read again before a commit can show a time that moved with the clock. With
+// ignoreClockTimes it still confirms when its kind and price are the same, on both steps.
+it("confirms an approved choice whose time moved with the clock, only when asked", () => {
+  const options = { ignoreClockTimes: true };
+  expect(readBackMatches("Express 7:23pm–8:53pm $3.99", "Express 7:21pm–8:51pm $3.99", options)).toBe(true);
+  expect(readBackMatches("Express delivery today 7:23pm–8:53pm $3.99", "Express 7:21pm–8:51pm $3.99", options)).toBe(
+    true,
+  );
+  expect(readBackMatches("Express 7:23pm–8:53pm $3.99", "Express 7:21pm–8:51pm $3.99")).toBe(false);
+  expect(readBackMatches("Express 7:23pm–8:53pm $4.99", "Express 7:21pm–8:51pm $3.99", options)).toBe(false);
+  expect(readBackMatches("Standard 7:23pm–8:53pm $3.99", "Express 7:21pm–8:51pm $3.99", options)).toBe(false);
+  // Each function holds its own copy of the times it leaves out, so page code can embed it alone.
+  const times = (fn: unknown) => /\/\(\?<!.*?\/giu/u.exec(String(fn))?.[0];
+  expect(times(readBackMatches)).toBeDefined();
+  expect(times(readBackMatches)).toBe(times(sameText));
+});
+
 it("refuses text that drops a wanted word or names another value", () => {
   expect(readBackMatches("Lakeside", "North Lakeside")).toBe(false);
   expect(readBackMatches("Hillcrest", "Exemple Bay")).toBe(false);

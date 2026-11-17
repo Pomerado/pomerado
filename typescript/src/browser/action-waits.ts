@@ -23,9 +23,10 @@ export interface InvalidField {
 }
 
 /**
- * What showed the winning outcome, by kind: the locator's one visible match and its text, how long
- * a `gone` element stayed gone, the fields marked invalid, the URL reached, the response's method,
- * URL and status, the native dialog's type and message, the popup's URL, or a `check`'s value.
+ * What showed the winning outcome, by kind: the locator's matches and its first visible one's
+ * text, how long a `gone` element stayed gone, the fields marked invalid, the URL reached, the
+ * response's method, URL and status, the native dialog's type and message, the popup's URL, or a
+ * `check`'s value.
  */
 export interface OutcomeEvidence {
   readonly count?: number;
@@ -58,6 +59,8 @@ export interface OutcomeKindObservation {
 export interface OutcomeResult {
   readonly outcome: string;
   readonly kind: OutcomeKind;
+  /** The outcome is one `pending` named, still showing when the wait's hold ended. */
+  readonly pending?: true;
   readonly afterMs: number;
   readonly looks: number;
   readonly evidence: OutcomeEvidence;
@@ -438,14 +441,21 @@ const outcomeWaitShows = (candidate, observation, state, stale, now) => {
 const outcomeWaitShowsAny = (candidate, observation) =>
   observation !== undefined &&
   (candidate.kind === "locator" ? observation.visible > 0 : candidate.kind !== "url" && candidate.kind !== "check" && observation.matched);
+// Whether a locator's visible matches, two to 20, all read the same text, spacing aside. A form
+// control has no text here, and matches with no text never read the same.
+const outcomeWaitSameText = (locator) =>
+  locator.filter({ visible: true }).evaluateAll((elements) => {
+    if (elements.length < 2 || elements.length > 20) return false;
+    const texts = new Set(elements.map((element) =>
+      element.matches("input, textarea, select") ? "" : String(element.innerText ?? "").replace(/\s+/g, " ").trim()));
+    return texts.size === 1 && !texts.has("");
+  });
 const outcomeWaitEvidence = async (candidate, observation, state, events, now) => {
   const { kind, name } = candidate;
   if (kind === "locator") {
     let text;
     try {
-      text = await candidate.locator.evaluateAll((elements) =>
-        elements.find((element) =>
-          typeof element.checkVisibility === "function" ? element.checkVisibility() : element.getClientRects().length > 0)?.innerText);
+      text = await candidate.locator.filter({ visible: true }).evaluateAll((elements) => elements[0]?.innerText);
     } catch {
       text = undefined;
     }
@@ -494,7 +504,10 @@ const readyWaitInPage = (elements, spec) => {
   if (spec.editable && (element.readOnly === true || element.getAttribute("aria-readonly") === "true")) blockers.push("read-only");
   if (element.closest('[aria-busy="true"]') !== null) blockers.push("busy");
   else {
-    const sign = [...element.querySelectorAll(spec.signs)].find(shows);
+    // A sign hidden by opacity, its own or an ancestor's, such as a spinner a button keeps at
+    // opacity 0 until it loads, is no loading sign.
+    const sign = [...element.querySelectorAll(spec.signs)].find((sign) => shows(sign) &&
+      (typeof sign.checkVisibility !== "function" || sign.checkVisibility({ opacityProperty: true })));
     if (sign !== undefined) blockers.push("busy");
   }
   const rect = element.getBoundingClientRect();

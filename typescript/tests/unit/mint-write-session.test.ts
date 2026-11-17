@@ -6,6 +6,7 @@ import {
   checkWriteSession,
   commitEvidenceOf,
   commitUncertain,
+  fencedCommitNotice,
   readBackFirst,
   sessionEnteredMarks,
   sessionSentWrite,
@@ -75,7 +76,7 @@ describe("an act step's commit evidence", () => {
 describe("the read-back an act step Guardian labelled a write asks for when it did not complete", () => {
   /** The notice for a step that may have committed for `reason`. */
   const notice = (reason: string) =>
-    `This act step did not complete after ${reason}, so the write may already be committed. Before any further write, verify: run an act step that only reads the page or the account and learns whether the write happened. When this step's stateChangingRequests shows its commit request to the site returned 2xx or 3xx, that step may read back the write's own result, the record it just created or changed: on the page as it stands, or looked up on another page such as a list. Check it shows no error or validation message, read what the output needs, and call verified() there. Reading is allowed; a second write is not. A 200 whose body reports an error, as GraphQL can, did not go through. Read the site's own proof for such a commit, as for an error status, since part of it may have applied. A 202, or a 2xx whose body says the work is queued, counts too: return the site's own status word for it, such as Queued, in the output. If the write happened, record it with verified() in that step and publish against it; never submit the write again. If the read-back shows nothing happened, you may submit the write again with the caller's values and read its confirmation. Either way, adjust the composed script to what actually works end to end. The host never resubmits a write for you.`;
+    `This act step did not complete after ${reason}, so the write may already be committed. Before any further write, verify: run an act step that only reads the page, or the account only when the page can't tell, and learns whether the write happened. When this step's stateChangingRequests shows its commit request to the site returned 2xx or 3xx, with a body you can read showing no error, that step may read back the write's own result, the record it just created or changed: on the page as it stands, or looked up on another page such as a list. Check it shows no error or validation message, read what the output needs, and call verified() there. Reading is allowed; a second write is not. A 200 whose body reports an error, as GraphQL can, did not go through. Read the site's own proof for such a commit, as for an error status, since part of it may have applied. A 202, or a 2xx whose body says the work is queued, counts too: return the site's own status word for it, such as Queued, in the output. If the write happened, record it with verified() in that step and publish against it; never submit the write again. If the read-back shows nothing happened, you may submit the write again with the caller's values and read its confirmation. Either way, adjust the composed script to what actually works end to end. The host never resubmits a write for you.`;
 
   it("asks for none when the step's marks show no commit step entered", () => {
     expect(readBackFirst("not_entered")).toBeUndefined();
@@ -102,9 +103,24 @@ describe("the read-back an act step Guardian labelled a write asks for when it d
 
   it("lets a commit request the site answered 2xx or 3xx read back the write's own result on any page", () => {
     expect(readBackFirst("entered")?.notice).toContain(
-      "When this step's stateChangingRequests shows its commit request to the site returned 2xx or 3xx, that step may read back the write's own result, the record it just created or changed: on the page as it stands, or looked up on another page such as a list.",
+      "When this step's stateChangingRequests shows its commit request to the site returned 2xx or 3xx, with a body you can read showing no error, that step may read back the write's own result, the record it just created or changed: on the page as it stands, or looked up on another page such as a list.",
     );
     expect(readBackFirst("entered")?.notice).toContain("Reading is allowed; a second write is not.");
+  });
+
+  // A purchase whose order request answered 200 with a body nobody could read, on a page that
+  // showed no outcome, went first to the account's order history. The page comes first, and the
+  // account only when the page can't tell.
+  it("reads an unclear write back from the page first, and the account only when the page can't tell", () => {
+    for (const commit of ["entered", "unreported", "undeclared", undefined] as const) {
+      expect(readBackFirst(commit)?.notice).toContain(
+        "run an act step that only reads the page, or the account only when the page can't tell, and learns whether the write happened.",
+      );
+      expect(readBackFirst(commit)?.notice).not.toContain("the page or the account");
+    }
+    expect(fencedCommitNotice("place-order", ["exec_1"])).toContain(
+      "Prefer reading back the page, or the account only when the page can't tell, in a step that changes nothing.",
+    );
   });
 });
 
@@ -147,6 +163,7 @@ describe("a write session's publication check", () => {
     readonly confirmation: "message" | "readback" | "unverifiable";
     readonly commits?: readonly unknown[];
     readonly commitsUnproven?: readonly unknown[];
+    readonly settings?: readonly unknown[];
   }) => ({ contract: write === undefined ? {} : { write }, inputDecodes: true });
   const check = (
     steps: readonly WriteSessionMarks[],
@@ -190,6 +207,16 @@ describe("a write session's publication check", () => {
     );
     expect(reason(result)).toBe("commit_marks_unentered");
     expect(extractions).toBe(1);
+  });
+
+  it("refuses setting steps outside its commit steps or with no other commit step after them", () => {
+    const settings = (commits: readonly string[], named: readonly string[]) =>
+      reason(
+        check([confirmed], contract({ confirmation: "readback", commits, settings: named })).result,
+      );
+    expect(settings(["save-tip", "place-order"], ["place-order"])).toBe("commit_settings_invalid");
+    expect(settings(["place-order"], ["save-tip"])).toBe("commit_settings_invalid");
+    expect(settings(["place-order"], [])).toBeUndefined();
   });
 
   it("then refuses a contract that does not match the session", () => {
@@ -715,6 +742,9 @@ describe("a write build's write path", () => {
       // A form filled and read back, never submitted.
       const filled: WritePath = { steps: [], ends: "The filled form, unsubmitted" };
       expect(writePathRefusal(act(filled), session(false))).toContain("writePath names no step");
+      // The ending it names is one the harness takes: the request's own stop is caller_input,
+      // never host_refused, which the harness refuses when no host check refused a step.
+      expect(writePathRefusal(act(filled), session(false))).toContain("reason caller_input");
       expect(
         writePathRefusal(act(filled), session(false), { publishOnReadBack: true }),
       ).toBeUndefined();

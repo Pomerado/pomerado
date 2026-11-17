@@ -1,8 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { Effect, Either, Schema } from "effect";
 import { failureDetail } from "../runtime/failure-detail.js";
-import { type AutofillFillCall, autofillStepCode } from "./autofill-page-code.js";
-import { frameCrossing, unsupportedSelector } from "./autofill-locate-code.js";
+import { type AutofillFillCall, autofillPageCode, autofillStepCode } from "./autofill-page-code.js";
+import {
+  elementReadMs,
+  frameCrossing,
+  locateCode,
+  unsupportedSelector,
+} from "./autofill-locate-code.js";
 import { firedRefusal, guardedSubmit, GuardRefusal } from "./autofill-submission-guard.js";
 import {
   configuredOrigins,
@@ -72,14 +77,16 @@ const FillAnswer = Schema.Union(
   Schema.Struct({
     focused: Schema.Boolean,
     /**
-     * Why the field did not take the focus: the error focusing threw, the tag that holds it, or
-     * that the field takes no typing yet, which the call never focused.
+     * Why the field did not take the focus: the error focusing threw, the tag that holds it, that
+     * the field takes no typing yet, which the call never focused, or that its page put back what
+     * it held once the call emptied it (`emptied: false`), which the call never bound.
      */
     unfocused: Schema.optional(
       Schema.Union(
         Schema.Struct({ focusError: Schema.String }),
         Schema.Struct({ activeTag: Schema.String }),
         Schema.Struct({ editable: Schema.Literal(false) }),
+        Schema.Struct({ emptied: Schema.Literal(false) }),
       ),
     ),
     located: Schema.optional(FoundIn),
@@ -424,9 +431,10 @@ interface FillInput extends CallInput {
    * submit while a page that judges how it was used finishes judging. Never for a step with only a
    * submit key or no submit, a fill that stopped before its submit, a click again
    * (`resubmitAutofillStep`), or a second click in the same fill (a retype by keys after
-   * `stayed_disabled`, a dismiss then a second click). It gets no value. When it fails, the host
-   * clicks nothing (`heldSubmit`): one look reports `page` when the page sent what was typed
-   * itself; otherwise the fill reports the submit `refused` with the failure's detail.
+   * `stayed_disabled`, a dismiss or a closed field list then a second click). It gets no value.
+   * When it fails, the host clicks nothing (`heldSubmit`): one look reports `page` when the page
+   * sent what was typed itself; otherwise the fill reports the submit `refused` with the failure's
+   * detail.
    */
   readonly beforeSubmit?: (typed: {
     readonly document: number | undefined;
@@ -902,8 +910,9 @@ const fillField = (
 /**
  * A field that did not take the focus, or whose native insertion refused (`insertion`, its finite
  * cause), and why. A private answer's question that changed is a change on the screen, as when the
- * call found it changed before focusing. A field that still takes no typing once the host's wait
- * ran out is `not_editable`, as inspection refuses one.
+ * call found it changed before focusing, and so is a field whose page put back what it held once
+ * the call emptied it (`not_emptied`). A field that still takes no typing once the host's wait ran
+ * out is `not_editable`, as inspection refuses one.
  */
 const untypedRefusal = (
   input: FillInput,
@@ -915,6 +924,12 @@ const untypedRefusal = (
   if (answer.unfocused !== undefined && "editable" in answer.unfocused)
     return withCheck(refused("not_editable", index), "not_editable", {
       control: progress.judged.fields[index]?.control,
+      ...targetEvidence(progress.judged.fields[index], evidenceOrigins(input, progress)),
+      ...foundEvidence(answer.url, answer.located, evidenceOrigins(input, progress)),
+    });
+  if (answer.unfocused !== undefined && "emptied" in answer.unfocused)
+    return withCheck(refused("credential_target_refused", index), "change", {
+      cause: "not_emptied",
       ...targetEvidence(progress.judged.fields[index], evidenceOrigins(input, progress)),
       ...foundEvidence(answer.url, answer.located, evidenceOrigins(input, progress)),
     });
@@ -1238,10 +1253,15 @@ const afterFieldCall = (
  * the element's own control as `dismiss` and send the screen again (`resubmitAutofillStep`), which
  * presses the submit from the keyboard only when its click is caught again. On a step that names
  * `dismiss`, a notice drawn only once the fields were typed is dismissed then, and the submit
- * clicked once more, with nothing typed again. A click that ran out of time while the next page
- * loaded, as one through a slow chain of redirects does, is `clicked` once a request for the page's
- * main frame went out, whatever the site answered, and the page gets the settle wait from there;
- * with no such request it is `failed`.
+ * clicked once more, with nothing typed again. A click caught by a list that the field the host
+ * typed last opened, such as an email box's own suggestions, closes that list first: the host
+ * presses Escape in that field once and, when the list closed and the field kept its value, clicks
+ * the submit again, pressing it from the keyboard when that click is caught too
+ * (`closeFieldList`). It types nothing again; a list that stays open leaves the click `blocked`.
+ * A click that ran out of time while the next page loaded, as one through a slow chain of
+ * redirects does, is `clicked` once a request for the page's main frame went out, whatever the
+ * site answered, and the page gets the settle wait from there; with no such request it is
+ * `failed`.
  */
 export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepReport> =>
   Effect.gen(function* () {
@@ -1297,6 +1317,10 @@ export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepRe
       typedFields(step, progress).length > 0
     )
       return yield* typeAgain({ ...input, keyboard: byKeys(input.keyboard) });
+    if (isBlocked(report) && (yield* closeFieldList(input, progress))) {
+      progress.check = typedFields(step, progress);
+      return yield* submitStep(input, progress, boxes, typed, true);
+    }
     if (!isBlocked(report) || step.dismiss === undefined) return report;
     const again = yield* dismissNotice(input, progress);
     // The dismiss emptied the fields before its click: the host types them all again.
@@ -1461,6 +1485,82 @@ const dismissNotice = (
       url: answer.url,
     };
   });
+
+/**
+ * Page code: closes a list the step's field `index`, the one the host typed last, opened over the
+ * step's submit, as an email box's own suggestions do. The field opened the element at the
+ * submit's centre when the field says it is expanded (`aria-expanded="true"`), names that element
+ * or one around it in `aria-controls` or `aria-owns`, or when the outermost element around it that
+ * does not hold the field sits in the field's form, its top edge within 8 pixels under the field.
+ * Only then does the call press Escape in the field, once, and it answers `closed` when the field
+ * still holds what it held, compared in the page's isolated world, which then drops its copy, and
+ * the submit itself is the element at its centre again: a notice still over it, or a dialog that
+ * Escape closed with the submit in it, is no closed list. Only that answer leaves the page.
+ */
+const closeFieldListCode = (input: CallInput, index: number) => `${autofillPageCode(
+  input.page.targetId,
+  input.step.popup,
+)}
+${locateCode}
+const field = await locate(${JSON.stringify(input.step.fields[index]?.selector)}, null);
+if ("error" in field) return { closed: false };
+const submit = await locate(${JSON.stringify(input.step.submit)}, null, [field]);
+if ("error" in submit || submit.frame !== field.frame) return { closed: false };
+const read = { timeout: ${elementReadMs} };
+const opened = (element, [submit]) => {
+  const box = submit.getBoundingClientRect();
+  const root = submit.getRootNode();
+  const hit = (typeof root.elementFromPoint === "function" ? root : submit.ownerDocument)
+    .elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+  if (hit === null || hit === submit || submit.contains(hit) || hit.contains(submit)) return false;
+  if (element.getAttribute("aria-expanded") === "true") return true;
+  const owned = [element.getAttribute("aria-controls"), element.getAttribute("aria-owns")].join(" ");
+  const scope = element.getRootNode();
+  if (owned.split(/\\s+/).some((id) => id !== "" && scope.getElementById?.(id)?.contains(hit) === true))
+    return true;
+  let cover = hit;
+  while (cover.parentElement !== null && !cover.parentElement.contains(element)) cover = cover.parentElement;
+  const form = element.form ?? element.closest("form");
+  const under = cover.getBoundingClientRect();
+  const own = element.getBoundingClientRect();
+  return form !== null && form.contains(cover) && under.top >= own.top && under.top <= own.bottom + 8 &&
+    under.left < own.right && under.right > own.left;
+};
+if (!(await field.locator.evaluate(opened, [submit.handle], read))) return { closed: false };
+const key = ${JSON.stringify(`__pomerado_list_${randomUUID()}`)};
+await field.locator.evaluate((element, key) => { element[key] = element.value; }, key, read, true);
+await field.locator.press("Escape", read);
+const unchanged = await field.locator.evaluate((element, key) => {
+  const same = element.value === element[key];
+  delete element[key];
+  return same;
+}, key, read, true);
+const clear = await submit.handle.evaluate((element) => {
+  const box = element.getBoundingClientRect();
+  const root = element.getRootNode();
+  const hit = (typeof root.elementFromPoint === "function" ? root : element.ownerDocument)
+    .elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+  return hit !== null && (hit === element || element.contains(hit));
+});
+return { closed: unchanged && clear };`;
+
+/**
+ * Closes a list the step's field the host typed last opened over its submit
+ * (`closeFieldListCode`): true once Escape in that field closed it and the field kept its value.
+ * A step with no submit or no field the host typed, or a call that failed, closes nothing. It
+ * types and clicks nothing.
+ */
+const closeFieldList = (input: CallInput, progress: FillProgress): Effect.Effect<boolean> => {
+  const index = typedFields(input.step, progress).at(-1);
+  return index === undefined || input.step.submit === undefined
+    ? Effect.succeed(false)
+    : input.page.execute(closeFieldListCode(input, index), 30).pipe(
+        Effect.flatMap(Schema.decodeUnknown(Schema.Struct({ closed: Schema.Boolean }))),
+        Effect.map((answer) => answer.closed),
+        // error-reporting-allow: typed-recovery a list the host could not close leaves the click it caught standing, as before
+        Effect.orElseSucceed(() => false),
+      );
+};
 
 /**
  * The step's submit, judged again, guarded and clicked once every field was typed

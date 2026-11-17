@@ -1,19 +1,25 @@
 import type { Page, Route } from "playwright";
 import { pickerCode } from "../../src/browser/picker.js";
+import { withRunEffect } from "../../src/runtime/kernel-operation.js";
 import { makeLocalKernel } from "../../src/testing/local-kernel.js";
 
 /**
  * Runs page code after `pickerCode`, as a Kernel call body runs it (`page` in scope), with `fast`
  * declared: short settle and hold windows, since every fixture answers within a few hundred
- * milliseconds.
+ * milliseconds. With `effect`, the run's effect is declared as the runtime declares it; without
+ * it, as for code run outside the runtime, the picker takes only a clean match.
  */
-export const call = async (page: Page, body: string, timeoutSec = 20) => {
+export const call = async (page: Page, body: string, timeoutSec = 20, effect?: "read" | "write") => {
+  const code = `${pickerCode}\nconst fast = { settleMs: 120, holdMs: 120, timeout: 8000 };\n${body}`;
   const answer = await makeLocalKernel(page).browsers.playwright.execute("session-1", {
     timeout_sec: timeoutSec,
-    code: `${pickerCode}\nconst fast = { settleMs: 120, holdMs: 120, timeout: 8000 };\n${body}`,
+    code: effect === undefined ? code : withRunEffect(code, effect),
   });
   return answer.success ? { result: answer.result } : { error: answer.error };
 };
+
+/** Like `call`, in a read: the picker takes its best match at any rank. */
+export const callRead = (page: Page, body: string, timeoutSec = 20) => call(page, body, timeoutSec, "read");
 
 /** Like `call`, for a call that fails: its error and the first line of its stack, as a host logs them. */
 export const callFailure = async (page: Page, body: string, timeoutSec = 20) => {

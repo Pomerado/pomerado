@@ -21,6 +21,7 @@ import { inspectSignInRejection } from "./sign-in-rejection.js";
 import {
   FileField,
   FileRefused,
+  ScreenshotTarget,
   SiteFileLimits,
   type FileChannel,
   type FileRefusalReason,
@@ -159,7 +160,6 @@ export interface KernelOperationContext<
    * declared with its type and prompt in the contract's `questions`. The browser stays open and
    * the deadline pauses while the caller decides; the next call gets the answers written into
    * its code. It throws `ScriptInputFailure` when no usable answer comes, such as `NoResponse`.
-   * A card question's answer is a card handle for `fillCard`, never the card itself.
    */
   readonly ask: ScriptAsk<Questions>;
   /** Asks one declared question and returns its answer itself, not one answer per id. */
@@ -180,20 +180,20 @@ export interface KernelOperationContext<
    */
   readonly handOff: ScriptHandOff<Questions>;
   /**
-   * Types the caller's payment card into the card fields of the site's own checkout, the way the
-   * host types a password. Ask for every part of the card in one `ask`, with a declared secret
-   * question for each part whose secretKind is card_number, card_expiry, card_cvc or
-   * billing_postal_code; `ask` returns a card handle for each, never the card. Pass each field's
-   * own selector, even inside a payment processor's frame, with its handle: one to four fields,
-   * each handle once. The host types only when the page's top document is on this site and each
-   * field is on the site or in a frame on an allowlisted payment processor's origin. It clicks
-   * nothing: submit the payment in a later call, under the write's commit rules. It returns each
-   * field's part and status, and throws `OperationFailure`, with no value in it, when it typed
-   * nothing or not every field.
+   * Fills the caller's payment method into the card fields of the site's own checkout, on a host
+   * that fills the card from a payment method. Pass each field's own selector, even inside a
+   * payment processor's frame, with its slot (card_number, card_expiry, card_cvc or
+   * billing_postal_code, which the host fills from the payer's billing address), each slot once,
+   * and the order total the checkout shows. The host fills only when the page's top document
+   * is on this site and each field is on the site or in a frame on an allowlisted payment
+   * processor's origin. It clicks nothing: submit the payment in a later call, under the write's
+   * commit rules. It returns `outcome: "filled"` with each field's part and status, and throws
+   * `OperationFailure`, with no value in it, when it filled nothing or not every field.
    */
-  readonly fillCard: (step: {
-    readonly fields: readonly { readonly selector: string; readonly handle: string }[];
-  }) => Promise<{ readonly fields: readonly { readonly slot: string; readonly status: string }[] }>;
+  readonly fillCard: (step: ScriptCardFillRequest) => Promise<{
+    readonly outcome: "filled";
+    readonly fields: readonly { readonly slot: string; readonly status: string }[];
+  }>;
   /**
    * One runtime-written call that waits up to 30 s for Kernel's solver to clear a bot challenge,
    * polling `ready`, a code body that returns true once the page is usable. It throws
@@ -275,8 +275,9 @@ export interface KernelOperationContext<
   readonly ensureSignedIn: () => Promise<{ readonly signedInAgain: boolean }>;
   /**
    * The run's files: `place` puts a caller's file into a file input on the site, `collect`
-   * captures a download the page starts. The bytes stay with the host. A run without the host's
-   * file service, such as an offline run, throws `OperationFailure` on either.
+   * captures a download the page starts, `collectAll` every download a trigger starts and
+   * `screenshot` a picture of the page. The bytes stay with the host. A run without the host's
+   * file service, such as an offline run, throws `OperationFailure` on each.
    */
   readonly files: ScriptFiles;
   readonly errors: typeof operationErrors;
@@ -457,6 +458,12 @@ interface ScriptBrowser {
    * refuses any cursor that would continue a runtime list.
    */
   readonly list?: ListHost;
+  /**
+   * Whether the run reads or writes, which `pickerCode` follows: a read takes a picker's best match
+   * at any rank, a write only a clean one. A build's or repair's step passes the build's effect.
+   * Absent, a script that declares `write` writes and any other reads.
+   */
+  readonly effect?: "read" | "write";
 }
 
 /** The default wait for a download to finish after its trigger. */
@@ -495,6 +502,18 @@ const fileFailure = (error: unknown, afterCalls = false) => {
     dispatch:
       afterCalls || refused === undefined || refused.dispatched === true ? "unknown" : "not_sent",
   });
+};
+
+/**
+ * A failed take of a trigger's downloads, by `files.collect` or `files.collectAll`: a download
+ * over the host's caps fails with the cap's own wording, which a build's host reads as its file
+ * cap; any other refusal as `fileFailure` after the trigger's calls.
+ */
+const collectFailure = (error: unknown) => {
+  const overCap = error instanceof FileRefused ? downloadCapFailures[error.reason] : undefined;
+  return overCap === undefined
+    ? fileFailure(error, true)
+    : new OperationFailure(overCap, { cause: error, dispatch: "unknown" });
 };
 
 /**
@@ -573,11 +592,80 @@ const scriptFiles = (
       try {
         return await settle(files.collect({ slot, timeoutMs }));
       } catch (error) {
+        throw collectFailure(error);
+      }
+    },
+    collectAll: async (trigger, collectOptions) => {
+      const files = channel();
+      const collectAll = files.collectAll;
+      if (collectAll === undefined)
+        throw new OperationFailure(
+          "This host cannot collect every download a trigger starts (files.collectAll); use files.collect for one download",
+          { dispatch: "not_sent" },
+        );
+      const max = collectOptions?.max;
+      if (max !== undefined && !(Number.isSafeInteger(max) && max >= 1))
+        throw new OperationFailure("files.collectAll takes max as a positive whole number", {
+          dispatch: "not_sent",
+        });
+      let slot: string;
+      try {
+        slot = await settle(files.arm());
+      } catch (error) {
+        throw fileFailure(error);
+      }
+      try {
+        await trigger();
+      } catch (error) {
+        // The capture ends with the trigger, so nothing it armed outlives the failure.
+        await Effect.runPromise(Effect.ignore(collectAll({ slot, timeoutMs: 0, max: 1 })));
+        throw error;
+      }
+      const timeoutMs = Math.min(
+        collectOptions?.timeoutMs ?? downloadWaitMs,
+        Math.max(0, options.deadline.remainingMs()),
+      );
+      try {
+        return await settle(
+          collectAll({ slot, timeoutMs, ...(max === undefined ? {} : { max }) }),
+        );
+      } catch (error) {
+        throw collectFailure(error);
+      }
+    },
+    screenshot: async (shot = {}) => {
+      const files = channel();
+      if (files.screenshot === undefined)
+        throw new OperationFailure("This run's host takes no screenshots", { dispatch: "not_sent" });
+      // The target is data the host writes into its own locator; anything else names no element.
+      // An option left undefined is no option; anything but an options object still names no
+      // target.
+      const given =
+        typeof shot === "object" && shot !== null && !Array.isArray(shot)
+          ? Object.fromEntries(Object.entries(shot).filter(([, value]) => value !== undefined))
+          : shot;
+      const target = Schema.decodeUnknownEither(ScreenshotTarget)(given);
+      if (Either.isLeft(target)) throw fileFailure(new FileRefused({ reason: "field_not_found" }));
+      try {
+        return await settle(
+          files.screenshot({
+            ...target.right,
+            timeoutMs: Math.min(
+              shot.timeoutMs ?? downloadWaitMs,
+              Math.max(0, options.deadline.remainingMs()),
+            ),
+          }),
+        );
+      } catch (error) {
+        // A picture over the caps is the host's limit, as a download's is; it sent nothing.
         const overCap =
           error instanceof FileRefused ? downloadCapFailures[error.reason] : undefined;
         if (overCap !== undefined)
-          throw new OperationFailure(overCap, { cause: error, dispatch: "unknown" });
-        throw fileFailure(error, true);
+          throw new OperationFailure(overCap.replace("downloaded file", "screenshot"), {
+            cause: error,
+            dispatch: "not_sent",
+          });
+        throw fileFailure(error);
       }
     },
   };
@@ -600,7 +688,7 @@ const scriptFillCard =
     });
     if (Either.isLeft(request))
       throw new OperationFailure(
-        "fillCard takes one to four fields, each its own selector and a card handle ask returned, each handle once",
+        "fillCard takes one to four fields, each its own selector and a card handle ask returned, each handle once, or card slots with the checkout's total",
         { dispatch: "not_sent" },
       );
     const resume = options.deadline.suspend();
@@ -610,7 +698,7 @@ const scriptFillCard =
       );
       const typed = answer.outcome === "filled" || answer.typed;
       if (typed && options.journal !== undefined) Effect.runSync(options.journal.enteringDispatch);
-      if (answer.outcome === "filled") return { fields: answer.fields };
+      if (answer.outcome === "filled") return { outcome: answer.outcome, fields: answer.fields };
       throw new OperationFailure(answer.message, { dispatch: typed ? "unknown" : "not_sent" });
     } finally {
       resume();
@@ -773,9 +861,32 @@ const clickNavigationWait = String.raw`(until) => {
   return () => restores.forEach((restore) => restore());
 }`.replace(/\n\s*/gu, " ");
 
-/** A call's code inside `clickNavigationWait`, which ends a second before its `timeout_sec`. */
+/**
+ * A call's code with the run's effect declared ahead of it, on the same line, as `pickerCode`
+ * reads it (`__pomeradoEffect`).
+ */
+export const withRunEffect = (code: string, effect: "read" | "write") =>
+  `const __pomeradoEffect = ${JSON.stringify(effect)};${code}`;
+
+/**
+ * A commit's own call, the first a script sends after `enteringCommit`, with that declared ahead of
+ * its code on the same line (`__pomeradoCommitting`): an outcome wait its click starts then reads
+ * the site's refusal on the page before it ends `outcome_unknown` (`waitCode`).
+ */
+export const withCommitCall = (code: string) => `const __pomeradoCommitting = true;${code}`;
+
+/** A commit call that failed because its outcome wait read the site's refusal on the page. */
+const siteRefusedCall = (answer: { readonly success: boolean; readonly error?: string }) =>
+  answer.success === false &&
+  typeof answer.error === "string" &&
+  /^(?:OutcomeWaitFailure:\s*)?outcome_refused after \d+ ms\b/u.test(answer.error);
+
+/**
+ * A call's code inside `clickNavigationWait`, which ends a second before its `timeout_sec`, with
+ * that end declared as `__pomeradoCallEnds`, where a pending `waitForOutcome` ends its hold.
+ */
 const withClickNavigationWait = (code: string, timeoutSec = 60) =>
-  `const __pomeradoClickNavigation = (${clickNavigationWait})(Date.now() + ${timeoutSec * 1000 - 1000}); try {${code}
+  `const __pomeradoCallEnds = Date.now() + ${timeoutSec * 1000 - 1000}; const __pomeradoClickNavigation = (${clickNavigationWait})(__pomeradoCallEnds); try {${code}
 } finally { __pomeradoClickNavigation(); }`;
 
 /**
@@ -794,47 +905,84 @@ export const runKernelScript = <Input, EncodedInput, Output, EncodedOutput>(
   Effect.suspend(() => {
     let actionTimeout: string | undefined;
     let calls = 0;
+    // The commit step the script entered last, until its own next call goes out
+    // (`withCommitCall`), or it asks a question, since a person may send the step meanwhile.
+    let entering: string | undefined;
+    // Steps the runtime put back after their call's `outcome_refused`, until entered again: the
+    // script's own put-back of one still unsent finds it done.
+    const putBack = new Set<string>();
+    const effect = browser.effect ?? (operation.write === undefined ? "read" : "write");
     // The host's sign-in under way. Every browser call the script starts meanwhile, from a timer
     // or an un-awaited promise too, waits for it and is only then sent, in order, so its own
     // timeout starts then. A failed sign-in releases them as well.
     let signingIn: Promise<{ readonly signedInAgain: boolean }> | undefined;
     const afterSignIn = <A>(call: () => Promise<A>): Promise<A> =>
       signingIn === undefined ? call() : signingIn.then(call, call);
+    const send = (
+      commit: string | undefined,
+      ...[sessionId, body, options]: Parameters<KernelExecuteClient["browsers"]["playwright"]["execute"]>
+    ) => {
+      // Counted when made: a held call goes out later, even after the script ends.
+      calls += 1;
+      return afterSignIn(() =>
+        settle(
+          Effect.sync(() => {
+            actionTimeout = undefined;
+          }).pipe(
+            Effect.flatMap(() =>
+              Effect.tryPromise({
+                try: () =>
+                  browser.kernel.browsers.playwright.execute(
+                    sessionId,
+                    {
+                      ...body,
+                      code: withClickNavigationWait(
+                        withRunEffect(commit === undefined ? body.code : withCommitCall(body.code), effect),
+                        body.timeout_sec,
+                      ),
+                    },
+                    options,
+                  ),
+                catch: (error) =>
+                  error instanceof Error ? error : new Error(String(error), { cause: error }),
+              }),
+            ),
+            Effect.tap((answer) =>
+              Effect.sync(() => {
+                actionTimeout = nativeActionTimeout(answer);
+                // The site refused the commit's click and its wait read that on the page:
+                // the step goes back unsent, once, as the script's own put-back would. A
+                // step the journal can't put back stays sent.
+                const revert = browser.journal?.notCommitted;
+                if (commit !== undefined && revert !== undefined && siteRefusedCall(answer)) {
+                  const reverted = Effect.runSync(
+                    Effect.either(revert(commit, { siteRefused: true, outcomeRefused: true })),
+                  );
+                  if (Either.isRight(reverted)) putBack.add(commit);
+                }
+              }),
+            ),
+          ),
+        ),
+      );
+    };
+    // The runtime's own calls, such as a challenge wait or a sign-in check, are never a commit's.
     const kernel: KernelExecuteClient = {
+      browsers: { playwright: { execute: (...call) => send(undefined, ...call) } },
+    };
+    // The script's own: the first after `enteringCommit` is that step's.
+    const scriptKernel: KernelExecuteClient = {
       browsers: {
         playwright: {
-          execute: (sessionId, body, options) => {
-            // Counted when made: a held call goes out later, even after the script ends.
-            calls += 1;
-            return afterSignIn(() =>
-              settle(
-                Effect.sync(() => {
-                  actionTimeout = undefined;
-                }).pipe(
-                  Effect.flatMap(() =>
-                    Effect.tryPromise({
-                      try: () =>
-                        browser.kernel.browsers.playwright.execute(
-                          sessionId,
-                          { ...body, code: withClickNavigationWait(body.code, body.timeout_sec) },
-                          options,
-                        ),
-                      catch: (error) =>
-                        error instanceof Error ? error : new Error(String(error), { cause: error }),
-                    }),
-                  ),
-                  Effect.tap((answer) =>
-                    Effect.sync(() => {
-                      actionTimeout = nativeActionTimeout(answer);
-                    }),
-                  ),
-                ),
-              ),
-            );
+          execute: (...call) => {
+            const commit = entering;
+            entering = undefined;
+            return send(commit, ...call);
           },
         },
       },
     };
+    const scriptInput = browser.scriptInput;
     // The host's sign-in, with the deadline paused. A refusal before the script's first call
     // sent nothing; after it, the script's own calls may have.
     const signInOnce = async (signIn: NonNullable<ScriptBrowser["signIn"]>) => {
@@ -869,6 +1017,17 @@ export const runKernelScript = <Input, EncodedInput, Output, EncodedOutput>(
         const context = makeKernelOperationContext({
           ...browser,
           kernel,
+          ...(scriptInput === undefined
+            ? {}
+            : {
+                scriptInput: {
+                  ...scriptInput,
+                  ask: (...question: Parameters<typeof scriptInput.ask>) => {
+                    entering = undefined;
+                    return scriptInput.ask(...question);
+                  },
+                },
+              }),
           input,
           ensureSignedIn,
           ...(operation.write === undefined ? {} : { write: operation.write }),
@@ -876,6 +1035,23 @@ export const runKernelScript = <Input, EncodedInput, Output, EncodedOutput>(
         });
         const output = await operation.run({
           ...context,
+          kernel: scriptKernel,
+          // The next call is that step's own (`withCommitCall`).
+          enteringCommit: (name) => {
+            context.enteringCommit(name);
+            putBack.delete(name);
+            entering = name;
+          },
+          // A hand-off since enters the step again without the script, and the journal's rule
+          // then holds.
+          notCommitted: (name, said) => {
+            const journal = browser.journal;
+            const done =
+              putBack.has(name) &&
+              journal !== undefined &&
+              Effect.runSync(journal.commits).some((mark) => mark.name === name && mark.state === "not_sent");
+            if (!done) context.notCommitted(name, said);
+          },
           decideDialog: (report) => afterSignIn(() => context.decideDialog(report)),
           // Typing a card is a browser call too.
           fillCard: (step) => {

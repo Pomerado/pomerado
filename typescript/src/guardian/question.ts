@@ -56,6 +56,17 @@ export const questionNotNeededLabels: readonly QuestionReviewLabel[] = [
   "unsafe",
 ];
 
+/**
+ * The allow labels of a question that asks no one's consent to act: it only decides how the tool
+ * works or what it reads. Any other label, or none, may ask for consent.
+ */
+export const noConsentQuestionLabels: readonly QuestionReviewLabel[] = [
+  "ambiguous_request",
+  "changes_output",
+  "navigation_help",
+  "finding_choice",
+];
+
 const isQuestionReviewLabel = (value: string): value is QuestionReviewLabel =>
   (questionReviewLabels as readonly string[]).includes(value);
 
@@ -116,6 +127,8 @@ interface ReviewedOption {
   readonly label: string;
   readonly accountSpecific?: true;
   readonly maskedLabel?: string;
+  /** The asker recommends this option, which the caller sees. */
+  readonly recommended?: true;
 }
 
 /**
@@ -136,6 +149,8 @@ interface ReviewedQuestion {
   readonly followUp?: { readonly prompt: string; readonly defaultText?: string };
   readonly secretKind?: SecretKind;
   readonly fields?: "username_password" | "password";
+  /** A text question's recommended answer, which the caller sees. */
+  readonly recommended?: string;
   /** A browser hand-off's operation inputs the host may show beside the browser, by name. */
   readonly show_inputs?: readonly string[];
 }
@@ -199,15 +214,18 @@ export interface ConfirmedStepQuestion {
 const reviewedOption = <E>(
   option: InputOption,
   screen: (text: string) => Effect.Effect<string, E>,
+  recommended: boolean,
 ): Effect.Effect<ReviewedOption, E> =>
   Effect.gen(function* () {
     const label = yield* screen(option.label);
-    if (option.accountSpecific !== true) return { label };
+    const mark = recommended ? { recommended: true as const } : {};
+    if (option.accountSpecific !== true) return { label, ...mark };
     const masked = option.maskedLabel === undefined ? undefined : yield* screen(option.maskedLabel);
     return {
       label,
       accountSpecific: true,
       ...(masked === undefined ? {} : { maskedLabel: masked }),
+      ...mark,
     };
   });
 
@@ -241,7 +259,7 @@ export const questionForReview = <E>(
             return {
               ...base,
               options: yield* Effect.forEach(question.options, (option) =>
-                reviewedOption(option, screen),
+                reviewedOption(option, screen, question.recommended === option.id),
               ),
             };
           case "multi_choice":
@@ -249,7 +267,7 @@ export const questionForReview = <E>(
             return {
               ...base,
               options: yield* Effect.forEach(question.options, (option) =>
-                reviewedOption(option, screen),
+                reviewedOption(option, screen, question.recommended?.includes(option.id) === true),
               ),
               minSelections: question.minSelections,
               maxSelections: question.maxSelections,
@@ -273,7 +291,9 @@ export const questionForReview = <E>(
           case "credential":
             return { ...base, fields: question.fields };
           case "text":
-            return base;
+            return question.recommended === undefined
+              ? base
+              : { ...base, recommended: yield* screen(question.recommended) };
           // Input names are the contract's identifiers, never caller text: nothing to screen.
           case "browser_handoff":
             return { ...base, show_inputs: question.show_inputs };

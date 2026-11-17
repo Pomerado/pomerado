@@ -41,7 +41,13 @@ to prove an edited script.
 (`publication/definition.json`)
 pomerado:section publication.metadata-readers:end -->:
 
-- **Name.** A 2–5 word verb phrase naming what the tool does: "Search flights", "Get claim
+- **English.** Write the name, the description and every input and output field description in
+  English, whatever language the request or the site uses: people read them in catalogs and
+  agents in tool listings. When the site's content is in another language, say so in English
+  where a caller needs it, such as "Returns the site's articles in Spanish", and keep the site's
+  own labels and values as it shows them, in quotes.
+- **Name.** A 2–5 word verb phrase naming the action the tool does, never a choice its inputs
+  make: "Search flights", "Get claim
   status", "Cancel reservation". Leave out the site's name<!-- pomerado:section publication.integration-name --> and words
   like "tool".<!-- pomerado:section publication.unique-name -->
 - **Description.** 1–3 sentences for an agent deciding whether to call this tool: what it does,
@@ -50,20 +56,9 @@ pomerado:section publication.metadata-readers:end -->:
   page, date range, the site's default location, what it doesn't cover) and, for a write,
   exactly what changes on the site and whether it can be undone. Don't repeat the inputs; their field descriptions cover them.<!-- pomerado:section publication.site-naming -->
 
-## Check before `finish_build`
+## What publication refuses
 
-Before your first `finish_build`, prefer checking the tool against each rule the request states
-for its inputs, outputs and refusals.
-
-Before each `finish_build`, the first and every later one, prefer one pass over your own source
-with four questions: for each output field, which line fills it and whether its description says
-where that value comes from; for each branch that returns, whether it returns every required field
-with values read on this run; for each value the caller gave or answered through `ask`, whether the
-output labels it as caller input; and whether any live test case still ends failed or flaky on the
-source you publish. Fix what this finds before you call.
-
-Guardian reports what it finds in rounds, and each round costs minutes, so settle all of these
-first:
+Publication refuses a tool for any of these:
 
 - **Schemas.** The input schema accepts exactly what the code accepts, every input and output
   field has its own description, every output field is typed and each constraint has a JSON
@@ -161,8 +156,8 @@ first:
   - a free-text place, name or venue that matches several of the site's options equally either
     takes the first in the site's order and returns the one it used, as the site labels it, or
     lists them for the caller to choose one, as the tool decides (core skill, the input schema);
-  - a check that refuses a past date compares with today in the site's time zone, or the
-    place's, not with today in UTC (caller-input skill) ("Past date in UTC");
+  - a check that compares a date with today uses today in the site's time zone, or the place's,
+    not in UTC (caller-input skill) ("Date in UTC");
   - in a read signed out, each declared input is used, or changed from its default, by a passing
     case, and a case whose expectation you changed because the site itself gave another answer
     for that input names the capture of that answer, such as the site's no-results page for that
@@ -220,10 +215,13 @@ pomerado:section publication.saved-files:end -->.
      card or address, account ID) as an enum member, example or default; every input as general
      as the site's field, never narrowed to the example's value; on a write, every option the
      session met on the path is an input or a settled default, and a costly choice is an input
-     or a run-time question whose default may only decline it (writes skill); a paid upsell
+     or a run-time question whose default is one the writes skill allows; a paid upsell
      outside the tool's purpose is declined;
    - a pop-up that shows only for some accounts, states or visits is handled when present and
      never required;
+   - a tool's checks reject no run whose page shows the task went right, and one guarding what
+     neither the caller asked for nor the tool itself changes stops only for a problem the page
+     shows;
    - declared questions ask only what the page or the caller uniquely knows, never a login;
    <!-- pomerado:section publication.declared-refusal:start
 - a write runs every check that can refuse, such as a limit on its total, before the mark of
@@ -231,13 +229,13 @@ pomerado:section publication.saved-files:end -->.
      schema declares before its first mark, never in an undeclared output shape;
 pomerado:section publication.declared-refusal:end -->
    - a composed write reproduces the session's flow and returns the confirmation or read-back it
-     declares, without committing twice, and its checks reject no correct write: a
-     before-and-after comparison that compares whole objects or serialized text, reads through
-     another query after the commit than before it, or counts a field the site maintains as a
-     change, a branch the session did not run that confirms through its own code (its own commit
-     call is fine), a throw after a confirmed final commit once the read-back found the written
-     record, and a stop before it on free text a save rewrote, are findings too, as is a coverage
-     claim that a check passed offline over a body that was not saved whole.
+     declares, without committing twice; among its checks, a before-and-after comparison that
+     compares whole objects or serialized text, reads through another query after the commit
+     than before it, or counts a field the site maintains as a change, a branch the session did
+     not run that confirms through its own code (its own commit call is fine), a throw after a
+     confirmed final commit once the read-back found the written record, and a stop before it on
+     free text a save rewrote, are findings, as is a coverage claim that a check passed
+     offline over a body that was not saved whole.
 
 ## Never put these in published files
 
@@ -255,8 +253,11 @@ pomerado:section publication.declared-refusal:end -->
 ## Reading a rejection
 
 A `not_published` result says why in `reason` and, for most reasons, what to do in
-`instruction`: follow it. A Guardian denial comes back as `code` `ReviewDenied` with no top-level
-`reason`; its `diagnostic` holds `review.reason` and `review.findings`. The common cases:
+`instruction`: follow it. One result holds every refusal found in that submission: Guardian's
+findings, and in `alsoRefused` each other host refusal with its own `reason` and `instruction`.
+Fix all of them before you call `finish_build` again; each one left unfixed costs another round.
+A Guardian denial comes back as `code` `ReviewDenied` with no top-level `reason`; its
+`diagnostic` holds `review.reason` and `review.findings`. The common cases:
 
 | Where                      | Value                                                                                                                                  | What it means                                                                      | What to do                                                                                                                                                                                                                                                                                   |
 | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -264,7 +265,7 @@ A `not_published` result says why in `reason` and, for most reasons, what to do 
 | `reason`                   | `host_owned`                                                                                                                           | Every finding is in a host-owned file                                              | The host ends the attempt as its own failure. Do not edit host files, repeat the action or call `finish_build` again.                                                                                                                                                                        |
 | `reason`                   | `input_feedback_unresolved`                                                                                                            | The feedback rounds are spent                                                      | End the attempt; do not execute again                                                                                                                                                                                                                                                        |<!-- pomerado:section publication.http-rejections -->
 | `reason`                   | `secret_handle`<!-- pomerado:section publication.token-codes -->                                                                  | A published file holds a handle<!-- pomerado:section publication.token-meaning -->                                         | Read the value at run time instead (a declared question<!-- pomerado:section publication.token-source -->), then call again.<!-- pomerado:section publication.token-retest -->                                                                                                                            |
-| `reason`                   | `confirmation_undeclared`, `commit_marks_undeclared`, `confirmation_unrecorded`, `confirm_action_unmatched`, `contract_input_mismatch` | The composed write's contract does not match its session                           | Fix the declaration the instruction names and call again with the same `executionId`. Never run the write again                                                                                                                                                                              |
+| `reason`                   | `confirmation_undeclared`, `commit_marks_undeclared`, `commit_settings_invalid`, `confirmation_unrecorded`, `confirm_action_unmatched`, `contract_input_mismatch` | The composed write's contract does not match its session                           | Fix the declaration the instruction names and call again with the same `executionId`. Never run the write again                                                                                                                                                                              |
 | `reason`                   | `commit_marks_unentered`                                                                                                               | The composed script declares a mark no session act step entered                    | Correct the declaration only to match marks the session actually entered, then call again with the same `executionId`. When the session stopped before later save steps because the caller's facts ran out, keep those steps in `write.commits` after the entered ones and list them again in `write.commitsUnproven`. A completed session that sent its write with no entered marks cannot publish: end and explain that its commit steps were not marked. Never repeat the write or enter a retrospective mark |
 | `reason`                   | `write_not_submitted`                                                                                                                  | The session did not demonstrate the requested write                                | Follow the instruction: read back first, continue the remaining work, or ask about revising inputs the site cannot take                                                                                                                                                                                                                                                     |
 | `reason`                   | `write_path_unfinished`                                                                                                                | The session has not settled every mark of its recorded write path                  | Read back first where a receipt says so, which settles only marks a lost step entered; run only steps that never ran, or declare a revised path when the site skips a step or a step saves nothing; never redo one that finished or may have. Then call again naming the step that confirmed the path's end                                                                                                                                          |

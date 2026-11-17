@@ -83,3 +83,24 @@ it("names no cap once a later capture starts", async () => {
   await Effect.runPromise(collectOne(files));
   expect(files.overCap?.()).toBeUndefined();
 });
+
+it("keeps a screenshot the page call returns within the caps, and names the cap one goes over", async () => {
+  // A host without `screenshotFile` gets the PNG back from its page call, sized by the page.
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]);
+  const files = await Effect.runPromise(
+    makeRunFiles({
+      hook: hookTaking([]),
+      execute: () => Effect.succeed({ success: true, result: { base64: png.toString("base64") } }),
+      siteOrigin: "https://files.example.test",
+      resolve: () => undefined,
+      limits: { fileBytes: png.length, runFiles: 3, runBytes: png.length + 4 },
+    }),
+  );
+  const shoot = () => files.screenshot?.({ timeoutMs: 1000 }) ?? Effect.die("No screenshot");
+  const kept = await Effect.runPromise(shoot());
+  expect(kept.$file).toMatchObject({ name: "screenshot.png", media_type: "image/png" });
+  await Effect.runPromise(files.checkOutput({ kept }));
+  const refused = await Effect.runPromise(Effect.flip(shoot()));
+  expect(refused.reason).toBe("run_limit");
+  expect(files.overCap?.()).toEqual({ limit: "run", maxBytes: png.length + 4, maxFiles: 3 });
+});

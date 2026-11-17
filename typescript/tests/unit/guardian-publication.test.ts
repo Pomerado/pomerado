@@ -11,12 +11,15 @@ import { answersForReview } from "../../src/guardian/question.js";
 import {
   decodePublicationDecision,
   guardianPublicationPolicy,
+  publicationApprovedChoicePolicy,
   publicationCallerDecisionPolicy,
   publicationCartPolicy,
+  publicationCostlyChoiceDefault,
   publicationDecisionPolicy,
   publicationPaidChoiceLimit,
   publicationLiveTestsPolicy,
   publicationOutputPolicy,
+  publicationPurchaseOrderPolicy,
   publicationSafetyDefaultPolicy,
   publicationWriteLaterStatePolicy,
   publicationWritePathPolicy,
@@ -1044,6 +1047,48 @@ describe("the publication policy", () => {
     expect(publicationFindingCategories).toContain("cart_sign_in");
   });
 
+  // A purchase tool built before `order` existed asked its final confirm with no items or total,
+  // and a repair that fixed something else published it unchanged. The review finds that confirm
+  // wherever it is, a repair's unchanged code included, beside the rule on checks before a commit.
+  it("finds a write's last question before a commit that pays with no order, in a repair too", () => {
+    const rule =
+      "The last declared choice or confirm a write asks before a commit that buys or pays, once the page shows the items and total that commit pays, passes them as `order` to `ask`. One that passes none is a confirmation finding at that `ask`, in a repair too, even in code the repair did not change.";
+    expect(publicationPurchaseOrderPolicy).toBe(rule);
+    expect(guardianPublicationPolicy.split(rule)).toHaveLength(2);
+    expect(guardianPublicationPolicy).toContain(
+      `before that step's next enteringCommit. ${rule} A re-check before a commit`,
+    );
+    expect(publicationFindingCategories).toContain("confirmation");
+  });
+
+  // A choice the caller approved can show a time that moves with the clock, such as an
+  // as-soon-as-possible delivery window or a ride's pickup time, and a re-check before the commit that matched its exact text
+  // refused it once the time moved, though the site still offered it. The review sends that check
+  // back, beside the rule on the last question before a commit.
+  it("finds a re-check before a commit that refuses an approved choice on a moved time alone", () => {
+    const rule =
+      "A re-check before a commit, the marked call's re-read included, that stops the write or asks the caller again when the choice the caller approved changed only in a time it shows that moves with the clock, instead of matching it by its kind or name and any time it shows that stays fixed, is a confirmation finding at that check.";
+    expect(publicationApprovedChoicePolicy).toBe(rule);
+    expect(guardianPublicationPolicy.split(rule)).toHaveLength(2);
+    expect(guardianPublicationPolicy).toContain(
+      `${publicationPurchaseOrderPolicy} ${rule} A write that hands its browser to a person`,
+    );
+    expect(publicationFindingCategories).toContain("confirmation");
+  });
+
+  // A request may give values for one run, such as which item or a price range, or describe another
+  // tool. The review reads the values as an input's example, as the minter's skills do, and the
+  // description as context, never as a rule the general tool must enforce, right after the rule
+  // that compares the tool with the requested outcome.
+  it("reads a request's values for one run as an input's example, not a rule", () => {
+    const rule =
+      "A value or choice the request gives for one run is the example of an input, not a rule the tool must enforce, unless the request states it for every run. A request's description of another tool is context, not a rule.";
+    expect(guardianPublicationPolicy.split(rule)).toHaveLength(2);
+    expect(guardianPublicationPolicy).toContain(
+      `Source edits since the prior example are permitted without source attestation. ${rule}\n`,
+    );
+  });
+
   // A repair is judged on what it changed: an unchanged line is denied only when a failing run or
   // example shows it broken. Hosts with their own publication policy get it with the live tests.
   it("judges a repair on the lines it changed, beside the maintenance rule for live tests", () => {
@@ -1176,6 +1221,15 @@ describe("the publication policy", () => {
     expect(guardianPublicationPolicy).toContain(publicationOutputPolicy);
   });
 
+  // The host refuses any source of a tool that calls fillCard once it reads a field's value or the
+  // page's markup, so a review that asks such a tool to read a typed field back asks for code the
+  // host will refuse. What the fill returns and what the page shows stand in for that read-back.
+  it("asks a tool that fills a card for no read of a field's value", () => {
+    expect(publicationOutputPolicy).toContain(
+      "even one built from the site's own pattern. A tool whose source calls fillCard reads no field's value in its own code, nor the page's markup, since the host refuses such source, so no rule of this review asks it to: there an SDK fill's own result and text the page shows, such as a review step or a confirmation showing the value, are the read-back of what it typed.",
+    );
+  });
+
   // A read-back that compares the page with a part the script cut from a picked option, such as
   // its text before the first comma, refuses a correct pick whenever the page shows more of the
   // option. It joins the list of checks that would reject a correct write.
@@ -1198,6 +1252,20 @@ describe("the publication policy", () => {
     );
   });
 
+  // A check that needs the page to show something a correct run may not show, or that stops on
+  // what neither the caller asked for nor the tool changes for anything but a problem the page
+  // shows, stops correct runs in every kind of tool. The rule sits in the output rules, which every
+  // host's review and the minter both read.
+  it("finds a check that can stop a run where the task went right", () => {
+    const wrongFailure = publicationOutputPolicy.slice(
+      publicationOutputPolicy.indexOf("Wrong failure:"),
+      publicationOutputPolicy.indexOf("Strict name check:"),
+    );
+    expect(wrongFailure).toContain(
+      "So is a check that can stop a run whose page shows the task went right, or one that stops for anything other than a problem the page shows while guarding what neither the caller asked for nor the tool itself changes.",
+    );
+  });
+
   // A site that quietly stops answering a data call can still show its no-results message while
   // another part of the same page shows results for the same inputs. Returning that as an honest
   // empty list hides the site's failure. The rule sits in the output rules, which the review and
@@ -1210,6 +1278,61 @@ describe("the publication policy", () => {
     expect(wrongFailure).toContain(
       "So is an empty result that other evidence on the same page contradicts for the same inputs, even beside the site's no-results message: its fix throws OperationFailure naming what that evidence shows.",
     );
+  });
+
+  // A search tool's own matching of the site's result rows drops the site's real matches, a
+  // refusal listing choices its field refuses offers nothing a caller could send back, and a money
+  // field the site shows meaning something else misleads a caller who acts on it.
+  it("finds own matching of result rows, refused choices and a misread amount", () => {
+    const rule = (name: string, next: string) =>
+      publicationOutputPolicy.slice(
+        publicationOutputPolicy.indexOf(name),
+        publicationOutputPolicy.indexOf(next),
+      );
+    expect(rule("Own picker:", "Own address match:")).toContain(
+      "It is also this finding when source drops rows of a search's results from the list it returns because they fail matching of its own against the caller's text, instead of ranking them with `rankChoices` with `spellingsOf`, or returns an empty list when none matches cleanly instead of the site's rows, in the site's order, as candidates.",
+    );
+    expect(rule("Wrong failure:", "Strict name check:")).toContain(
+      "So is an InvalidInput whose `available` lists values its `field`'s own input schema refuses.",
+    );
+    expect(rule("Unchecked amount:", "Unapplied input:")).toBe(
+      "Unchecked amount: a money field filled from a site value that the site's own display, in the captures, shows to mean something other than what the field's name and description say. ",
+    );
+  });
+
+  // The general picker needs every word of a typed address, a ZIP included, to pair with a
+  // suggestion, so it refuses the site's own suggestion for that address when it leaves one out;
+  // the address resolver takes it and still refuses another address. A choice among the account's
+  // saved addresses is not a typed address. An address typeahead the tool drives itself is also an
+  // own picker, whose fix names the address resolver too, so the two rules ask for the same fix.
+  it("finds a typed street address matched without the address resolver", () => {
+    expect(publicationOutputPolicy).toContain(
+      "Own address match: source that matches a street address the caller typed against the site's suggestions with pickValue, rankChoices or matching of its own, instead of pickerMatchAddress or pickAddress, or resolveAddress over the site's own suggestion request. A choice among the account's saved addresses is not this finding.",
+    );
+    expect(
+      publicationOutputPolicy.slice(
+        publicationOutputPolicy.indexOf("Own picker:"),
+        publicationOutputPolicy.indexOf("Own address match:"),
+      ),
+    ).toContain(
+      "The fix is pickValue or pickValues, with their options for the site's quirks, such as query, answered, committed, commit or blur; for a street address the caller typed, it is pickerTypeAddress, then pickerMatchAddress, clicking the row it returns.",
+    );
+    expect(guardianPublicationPolicy).toContain(publicationOutputPolicy);
+  });
+
+  // Matching a record by today's date, or turning the site's "Tomorrow" into a date, picks the
+  // wrong day as surely as refusing a past date does when today is UTC's. A time with no offset
+  // names no moment, but a repair or change is judged only on the times it adds or changes, so
+  // the many tools that return one today still repair.
+  it("finds a comparison with today in UTC, and an output time with no offset that a build adds", () => {
+    expect(publicationOutputPolicy).toContain(
+      "Date in UTC: source that compares a site's date or time with today's date or the time in UTC, such as new Date().toISOString().slice(0, 10), rather than with today in the site's time zone or in that of the place the date is at,",
+    );
+    expect(publicationOutputPolicy).toContain(
+      "Zone-less time: an output time with no UTC offset, unless the output also returns that time with one. In a repair or change, only for an output time it adds or changes.",
+    );
+    expect(guardianPublicationPolicy).not.toContain("Past date in UTC");
+    expect(guardianPublicationPolicy).toContain(publicationOutputPolicy);
   });
 });
 
@@ -1501,6 +1624,34 @@ describe("the OpenAI publication reviewer", () => {
       .split("\n")
       .find((line) => line.startsWith("Review the public input schema"));
     expect(inputReview).toContain(publicationPaidChoiceLimit);
+  });
+
+  // With no caller choice, a write takes the tier of speed, class or service level the site
+  // presents as standard whenever the action must take one, pre-selected or not, so such a
+  // choice's input may default to it. Every rule that judges a costly choice's default reads
+  // that one text.
+  it("lets a costly choice among tiers default to the site's standard tier", () => {
+    expect(publicationCostlyChoiceDefault).toContain(
+      "when the action must take one of a service's tiers of speed, class or service level, the tier the site presents as standard",
+    );
+    const inputReview = guardianPublicationPolicy
+      .split("\n")
+      .find((line) => line.startsWith("Review the public input schema"));
+    for (const rule of [inputReview, publicationOutputPolicy, publicationPaidChoiceLimit])
+      expect(rule).toContain(publicationCostlyChoiceDefault);
+  });
+
+  // A run that leaves such a choice's optional input unset takes its allowed default, such as
+  // the standard tier over a pre-selected faster one, so the live review counts that default as
+  // the caller's input instead of denying it as made up or escalating it as unsettled.
+  it("counts a costly choice's allowed default as the caller's input in the live review", () => {
+    const policy = guardianExecutionPolicy(nativeExecutionEnvironment);
+    expect(policy).toContain(
+      `including an optional input's default that settles a choice changing what the caller buys or pays as ${publicationCostlyChoiceDefault})`,
+    );
+    expect(policy).toContain(
+      `the caller's input includes an optional input's default that settles such an option as ${publicationCostlyChoiceDefault}.`,
+    );
   });
 
   it("gives an execution review no publication policy or index", async () => {

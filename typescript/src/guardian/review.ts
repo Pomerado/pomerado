@@ -374,6 +374,11 @@ export interface PendingExecution {
   /** Mints only: the screened intent as the owner submitted it. */
   readonly requestedIntent?: string;
   /**
+   * Mints only: the request's `otherExampleInputs`, screened as JSON text, when the caller sent
+   * more than one example input. Guardian reads them with the request.
+   */
+  readonly screenedOtherExampleInputs?: string;
+  /**
    * Mints only: the caller-confirmed updates to the task that the host accepted, oldest first.
    * The effective task is `screenedIntent` with each applied in order. Every review after an
    * update reads them, and `allowedOrigins` is already rebound to a changed site.
@@ -411,6 +416,16 @@ export interface PendingExecution {
    * authority. Absent means no write authority.
    */
   readonly writeAuthority?: boolean;
+  /**
+   * Execution reviews only: the most a card-fill step that names slots may pay, when the host that
+   * fills the caller's payment method has one. Absent, the review checks no limit.
+   */
+  readonly paymentLimit?: { readonly amount: string; readonly currency: string };
+  /**
+   * Execution reviews only: the exact origins of the site's own checkout the owner approved, where
+   * a card-fill step may also type. Absent, none.
+   */
+  readonly checkoutOrigins?: readonly string[];
   /**
    * The questions the owner answered in this job through the host's question flow, each with its
    * screened answer, in the order answered; a prompt asked again keeps only its latest answer.
@@ -471,13 +486,27 @@ export interface PendingExecution {
        * agent_chosen: a read's live test on an input the minting agent chose instead of the
        * caller's. intent_derived: a read's example or a write's act step whose caller sent empty
        * input runs the agent's reading of the intent and the owner's answered questions as its
-       * submitted input. substitute: a read's example that runs another record of the same kind,
-       * which the agent found on the site or an answer gave, in place of the caller's own input,
-       * after the host recorded the tool refusing that input with InvalidInput.
+       * submitted input, or a write's act step runs the caller's input with values the request
+       * states added (`callerKeys`). substitute: a read's example that runs another record of the
+       * same kind, which the agent found on the site or an answer gave, in place of the caller's
+       * own input, after the host recorded the tool refusing that input with InvalidInput.
        * agent_chosen_batch: a batch of a read's live tests on inputs the minting agent chose, whose
-       * submitted input lists each case's input under `cases`.
+       * submitted input lists each case's input under `cases`. recent_inputs_batch: such a batch on
+       * inputs this tool's recent runs in the caller's own account sent, which a host runs again
+       * before a repair publishes. A host lists in it only inputs callers' own runs sent, never one
+       * a build's or repair's own example or live tests ran.
        */
-      readonly input?: "agent_chosen" | "intent_derived" | "substitute" | "agent_chosen_batch";
+      readonly input?:
+        | "agent_chosen"
+        | "intent_derived"
+        | "substitute"
+        | "agent_chosen_batch"
+        | "recent_inputs_batch";
+      /**
+       * An intent_derived act step's input keys whose values are the caller's own, as its current
+       * input has them. Absent when none is.
+       */
+      readonly callerKeys?: readonly string[];
       /**
        * Host facts about an offline command's sandbox. The submitted entrypoint is the command
        * text itself; the host runs it through its own shell wrapper, which is not reviewed.
@@ -540,8 +569,10 @@ export interface PendingExecution {
       /**
        * agent_chosen: a read's live test ran an input the minting agent chose.
        * agent_chosen_batch: a batch of such live tests on inputs it chose.
+       * recent_inputs_batch: a batch of a read's live tests on inputs this tool's recent runs in the
+       * caller's own account sent.
        */
-      readonly input?: "agent_chosen" | "agent_chosen_batch";
+      readonly input?: "agent_chosen" | "agent_chosen_batch" | "recent_inputs_batch";
       /**
        * The task revision the execution ran under, once an update applied: 0 for the original
        * request, else the `taskUpdates` revision then in force. What it did is judged against that
@@ -563,6 +594,12 @@ export interface PendingExecution {
       readonly purpose: string;
       readonly entrypoint?: string;
       readonly outcome: "done" | "not_done" | "unknown" | "unassessed";
+      /**
+       * The commit marks the write's step sent (entered `sent` or `confirmed`), empty when it
+       * sent none. Leave it out unless the step's own commit report was read and nothing it did
+       * could have sent past its marks.
+       */
+      readonly sent?: readonly string[];
     }[];
     /**
      * Execution reviews only: this attempt's latest live test batches, and any older one holding

@@ -184,8 +184,9 @@ export const mintState = (
         readonly entrypoint: string;
         readonly input: unknown;
         /**
-         * The agent's exampleInput the step ran because the caller sent none, or in place of the
-         * caller's own input the tool refused.
+         * The agent's exampleInput the step ran because the caller sent none, in place of the
+         * caller's own input the tool refused, or, on an act step, adding values the request
+         * states to the caller's.
          */
         readonly intentDerivedInput?: Readonly<Record<string, unknown>>;
         readonly output: unknown;
@@ -206,8 +207,8 @@ export const mintState = (
     const assessments = new Map<string, OutcomeAssessment>();
     /**
      * The build's one write session: whether its first act step dispatched, and the agent's
-     * `exampleInput` it runs when the caller sent none (fixed by the first act step that passed
-     * one), its recorded write path (the latest one an allowed act step that dispatched carried),
+     * `exampleInput` it runs when the caller sent none or left out values the request states (fixed
+     * by the first act step that passed one), its recorded write path (the latest one an allowed act step that dispatched carried),
      * its act steps in order for publication's checks, and the confirm popups its act steps
      * accepted.
      */
@@ -233,6 +234,11 @@ export const mintState = (
     const refusedCallerExamples: unknown[] = [];
     /** Each one-time login URL publication already asked about, so finishing again publishes it. */
     const oneTimeLoginUrlsAsked = new Set<string>();
+    /**
+     * Whether the host began typing a card into the build's browser, whoever asked for it: from
+     * then on the page may hold the card (`cardReadbackRefusal`).
+     */
+    const cardTyped = { current: false };
     const afterSubmit = makeAfterSubmit({ workspace, screen: secrets.json });
     // The build's automatic sign-ins, counted for the whole attempt: a task update that moves
     // the build to another site starts no new allowance.
@@ -369,6 +375,7 @@ export const mintState = (
       scriptAnswers,
       refusedCallerExamples,
       oneTimeLoginUrlsAsked,
+      cardTyped,
       afterSubmit,
       get recorder() {
         return bound.recorder;

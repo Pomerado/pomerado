@@ -39,6 +39,7 @@ import {
   passwordFillsSpent,
   reasksCode,
   reasksPassword,
+  reasksPasswordAlone,
   recordResubmit,
   recordStep,
   registeredSecretIn,
@@ -595,11 +596,19 @@ export const makeSignInRecorder = (input: {
       const open = h.autofillSignIn.current;
       const { state, refund } =
         open === undefined ? openSignIn(at) : { state: open, refund: () => undefined };
-      const reasked = reasksPassword(open, step, refills)
-        ? ("password" as const)
-        : reasksCode(open, step, refills, inspected.screen.fields)
-          ? ("code" as const)
-          : undefined;
+      const reasked =
+        reasksPassword(open, step, refills) ||
+        (yield* reasksPasswordAlone(
+          open,
+          step,
+          refills,
+          afterSubmit !== undefined && afterSubmit.open === open ? afterSubmit.slots : [],
+          h.reportCorrelation,
+        ))
+          ? ("password" as const)
+          : reasksCode(open, step, refills, inspected.screen.fields)
+            ? ("code" as const)
+            : undefined;
       yield* armStep(state, step, inspected, filled, secretIn);
       if (reasked !== undefined) noteRefill(state, reasked);
       afterSubmit = undefined;
@@ -638,6 +647,16 @@ export const makeSignInRecorder = (input: {
 
   const approval = (step: Extract<SignInStep, { readonly approval: unknown }>) =>
     Effect.gen(function* () {
+      // The local host hands no sign-in to a person.
+      if (step.approval === "handoff")
+        return {
+          result: {
+            approved: false,
+            failed: "handoff_unavailable",
+            nextStep:
+              "This host can't hand the browser to a person to sign in. Send the sign-in's screens as signInSteps instead.",
+          },
+        };
       const open = h.autofillSignIn.current;
       settleMinter(h, open);
       if (open === undefined || ![...open.submittedSlots].some(isIdentifier))

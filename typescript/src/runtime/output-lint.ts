@@ -8,11 +8,11 @@
  * leftovers in a string are never what a page shows a person. The rest are flags for the reviewer:
  * a value read while collapsed or cut short, a field that never varies or is always empty,
  * repeated entries, records or item IDs, very long strings, one field restating its siblings (a
- * whole card's text), a date or timestamp not in the form its field declares, and one value
- * written in two letter cases in one list. Every finding is a lead, never a verdict: when a
- * flagged value is correct as returned, such as code on a tool that returns code or page text
- * that only resembles code, the minter names its path and check with the reason as an override,
- * and the reviewer sees both.
+ * whole card's text), a date or timestamp not in the form its field declares or a timestamp with
+ * no offset, and one value written in two letter cases in one list. Every finding is a lead,
+ * never a verdict: when a flagged value is correct as returned, such as code on a tool that
+ * returns code or page text that only resembles code, the minter names its path and check with
+ * the reason as an override, and the reviewer sees both.
  *
  * `lintSchemas` adds advisory checks of the declared schemas rather than the values
  * (`loose_text`, `looser_than_input`, `unheld_format`). `lintOutput` never reports them, so a
@@ -313,13 +313,40 @@ const expandControl =
 const isoDate = /^\d{4}-\d{2}-\d{2}$/u;
 const isoDateTime =
   /^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:[Zz]|[+-]\d{2}:?\d{2})$/u;
+/** A timestamp with no offset, which names no moment, in any field. */
+const zonelessDateTime = /^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/u;
+/**
+ * A bare clock time, or a range of them, as a site writes it: `7:45 PM`, `7 pm`, `12:38-12:59 AM`
+ * or `7-9 PM`, and `19:45` alone in a field named for a time (`clockKey`). It names no moment
+ * until its day and zone are known.
+ */
+const clockPart = String.raw`\d{1,2}(?::\d{2}){1,2}\s*(?:[ap]\.?\s?m\.?)?|\d{1,2}\s*[ap]\.?\s?m\.?`;
+const meridiemClock = new RegExp(
+  String.raw`^(?:${clockPart}|(?:${clockPart}|\d{1,2})\s*[-\u2013\u2014]\s*(?:${clockPart}))$`,
+  "iu",
+);
+const meridiem = /[ap]\.?\s?m\.?$/iu;
+// One 24-hour time alone: `07:00-08:00` is a time of day with its offset.
+const twentyFourHourClock = /^\d{1,2}:\d{2}(?::\d{2})?$/u;
+const clockKey = /(?:^|_)(?:time|eta|at)$|(?:Time|Eta|At)$/u;
+// A field named for a length of time, such as `cook_time: "1:30"`, holds a duration, not a clock time.
+const durationKey =
+  /(?:duration|elapsed|cook|prep|run|wait|travel|drive|transit|total|lead|play|hold|response|turnaround|flight)_?time$/iu;
+const bareClock = (text: string, key: string | undefined) =>
+  (meridiemClock.test(text) && meridiem.test(text)) ||
+  (key !== undefined && clockKey.test(key) && !durationKey.test(key) && twentyFourHourClock.test(text));
+/**
+ * A field that names the zone of the times beside it, such as `time_zone`: a bare clock time in
+ * its record, or in a record within it, keeps its zone.
+ */
+const zoneKey = /(?:^|_)(?:time_?zone|tz)$|(?:TimeZone|Timezone|Tz)$|^timeZone$/u;
 /**
  * The notations a field's description can promise, each with the values written in it: a date as
- * `YYYY-MM-DD`, ISO 8601 (a date, a timestamp with its offset, a time of day, a month or a
+ * `YYYY-MM-DD`, ISO 8601 (a date, a timestamp or a time of day with its offset, a month or a
  * duration) and an ISO 4217 currency code. A field named for a currency, such as `currency` or
  * `price_currency`, promises a code too.
  */
-const isoTime = /^\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:[Zz]|[+-]\d{2}:?\d{2})?$/u;
+const isoTime = /^\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:[Zz]|[+-]\d{2}:?\d{2})$/u;
 const isoMonth = /^\d{4}-\d{2}$/u;
 const isoDuration =
   /^P(?=\d|T\d)(?:\d+Y)?(?:\d+M)?(?:\d+W)?(?:\d+D)?(?:T(?=\d)(?:\d+H)?(?:\d+M)?(?:\d+(?:\.\d+)?S)?)?$/u;
@@ -597,7 +624,13 @@ export const lintOutput = (output: unknown, options: OutputLintOptions = {}): Ou
   // short.
   const idPaths = new Set<string>();
 
-  const lintString = (text: string, path: string, node: Json | undefined, inRow: boolean) => {
+  const lintString = (
+    text: string,
+    path: string,
+    node: Json | undefined,
+    inRow: boolean,
+    zoned: boolean,
+  ) => {
     const mediaType = schema.annotation(node, "contentMediaType");
     const waived = typeof mediaType === "string" ? waivedByMediaType[mediaType.toLowerCase()] : undefined;
     const leak = (check: OutputCheck) =>
@@ -623,7 +656,8 @@ export const lintOutput = (output: unknown, options: OutputLintOptions = {}): Ou
     if (text.length > (allowedLength ?? (inRow ? longRowValue : longValue)))
       flag(path, "too_long", text);
     const format = schema.annotation(node, "format");
-    // A value in another notation than its field declares, by its format or in its description.
+    // A value in another notation than its field declares, by its format or in its description,
+    // and a timestamp with no offset whatever its field declares.
     const key = keyOfPath(path);
     const promised =
       key !== undefined && siteWordingKey.test(key)
@@ -632,7 +666,9 @@ export const lintOutput = (output: unknown, options: OutputLintOptions = {}): Ou
     if (
       (format === "date" && !isoDate.test(text)) ||
       (format === "date-time" && !isoDateTime.test(text)) ||
-      (promised.length > 0 && !promised.some((notation) => notation.holds(text)))
+      (promised.length > 0 && !promised.some((notation) => notation.holds(text))) ||
+      zonelessDateTime.test(text) ||
+      (!zoned && bareClock(text.trim(), key))
     )
       flag(path, "format_mismatch", text);
     // A card_text section is a card's whole text, its controls included. An ending ellipsis
@@ -780,10 +816,17 @@ export const lintOutput = (output: unknown, options: OutputLintOptions = {}): Ou
     }
   };
 
-  const visit = (value: unknown, path: string, node: Json | undefined, inRow: boolean, depth: number) => {
+  const visit = (
+    value: unknown,
+    path: string,
+    node: Json | undefined,
+    inRow: boolean,
+    depth: number,
+    zoned = false,
+  ) => {
     if (depth > 32) return;
     if (typeof value === "string") {
-      lintString(value, path, node, inRow);
+      lintString(value, path, node, inRow, zoned);
       return;
     }
     if (Array.isArray(value)) {
@@ -795,10 +838,15 @@ export const lintOutput = (output: unknown, options: OutputLintOptions = {}): Ou
       }
       const records = value.filter(isRecord);
       if (records.length > 0) lintRecords(records, path, node);
-      for (const item of value) visit(item, `${path}[]`, itemNode, true, depth + 1);
+      for (const item of value) visit(item, `${path}[]`, itemNode, true, depth + 1, zoned);
       return;
     }
-    if (isRecord(value))
+    if (isRecord(value)) {
+      const keepsZone =
+        zoned ||
+        Object.entries(value).some(
+          ([key, child]) => zoneKey.test(key) && typeof child === "string" && child.trim() !== "",
+        );
       for (const [key, child] of Object.entries(value))
         visit(
           child,
@@ -806,7 +854,9 @@ export const lintOutput = (output: unknown, options: OutputLintOptions = {}): Ou
           schema.property(node, key),
           inRow,
           depth + 1,
+          keepsZone,
         );
+    }
   };
 
   visit(output, "$", schema.root, false, 0);
@@ -1212,7 +1262,7 @@ export const outputCheckMeaning: Readonly<Record<OutputCheck, string>> = {
   loose_text:
     "is a required string whose declared schema accepts an empty string or whitespace alone",
   format_mismatch:
-    "is not in the form its field declares: a format date that is not YYYY-MM-DD, such as a timestamp or the site's own wording, a format date-time that is not ISO 8601 with an offset, a value in another notation than its description names (YYYY-MM-DD, ISO 8601 or ISO 4217), or a currency field that is not a three-letter ISO 4217 code",
+    "is not in the form its field declares: a format date that is not YYYY-MM-DD, such as a timestamp or the site's own wording, a format date-time that is not ISO 8601 with an offset, a value in another notation than its description names (YYYY-MM-DD, ISO 8601 or ISO 4217), a currency field that is not a three-letter ISO 4217 code, a timestamp with no offset, or a bare clock time such as 7:45 PM, or 19:45 in a field named for a time of day, in a record that names no time_zone (a duration such as cook_time 1:30 is not one)",
   case_variant:
     "holds one value in two letter cases across the list, such as paid and Paid, so callers cannot compare it",
   looser_than_input:
@@ -1234,5 +1284,5 @@ export const outputChecksNotice = (findings: readonly OutputFinding[]) =>
           meaning: outputCheckMeaning[finding.check],
         })),
         instruction:
-          "The host checked every value this run returned. Check each finding against the page. Fix a wrong value at the read in source: read rendered text with visibleText, visibleTexts or readRows, expand collapsed text before reading it and read it back, and scope rows to the main list; never clean a string afterwards. A repeated item ID is often a sponsored copy of an organic result: first check whether the rows are variants or line items that share an ID on purpose, and return a copy once only when it is the same item (pagination skill). A field empty in every record of every tested run was usually read from a collapsed section or a guessed key: check it against a record whose page shows it, then read it from the page's embedded record data or the opened section, or remove it. A check can be wrong: when a value is correct as it is, such as code the tool is meant to return or the page's own text that only resembles code, name its path and check with the reason in finish_build's outputOverrides. A field that holds code or markup on purpose can declare its contentMediaType instead; its findings then name that type and never block. Blocking findings (script, css, markup, template_residue) refuse finish_build until fixed or overridden; the others never block. format_mismatch and case_variant name a value in another notation than its field promises: convert it in code to the declared form, a date as YYYY-MM-DD, a timestamp as ISO 8601 with an offset, a currency as its ISO 4217 code, an enum value in lowercase snake_case with the site's wording in a separate *_label field, unless the request states another notation, which an override then names. unheld_format names a field whose description promises a notation its schema does not hold: give it the pattern of that notation, such as Schema.pattern(/^\\d{4}-\\d{2}-\\d{2}$/u) for a date, or a Literal enum. loose_text, looser_than_input and unheld_format judge the declared schema, not a value: type a needed value's field as strictly as the core skill says, and keep a field loose only where the page may genuinely not show its value. The publication reviewer reads every finding and every override with its reason.",
+          "The host checked every value this run returned. Check each finding against the page. Fix a wrong value at the read in source: read rendered text with visibleText, visibleTexts or readRows, expand collapsed text before reading it and read it back, and scope rows to the main list; never clean a string afterwards. A repeated item ID is often a sponsored copy of an organic result: first check whether the rows are variants or line items that share an ID on purpose, and return a copy once only when it is the same item (pagination skill). A field empty in every record of every tested run was usually read from a collapsed section or a guessed key: check it against a record whose page shows it, then read it from the page's embedded record data or the opened section, or remove it. A check can be wrong: when a value is correct as it is, such as code the tool is meant to return or the page's own text that only resembles code, name its path and check with the reason in finish_build's outputOverrides. A field that holds code or markup on purpose can declare its contentMediaType instead; its findings then name that type and never block. Blocking findings (script, css, markup, template_residue) refuse finish_build until fixed or overridden; the others never block. format_mismatch and case_variant name a value in another notation than its field promises: convert it in code to the declared form, a date as YYYY-MM-DD, a timestamp as ISO 8601 with an offset, a clock time as a timestamp with its offset (zonedClock), with the zone of the site's own text in time_zone beside it, a currency as its ISO 4217 code, an enum value in lowercase snake_case with the site's wording in a separate *_label field, unless the request states another notation, which an override then names. unheld_format names a field whose description promises a notation its schema does not hold: give it the pattern of that notation, such as Schema.pattern(/^\\d{4}-\\d{2}-\\d{2}$/u) for a date, or a Literal enum. loose_text, looser_than_input and unheld_format judge the declared schema, not a value: type a needed value's field as strictly as the core skill says, and keep a field loose only where the page may genuinely not show its value. The publication reviewer reads every finding and every override with its reason.",
       };

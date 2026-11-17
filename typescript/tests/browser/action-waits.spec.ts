@@ -944,6 +944,13 @@ test.describe("readiness before acting", () => {
     expect(answer.ms).toBeGreaterThanOrEqual(300);
   });
 
+  test("a button that keeps its spinner hidden by opacity is ready at once", async ({ page }) => {
+    await page.setContent(`
+      <button><span class="spinner-border spinner-border-sm" role="status" style="display:inline-block;width:1em;height:1em;opacity:0"></span> Save</button>`);
+    const answer = await ready(page, `page.getByRole("button", { name: "Save" })`, "");
+    expect(answer).toMatchObject({ waitedFor: [] });
+  });
+
   test("an Intro.js-style tour covering the page is closed with its skip button", async ({ page }) => {
     await page.setContent(`
       <button id="target">Save</button>

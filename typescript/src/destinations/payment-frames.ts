@@ -41,6 +41,8 @@ export const paymentFrameOrigins: readonly string[] = [
   "https://checkoutshopper-live-in.adyen.com",
   // Toast: the hosted checkout iframe, on its SDK's production host (doc.toasttab.com).
   "https://payments.toasttab.com",
+  // Shopify: the origin Shopify Checkout loads its card-field frames from; no Shopify doc names it.
+  "https://checkout.pci.shopifyinc.com",
 ];
 
 /** Whether a URL's own origin is exactly one of `origins`; a URL with credentials never is. */

@@ -19,8 +19,9 @@ export const markerSettle: MarkerSettle = {
 
 /**
  * Checks the marker, opening its page when it names one, then reads the page as it is again every
- * `interval` while the marker alone is missing, until `within` after the first check. A check that
- * shows it, or fails for any other reason, ends the wait: what counts as signed in is the check's.
+ * `interval` while the marker alone is missing or a sign-in pop-up still asks, until `within` after
+ * the first check. A check that shows it, or fails for any other reason, ends the wait: what counts
+ * as signed in is the check's.
  */
 export const settledMarkerCheck = <E, R>(
   check: (indicator: AutofillSignedIn) => Effect.Effect<AutofillSignedInCheck, E, R>,
@@ -31,7 +32,10 @@ export const settledMarkerCheck = <E, R>(
     let checked = yield* check(indicator);
     const until = (yield* Clock.currentTimeMillis) + Duration.toMillis(settle.within);
     const here = { selector: indicator.selector, urlPath: indicator.urlPath };
-    while (!checked.signedIn && checked.failed === "indicator_not_visible") {
+    while (
+      !checked.signedIn &&
+      (checked.failed === "indicator_not_visible" || checked.failed === "sign_in_popup_open")
+    ) {
       const next = (yield* Clock.currentTimeMillis) + Duration.toMillis(settle.interval);
       if (next > until) break;
       yield* Effect.sleep(settle.interval);

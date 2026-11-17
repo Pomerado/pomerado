@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { call, serve, submitted } from "./picker-fixture.js";
+import { call, callRead, serve, submitted } from "./picker-fixture.js";
 
 // The picker helper on synthetic pages that reproduce the markup and event handling common UI
 // libraries use for pickers: a hidden select with a search dropdown, a results list that commits
@@ -276,12 +276,12 @@ test("pickValue searches a lookup dialog on Enter, then presses its Select butto
   await expect(page.getByRole("dialog")).toBeHidden();
 });
 
-test("pickValue reports two rows of a lookup dialog that both match, and closes the dialog", async ({ page }) => {
+test("pickValue reports two rows of a lookup dialog that both match only loosely, and closes the dialog", async ({ page }) => {
   await serve(page, lookupDialog, customerApi);
   expect(await call(page, `return await pickValue(page.getByRole("button", { name: "Find customer" }), "Acme", fast);`)).toEqual({
     result: {
       picked: false,
-      reason: "option_ambiguous",
+      reason: "option_unclear",
       wanted: "Acme",
       available: ["C-101 Acme Insurance Group Boston", "C-102 Acme Industrial Supply Denver"],
       matches: ["C-101 Acme Insurance Group Boston", "C-102 Acme Industrial Supply Denver"],
@@ -425,7 +425,7 @@ test("pickValues chooses several options of a native multiple select", async ({ 
   expect(await submitted(page)).toEqual({ days: "tue" });
 });
 
-test("pickValue matches a native select's option by stem only when asked", async ({ page }) => {
+test("pickValue lists a native select's option by stem only when asked, never picking it", async ({ page }) => {
   await serve(page, `<form><label>Specialty <select name="specialty">
 <option value="">Choose a specialty</option><option value="cd">Example Dentistry</option><option value="d">Dentistry</option>
 </select></label></form>`);
@@ -433,13 +433,33 @@ test("pickValue matches a native select's option by stem only when asked", async
   expect(await call(page, `return await pickValue(${specialty}, "Dentist", fast);`)).toMatchObject({
     result: { picked: false, reason: "option_missing" },
   });
-  expect(await call(page, `return await pickValue(${specialty}, "Dentist", { ...fast, stem: true });`)).toEqual({
-    result: { picked: true, kind: "select", label: "Dentistry", value: "d", rank: "stem", refills: 0 },
+  expect(await call(page, `return await pickValue(${specialty}, "Dentist", { ...fast, stem: true });`)).toMatchObject({
+    result: { picked: false, reason: "option_unclear", matches: ["Dentistry"] },
   });
-  expect(await submitted(page)).toEqual({ specialty: "d" });
+  expect(await submitted(page)).toEqual({ specialty: "" });
 });
 
-test("pickValues matches a native multiple select's options by stem only when asked", async ({ page }) => {
+// A read takes the stem matches and says each was loose; Pediatrics is Pediatric's plural, so clean.
+test("pickValues in a read picks a native multiple select's options by stem when asked, naming the loose ones", async ({ page }) => {
+  await serve(page, `<form><label>Specialties <select name="specialties" multiple size="4">
+<option value="cd">Example Dentistry</option><option value="d">Dentistry</option><option value="p">Pediatrics</option>
+<option value="po">Podiatry</option></select></label></form>`);
+  const specialties = 'page.getByLabel("Specialties")';
+  expect(await callRead(page, `return await pickValues(${specialties}, ["Dentist", "Pediatric"], { ...fast, stem: true });`)).toEqual({
+    result: {
+      picked: true,
+      kind: "select",
+      values: [
+        { label: "Dentistry", value: "d", added: true, loose: true },
+        { label: "Pediatrics", value: "p", added: true },
+      ],
+      removed: [],
+    },
+  });
+  expect(await submitted(page)).toEqual({ specialties: "d,p" });
+});
+
+test("pickValues lists a native multiple select's options by stem only when asked, never picking them", async ({ page }) => {
   await serve(page, `<form><label>Specialties <select name="specialties" multiple size="4">
 <option value="cd">Example Dentistry</option><option value="d">Dentistry</option><option value="p">Pediatrics</option>
 <option value="po">Podiatry</option></select></label></form>`);
@@ -447,18 +467,10 @@ test("pickValues matches a native multiple select's options by stem only when as
   expect(await call(page, `return await pickValues(${specialties}, ["Dentist", "Pediatric"], fast);`)).toMatchObject({
     result: { picked: false, reason: "option_missing", wanted: "Dentist" },
   });
-  expect(await call(page, `return await pickValues(${specialties}, ["Dentist", "Pediatric"], { ...fast, stem: true });`)).toEqual({
-    result: {
-      picked: true,
-      kind: "select",
-      values: [
-        { label: "Dentistry", value: "d", added: true },
-        { label: "Pediatrics", value: "p", added: true },
-      ],
-      removed: [],
-    },
+  expect(await call(page, `return await pickValues(${specialties}, ["Dentist", "Pediatric"], { ...fast, stem: true });`)).toMatchObject({
+    result: { picked: false, reason: "option_unclear", wanted: "Dentist", matches: ["Dentistry"], values: [] },
   });
-  expect(await submitted(page)).toEqual({ specialties: "d,p" });
+  expect(await submitted(page)).toEqual({});
 });
 
 // The chips field with specialties for suggestions, and Enter making a free-entry chip.
@@ -478,47 +490,13 @@ const specialtyChips = chips
 list.addEventListener("mousedown"`,
   );
 
-test("pickValues adds a chip suggestion by stem when asked", async ({ page }) => {
-  await serve(page, specialtyChips);
-  const field = 'page.getByRole("combobox", { name: "Colors" })';
-  expect(await call(page, `return await pickValues(${field}, ["Dentist"], { ...fast, stem: true });`)).toEqual({
-    result: { picked: true, kind: "typeahead", values: [{ label: "Dentistry", value: "", added: true }], removed: [] },
-  });
-  expect(await submitted(page)).toEqual({ colors: "red,dentistry" });
-});
-
-// Replace removes the chips the call did not choose, never one it just picked by stem or as whole
-// words, which its whole name does not match.
-test("pickValues with replace keeps the chip it picked by stem", async ({ page }) => {
-  await serve(page, specialtyChips);
-  const field = 'page.getByRole("combobox", { name: "Colors" })';
-  expect(await call(page, `return await pickValues(${field}, ["Dentist"], { ...fast, stem: true, mode: "replace" });`)).toEqual({
-    result: { picked: true, kind: "typeahead", values: [{ label: "Dentistry", value: "", added: true }], removed: ["Red"] },
-  });
-  expect(await submitted(page)).toEqual({ colors: "dentistry" });
-});
-
-test("pickValues with replace keeps the chip it picked as whole words", async ({ page }) => {
-  await serve(page, chips);
-  const field = 'page.getByRole("combobox", { name: "Colors" })';
-  expect(await call(page, `return await pickValues(${field}, ["Grey"], { ...fast, mode: "replace" });`)).toEqual({
-    result: { picked: true, kind: "typeahead", values: [{ label: "Blue Grey", value: "", added: true }], removed: ["Red"] },
-  });
-  expect(await submitted(page)).toEqual({ colors: "blue grey" });
-});
-
-// The field stops suggesting a chosen option, so a second call finds the chip it made by stem among
-// the chips, ranked as the options were, instead of refusing the value as missing.
-test("pickValues finds the chip it picked by stem again once the site stops suggesting it", async ({ page }) => {
+test("pickValues lists a chip suggestion by stem when asked, never adding it", async ({ page }) => {
   await serve(page, specialtyChips);
   const field = 'page.getByRole("combobox", { name: "Colors" })';
   expect(await call(page, `return await pickValues(${field}, ["Dentist"], { ...fast, stem: true });`)).toMatchObject({
-    result: { picked: true, values: [{ label: "Dentistry", added: true }] },
+    result: { picked: false, reason: "option_unclear", matches: ["Dentistry"], values: [] },
   });
-  expect(await call(page, `return await pickValues(${field}, ["Dentist"], { ...fast, stem: true });`)).toEqual({
-    result: { picked: true, kind: "typeahead", values: [{ label: "Dentistry", value: "dentistry", added: false }], removed: [] },
-  });
-  expect(await submitted(page)).toEqual({ colors: "red,dentistry" });
+  expect(await submitted(page)).toEqual({ colors: "red" });
 });
 
 test("pickValues with create makes the typed tag rather than take a suggestion that matches only by stem", async ({ page }) => {
@@ -552,8 +530,21 @@ button.addEventListener("keydown", (event) => { if (event.key === "Escape") { li
   expect(answer).toMatchObject({ result: { kind: "dropdown" } });
   const options = (answer as { result: { options: { label: string; value: string; disabled: boolean }[] } }).result.options;
   expect(options).toHaveLength(60);
-  expect(options[59]).toEqual({ label: "Seat 59", value: "s59", disabled: true });
+  expect(options[59]).toEqual({ label: "Seat 59", text: "Seat 59", value: "s59", disabled: true });
   await expect(page.getByRole("listbox")).toBeHidden();
+});
+
+// A read takes Blue Grey for Grey loosely; once the site stops suggesting the chosen chip, it finds
+// the chip again and still says the match was loose.
+test("pickValues in a read finds a chip it picked loosely again, still naming it loose", async ({ page }) => {
+  await serve(page, chips);
+  const colors = 'page.getByRole("combobox", { name: "Colors" })';
+  expect(await callRead(page, `return await pickValues(${colors}, ["Grey"], fast);`)).toMatchObject({
+    result: { picked: true, values: [{ label: "Blue Grey", added: true, loose: true }] },
+  });
+  expect(await callRead(page, `return await pickValues(${colors}, ["Grey"], fast);`)).toMatchObject({
+    result: { picked: true, values: [{ label: "Blue Grey", added: false, loose: true }] },
+  });
 });
 
 test("pickValues adds a value even when a chip already holds it as a word", async ({ page }) => {

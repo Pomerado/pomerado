@@ -111,17 +111,14 @@ datalist, an autocomplete or typeahead, an ARIA combobox, a dropdown built from 
 lookup dialog with a search box and a results table. `wanted` is the input's value or a list of
 its spellings (`["CA", "California"]`). `pickValues` adds or replaces chips and tags in a
 multi-select, and `pickerOptions` returns the options a picker lists, for a caller question.
-They wait for suggestions to settle, scroll lists that render as they scroll, match the value
-exactly, then loosely, never pick an "Add" or "Create" row, and confirm the field kept the choice,
-picking again when the page reverts it. A read of a category or term, such as a specialty, passes
-`stem: true`, so a caller's word also matches an option word it begins or that begins it, such as
-Dentist and Dentistry, and returns the option it used. Leave it off for names of people and places,
-and on writes, which ask the caller or list the options instead. A value the picker lacks, or several options that tie,
+They wait for suggestions to settle, scroll lists that render as they scroll, pick the best
+match, in a write only a clean one (core skill), never pick an "Add" or "Create" row, and confirm the field kept the choice,
+picking again when the page reverts it. A read of a category or term passes `stem: true`, so a
+caller's word also matches an option word it begins or that begins it. A value the picker
+lacks, one a write matches only loosely (`option_unclear`), or several options that tie,
 comes back as `{ picked: false, reason, available, matches }`: decode it with `PickOutcome` and
 throw `pickRefusal(outcome, field)`, which lists options that tie as `available`, or ask the
-caller to choose among `matches`. On a write, a single suggestion for a free-text value the caller
-typed is the site's correction instead, never for a picker that selects a record: take it as the
-writes skill says. In a tool that takes the first of options that tie instead (each tool decides,
+caller to choose among `matches`, as the core skill says for `option_unclear`. In a tool that takes the first of options that tie instead (each tool decides,
 core skill), pass `tie: "first"`, so the picker takes the first of them in the site's order and
 returns the one it used, and return that option's label in the tool's output. In a read whose
 typed field is the site's own search, when `pickValue` returns `option_missing` with an empty
@@ -130,6 +127,9 @@ run the search as after a pick, with the site's Search button or Enter, and read
 page as any search's. Prefer refusing on the site's own words that it found nothing for that text
 over `pickRefusal`. Never use this fallback in a write. Handle a site's quirk with the helper's options, such as `query`,
 `answered`, `committed`, `commit: "keyboard"` or `blur: "tab"`, never with a picker of your own.
+Pass a control that lists more results, or a function that opens them, as `more`, never click it
+in `type`: the picker opens them only when the list the site shows for the typed text has no clean
+match.
 Publication review sends one back ("Own picker").
 When a picker's options depend on another field, such as times on a date or a party size, models
 on a make or regions on a country, set that field first, whatever order the page shows them in,
@@ -178,7 +178,15 @@ such as a confirmation dialog a button always opens, may be expected, and the sc
 when it only restates what this run entered or acts on. One that shows something new, such as a
 fee, a consequence beyond the request, another record or a warning about this input, goes to the
 caller as a declared question. A pop-up the session met once is conditional unless the page
-shows it always follows that action.
+shows it always follows that action. When a click times out, read the page for a pop-up or
+dialog covering its control before trying it again; a commit or pay click follows the writes
+skill.
+
+Before acting on a notice, find its container in the page's structure (its form or group), not
+its place in the accessibility snapshot, which can hide dividers. A notice applies only to the
+controls in its own container, or a control its text names. Before you end a build because the
+site requires something, name its exact text and the control it belongs to; when that control
+is not on the request's path, keep going.
 
 Type each date-only input and output as the runtime's `CalendarDate`, imported beside
 `formControlsCode`, never a bare `YYYY-MM-DD` pattern, which accepts `2026-02-30`. It checks
@@ -208,9 +216,13 @@ the file and puts it there, and never anywhere else. When the site states a file
 declaring it on the input, as `fileInputWithin({ maxBytes: 5_242_880, extensions: [".pdf"] })`,
 and passing it to `files.place`, rather than checking the file in code. Return a download as a
 `FileOutput` from `files.collect(trigger)`, where `trigger` makes the execute call that starts
-it; you see only its name, type, size and sha256. While the tool is being built, the file has
+it, and a screenshot of the page, or of one element, from `files.screenshot({ selector })`; you
+see only its name, type, size and sha256. While the tool is being built, the file has
 no download_url or expires_at; the published tool's runs add them. Prefer returning the file as
-collected, and never require those fields in code. The host refuses a result whose `$file`
+collected, and never require those fields in code. When one call starts several downloads,
+such as one per listed item, possibly in several pages, use `files.collectAll(trigger)`, which
+returns each download in the order they began, with its `file` or why it has none, and its
+address `url` for telling which item started it. The host refuses a result whose `$file`
 differs from the file it collected: `download_url` and `expires_at` are the host's own link to
 the bytes. When the caller wants the site's own link or another fact about the file, prefer
 returning it in a separate field beside the file. A downloaded file meant for the caller goes

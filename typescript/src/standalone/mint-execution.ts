@@ -48,8 +48,18 @@ import { downloadCapFailures } from "../runtime/kernel-operation.js";
 import { stepInput } from "../mint/step-checks.js";
 import { admitListCursor, sealListOutput } from "../runtime/list-cursor.js";
 import { mintListScope, refusedCursor } from "./list-cursors.js";
-import { readBackFirst, sessionEnteredMarks, writePathRemaining } from "../mint/write-session.js";
-import { commitEvidenceOf, type CommitEvidence } from "../runtime/run-outcome.js";
+import {
+  fencedCommitNotice,
+  fencedCommits,
+  readBackFirst,
+  sessionEnteredMarks,
+  writePathRemaining,
+} from "../mint/write-session.js";
+import {
+  commitEvidenceOf,
+  returnedRefusal,
+  type CommitEvidence,
+} from "../runtime/run-outcome.js";
 import { InputRequestFailure, type InputAsker } from "../runtime/input-request.js";
 import { siteDomain } from "../runtime/same-site.js";
 import { probeCallCode } from "../runtime/host-execute.js";
@@ -58,6 +68,7 @@ import type { DownloadCap } from "../runtime/files.js";
 import { trustedUrl } from "../runtime/sign-in-origins.js";
 import type { MintState } from "./mint-state.js";
 import {
+  forgetOrderAnswers,
   keptScriptAnswers,
   reusedScriptAnswers,
   scriptQuestionKeys,
@@ -194,39 +205,47 @@ const scriptQuestions = (
   let unanswered = false;
   const scriptAsk: InputAsker = (candidate, bounds) =>
     Effect.gen(function* () {
-      const question = yield* questionForReview(
-        candidate,
-        { credentialsAvailable: false, scriptAsk: true },
-        projection.text,
-      );
-      const review = yield* context.reviewQuestion(
-        { entrypoint: `operation/${entrypoint}`, sources: sourceMap, input },
-        question,
-      );
-      if (review.decision.outcome !== "allow_business") {
-        scriptQuestion = {
-          requestId: candidate.id,
-          outcome: review.decision.outcome,
-          rationale: review.decision.rationale,
-          reviewId: review.reviewId,
-        };
-        return yield* Effect.fail(new InputRequestFailure({ code: "Unauthorized" }));
-      }
-      // The same question asked again reuses the owner's answer, however long ago they gave it
-      // and whether or not a step entered a commit since. Guardian reviewed this ask all the same,
-      // and the reused answer reaches later reviews as a fresh one does. It is always the owner's
-      // latest answer to its prompt (`forgetScriptAnswers`), so it never replaces a newer one in
-      // Guardian's list.
+      // The same question asked again reuses the owner's answer before Guardian reviews it, which
+      // would refuse it as a repeat of an answer it already trusts, however long ago the owner
+      // gave it and whether or not a step entered a commit since. A purchase confirm reuses only
+      // the owner's yes to the same order, and only while no act step since that yes may have
+      // placed it: each made no browser call or left every commit step it declares unsent, by its
+      // own report once it ended (`forgetOrderAnswers` below) and, for the asking step, by its
+      // journal when it asked (`commitsUnsent`); an opened hand-off counts as a browser call. A
+      // save a script sends outside every commit step it declares is beyond this check, as it is
+      // for the commit fence; Guardian's source review looks for one. The reused answer reaches
+      // later reviews as a fresh one does. It is always the owner's latest answer to its prompt
+      // (`forgetScriptAnswers`), so it never replaces a newer one in Guardian's list.
       const keys = yield* scriptQuestionKeys(candidate, (text) => projection.text(text));
+      const kept =
+        bounds?.commitsUnsent === true
+          ? scriptAnswers.kept
+          : forgetOrderAnswers(scriptAnswers.kept);
       const answers =
-        reusedScriptAnswers(candidate, keys, scriptAnswers.kept) ??
-        (yield* mintAsk(candidate, bounds).pipe(
-          Effect.tap((fresh) =>
-            Effect.sync(() => {
-              scriptAnswers.kept = keptScriptAnswers(scriptAnswers.kept, keys, fresh);
-            }),
-          ),
-        ));
+        reusedScriptAnswers(candidate, keys, kept) ??
+        (yield* Effect.gen(function* () {
+          const question = yield* questionForReview(
+            candidate,
+            { credentialsAvailable: false, scriptAsk: true },
+            projection.text,
+          );
+          const review = yield* context.reviewQuestion(
+            { entrypoint: `operation/${entrypoint}`, sources: sourceMap, input },
+            question,
+          );
+          if (review.decision.outcome !== "allow_business") {
+            scriptQuestion = {
+              requestId: candidate.id,
+              outcome: review.decision.outcome,
+              rationale: review.decision.rationale,
+              reviewId: review.reviewId,
+            };
+            return yield* Effect.fail(new InputRequestFailure({ code: "Unauthorized" }));
+          }
+          const fresh = yield* mintAsk(candidate, bounds);
+          scriptAnswers.kept = keptScriptAnswers(scriptAnswers.kept, keys, fresh, candidate.order);
+          return fresh;
+        }));
       yield* context.answered(candidate, answers);
       return answers;
     }).pipe(
@@ -260,7 +279,8 @@ const scriptQuestions = (
  * only once a later step confirms. Only a failed step Guardian labelled a write asks the minter
  * to read back before writing again (`readBackFirst`). Marks showing no commit step entered
  * skip the ask only while the step made no browser call: this host records no requests that
- * would show a write the page sent before any mark was entered.
+ * would show a write the page sent before any mark was entered. A completed step that returned a
+ * refusal its output schema declares before any mark (`returnedRefusal`) records it as `refused`.
  */
 const actOutcome = (
   executed: Either.Either<LocalOperationOutput, Error>,
@@ -278,13 +298,23 @@ const actOutcome = (
     .filter((mark) => mark.state !== "not_sent")
     .map(({ name }) => name);
   const commit: CommitEvidence = reported ? commitEvidenceOf(journal.commits) : "unreported";
+  const refused = Either.isRight(executed)
+    ? returnedRefusal({
+        outputSchema: executed.right.schemas.output,
+        output: executed.right.output,
+        commits: commit,
+        runnerEffect: journal.effect,
+      })
+    : undefined;
   return {
+    commit,
     marks: {
       ...(journal.confirmation === undefined ? {} : { confirmation: journal.confirmation }),
       ...(action === undefined ? {} : { action }),
       possiblySent: journal.effect !== "not_sent",
       enteredMarks: reported ? entered : [],
       ...(failure instanceof LocalOperationFailure && !reported ? { streamedMarks: entered } : {}),
+      ...(refused === undefined ? {} : { refused }),
     },
     writeSession:
       failure !== undefined && action === "write"
@@ -293,6 +323,22 @@ const actOutcome = (
           )
         : undefined,
   };
+};
+
+/**
+ * The session's last act step when it is `executionId` and no earlier act step made a browser
+ * call, so a site's no that step returned may stand as the session's outcome: this host records no
+ * requests that would show a save such an earlier step sent without entering a mark.
+ */
+export const refusalEndingStep = (
+  steps: MintState["writeSession"]["steps"],
+  executionId: string,
+) => {
+  const last = steps.at(-1);
+  return last?.executionId === executionId &&
+    steps.slice(0, -1).every((earlier) => earlier.possiblySent === false)
+    ? last
+    : undefined;
 };
 
 /**
@@ -341,6 +387,8 @@ interface ReceiptInput {
   readonly afterUnverifiedSignIn?: true;
   /** The latest download the step's files refused over the host's caps (`RunFiles.overCap`). */
   readonly fileCap?: DownloadCap;
+  /** The commit steps this act step ran settled, with the steps that may have sent each. */
+  readonly fenced?: ReadonlyMap<string, readonly string[]>;
 }
 /** The allow a receipt carries: Guardian's review, outcome, rationale and action label. */
 const reviewFeedback = ({ reviewId, decision }: ReceiptInput["reviewed"]): MintReviewFeedback => ({
@@ -365,6 +413,11 @@ const failedReceipt = (
     const { scriptQuestion, unanswered } = questions;
     const { writeSession, afterUnverifiedSignIn } = receipt;
 
+    // A step refused a settled commit step fails with that step's name as its message.
+    const fencedBy =
+      failure instanceof LocalOperationFailure && failure.tag === "CommitAlreadySent"
+        ? receipt.fenced?.get(failure.message)
+        : undefined;
     const failureJournal: LocalOperationJournal =
       failure instanceof LocalOperationFailure
         ? failure.journal
@@ -417,6 +470,9 @@ const failedReceipt = (
             }
           : {}),
         ...(writeSession === undefined ? {} : { writeSession }),
+        ...(fencedBy === undefined
+          ? {}
+          : { fencedCommit: fencedCommitNotice(failure.message, fencedBy) }),
       },
       review: reviewFeedback(reviewed),
       ...(receipt.fileCap === undefined ? {} : { fileCap: receipt.fileCap }),
@@ -520,7 +576,7 @@ const authoredExecution = (
       secretHandleRefusal(handles, files, execution, context.siteOrigin) ??
       fileHandleRefusal(files, execution) ??
       fileReadbackRefusal(files, execution, state.fileHandles.files.length > 0) ??
-      cardReadbackRefusal(files, execution, handles.issuedCard()) ??
+      cardReadbackRefusal(files, execution, handles.issuedCard() || state.cardTyped.current) ??
       draftQuestionDeclarationFailure(execution.entrypoint, entrypointSource);
     if (refusal !== undefined) return unsupported(refusal);
     const selected = yield* stepInput(execution, {
@@ -538,6 +594,7 @@ const authoredExecution = (
           purpose: execution.purpose,
           target: execution.target,
           ...(mark === undefined ? {} : { input: mark }),
+          ...("callerKeys" in selected ? { callerKeys: selected.callerKeys } : {}),
         },
         startsOnFreshPage: start.resets(execution),
         ...(execution.agentNote === undefined ? {} : { agentNote: execution.agentNote }),
@@ -584,6 +641,17 @@ const authoredExecution = (
       // Guardian allowed the path the step declared or revised, so the session runs it.
       if (execution.writePath !== undefined) writeSession.path = execution.writePath;
     }
+    // A commit step an earlier act step may have sent stays settled for this one, whatever file it
+    // runs, until the outcome review finds that write did not happen.
+    const fenced =
+      execution.purpose === "act" && live
+        ? fencedCommits(
+            writeSession.steps.map((step) => ({
+              ...step,
+              assessment: state.assessments.get(step.executionId)?.outcome,
+            })),
+          )
+        : new Map<string, readonly string[]>();
     const questions = scriptQuestions(state, execution.entrypoint, input, sourceMap);
     const { scriptAsk } = questions;
     // The confirm popups the owner accepts during this execution, host-only.
@@ -638,6 +706,9 @@ const authoredExecution = (
                 mode: "run",
                 target: live ? "browser" : "pureFiles",
                 dispatchAtFirstCall: true,
+                // Every step's pickers follow the build's effect, whatever the step declares.
+                ...(context.buildEffect === undefined ? {} : { effect: context.buildEffect }),
+                ...(fenced.size === 0 ? {} : { settledCommits: [...fenced.keys()] }),
                 ask: localHandOffAsker(scriptAsk, {
                   visible: live && visibleBrowser(state.session.options.browser),
                 }),
@@ -655,7 +726,15 @@ const authoredExecution = (
                       signIn: state.sessionSignIn.hook((failure) => {
                         signInFailure ??= failure;
                       }),
-                      cardFill: sessionCardFill(state.session, context.siteOrigin),
+                      // Only an act or residual step types a card, as a hosted build's do, so
+                      // any other step may read the page until one is typed (cardReadbackRefusal).
+                      ...(execution.purpose === "act" || execution.purpose === "residual"
+                        ? {
+                            cardFill: sessionCardFill(state.session, context.siteOrigin, () => {
+                              state.cardTyped.current = true;
+                            }),
+                          }
+                        : {}),
                     }
                   : {}),
                 ...(runFiles === undefined ? {} : { files: runFiles }),
@@ -683,11 +762,20 @@ const authoredExecution = (
             writeSession,
             yield* acceptedConfirmsKept({ write: true, accepted, screen: secrets.assertAbsent }),
           );
-        if (act !== undefined) writeSession.steps.push({ executionId: id, ...act.marks });
+        if (act !== undefined) {
+          writeSession.steps.push({ executionId: id, ...act.marks });
+          // Unless the step made no browser call or its own report shows every commit step it
+          // declares unsent, it may have placed the order its owner said yes to, so that yes
+          // answers no later purchase confirm.
+          if (act.marks.possiblySent && act.commit !== "not_entered")
+            state.scriptAnswers.kept = forgetOrderAnswers(state.scriptAnswers.kept);
+        }
         // The marks of the session's recorded path not yet settled: until none is left, a
-        // confirmation does not close the session.
+        // confirmation does not close the session. A declared refusal that ends the session
+        // leaves none, since no step runs after it.
         const pathLeft =
-          act === undefined
+          act === undefined ||
+          (act.marks.refused !== undefined && refusalEndingStep(writeSession.steps, id) !== undefined)
             ? []
             : writePathRemaining(writeSession.path, sessionEnteredMarks(writeSession.steps));
         if (execution.purpose === "example" && executed._tag === "Right")
@@ -709,6 +797,7 @@ const authoredExecution = (
           ...(pathLeft.length === 0 ? {} : { writePathRemaining: pathLeft }),
           ...(afterUnverifiedSignIn ? { afterUnverifiedSignIn: true as const } : {}),
           ...(fileCap === undefined ? {} : { fileCap }),
+          ...(fenced.size === 0 ? {} : { fenced }),
         };
         const evidence = yield* executed._tag === "Left"
           ? failedReceipt(receipt, executed.left, questions)
@@ -761,7 +850,10 @@ const executeCardFill = (
           Effect.flatMap(allowedOf),
           Effect.flatMap((allowed) => beforeDispatch?.(allowed) ?? Effect.void),
         ),
-      beforeTyping: () => Effect.void,
+      beforeTyping: () =>
+        Effect.sync(() => {
+          state.cardTyped.current = true;
+        }),
     });
     if (outcome.status !== "refused" && outcome.typed) signInTyping.typed = true;
     yield* context.observe;

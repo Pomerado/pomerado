@@ -5,7 +5,12 @@ import type { Deadline } from "./deadline.js";
 import {
   ConfirmQuestion,
   InputRequest,
+  longestItemName,
   longestPrompt,
+  OrderFacts,
+  OrderFee,
+  OrderItem,
+  orderNotice,
   QuestionId,
   questionIdPattern,
   SecretQuestion,
@@ -115,16 +120,32 @@ export const ScriptOption = Schema.Struct({
   accountSpecific: Schema.optional(Schema.Boolean),
   /** How an account-specific option reads outside the protected page, like "Visa •••• 4242". */
   maskedLabel: Schema.optional(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(64))),
+  /** Picking it is the caller's no to the write, as a confirm's no is. */
+  declines: Schema.optional(Schema.Boolean),
 });
 export type ScriptOption = typeof ScriptOption.Type;
 
+const NameLine = Schema.String.pipe(Schema.pattern(/\S/u));
+/**
+ * A purchase confirm's order as the checkout shows it (`OrderFacts`): an item or fee name reaches
+ * the caller on one line, and a long one shortened (`cutTo`).
+ */
+const ScriptOrder = Schema.Struct({
+  ...OrderFacts.fields,
+  items: Schema.Array(Schema.Struct({ ...OrderItem.fields, name: NameLine })),
+  fees: Schema.optional(Schema.Array(Schema.Struct({ ...OrderFee.fields, name: NameLine }))),
+});
+export type ScriptOrder = typeof ScriptOrder.Encoded;
+
 /**
  * A question asked now: choices carry the page's options; nothing else carries any. A site field
- * carries its label from the page, with options when it is a select.
+ * carries its label from the page, with options when it is a select. A choice or a confirm may
+ * carry the order it confirms, which the host shows unmasked.
  */
 interface AskSpec {
   readonly options?: ReadonlyArray<ScriptOption>;
   readonly label?: string;
+  readonly order?: ScriptOrder;
 }
 
 /** What `ask` returns for a browser hand-off, once the person marked the step done. */
@@ -156,15 +177,17 @@ export type ScriptAnswer =
 
 /**
  * What each asked question needs at ask time: the page's options for a choice, a site field's
- * label and any options from the page, else nothing.
+ * label and any options from the page, else nothing. A choice or a confirm may add its order.
  */
 export type AskSpecOf<Declaration> = Declaration extends { readonly type: "site_field" }
   ? { readonly label: string; readonly options?: ReadonlyArray<ScriptOption> }
-  : Declaration extends {
-        readonly type: "text" | "secret" | "confirm" | "browser_handoff";
-      }
-    ? { readonly options?: never }
-    : { readonly options: ReadonlyArray<ScriptOption> };
+  : Declaration extends { readonly type: "confirm" }
+    ? { readonly options?: never; readonly order?: ScriptOrder }
+    : Declaration extends { readonly type: "text" | "secret" | "browser_handoff" }
+      ? { readonly options?: never }
+      : Declaration extends { readonly type: "multi_choice" }
+        ? { readonly options: ReadonlyArray<ScriptOption> }
+        : { readonly options: ReadonlyArray<ScriptOption>; readonly order?: ScriptOrder };
 
 /**
  * `NoResponse`: the caller did not answer in time, and the run fails as `no_response`.
@@ -299,6 +322,7 @@ const offeredOptions = (id: string, given: ReadonlyArray<ScriptOption> | undefin
       label: cutTo(option.label, longestLabel),
       ...(option.accountSpecific === undefined ? {} : { accountSpecific: option.accountSpecific }),
       ...(option.maskedLabel === undefined ? {} : { maskedLabel: option.maskedLabel }),
+      ...(option.declines === undefined ? {} : { declines: option.declines }),
     })),
   });
 };
@@ -453,15 +477,43 @@ export const makeScriptInput = (
   const askAll = (asked: Readonly<Record<string, GivenSpec>>, hooks: ScriptAskHooks = {}) =>
     Effect.gen(function* () {
       const questions: Asked[] = [];
+      let order: OrderFacts | undefined;
       for (const [id, spec] of Object.entries(asked)) {
         const declaration = declared && Object.hasOwn(declared, id) ? declared[id] : undefined;
         if (declaration === undefined) return yield* new ScriptInputFailure({ code: "Undeclared" });
         const built = askedQuestion(id, declaration, spec);
         if (Either.isLeft(built)) return yield* built.left;
         questions.push(built.right);
+        const given = isOptionList(spec) ? undefined : spec.order;
+        if (given === undefined) continue;
+        // One order per request, with a choice or a confirm, and only the facts it names.
+        const type: string = "type" in declaration ? declaration.type : "choice";
+        if (order !== undefined || (type !== "choice" && type !== "confirm"))
+          return yield* invalidOptions();
+        const decoded = Schema.decodeUnknownEither(ScriptOrder, { onExcessProperty: "error" })(
+          given,
+        );
+        if (Either.isLeft(decoded)) return yield* invalidOptions();
+        const named = <Line extends { readonly name: string }>(line: Line) => ({
+          ...line,
+          name: cutTo(line.name.replace(/\s+/gu, " ").trim(), longestItemName),
+        });
+        const { fees, ...facts } = decoded.right;
+        order = {
+          ...facts,
+          items: facts.items.map(named),
+          // An empty list is left out, so an order of the earlier shape still decodes on a host
+          // that predates fees.
+          ...(fees === undefined || fees.length === 0 ? {} : { fees: fees.map(named) }),
+        };
       }
       const request = yield* Schema.decodeUnknown(InputRequest)(
-        { id: randomUUID(), source: "script", questions: questions.map((asked) => asked.question) },
+        {
+          id: randomUUID(),
+          source: "script",
+          questions: questions.map((asked) => asked.question),
+          ...(order === undefined ? {} : { order, notice: orderNotice(order) }),
+        },
         { onExcessProperty: "error" },
       ).pipe(Effect.mapError(invalidOptions));
       if (handle === undefined) return yield* new ScriptInputFailure({ code: "Unavailable" });
