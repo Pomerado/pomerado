@@ -123,6 +123,58 @@ it.each([
   expect(host.applied).toEqual([]);
 });
 
+// A host whose answering person may settle what the task requires, while its callers keep every
+// output the registered contract declares, names `owner_requirements`. Fails while the harness
+// reads that value as nobody, which refuses the requirement change too.
+const colorRequirement = {
+  setting: "requirement",
+  change: "add",
+  text: "Read only the notes saved on the requested day.",
+};
+it.each([
+  {
+    case: "a requirement change its answer confirms",
+    update: { ...dropColor, changes: [colorRequirement] },
+    result: { status: "updated", task: { revision: 1 } },
+    reviewed: true,
+  },
+  {
+    case: "a requirement change that cites no answer",
+    update: { ...dropColor, changes: [colorRequirement], confirmedBy: [] },
+    result: { status: "clarification_required", reason: "confirmation_required" },
+    reviewed: false,
+  },
+  {
+    case: "an output it loosens",
+    update: dropColor,
+    result: { status: "update_refused", reason: "owner_unavailable" },
+    reviewed: false,
+  },
+  {
+    case: "a requirement change beside an output it loosens",
+    update: { ...dropColor, changes: [colorRequirement, dropColor.changes[0]] },
+    result: { status: "update_refused", reason: "owner_unavailable" },
+    reviewed: false,
+  },
+])(
+  "settles $case under owner_requirements as the owner path does, but no loosened output",
+  async ({ update, result, reviewed }) => {
+    const host = updateHost();
+    const answer = await propose(update, {
+      ...host.dependencies,
+      taskUpdateConfirmer: () => Effect.succeed("owner_requirements"),
+    });
+    expect(answer).toMatchObject(result);
+    // Guardian reviews what reaches it as the owner path's, which is all that may.
+    expect(host.reviews.map(({ update }) => update.maintenance)).toEqual(
+      reviewed ? [{ confirmer: "owner" }] : [],
+    );
+    // The refusal names only the output it can't confirm, not the requirement it can.
+    if (answer?.["reason"] === "owner_unavailable")
+      expect(String(answer["instruction"])).not.toContain("requirement");
+  },
+);
+
 it("asks for the owner's confirmation before reviewing a contract change that cites none", async () => {
   const host = updateHost();
   const result = await propose(
