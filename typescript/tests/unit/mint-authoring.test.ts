@@ -1615,6 +1615,15 @@ it("tells the minter a collected file's download link appears only when the publ
   );
 });
 
+// A 429 without the site's cross-origin header reaches the page only as a failed fetch, which
+// batchFetch backs off on, so the minter adds no pacing of its own around it.
+it("tells the minter batchFetch backs off on a failed fetch, so it adds no pacing of its own", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  expect((texts.get("core") ?? "").replace(/\s+/g, " ")).toContain(
+    "Add no sleep, interval or fixed delay between independent requests or batches sent through them. A site's backend may rate-limit a burst: they halve on a 429 or a 5xx, and `batchFetch` on a failed fetch too, and wait as long as the site's `Retry-After` asks, so add no retry loop, throttle or pacing of your own to requests sent through them.",
+  );
+});
+
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 
 /*
@@ -1635,7 +1644,7 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["761c7ebfe3f6d6068cf97b266a4ba8350eb4e00bf16d44e7c323e47088846852", "core"],
+    ["a2bfbdde02d94c20c50129c029315a46beaff67d3b22305b91f585481cab581e", "core"],
     ["7c3be765ee7c1c62b13a4876cc5453bbeb8acc7948b51511574f36f2aed09c4a", "search"],
     ["5918d38595593c4dfbf5028322c5b678c3082d6c473573f454f53f511b2f5f53", "auth"],
     ["539abe36b602c8e2eff8745dd0462aea41837a20cc0b90cbef7a01cbad6fb89a", "testing"],
