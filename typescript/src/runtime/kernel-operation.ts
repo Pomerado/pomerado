@@ -186,8 +186,8 @@ export interface KernelOperationContext<
    * billing_postal_code, which the host fills from the payer's billing address), each slot once,
    * and the order total the checkout shows. The host fills only when the page's top document
    * is on this site and each field is on the site or in a frame on an allowlisted payment
-   * processor's origin. It clicks nothing: submit the payment in a later call, under the write's
-   * commit rules. It returns `outcome: "filled"` with each field's part and status, and throws
+   * processor's origin. It clicks nothing: submit the payment in the same step's calls right
+   * after it, under the write's commit rules. It returns `outcome: "filled"` with each field's part and status, and throws
    * `OperationFailure`, with no value in it, when it filled nothing or not every field.
    */
   readonly fillCard: (step: ScriptCardFillRequest) => Promise<{

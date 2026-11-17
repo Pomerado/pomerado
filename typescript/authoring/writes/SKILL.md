@@ -417,7 +417,8 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   evidence for the `http` version; any other write is unintended and must not be in
   the script.
 - Prefer confirming the write from its commit request. Keep the click on the final commit
-  control, such as Save, Send, Submit, Book or Pay, in its own step. In the same call as
+  control, such as Save, Send, Submit, Book or Pay, in its own step, except a pay press after
+  the host's card fill, which goes in the fill's step (caller-input skill). In the same call as
   that click, wait for the site's response to the request it sends, matched by the method
   and path the session saw carry the commit on the site, and by its body where the body
   shows the caller's values, as `references/write-readback.ts` does: a `{ response }` answer of

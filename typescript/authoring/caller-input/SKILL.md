@@ -220,18 +220,21 @@ already asked for, or to solve a CAPTCHA.
      (`card_number`, `card_expiry`, `card_cvc`) and the order total the checkout shows as
      `{ amount, currency }`. On a checkout the site opened in a pop-up, also pass
      `popup: { opener: "primary", origin }` as a sign-in step names it. The host fills
-     the card and clicks nothing, so submit the payment in a later call under the
-     write's commit rules. Fill the card last: first settle and read back everything that
-     can change the order, such as the pickup or delivery time, quantities and options, and
-     every pre-checked box, such as one that saves the payment details, with any question
-     about them answered; then fill the card and press pay in the next step, with no step
-     or question between them unless the checkout itself requires one. The filled card
-     lasts only minutes, a step that leaves or reloads the checkout clears it, and a host
-     may refuse to fill it again once a request that may have charged went out. So never
-     leave the checkout once the card is in: when something must change after that, such
-     as a pickup time that moved from 12:15 to 12:30, don't go back to change it. Report
-     it instead: a build ends with `report_blocked` naming what changed, and a run fails
-     before the order's commit mark saying so. Wherever source calls `fillCard`, no source reads a
+     the card and clicks nothing, so the step that calls `fillCard` goes straight on to
+     every press after it, under the write's commit rules: any submit that sends the
+     card, then pay. The host reviews that whole step before the cardholder approves,
+     then runs it through with no other review. Fill the card last: first settle and read
+     back everything that can change the order, such as the pickup or delivery time,
+     quantities and options, and every pre-checked box, such as one that saves the payment
+     details, with any question about them answered; then fill the card and press pay in
+     that one step, with no question between them unless the checkout itself requires one.
+     The filled card lasts only minutes, a step that leaves or reloads the checkout clears
+     it, and a host may refuse to fill it again once a request that may have charged went
+     out. So never leave the checkout once the card is in: when something must change
+     after that, such as a pickup time that moved from 12:15 to 12:30 or a press that
+     failed, don't go back to change it or press it again in a later step. Report it
+     instead: a build ends with `report_blocked` naming it, and a run fails before the
+     order's commit mark saying so. Wherever source calls `fillCard`, no source reads a
      field's value or the page's markup, runs or plants code in the page, opens a
      DevTools session, takes an accessibility snapshot, screenshot or PDF of the page,
      records the page, or reads a request body, except in an explore step before the
