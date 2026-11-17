@@ -1020,10 +1020,10 @@ it("has cart tools carry over sibling handling, refuse the caller's input first 
   const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
   for (const line of [
     "When the site has other cart tools (the core skill, `reference/site-tools.json`), prefer carrying over their handling of the page states this tool shares with them.",
-    "Run each refusal of the caller's own input as soon as the page shows what it needs, before any check of the page's state.",
-    "Where the build runs test cases, prefer including an item already in the cart and, for a checkout, a cart under the store's minimum.",
+    "Run each refusal of the caller's own input as soon as the page shows what it needs, before any check of the page's state that fails the run.",
+    "Where the build runs test cases (testing skill), prefer including an item already in the cart and, for a checkout, a cart under the store's minimum.",
     "and return the state the site shows, in its own words, as the refusal for the item,",
-    'A delivery left unset, or asked for as "standard", takes the free option the page offers that arrives soonest, for each shipment; with no free option, ask the caller which to use, showing each fee.',
+    'A delivery speed left unset, or asked for as "standard", takes the free option the page offers that arrives soonest, for each shipment, in place of the tier the site presents as standard; with no free option, ask the caller which to use, showing each fee.',
   ]) {
     expect(text("cart")).toContain(line);
   }
@@ -1567,7 +1567,7 @@ it("renders the pinned standalone authoring", async () => {
     ["d524204c6ed2dc0fa773d6e5cf0aef993e2b48ee9db3fcbf291e40ebe8c9913d", "pagination"],
     ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
     ["54284ef5a6dd2a2e01dc75b920ee0c9da968c7a41df8c8406ca7d17f0f225924", "writes"],
-    ["367c54b75ec46dc9c564fc190713f7f659bc282817d40d008ac45b10bee72233", "cart"],
+    ["3ff8366fc701a733eb51ae689e681d9b1e3bfadde541832a8ac560f220ef8cc8", "cart"],
     ["3bd0c46940f314c940bcdb3a807ac9d18759123682f349b5c603f94ca14626ad", "caller-input"],
     ["5e831bd1ba21d5ec4b1da3a96152f9d905144cbef58b9bd26381933f27faa97c", "publication"],
     ["aa6c505252ff47843596ef4a05b431f34c2a63ffb4bef73c817804c10b7a9042", "workspace/AGENTS.md"],

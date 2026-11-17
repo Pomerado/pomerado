@@ -169,11 +169,11 @@ A checkout that takes a limit of the caller's, such as
 a maximum total, reads the final total and compares it before the order's commit mark, and
 refuses with `InvalidInput`, `field` that input and `kind: "over_price_limit"`, giving the total
 and the limit (the caller-input skill). Run each refusal of the caller's own input as soon as the
-page shows what it needs, before any check of the page's state. Never add items, raise a
-quantity or change the delivery method to meet a limit. While building, ask the caller to revise
-or stop, as `AGENTS.md` says. When they stop, or their answer cannot be met either, end with
-`report_blocked` and explain the site's limit: a build that only reached the limit never
-completed the write, so it never publishes.
+page shows what it needs, before any check of the page's state that fails the run. Never add
+items, raise a quantity or change the delivery method to meet a limit. While building, ask the
+caller to revise or stop, as `AGENTS.md` says. When they stop, or their answer cannot be met
+either, end with `report_blocked` and explain the site's limit: a build that only reached the
+limit never completed the write, so it never publishes.
 
 An account's state can change the add or buy flow, so that its controls would change an open
 order or a line already in the cart instead. A product already in the cart can show that line's
@@ -185,8 +185,8 @@ quantity plus the input, or to the input, with that control under the add's comm
 refuse with `InvalidInput` naming the site's state before the commit mark, as the caller-input
 skill says for a page's state that rules the task out.
 
-Where the build runs test cases, prefer including an item already in the cart and, for a
-checkout, a cart under the store's minimum.
+Where the build runs test cases (testing skill), prefer including an item already in the cart
+and, for a checkout, a cart under the store's minimum.
 
 An example item that is out of stock doesn't end the build. The tool returns that as the site's
 refusal for the item, and the build publishes on it as the writes skill says.
@@ -199,11 +199,12 @@ out of stock, before any commit mark, setting the address included. Never wait o
 a control the page replaced.
 
 When the order must take one of a service's tiers of speed, class or service level, take the
-caller's choice from an optional input and keep it as given. A delivery left unset, or asked for
-as "standard", takes the free option the page offers that arrives soonest, for each shipment;
-with no free option, ask the caller which to use, showing each fee. For any other tier left
-unset, choose the tier the site presents as standard, not one sold as faster, larger or premium;
-when the site shows no standard tier, ask the caller which to use.
+caller's choice from an optional input and keep it as given. A delivery speed left unset, or
+asked for as "standard", takes the free option the page offers that arrives soonest, for each
+shipment, in place of the tier the site presents as standard; with no free option, ask the caller
+which to use, showing each fee. For any other tier left unset, choose the tier the site presents
+as standard, not one sold as faster, larger or premium; when the site shows no standard tier, ask
+the caller which to use.
 
 An "earliest" pickup or delivery time moves with the clock: pick it in the step that places the
 order, or right before the card fill when the host fills the card or picking it reloads the
