@@ -140,7 +140,9 @@ Publication refuses a tool for any of these:
   - every applied filter or option is read back from the page as the value the site applied,
     such as the chosen option's label, never `true` ("Applied without readback");
   - a value chosen in a typeahead, combobox, dropdown, chip input or lookup dialog goes through
-    `pickValue` or `pickValues`, or `chooseOption` where the control takes no typing (forms skill);
+    `pickValue` or `pickValues`, an address, pickup or drop-off value through the core skill's
+    address helpers ("Own address match"), or `chooseOption` where the control takes no typing
+    (forms skill);
     review sends back a picker of the tool's own unless `pickValue` failed on that control and the
     code says what the page showed ("Own picker");
   - a requested value the site does not offer throws `InvalidInput` with the site's choices, and
@@ -153,9 +155,10 @@ Publication refuses a tool for any of these:
     field, or through its one suggestion is not unapplied input; the tool read the site's version
     back and returns it. Nor is a write's `saved_differences` listing a value the site saved
     differently after the final commit, or free text a save before it rewrote.
-  - a free-text place, name or venue that matches several of the site's options equally either
-    takes the first in the site's order and returns the one it used, as the site labels it, or
-    lists them for the caller to choose one, as the tool decides (core skill, the input schema);
+  - a free-text place, name or venue, other than an address, pickup or drop-off value, that
+    matches several of the site's options equally either takes the first in the site's order
+    and returns the one it used, as the site labels it, or lists them for the caller to choose
+    one, as the tool decides (core skill, the input schema);
   - a check that compares a date with today uses today in the site's time zone, or the place's,
     not in UTC (caller-input skill) ("Date in UTC");
   - in a read signed out, each declared input is used, or changed from its default, by a passing

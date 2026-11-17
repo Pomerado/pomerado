@@ -1001,10 +1001,12 @@ describe("the publication policy", () => {
   });
 
   // A caller's place, venue or company name matches in its usual forms, so neither the review of
-  // a live step nor the publication review asks a tool to require an exact match.
+  // a live step nor the publication review asks a tool to require an exact match. A tool took the
+  // site's first suggestion for a pickup place, since the equal-match rule left that choice to each
+  // tool: only the address matcher chooses an address, pickup or drop-off value.
   it("gives the execution and publication reviews the same fuzzy proper-noun rule", () => {
     const rule =
-      "A tool matches the caller's proper nouns, such as places, venues and company names, with a fuzzy match that accepts the usual forms of the same name. Never ask a tool to require an exact match. When more than one option matches a caller's value equally, the tool either takes the first in the site's order and returns the one it used, as the site labels it, or lists them for the caller to choose one, in a question or a refusal whose options each select exactly one of them. Which of the two is the tool's own choice, never a finding or a reason to deny. A tool that takes the first and does not return the one it used is a schema_mismatch finding with reason source_correction.";
+      "A tool matches the caller's proper nouns, such as places, venues and company names, with a fuzzy match that accepts the usual forms of the same name. Never ask a tool to require an exact match. When more than one option matches a caller's value equally, the tool either takes the first in the site's order and returns the one it used, as the site labels it, or lists them for the caller to choose one, in a question or a refusal whose options each select exactly one of them. Which of the two is the tool's own choice, never a finding or a reason to deny, except for an address, pickup or drop-off value, which only the address matcher chooses. A tool that takes the first and does not return the one it used is a schema_mismatch finding with reason source_correction.";
     expect(guardianPublicationPolicy.split(rule)).toHaveLength(2);
     expect(guardianExecutionPolicy(nativeExecutionEnvironment)).toContain(`\n${rule}\n`);
   });
@@ -1026,7 +1028,8 @@ describe("the publication policy", () => {
   // choice. Only taking the first without returning the match it used is a finding, and one the
   // publication review can return.
   it("finds a tool that takes the first of equal matches without returning it, never the choice", () => {
-    const choice = "Which of the two is the tool's own choice, never a finding or a reason to deny.";
+    const choice =
+      "Which of the two is the tool's own choice, never a finding or a reason to deny, except for an address, pickup or drop-off value, which only the address matcher chooses.";
     const missing =
       "A tool that takes the first and does not return the one it used is a schema_mismatch finding with reason source_correction.";
     expect(guardianPublicationPolicy.split(`${choice} ${missing}`)).toHaveLength(2);
@@ -1305,9 +1308,9 @@ describe("the publication policy", () => {
   // the address resolver takes it and still refuses another address. A choice among the account's
   // saved addresses is not a typed address. An address typeahead the tool drives itself is also an
   // own picker, whose fix names the address resolver too, so the two rules ask for the same fix.
-  it("finds a typed street address matched without the address resolver", () => {
+  it("finds a typed address, pickup or drop-off value matched without the address resolver", () => {
     expect(publicationOutputPolicy).toContain(
-      "Own address match: source that matches a street address the caller typed against the site's suggestions with pickValue, rankChoices or matching of its own, instead of matchAddressRows over the rows pickerAddressRows read, or resolveAddress over the site's own suggestion request. A choice among the account's saved addresses is not this finding.",
+      "Own address match: source that matches an address, pickup or drop-off value the caller typed against the site's suggestions with pickValue, rankChoices, taking the first or matching of its own, instead of matchAddressRows over the rows pickerAddressRows read, or resolveAddress over the site's own suggestion request. A choice among the account's saved addresses is not this finding.",
     );
     expect(
       publicationOutputPolicy.slice(
@@ -1315,7 +1318,7 @@ describe("the publication policy", () => {
         publicationOutputPolicy.indexOf("Own address match:"),
       ),
     ).toContain(
-      "The fix is pickValue or pickValues, with their options for the site's quirks, such as query, answered, committed, commit or blur; for a street address the caller typed, it is pickerTypeAddress and pickerAddressRows in one call, matchAddressRows in the script, then pickerMatchAddress in the next call, clicking the row it returns.",
+      "The fix is pickValue or pickValues, with their options for the site's quirks, such as query, answered, committed, commit or blur; for an address, pickup or drop-off value the caller typed, it is pickerTypeAddress and pickerAddressRows in one call, matchAddressRows in the script, then pickerMatchAddress in the next call, clicking the row it returns.",
     );
     expect(guardianPublicationPolicy).toContain(publicationOutputPolicy);
   });

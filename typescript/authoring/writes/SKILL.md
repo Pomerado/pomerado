@@ -71,8 +71,9 @@ says (a tool that fills a cart and returns its quote in one run may use the site
 with the auth skill: read-only `explore` to find the login, then
 `authenticate`. Before the first `act` step you may still explore
 read-only, for example to read the first page's options, and set the session's delivery or
-pickup location as a read (above), with `pickValue` and the site's own confirm control in one
-step. Never fill, select, add, save or submit anything else there, except one made-up key in
+pickup location as a read (above), with `pickValue`, or the core skill's address helpers for
+an address, pickup or drop-off value, and the site's own confirm control in one step. Never
+fill, select, add, save or submit anything else there, except one made-up key in
 the site's own format, with a
 serial past any the site lists, per input that takes a record's own key, looked up once in the
 site's own lookup to see what it shows for a key it has no record of (core skill), and the
@@ -237,7 +238,8 @@ During the session:
   the option.
 - Read each typed value back once its field settles, before the step's commit. When the site
   rewrote it as it was typed or on leaving the field, such as an address it standardized, or
-  offered exactly one suggestion for it that matches it cleanly or that the address matcher accepted,
+  offered exactly one suggestion for it that matches it cleanly (for an address, pickup or
+  drop-off value, one the address matcher accepted),
   take the site's version, as you would a picked
   option: later read-backs, such as a review page, summary or confirmation, compare against
   it, and the output returns it for that field. Ask about any other lone suggestion as about a
