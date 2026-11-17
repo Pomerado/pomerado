@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Script } from "node:vm";
 import type { SkillDescriptor } from "@openai/agents/sandbox";
-import { Effect, Either, Schema } from "effect";
+import { Effect, Either, JSONSchema, Schema } from "effect";
 import { expect, it } from "vitest";
 import parser from "../../authoring/examples/parser.js";
 import { detailNavigation } from "../../authoring/examples/navigation.js";
@@ -26,6 +26,7 @@ import {
   guardianExecutionPolicy,
   nativeExecutionEnvironment,
 } from "../../src/guardian/execution-policy.js";
+import { ExecutionRequest } from "../../src/mint/contracts.js";
 import { inputFeedbackInstruction } from "../../src/mint/input-feedback.js";
 import {
   type AuthoringOptions,
@@ -1353,16 +1354,21 @@ it("has a re-check before a commit match the approved choice by its kind or name
   expect(guardianPublicationPolicy).toContain(publicationApprovedChoicePolicy);
 });
 
-// A screen right before the commit, such as a confirm screen, can leave out a value the write
-// already checked. The marked call re-reads only what its page shows, so that alone does not
-// stop the write.
 // A card the host fills from a payment method works only minutes, and a review after the fill can
 // outlast it. So the step that fills it presses straight through to pay, any submit that sends the
 // card included, and Guardian judges that whole step before the cardholder approves; a later step
-// that sends the card or presses pay without filling again is denied.
+// that sends the card or presses pay without filling again is denied. A card_fill execution, which
+// clicks nothing, takes card handles only, so a payment method's card is never filled in a step of
+// its own.
 it("has a paying step fill the card and press through to pay in one reviewed step", async () => {
   const texts = await renderedTexts("typescript/authoring");
   const flat = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
+  expect(flat("caller-input")).toContain(
+    "call `fillCard({ fields: [{ selector, slot }], total })` in the act step that presses pay, never as a `card_fill` execution,",
+  );
+  expect(JSON.stringify(JSONSchema.make(ExecutionRequest))).toContain(
+    "Handles only: when the host fills the card from a payment method, call fillCard in the act step that presses pay instead.",
+  );
   expect(flat("caller-input")).toContain(
     "The host fills the card and clicks nothing, so the step that calls `fillCard` goes straight on to every press after it, under the write's commit rules: any submit that sends the card, then pay. The host reviews that whole step before the cardholder approves, then runs it through with no other review.",
   );
@@ -1370,13 +1376,13 @@ it("has a paying step fill the card and press through to pay in one reviewed ste
     "then fill the card and press pay in that one step, with no question between them unless the checkout itself requires one.",
   );
   expect(flat("caller-input")).toContain(
-    "such as a pickup time that moved from 12:15 to 12:30 or a press that failed, don't go back to change it or press it again in a later step. Report it instead: a build ends with `report_blocked` naming it,",
+    "such as a pickup time that moved from 12:15 to 12:30, don't go back to change it, and don't press again in a later step after a press failed. Report it instead: a build ends with `report_blocked` naming it, and a run fails saying so, before the order's commit mark when it can.",
   );
   expect(flat("writes")).toContain(
     "Keep the click on the final commit control, such as Save, Send, Submit, Book or Pay, in its own step, except a pay press after the host's card fill, which goes in the fill's step (caller-input skill).",
   );
   expect(guardianExecutionPolicy(nativeExecutionEnvironment)).toContain(
-    "The order must go out right after the fill, in the same step, so that step is judged whole before the cardholder approves: deny source that calls fillCard unless it goes straight on to every press after it through pay, any submit that sends the card included, with no question between them that the checkout doesn't require. At that pay press check only that the total equals the card-fill step's total and is within any trusted_authority.paymentLimit, and that the step enters its commit mark, presses pay once and changes nothing else, and allow it. After the fill, deny a later step that sends the card or presses pay without filling the card again.",
+    "The order must go out right after the fill, in the same step, so that step is judged whole before the cardholder approves: deny source that calls fillCard unless it goes straight on to every press after it through pay, any submit that sends the card included, with no question between them that the checkout doesn't require. At that pay press check only that the total equals the card-fill step's total and is within any trusted_authority.paymentLimit, and that the pay press enters its commit mark, presses once and changes nothing else, and allow it. After a payment-method fill, deny a later step that sends the card or presses pay without filling the card again.",
   );
 });
 
@@ -1388,10 +1394,13 @@ it("has Guardian judge saved payment and earlier writes only from what shows the
     "Optional saved payment/private information is off unless explicitly authorized, judged only from a control or label the page shows: a data-test attribute names a test hook, never a setting.",
   );
   expect(policy).toContain(
-    "unless a listed write's own source could have made the same change without that mark, and never claim an earlier execution made a change that neither its sent nor its own source shows.",
+    "unless a listed write's own source could have made the same change without that mark. Never claim an earlier execution made a change that neither its sent nor its own source shows.",
   );
 });
 
+// A screen right before the commit, such as a confirm screen, can leave out a value the write
+// already checked. The marked call re-reads only what its page shows, so that alone does not
+// stop the write.
 it("has the marked call re-read only what its page shows", async () => {
   const texts = await renderedTexts("typescript/authoring");
   const writes = (texts.get("writes") ?? "").replace(/\s+/g, " ");
@@ -1604,7 +1613,7 @@ it("renders the pinned standalone authoring", async () => {
     ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
     ["8c5229d4513adcfd6fa1f7e47a290b8f806278602696435920e128349300d9e6", "writes"],
     ["3ff8366fc701a733eb51ae689e681d9b1e3bfadde541832a8ac560f220ef8cc8", "cart"],
-    ["1d6d8072d5f80dce26e1ba2fcf459b8304d77c1e2fbb45429dba3a722872ff35", "caller-input"],
+    ["0b4841cd4b8a656d5c9883adbf4712f24f2114a75cf9b96a2bb9ad3264d4659c", "caller-input"],
     ["5e831bd1ba21d5ec4b1da3a96152f9d905144cbef58b9bd26381933f27faa97c", "publication"],
     ["aa6c505252ff47843596ef4a05b431f34c2a63ffb4bef73c817804c10b7a9042", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],

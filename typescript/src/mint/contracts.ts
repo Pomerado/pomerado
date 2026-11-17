@@ -1020,7 +1020,7 @@ export const ExecutionRequest = Schema.Struct({
   cardFillStep: Schema.optional(
     CardFillStep.annotations({
       description:
-        "Only with purpose card_fill, target liveBrowser and entrypoint operation/card-fill-step.json: the payment card fields on the checkout showing now, each the field's own selector, on the site's page or inside the payment provider's frame (the host finds the frame that holds it), and the card handle a request_input answer gave you for it. On a checkout the site opened in a pop-up, also name popup as a sign-in step does. The host types the caller's card into them and clicks nothing.",
+        "Only with purpose card_fill, target liveBrowser and entrypoint operation/card-fill-step.json: the payment card fields on the checkout showing now, each the field's own selector, on the site's page or inside the payment provider's frame (the host finds the frame that holds it), and the card handle a request_input answer gave you for it. Handles only: when the host fills the card from a payment method, call fillCard in the act step that presses pay instead. On a checkout the site opened in a pop-up, also name popup as a sign-in step does. The host types the caller's card into them and clicks nothing.",
     }),
   ),
   /**

@@ -29,7 +29,7 @@ import type { CardFillTotal, ScriptCardFillAnswer } from "../runtime/script-card
  * payment frame origin, has Guardian review the step and the screen with handles only, then inserts
  * each value natively into the field it bound. No value ever enters page code, Guardian's input,
  * the minter's context or the step's result, and the step clicks nothing: the submit that books or
- * buys is a later step under the write rules. A step that names each field's card slot instead,
+ * buys comes after it under the write rules. A step that names each field's card slot instead,
  * with the checkout's total, is one a host fills from a payment method the caller named
  * (`fillVia`): core runs the same checks and review, then hands the host the checked fields and
  * reads no card value.
