@@ -854,6 +854,18 @@ it("has the minter read back a write, accept recent-search saves and look before
   );
 });
 
+// A tool that only copied pages was built as a write because the site marks each page it opens
+// as seen. Opening pages is reading, so the rule on what a read may do says so.
+it("keeps opening pages the site marks as visited or as progress part of a read", async () => {
+  const writes = ((await renderedTexts("typescript/authoring")).get("writes") ?? "").replace(
+    /\s+/g,
+    " ",
+  );
+  expect(writes).toContain(
+    "a task that needs that is a write build. Opening pages that the site then marks as visited or as progress, without submitting an answer or a form, is part of a read, unless the request asks to change that progress. Signed out, setting",
+  );
+});
+
 /*
  * A site rewrote an address as it was typed, writing Parkway as PKWY, and the read-back refused a
  * correct save. A write takes the site's version of a typed value, as it would a picked option,
@@ -1566,7 +1578,7 @@ it("renders the pinned standalone authoring", async () => {
     ["539abe36b602c8e2eff8745dd0462aea41837a20cc0b90cbef7a01cbad6fb89a", "testing"],
     ["d524204c6ed2dc0fa773d6e5cf0aef993e2b48ee9db3fcbf291e40ebe8c9913d", "pagination"],
     ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
-    ["54284ef5a6dd2a2e01dc75b920ee0c9da968c7a41df8c8406ca7d17f0f225924", "writes"],
+    ["257086cccf42fa59b62845c54d95f389fbaccca142fbaa753570e01fa3a409fb", "writes"],
     ["3ff8366fc701a733eb51ae689e681d9b1e3bfadde541832a8ac560f220ef8cc8", "cart"],
     ["3bd0c46940f314c940bcdb3a807ac9d18759123682f349b5c603f94ca14626ad", "caller-input"],
     ["5e831bd1ba21d5ec4b1da3a96152f9d905144cbef58b9bd26381933f27faa97c", "publication"],
