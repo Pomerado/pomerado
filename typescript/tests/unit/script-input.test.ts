@@ -563,6 +563,11 @@ describe("a purchase confirm's order", () => {
         ),
       ],
       [
+        "a quantity past its third decimal place, a check with no words of its own",
+        { ...order, items: [{ ...order.items[0], quantity: 1.0001, unit: "kg" }] },
+        because("order.items[0].quantity does not pass its check"),
+      ],
+      [
         "an item with neither a price nor a line total",
         { ...order, items: [{ name: "Synthetic cable", quantity: 2 }] },
         because(
