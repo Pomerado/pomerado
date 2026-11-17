@@ -222,8 +222,8 @@ earliest and latest times the caller accepts, and choose the first offered time 
 In the step that places the order, name the site's reply to that order request and the order's
 ID shown on the page as that wait's answers, beside the site's refusal and error messages, as the
 writes skill says for a commit, and read the ID from the reply or the page it leaves. Prefer
-passing a sign of progress that can show before them as that wait's `loading`, or naming it in
-`pending` as the writes skill says, over an answer that ends the wait.
+passing a sign of progress that can show before them as that wait's `loading`, or as an outcome
+whose key you name in `pending` as the writes skill says, over an answer that ends the wait.
 
 ## A checkout's inputs and output
 

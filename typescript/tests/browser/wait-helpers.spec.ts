@@ -145,6 +145,13 @@ test("a pending outcome counts only once the action brought it, and only as some
       action: () => page.locator("#cancel").click(), pending: "sent",
     });`);
   expect(refused.error).toContain('waitForOutcome pending "sent" names a response outcome; pending takes outcomes the page shows');
+  // A locator passed as pending fails naming the fix, before the action runs.
+  const locator = await call(page, `await waitForOutcome({ cancelled: page.locator(".success") }, {
+      action: () => page.locator("#cancel").click(), pending: page.locator(".info"),
+    });`);
+  expect(locator.error).toContain(
+    "waitForOutcome pending takes outcome keys, not locators: add the locator to the outcomes and name its key in pending",
+  );
 });
 
 test("an in-between answer still showing as the call nears its end is the answer, which confirmCommit reports pending", async ({
