@@ -8,6 +8,8 @@ import type {
 import type { SignInRecipe } from "../../src/destinations/sign-in-recipe.js";
 import { makeInputAsker } from "../../src/inputs/callback.js";
 import { makeRunSecrets } from "../../src/inputs/secrets.js";
+import { replayAutofillRecipe } from "../../src/runtime/autofill-replay.js";
+import type { AutofillHooks } from "../../src/runtime/autofill-state.js";
 import type { InputAnswers, Question } from "../../src/runtime/input-request.js";
 import {
   signInForRun,
@@ -189,6 +191,8 @@ interface Answers {
   readonly confirm?: boolean;
   /** The sign-in link the owner pastes. */
   readonly link?: string;
+  /** The owner gives no code when asked for one. */
+  readonly noCode?: boolean;
 }
 const owner = (fake: ScriptedSite, answers: Answers = {}) => {
   const codes = [...(answers.codes ?? [code])];
@@ -206,7 +210,7 @@ const owner = (fake: ScriptedSite, answers: Answers = {}) => {
       if (answers.confirm !== false) fake.approve();
       return { confirmed: answers.confirm !== false };
     }
-    if (question.id === "code") return codes.shift() ?? code;
+    if (question.id === "code") return answers.noCode === true ? undefined : (codes.shift() ?? code);
     if (question.id === "date_of_birth") return dates.shift() ?? "1990-04-12";
     if (question.id === "sign_in_link") return answers.link ?? "synthetic-answer";
     return "synthetic-answer";
@@ -907,8 +911,7 @@ it("names the number a device approval's matchSelector shows", async () => {
 // An emailed link that signs in only the browser that opens it: a step recorded with
 // `delivery: "paste"` asks the owner for the link and opens it on the run's own browser, and only
 // on the site.
-const pastedLinkSite = (link: string) => {
-  const fake = approvalSite("approve");
+const pastedLinkSite = (link: string, fake: ScriptedSite = approvalSite("approve")) => {
   const signIn = fake.approve;
   const open = fake.browser.open;
   return {
@@ -976,6 +979,73 @@ it.each([
     expect(fake.filled("approve")).toEqual([[code]]);
   },
 );
+
+// A host's own code, as from a saved authenticator seed, never goes into a code box on a recorded
+// emailed link's screen: the recording says the site emails, so the seed's code would be refused.
+it("never types the host's own code into the code box on a recorded email link's screen", async () => {
+  const seedCode = "111111";
+  const fake = codeInPlaceOfLinkSite();
+  const { ask } = owner(fake);
+  const hooks: AutofillHooks<never> = {
+    inspect: fake.browser.inspect,
+    fill: fake.browser.fill,
+    check: (indicator, screens) => fake.browser.confirm(indicator, screens, screens),
+    confirm: (indicator, _identifiers, screens) => fake.browser.confirm(indicator, screens, screens),
+    open: fake.browser.open,
+    markerVisible: fake.browser.markerVisible,
+  };
+  const outcome = await Effect.runPromise(
+    Effect.scoped(
+      replayAutofillRecipe({
+        recipe: recipe(loginStep, pasteStep),
+        hooks,
+        entryUrl: `${origin}/login`,
+        credentials: login,
+        ask,
+        broker: {
+          register: () => Effect.void,
+          registeredSecretMatches: () => Effect.succeed([]),
+        },
+        site,
+        correlation: undefined,
+        emit: () => Effect.void,
+        failures: {
+          unanswered: () => new SignInRunFailed({ code: "NeedsInput", reason: "code" }),
+          unavailable: () => new SignInRunFailed({ code: "NeedsInput", reason: "unavailable" }),
+        },
+        sent: { current: false },
+        timing: fastTiming,
+        hosted: {
+          login: (base, step) => ({ ...base, seedAllowed: step.seedAllowed }),
+          code: (held) =>
+            Effect.succeed({
+              slot: "code" as const,
+              value: (held as { seedAllowed?: boolean }).seedAllowed === true ? seedCode : code,
+            }),
+        },
+      }),
+    ),
+  );
+  expect(outcome).toMatchObject({ outcome: "signed_in" });
+  expect(fake.filled("approve")).toEqual([[code]]);
+});
+
+// A code box beside a recorded emailed link may be for a code the owner can't give, such as an
+// authenticator app's: with no code given, the owner is asked for the link, as before.
+it("asks for a recorded email link when its screen's code box gets no code", async () => {
+  const link = `${origin}/magic/AbCdEf0123456789`;
+  const fake = pastedLinkSite(link, codeInPlaceOfLinkSite());
+  const { result } = await signIn(recipe(loginStep, pasteStep), fake, { link, noCode: true });
+  expect(result).toEqual(Either.right({ alreadySignedIn: false }));
+  expect(steps(fake)).toEqual([
+    "ask:missing_credentials",
+    "fill:login",
+    "ask:code",
+    "ask:sign_in_link",
+  ]);
+  expect(fake.filled("approve")).toEqual([]);
+  expect(fake.trace).toContain("open:/magic/AbCdEf0123456789");
+});
 
 it("fails RecipeFailed when the owner declines a recorded approval", async () => {
   const fake = approvalSite("approve");

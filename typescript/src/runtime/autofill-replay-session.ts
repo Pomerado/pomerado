@@ -196,6 +196,12 @@ const makeReplaySession = <E extends YieldableError, V extends string, L extends
      */
     unrecordedCodeScreen: undefined as string | undefined,
     /**
+     * The code box on a recorded emailed link's screen that this replay is answering, by its page
+     * and field (`codeScreenOf`): the recording says the site emails, so it never takes the host
+     * generator's code, and with no code given the link is asked for instead.
+     */
+    linkCodeScreen: undefined as string | undefined,
+    /**
      * The login's workspace origin as this replay knows it: the pinned one, or the host this
      * replay admitted after it sent the login's identifier on the site's own sign-in.
      */

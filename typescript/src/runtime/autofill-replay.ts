@@ -430,10 +430,12 @@ const runScreen = <E extends YieldableError, V extends string, L extends Autofil
       if (approval === "screen_changed") return replay.outcome(approval);
       // A site that emailed a sign-in link when the recipe was recorded may text or email a code
       // this time, and show its box where the link's screen was: the code goes in as on a code
-      // screen the recipe never recorded (`runFoundCodeScreen`), and nobody is asked for a link.
+      // screen the recipe never recorded (`runFoundCodeScreen`), and nobody is asked for a link,
+      // unless nobody gives the code: never the host generator's, as the recording says the site
+      // emails.
       // While no code may have gone out, so the look never sends a second one.
       if (recorded.approval === "email_link" && !replay.sent.maySent.has("code")) {
-        const code = yield* runFoundCodeScreen(input, replay);
+        const code = yield* runFoundCodeScreen(input, replay, true);
         if (code === "ran") return "continue" as const;
         if (code !== "none") return replay.outcome(code);
       }
@@ -652,11 +654,15 @@ const retryCode = <E extends YieldableError, V extends string, L extends Autofil
  * box on it takes no code. A fill that typed no code leaves the sign-in as it was, its step dropped
  * from the screens that ran; one that typed it and sent nothing stops, as the code it holds would
  * count as sent there.
+ * On a recorded emailed link's screen (`onLinkScreen`), the recording says the site emails, so the
+ * code never comes from the host's generator, and a code nobody gave leaves the link's question to
+ * ask (`none`), as nothing was typed.
  * `ran` when the code went out, `none` when none shows, or why it stopped.
  */
 const runFoundCodeScreen = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   input: AutofillReplayInput<E, V, L>,
   replay: Replay<E, V, L>,
+  onLinkScreen = false,
 ) =>
   Effect.gen(function* () {
     const field = yield* findCodeScreen(input.hooks);
@@ -664,9 +670,17 @@ const runFoundCodeScreen = <E extends YieldableError, V extends string, L extend
     if ("outcome" in found || !onSignInOrigin(replay.signInOrigins(), found.inspection))
       return "none" as const;
     if (!(yield* lastScreenGone(input, replay))) return "none" as const;
-    replay.progress.unrecordedCodeScreen = codeScreenOf(found.inspection);
+    const screen = codeScreenOf(found.inspection);
+    const earlier = replay.progress.unrecordedCodeScreen;
+    replay.progress.unrecordedCodeScreen = screen;
+    if (onLinkScreen) replay.progress.linkCodeScreen = screen;
     const before = replay.progress.ran.length;
     const failed = yield* replay.runStep(found.step, found.inspection);
+    if (failed === "link_code_unanswered") {
+      replay.progress.unrecordedCodeScreen = earlier;
+      replay.progress.linkCodeScreen = undefined;
+      return "none" as const;
+    }
     if (failed === undefined && replay.sent.maySent.has("code")) return "ran" as const;
     if (replay.sent.maySent.has("code") || replay.state.filled.has("code"))
       return failed ?? "sign_in_check_failed";
