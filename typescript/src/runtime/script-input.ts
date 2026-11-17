@@ -114,11 +114,11 @@ export const ScriptOption = Schema.Struct({
    */
   label: Schema.String.pipe(Schema.minLength(1)),
   /**
-   * A detail of the caller's own account, such as a saved card, a passenger or an address. Its
-   * full label appears only on the protected page; the API and MCP show it masked.
+   * A detail of the caller's own account, such as a saved card, a passenger or an address. A host
+   * that masks shows `maskedLabel` in place of its full label.
    */
   accountSpecific: Schema.optional(Schema.Boolean),
-  /** How an account-specific option reads outside the protected page, like "Visa •••• 4242". */
+  /** How an account-specific option reads where a host masks, like "Visa •••• 4242". */
   maskedLabel: Schema.optional(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(64))),
   /** Picking it is the caller's no to the write, as a confirm's no is. */
   declines: Schema.optional(Schema.Boolean),
@@ -440,7 +440,7 @@ const cutTo = (text: string, limit: number) => {
 /**
  * A site field's prompt: the page's label whole, and after it the full text of each option its
  * label had to cut, by the option's number from 1, all cut only past `longestPrompt`. An
- * account-specific option's text never joins it: that label shows only on the protected page.
+ * account-specific option's text never joins it: a host that masks shows that label masked.
  */
 const siteFieldPrompt = (label: string, options: ReadonlyArray<ScriptOption> = []) =>
   cutTo(
