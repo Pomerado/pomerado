@@ -123,6 +123,58 @@ it.each([
   expect(host.applied).toEqual([]);
 });
 
+// A host whose answering person may settle what the task requires, while its callers keep every
+// output the registered contract declares, names `owner_requirements`. Fails while the harness
+// reads that value as nobody, which refuses the requirement change too.
+const colorRequirement = {
+  setting: "requirement",
+  change: "add",
+  text: "Read only the notes saved on the requested day.",
+};
+it.each([
+  {
+    case: "a requirement change its answer confirms",
+    update: { ...dropColor, changes: [colorRequirement] },
+    result: { status: "updated", task: { revision: 1 } },
+    reviewed: true,
+  },
+  {
+    case: "a requirement change that cites no answer",
+    update: { ...dropColor, changes: [colorRequirement], confirmedBy: [] },
+    result: { status: "clarification_required", reason: "confirmation_required" },
+    reviewed: false,
+  },
+  {
+    case: "an output it loosens",
+    update: dropColor,
+    result: { status: "update_refused", reason: "owner_unavailable" },
+    reviewed: false,
+  },
+  {
+    case: "a requirement change beside an output it loosens",
+    update: { ...dropColor, changes: [colorRequirement, dropColor.changes[0]] },
+    result: { status: "update_refused", reason: "owner_unavailable" },
+    reviewed: false,
+  },
+])(
+  "settles $case under owner_requirements as the owner path does, but no loosened output",
+  async ({ update, result, reviewed }) => {
+    const host = updateHost();
+    const answer = await propose(update, {
+      ...host.dependencies,
+      taskUpdateConfirmer: () => Effect.succeed("owner_requirements"),
+    });
+    expect(answer).toMatchObject(result);
+    // Guardian reviews what reaches it as the owner path's, which is all that may.
+    expect(host.reviews.map(({ update }) => update.maintenance)).toEqual(
+      reviewed ? [{ confirmer: "owner" }] : [],
+    );
+    // The refusal names only the output it can't confirm, not the requirement it can.
+    if (answer?.["reason"] === "owner_unavailable")
+      expect(String(answer["instruction"])).not.toContain("requirement");
+  },
+);
+
 it("asks for the owner's confirmation before reviewing a contract change that cites none", async () => {
   const host = updateHost();
   const result = await propose(
@@ -287,6 +339,35 @@ it.each([
     maintenance: { confirmer: "none" },
   });
   expect(host.applied[0]?.update.changes).toEqual([change]);
+  expect(outcome).toMatchObject({ build: "published", publicationRef: "published-revision" });
+});
+
+// A widened output under `owner_requirements` is refused, yet the repair still publishes: a root
+// branch that only refuses, such as the site declining the account, rides in the source's own
+// output schema, which the harness never holds to the registered contract, so the host's own
+// publication check judges it, not this gate.
+it("refuses a widened output under owner_requirements and still publishes the repair", async () => {
+  const host = updateHost();
+  const { result, outcome, asked } = await repairAndPublish(
+    {
+      summary: "Return the site's refusal when it declines this account.",
+      changes: [
+        {
+          setting: "output",
+          field: "status",
+          change: "widen",
+          text: "The tool may return the site's refusal in place of the notes.",
+        },
+      ],
+      confirmedBy: [],
+      recommend: "update",
+    },
+    { ...host.dependencies, taskUpdateConfirmer: () => Effect.succeed("owner_requirements") },
+  );
+  expect(result).toMatchObject({ status: "update_refused", reason: "owner_unavailable" });
+  expect(asked).toBe(0);
+  expect(host.reviews).toEqual([]);
+  expect(host.applied).toEqual([]);
   expect(outcome).toMatchObject({ build: "published", publicationRef: "published-revision" });
 });
 

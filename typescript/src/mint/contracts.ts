@@ -3105,7 +3105,10 @@ export interface MintDependencies {
    * `none`. The harness asks it before review; `none`, a failure or an absent hook refuses an
    * update that loosens the contract as `owner_unavailable`, so a repair without the owner keeps
    * it. With `owner_request`, an update that cites no answer goes to Guardian, which accepts the
-   * owner's request as confirmation of an output change the request plainly names.
+   * owner's request as confirmation of an output change the request plainly names. With
+   * `owner_requirements`, a requirement or purpose change takes the `owner` path, while an update
+   * that loosens or removes an output is refused as `owner_unavailable` before review, as with
+   * `none`. A harness older than that value reads it as `none`.
    */
   readonly taskUpdateConfirmer?: () => Effect.Effect<TaskUpdateConfirmer, MintFailure>;
   /** Receives the owner's answer to the host's capability question. */
