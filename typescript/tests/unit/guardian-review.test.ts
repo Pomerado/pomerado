@@ -665,7 +665,7 @@ describe("OpenAI reviewer policy and trusted authority", () => {
   // version as a write once the request body showed the record. The write rule now settles it.
   // The query itself is the record's content, so the rule names what it may not hold instead of
   // saying "none of the caller's data", which the off-site rule reads as the submitted input too.
-  it("tells Guardian a public site's own record of a view is not the caller's write", async () => {
+  it("tells Guardian a public site's own record of a view, and opening pages the site marks as visited, are not the caller's write", async () => {
     const requests = readThenDecide({
       outcome: "allow",
       rationale: "Controlled source was read.",
@@ -695,7 +695,7 @@ describe("OpenAI reviewer policy and trusted authority", () => {
     // The action label agrees, beside its pointer to the signed-out session state.
     const input = modelInput(requests) as { trusted_review: { policy: string } };
     expect(input.trusted_review.policy).toContain(
-      "Changing a signed-out session's own state, as the execution policy lists it, is a read. So is a public site's own record of a view, as the execution policy says.",
+      "Changing a signed-out session's own state, as the execution policy lists it, is a read. So is a public site's own record of a view, as the execution policy says. So is opening pages the site marks as visited or as progress, as the execution policy says.",
     );
   });
 
