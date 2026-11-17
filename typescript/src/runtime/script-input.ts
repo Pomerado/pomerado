@@ -199,7 +199,8 @@ export type AskSpecOf<Declaration> = Declaration extends { readonly type: "site_
  * `InvalidOptions` always sets `message`. It names the declared question, or every question asked
  * when the ask as a whole broke a rule, then the option by its number from 1 or the field, such as
  * `order.items[0].price`, and the rule it broke in fixed words, with a length or count when the
- * rule is one. It never holds an option's value or label, or any other value the script gave.
+ * rule is one. It never holds an option's value or label, or any other value the script gave,
+ * and names a field an order does not take only by a plain name.
  */
 export class ScriptInputFailure extends Data.TaggedError("ScriptInputFailure")<{
   readonly code: "Unavailable" | "NoResponse" | "Unauthorized" | "Undeclared" | "InvalidOptions";
@@ -305,7 +306,10 @@ const ruleOf = (issue: ParseResult.Refinement): string => {
   return Option.isSome(description) ? `must be ${description.value}` : "does not pass its check";
 };
 
-/** A field name a failure may say: the schema's own, never text that may come from the page. */
+/**
+ * A field name a failure may say: a plain identifier, as a field's name is. Any other key goes
+ * unnamed.
+ */
 const plainName = /^[A-Za-z_$][\w$]{0,63}$/u;
 
 /**
@@ -403,8 +407,12 @@ const refusedRequest = (
       [question.question.id],
       `${field.length === 0 ? "it" : pathText(field)} ${rule}`,
     );
-  if (first === "order" && orderedBy !== undefined)
-    return invalidOptions([orderedBy], `${pathText(path)} ${rule}`);
+  // The notice is the order's own text, which the runtime writes from it.
+  if ((first === "order" || first === "notice") && orderedBy !== undefined)
+    return invalidOptions(
+      [orderedBy],
+      `${first === "notice" ? "the order's notice" : pathText(path)} ${rule}`,
+    );
   return invalidOptions(
     questions.map((asked) => asked.question.id),
     `${path.length === 0 ? "the request" : pathText(path)} ${rule}`,
@@ -529,6 +537,7 @@ const askedQuestion = (
       return Either.flatMap(offeredOptions(id, given), ({ values, offered }) => {
         const minSelections = declaration.minSelections ?? 1;
         const maxSelections = Math.min(declaration.maxSelections ?? offered.length, offered.length);
+        if (offered.length === 0) return Either.left(invalidOptions([id], "options is empty"));
         return minSelections > maxSelections
           ? Either.left(
               invalidOptions(
@@ -562,7 +571,7 @@ const askedQuestion = (
     case "site_field": {
       const pageLabel = typeof label === "string" ? label.trim() : "";
       if (pageLabel === "")
-        return Either.left(invalidOptions([id], "its label is missing or empty"));
+        return Either.left(invalidOptions([id], "its label is missing, empty or not text"));
       if (given === undefined)
         return Either.right({
           question: { id, type: "text" as const, prompt: siteFieldPrompt(pageLabel) },

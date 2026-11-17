@@ -308,7 +308,17 @@ describe("a script question that can't be asked", () => {
     [
       "a site field with an empty label",
       { extra: { label: "  " } },
-      "Script question extra could not be asked because its label is missing or empty.",
+      "Script question extra could not be asked because its label is missing, empty or not text.",
+    ],
+    [
+      "a site field with a label that is not text",
+      { extra: { label: 5 } },
+      "Script question extra could not be asked because its label is missing, empty or not text.",
+    ],
+    [
+      "a multiple choice given an empty list",
+      { picks: { options: [] } },
+      "Script question picks could not be asked because options is empty.",
     ],
     [
       "more selections needed than options offered",
@@ -582,6 +592,21 @@ describe("a purchase confirm's order", () => {
       ["an order that is not an object", "Synthetic order", because("order must be an object")],
     ])("names the field and the rule for %s", (_, given, message) => {
       expect(refusal({ confirm_order: { options, order: given } })).toBe(message);
+    });
+
+    it("names the order's notice, with the question that carries the order, when it runs too long", () => {
+      const items = Array.from({ length: 80 }, (_, index) => ({
+        name: `${"Synthetic item ".repeat(13)}${index}`,
+        quantity: 1,
+        price: "1.00",
+      }));
+      for (const asked of [
+        { confirm_order: { options, order: { ...order, items } } },
+        { note: {}, confirm_order: { options, order: { ...order, items } } },
+      ])
+        expect(refusal(asked)).toMatch(
+          /^Script question confirm_order could not be asked because the order's notice is \d+ characters; the limit is 16384\.$/,
+        );
     });
 
     it("names the one-order rule", () => {
