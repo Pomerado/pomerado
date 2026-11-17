@@ -237,14 +237,15 @@ already asked for, or to solve a CAPTCHA.
      after that, such as a pickup time that moved from 12:15 to 12:30, don't go back to
      change it, and don't press again in a later step after a press failed. Report it
      instead: a build ends with `report_blocked` naming it, and a run fails saying so,
-     before the order's commit mark when it can. Wherever source calls `fillCard`, no source reads a
-     field's value or the page's markup, runs or plants code in the page, opens a
-     DevTools session, takes an accessibility snapshot, screenshot or PDF of the page,
-     records the page, or reads a request body, except in an explore step before the
-     card is filled, so delete such probes before any other step. A ZIP or postal-code
-     field in the card form is slot `billing_postal_code`,
-     named in the same call as the card's other fields: the host fills it from the
-     payer's billing address.
+     before the order's commit mark when it can. A tool that pays never reads a field's
+     value or the page's markup, runs or plants code in the page, opens a DevTools
+     session, takes an accessibility snapshot, screenshot or PDF of the page, records the
+     page, or reads a request body, in any step: write every act step that way from the
+     start, reading what the page shows as text instead. Only an explore step before the
+     card is filled may, so delete such probes before the step that fills the card. A ZIP
+     or postal-code field in the card form is slot `billing_postal_code`, named in the
+     same call as the card's other fields: the host fills it from the payer's billing
+     address.
 2. For a choice, read the options in the execute call that reaches it and return them as
    plain JSON. Each option has a `value` the script acts on and a `label` the caller
    reads. Values are unique within a question. Offer only options the page will accept:
