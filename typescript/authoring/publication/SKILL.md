@@ -153,8 +153,9 @@ Publication refuses a tool for any of these:
     field, or through its one suggestion is not unapplied input; the tool read the site's version
     back and returns it. Nor is a write's `saved_differences` listing a value the site saved
     differently after the final commit, or free text a save before it rewrote.
-  - a free-text place, name or venue that matches several of the site's options equally either
-    takes the first in the site's order and returns the one it used, as the site labels it, or
+  - a free-text place, name or venue, other than an address, pickup or drop-off value, that
+    matches several of the site's options equally either takes the first in the site's order
+    and returns the one it used, as the site labels it, or
     lists them for the caller to choose one, as the tool decides (core skill, the input schema);
   - a check that compares a date with today uses today in the site's time zone, or the place's,
     not in UTC (caller-input skill) ("Date in UTC");

@@ -263,8 +263,9 @@ exception: it is optional unless the task can't run without it (below).
   `place` needs options read with their `lines`. A match on an option's
   first line alone is a candidate, never a pick, when an option a typeahead lists before it
   holds the value's text before its first comma, as whole words, in its first line, and the
-  value's later comma parts in its text. In a read, a looser best match, such as a name with
-  words the value lacks, or the site's first result that shares a word with the value, is
+  value's later comma parts in its text. In a read, a looser best match for anything but an
+  address, pickup or drop-off value, such as a name with words the value lacks, or the site's
+  first result that shares a word with the value, is
   picked with `loose: true`: return the option it used, as the site labels it. In a write,
   `pickValue` returns it as `option_unclear`, with the site's options, each by its full text:
   before the first commit mark, ask the caller with a declared choice question with
@@ -273,8 +274,9 @@ exception: it is optional unless the task can't run without it (below).
   `pickRefusal`. A value it lacks lists the site's closest options first. With no match, throw
   its `pickRefusal`, an
   `InvalidInput` with `field` and `available`, the entries the site showed, even when the site
-  offered only one. With one, use it. With several, decide per tool: take the first in the site's own
-  order and return the one it used, as the site labels it, or list those matches as the site
+  offered only one. With one, use it. With several, decide per tool, except for an address,
+  pickup or drop-off value, which only the address helpers below choose: take the first in
+  the site's own order and return the one it used, as the site labels it, or list those matches as the site
   labels them for the caller to choose one, each selecting exactly one, with a declared choice
   question (.agents/caller-input/SKILL.md) or `pickRefusal`, which lists them as `available`.
   Resolve a typed address through the site's suggestions in two calls: in one, `pickerTypeAddress`,
@@ -312,9 +314,9 @@ exception: it is optional unless the task can't run without it (below).
   with a word added or dropped. Prefer it for confirming the pick, so the read-back agrees with
   the choice, but not for choosing from a list, where a short label can match a longer name it
   isn't, such as UK for Ukraine.
-  When more than one option matches equally, decide per tool: take the first in the site's
-  order and return the one it used, as the site labels it, or list them for the caller to
-  choose one, each selecting exactly one.
+  When more than one option matches equally, decide per tool, except for an address, pickup or
+  drop-off value (above): take the first in the site's order and return the one it used, as
+  the site labels it, or list them for the caller to choose one, each selecting exactly one.
 - In a product or catalog search, a result whose name has every word of the caller's value
   among words the value lacks is a looser match, which a read picks and a write asks about, as
   above: with no match, throw

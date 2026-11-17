@@ -319,6 +319,28 @@ it("lets an instruction to use test or synthetic values supply the values it lea
   );
 });
 
+// A question named a conflict between the request and a rule Guardian holds every build to, and
+// the question review reworded it as asking permission for what the request already asks, which
+// sent the agent back to break the rule. Such a question is never that reword.
+it("never rewords a question naming a conflict between trusted intent and a Guardian rule as already requested", async () => {
+  const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
+  await Effect.runPromise(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
+      pending,
+      question,
+      unreadable,
+    ),
+  );
+  const alreadyRequested = reviewPolicyOf(requests[0])
+    .split("\n")
+    .find((rule) =>
+      rule.startsWith("- asks permission to do what trusted intent already requests"),
+    );
+  expect(alreadyRequested).toContain(
+    "- asks permission to do what trusted intent already requests, never when it names a conflict between that intent and a rule Guardian holds every build to,",
+  );
+});
+
 // A repair asked whether the caller's refused value was invalid or real, and the question review
 // reworded it to offer a replacement value. The host keeps a repair's input fixed, so that answer
 // could never apply.
