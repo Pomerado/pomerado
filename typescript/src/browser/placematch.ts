@@ -31,6 +31,8 @@ const Explained = Schema.Struct({
   notes: Schema.Array(Schema.String),
   cross_script: Schema.Boolean,
   prefer_on_read: Schema.NullOr(Schema.Int),
+  /** The caller's unit as the caller wrote it, which PlaceMatch reads wherever it stands. */
+  unit: Schema.NullOr(Schema.String),
   rows: Schema.Array(
     Schema.Struct({
       verdict: Schema.Literal("same", "different", "unknown"),

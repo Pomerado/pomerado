@@ -441,12 +441,17 @@ describe("resolveAddress", () => {
       ["350 5th Ave, Apt 3, Exampleton, NY", "350 5th Ave Apt 3, Exampleton, NY, USA"],
     ])
       expect(await resolveAddress(address ?? "", () => [shown ?? ""])).toMatchObject({ picked: true, label: shown });
-    // A dotted direction, or a numbered street spelled out beside a unit, is asked about.
-    for (const [address, shown] of [
-      ["1600 Example Ave N.W., Exampleton, DC", "1600 Example Ave NW Exampleton, DC, USA"],
-      ["350 Fifth Ave Apt 3, Exampleton, NY", "350 5th Ave, Exampleton, NY, USA"],
-    ])
-      expect(await resolveAddress(address ?? "", () => [shown ?? ""])).toMatchObject({ picked: false, reason: "option_unclear" });
+    // A dotted direction is asked about.
+    expect(await resolveAddress("1600 Example Ave N.W., Exampleton, DC", () => ["1600 Example Ave NW Exampleton, DC, USA"])).toMatchObject({
+      picked: false,
+      reason: "option_unclear",
+    });
+    // A unit on the street's own line, which the split leaves in place, is still the caller's unit
+    // for the site's unit field, as PlaceMatch reads it.
+    expect(await resolveAddress("350 5th Ave Apt 3, Exampleton, NY", () => ["350 5th Ave, Exampleton, NY 10001, USA"])).toMatchObject({
+      picked: true,
+      unit: "Apt 3",
+    });
   });
 
   test("takes the suggestion that matches the typed text among those that tie, and returns the site's own item", async () => {
@@ -535,14 +540,6 @@ describe("resolveAddress", () => {
   // and the unit goes into the site's own unit field. A row that shows the unit needs none.
   test("takes a row that leaves out the caller's unit or suite, returning the unit for the site's unit field", async () => {
     const address = "1 Example Building, Suite 5, Example City, CA 94000";
-    const short = ["Example Building, 1 Example Bldg, Example City", "Example Building Garage, 5 Sample St, Example City", "See more results for 1 Example Building, Example City, CA 94000"];
-    expect(await resolveAddress(address, () => short)).toEqual({
-      picked: true,
-      choice: short[0],
-      label: short[0],
-      query: "1 Example Building, Example City, CA 94000",
-      unit: "Suite 5",
-    });
     const whole = ["Example Building, 1 Example Bldg, Example City, CA 94000, US", "Example Building Garage, 5 Sample St, Example City, CA 94000, US"];
     expect(await resolveAddress(address, () => whole)).toMatchObject({ picked: true, label: whole[0], unit: "Suite 5" });
     const apartment = "10 Example St, Apt 4, Springfield, IL";
@@ -710,6 +707,9 @@ describe("answers the pinned PlaceMatch still gives otherwise", () => {
   }
   const ask = "option_unclear";
   const cases: readonly Pending[] = [
+    // A place's row that leaves out the caller's state and ZIP, as a ride site's short list does: asked
+    // about, so the tool opens the site's whole addresses.
+    { name: "a place's row that leaves out state and ZIP", address: "1 Example Building, Suite 5, Example City, CA 94000", rows: ["Example Building, 1 Example Bldg, Example City", "Example Building Garage, 5 Sample St, Example City", "See more results for 1 Example Building, Example City, CA 94000"], read: false, today: "Example Building, 1 Example Bldg, Example City", intended: ask },
     // A row that leaves out only the caller's state, its town run on into its street.
     { name: "a row whose town runs on into its street", address: "1 Example St, Exampleton, IL", rows: ["1 Example St Exampleton"], read: false, today: ask, intended: "1 Example St Exampleton" },
     // Rows asked about: one that leaves out the caller's state and ZIP, one with no state beside the

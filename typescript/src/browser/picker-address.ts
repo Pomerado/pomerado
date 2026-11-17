@@ -174,6 +174,12 @@ const explain = (
 /** Whether PlaceMatch answered: it did unless it could not compare the list whole. */
 const answered = (found: ReturnType<typeof explain>): found is Explained => found.answer !== undefined;
 
+/**
+ * The caller's unit: the one split off the address, else the one PlaceMatch read inside it, such as
+ * a unit on the street's own line ("350 Example Ave Apt 3"), else none.
+ */
+const callerUnit = (found: Explained, split: string) => (split !== "" ? split : (found.answer.unit ?? ""));
+
 /** A text's words, folded, between single spaces. */
 const phrase = (text: string) => ` ${foldChoiceText(text).split(/[^\p{L}\p{N}]+/u).filter(Boolean).join(" ")} `;
 
@@ -181,8 +187,9 @@ const phrase = (text: string) => ` ${foldChoiceText(text).split(/[^\p{L}\p{N}]+/
  * The row at `at` of the usable rows, with the unit split off the address for the site's own unit
  * field unless the row shows that unit itself, word for word.
  */
-const take = (found: Explained, at: number, unit: string) => {
+const take = (found: Explained, at: number, split: string) => {
   const index = found.usable[at] ?? -1;
+  const unit = callerUnit(found, split);
   const notes = found.answer.rows[at]?.notes ?? [];
   const shown = unit !== "" && phrase(found.labels[index] ?? "").includes(phrase(unit));
   return { index, unit: notes.includes("unit_not_listed") || !shown ? unit : "" };
@@ -229,7 +236,7 @@ const refusal = (
   request: ReturnType<typeof addressRequest>,
   read: boolean,
 ): AddressRefusal => {
-  const base = { picked: false as const, wanted: request.wanted, available: [...new Set(available)].slice(0, 100), unit: request.unit };
+  const base = { picked: false as const, wanted: request.wanted, available: [...new Set(available)].slice(0, 100), unit: found === undefined ? request.unit : callerUnit(found, request.unit) };
   if (found === undefined) return { ...base, reason: "option_missing", matches: [] };
   const named = !/\d/u.test(request.wanted.split(",")[0] ?? "");
   if (read && !named && found.answer.outcome === "none") return { ...base, reason: "option_missing", matches: [] };
@@ -264,9 +271,9 @@ const crowded = (available: readonly string[], request: ReturnType<typeof addres
  *
  * Matching is PlaceMatch's (third-party/placematch): a row is taken when PlaceMatch says it is the
  * caller's place, the row PlaceMatch takes among such rows, the site's first that keeps the most of
- * the address. A unit the caller gave that the row leaves out is a match, and the unit split off
- * the address is returned as `unit` for the site's own unit field unless the row shows it word for
- * word. Pass `country` when the tool knows the address's country: PlaceMatch reads an address by
+ * the address. A unit the caller gave that the row leaves out is a match, and the caller's unit,
+ * split off the address or read by PlaceMatch on the street's own line, is returned as `unit` for
+ * the site's own unit field unless the row shows it word for word. Pass `country` when the tool knows the address's country: PlaceMatch reads an address by
  * its country's conventions, and asks more often without one. A site's control that lists more results for
  * the typed text is never a row. In a read, with no row that is the place, it takes the row
  * PlaceMatch says a read may take, such as a categorized venue beside a map pin of the same name
