@@ -516,6 +516,21 @@ describe("batchFetch in the page", () => {
     expect(answer.results.map((result) => result.error)).toEqual(Array.from({ length: 40 }, () => "network"));
   });
 
+  it("does not count a fetch past its own timeout as a throttle, after another was answered", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", (url: string, init: RequestInit) =>
+      url === itemUrl(0)
+        ? Promise.resolve(new Response(JSON.stringify({ id: 0 }), { headers: { "content-type": "application/json" } }))
+        : new Promise((_resolve, reject) => init.signal?.addEventListener("abort", () => reject(new Error("aborted")))),
+    );
+    const pending = runBatchFetch([{ url: itemUrl(0) }, { url: itemUrl(1) }]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    const answer = await pending;
+    expect(answer.batches).toEqual([2]);
+    expect(answer.stopped).toBeNull();
+    expect(answer.results.map((result) => (result.ok ? "ok" : result.error))).toEqual(["ok", "network"]);
+  });
+
   it("returns results in input order and stops at a block, marking the rest not sent", async () => {
     const site = scriptedSite((url) =>
       url === itemUrl(6)
