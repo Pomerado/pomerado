@@ -1610,7 +1610,7 @@ it("tells the minter batchFetch backs off on a failed fetch, so it adds no pacin
   );
 });
 
-const sha256 =(text: string) => createHash("sha256").update(text).digest("hex");
+const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 
 /*
  * Pins everything the package gives a standalone minting model: each skill's name, description,
