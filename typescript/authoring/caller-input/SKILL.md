@@ -217,31 +217,35 @@ already asked for, or to solve a CAPTCHA.
      with `ask` instead. Prefer a `secret` question of kind `private_text` for an access
      code, such as a gate, door, alarm or lockbox code.
    - When the host says it fills the card from a payment method, never ask for card
-     parts: call `fillCard({ fields: [{ selector, slot }], total })` with each card
-     field's own CSS selector, matching one editable field across the page's frames,
+     parts: call `fillCard({ fields: [{ selector, slot }], total })` in the act step that
+     presses pay, never as a `card_fill` execution, with each card field's own CSS selector, matching one editable field across the page's frames,
      even inside the payment processor's frame, its slot
      (`card_number`, `card_expiry`, `card_cvc`) and the order total the checkout shows as
      `{ amount, currency }`. On a checkout the site opened in a pop-up, also pass
      `popup: { opener: "primary", origin }` as a sign-in step names it. The host fills
-     the card and clicks nothing, so submit the payment in a later call under the
-     write's commit rules. Fill the card last: first settle and read back everything that
-     can change the order, such as the pickup or delivery time, quantities and options, and
-     every pre-checked box, such as one that saves the payment details, with any question
-     about them answered; then fill the card and press pay in the next step, with no step
-     or question between them unless the checkout itself requires one. The filled card
-     lasts only minutes, a step that leaves or reloads the checkout clears it, and a host
-     may refuse to fill it again once a request that may have charged went out. So never
-     leave the checkout once the card is in: when something must change after that, such
-     as a pickup time that moved from 12:15 to 12:30, don't go back to change it. Report
-     it instead: a build ends with `report_blocked` naming what changed, and a run fails
-     before the order's commit mark saying so. Wherever source calls `fillCard`, no source reads a
-     field's value or the page's markup, runs or plants code in the page, opens a
-     DevTools session, takes an accessibility snapshot, screenshot or PDF of the page,
-     records the page, or reads a request body, except in an explore step before the
-     card is filled, so delete such probes before any other step. A ZIP or postal-code
-     field in the card form is slot `billing_postal_code`,
-     named in the same call as the card's other fields: the host fills it from the
-     payer's billing address.
+     the card and clicks nothing, so the step that calls `fillCard` goes straight on to
+     every press after it, under the write's commit rules: any submit that sends the
+     card, then pay. The host reviews that whole step before the cardholder approves,
+     then runs it through with no other review. Fill the card last: first settle and read
+     back everything that can change the order, such as the pickup or delivery time,
+     quantities and options, and every pre-checked box, such as one that saves the payment
+     details, with any question about them answered; then fill the card and press pay in
+     that one step, with no question between them unless the checkout itself requires one.
+     The filled card lasts only minutes, a step that leaves or reloads the checkout clears
+     it, and a host may refuse to fill it again once a request that may have charged went
+     out. So never leave the checkout once the card is in: when something must change
+     after that, such as a pickup time that moved from 12:15 to 12:30, don't go back to
+     change it, and don't press again in a later step after a press failed. Report it
+     instead: a build ends with `report_blocked` naming it, and a run fails saying so,
+     before the order's commit mark when it can. A tool that pays never reads a field's
+     value or the page's markup, runs or plants code in the page, opens a DevTools
+     session, takes an accessibility snapshot, screenshot or PDF of the page, records the
+     page, or reads a request body, in any step: write every act step that way from the
+     start, reading what the page shows as text instead. Only an explore step before the
+     card is filled may, so delete such probes before the step that fills the card. A ZIP
+     or postal-code field in the card form is slot `billing_postal_code`, named in the
+     same call as the card's other fields: the host fills it from the payer's billing
+     address.
 2. For a choice, read the options in the execute call that reaches it and return them as
    plain JSON. Each option has a `value` the script acts on and a `label` the caller
    reads. Values are unique within a question. Offer only options the page will accept:
@@ -249,13 +253,16 @@ already asked for, or to solve a CAPTCHA.
    the caller sees only the label. Mark an option that stops the write with
    `declines: true`. Picking it is the caller's no, as a confirm's no is.
 3. Mark an option taken from the caller's own account (a saved traveler, address, card
-   or account) with `accountSpecific: true` and a `maskedLabel` that keeps it
+   or account) with `accountSpecific: true`, a `label` that reads in full as the site
+   shows the entry, and a `maskedLabel` that keeps it
    recognizable without its numbers or email: a card's brand and last four digits, an
    address's saved label name without its recipient, street, city or ZIP, or a numbered
-   placeholder for an address with no label name. The API and MCP show the masked label
-   with a notice; only the owner's protected page shows the full label. A masked label
+   placeholder for an address with no label name. A host that masks shows the masked
+   label with its own notice; other hosts show the full label. A masked label
    that still shows five or more digits or an email address is replaced by the label's
-   last four digits or a numbered placeholder. Prefer taking the saved entry the caller
+   last four digits or a numbered placeholder. Prefer a prompt that doesn't say labels
+   are masked or point the caller to a protected page: a host that masks says so itself.
+   Prefer taking the saved entry the caller
    can name as an optional input, matching each entry whose full label contains it as
    whole words or whose masked label it is, and ask only when the input is empty or
    matches no entry or several,

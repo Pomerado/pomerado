@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Context, Data, Effect, Either, Schema, SchemaAST } from "effect";
+import { Context, Data, Effect, Either, Option, ParseResult, Schema, SchemaAST } from "effect";
 import { isCardSlot } from "../destinations/payment-frames.js";
 import type { Deadline } from "./deadline.js";
 import {
@@ -114,11 +114,11 @@ export const ScriptOption = Schema.Struct({
    */
   label: Schema.String.pipe(Schema.minLength(1)),
   /**
-   * A detail of the caller's own account, such as a saved card, a passenger or an address. Its
-   * full label appears only on the protected page; the API and MCP show it masked.
+   * A detail of the caller's own account, such as a saved card, a passenger or an address. A host
+   * that masks shows `maskedLabel` in place of its full label.
    */
   accountSpecific: Schema.optional(Schema.Boolean),
-  /** How an account-specific option reads outside the protected page, like "Visa •••• 4242". */
+  /** How an account-specific option reads where a host masks, like "Visa •••• 4242". */
   maskedLabel: Schema.optional(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(64))),
   /** Picking it is the caller's no to the write, as a confirm's no is. */
   declines: Schema.optional(Schema.Boolean),
@@ -196,9 +196,11 @@ export type AskSpecOf<Declaration> = Declaration extends { readonly type: "site_
  * site field's label missing, empty or given for another type.
  * The others mean the question could not be asked or its answer could not be used.
  *
- * `message`, when set, names the declared question, the option that stopped it by its number
- * from 1, and what is wrong with that option in fixed words. It never holds an option's value or
- * label. A failure the fixed words don't cover keeps only its code.
+ * `InvalidOptions` always sets `message`. It names the declared question, or every question asked
+ * when the ask as a whole broke a rule, then the option by its number from 1 or the field, such as
+ * `order.items[0].price`, and the rule it broke in fixed words, with a length or count when the
+ * rule is one. It never holds an option's value or label, or any other value the script gave,
+ * and names a field an order does not take only by a plain name.
  */
 export class ScriptInputFailure extends Data.TaggedError("ScriptInputFailure")<{
   readonly code: "Unavailable" | "NoResponse" | "Unauthorized" | "Undeclared" | "InvalidOptions";
@@ -228,7 +230,12 @@ interface Asked {
   readonly values: ReadonlyMap<string, string>;
 }
 
-const invalidOptions = () => new ScriptInputFailure({ code: "InvalidOptions" });
+/** Names the declared questions and why they could not be asked, in fixed words. */
+const invalidOptions = (ids: ReadonlyArray<string>, reason: string) =>
+  new ScriptInputFailure({
+    code: "InvalidOptions",
+    message: `Script ${ids.length === 1 ? "question" : "questions"} ${ids.join(", ")} could not be asked because ${reason}.`,
+  });
 
 /** What can be wrong with one option, in the fixed words a run's error may carry. */
 const optionProblem = {
@@ -241,13 +248,126 @@ type OptionProblem = (typeof optionProblem)[keyof typeof optionProblem];
 
 /** Names the declared question, the option by its number from 1 and the fixed words. */
 const invalidOption = (id: string, index: number, problem: OptionProblem) =>
-  new ScriptInputFailure({
-    code: "InvalidOptions",
-    message: `Script question ${id} could not be asked because option ${index + 1} ${problem}.`,
-  });
+  invalidOptions([id], `option ${index + 1} ${problem}`);
+
+/** Where a decode failed, as the keys and positions that lead there, and the rule it broke. */
+interface Broken {
+  readonly path: ReadonlyArray<PropertyKey>;
+  readonly rule: string;
+}
+
+/** What a schema takes, in words for a value of another type. */
+const expected = (ast: SchemaAST.AST): string => {
+  switch (ast._tag) {
+    case "StringKeyword":
+      return "text";
+    case "NumberKeyword":
+      return "a number";
+    case "BooleanKeyword":
+      return "true or false";
+    case "TypeLiteral":
+      return "an object";
+    case "TupleType":
+      return "a list";
+    case "Literal":
+      return typeof ast.literal === "string" ? JSON.stringify(ast.literal) : String(ast.literal);
+    case "Union": {
+      // An optional field's union takes `undefined` too, which the caller of `ask` never passes.
+      const types = ast.types.filter((type) => !SchemaAST.isUndefinedKeyword(type));
+      const [only] = types;
+      return types.length === 1 && only !== undefined
+        ? expected(only)
+        : `one of ${types.map(expected).join(", ")}`;
+    }
+    default:
+      return Option.getOrElse(SchemaAST.getDescriptionAnnotation(ast), () => "another type");
+  }
+};
+
+/**
+ * The rule a refinement states, in its schema's words: a length or count with the given one's,
+ * else its message or description. These schemas' messages are fixed words.
+ */
+const ruleOf = (issue: ParseResult.Refinement): string => {
+  const { ast, actual } = issue;
+  const message = Option.getOrUndefined(SchemaAST.getMessageAnnotation(ast))?.(issue);
+  if (typeof message === "string") return `breaks the rule that ${message}`;
+  const limits = Option.getOrElse(SchemaAST.getJSONSchemaAnnotation(ast), () => ({}));
+  const text = typeof actual === "string";
+  if (text || Array.isArray(actual)) {
+    const most: unknown = Reflect.get(limits, text ? "maxLength" : "maxItems");
+    const least: unknown = Reflect.get(limits, text ? "minLength" : "minItems");
+    const size = text ? `is ${actual.length} characters` : `has ${actual.length} entries`;
+    if (typeof most === "number") return `${size}; the limit is ${most}`;
+    if (typeof least === "number")
+      return actual.length === 0 ? "is empty" : `${size}; it needs at least ${least}`;
+  }
+  const description = SchemaAST.getDescriptionAnnotation(ast);
+  return Option.isSome(description) ? `must be ${description.value}` : "does not pass its check";
+};
+
+/**
+ * A field name a failure may say: a plain identifier, as a field's name is. Any other key goes
+ * unnamed.
+ */
+const plainName = /^[A-Za-z_$][\w$]{0,63}$/u;
+
+/**
+ * Where a decode failed first and the rule it broke, in fixed words. It never holds a given value:
+ * only the schema's field names, positions, lengths and counts.
+ */
+const brokenRule = (
+  issue: ParseResult.ParseIssue,
+  path: ReadonlyArray<PropertyKey> = [],
+): Broken => {
+  switch (issue._tag) {
+    case "Pointer":
+      return brokenRule(issue.issue, path.concat(issue.path));
+    case "Composite": {
+      const issues = Array.isArray(issue.issues) ? issue.issues : [issue.issues];
+      const tried = issues.filter(
+        (member) => !(member._tag === "Type" && SchemaAST.isUndefinedKeyword(member.ast)),
+      );
+      // A member that matched the value's type and failed deeper says more than its type does.
+      const deeper = tried.find((member) => member._tag !== "Type");
+      return deeper === undefined
+        ? { path, rule: `must be ${expected(issue.ast)}` }
+        : brokenRule(deeper, path);
+    }
+    case "Refinement":
+      return issue.kind === "Predicate"
+        ? { path, rule: ruleOf(issue) }
+        : brokenRule(issue.issue, path);
+    case "Transformation":
+      return brokenRule(issue.issue, path);
+    case "Type":
+      return { path, rule: `must be ${expected(issue.ast)}` };
+    case "Missing":
+      return { path, rule: "is missing" };
+    case "Unexpected": {
+      const field = path.at(-1);
+      return {
+        path: path.slice(0, -1),
+        rule:
+          typeof field === "string" && plainName.test(field)
+            ? `has a field it does not take: ${field}`
+            : "has a field it does not take",
+      };
+    }
+    case "Forbidden":
+      return { path, rule: "does not pass its check" };
+  }
+};
+
+/** A path as code writes it, such as `order.items[0].price`. */
+const pathText = (path: ReadonlyArray<PropertyKey>) =>
+  path
+    .map((key, at) =>
+      typeof key === "number" ? `[${key}]` : at === 0 ? String(key) : `.${String(key)}`,
+    )
+    .join("");
 
 const optionFields = new Set(Object.keys(ScriptOption.fields));
-const decodeOption = Schema.decodeUnknownEither(ScriptOption, { onExcessProperty: "error" });
 /** What the fixed words say is wrong with an option `ScriptOption` refuses, when they cover it. */
 const problemOf = (option: unknown): OptionProblem | undefined => {
   if (typeof option !== "object" || option === null || Array.isArray(option)) return undefined;
@@ -256,12 +376,47 @@ const problemOf = (option: unknown): OptionProblem | undefined => {
   if (Reflect.get(option, "label") === "") return optionProblem.emptyLabel;
   return undefined;
 };
-/** The failure for refused options, named after the first refused one when the words cover it. */
-const refusedOptions = (id: string, given: unknown) => {
-  if (!Array.isArray(given)) return invalidOptions();
-  const index = given.findIndex((option) => Either.isLeft(decodeOption(option)));
-  const problem = index < 0 ? undefined : problemOf(given[index]);
-  return problem === undefined ? invalidOptions() : invalidOption(id, index, problem);
+/**
+ * The failure for refused options, named after the first refused one: in the fixed words when
+ * they cover it, else by its field and the rule that field broke.
+ */
+const refusedOptions = (id: string, given: unknown, issue: ParseResult.ParseIssue) => {
+  const { path, rule } = brokenRule(issue);
+  const [index, ...field] = path;
+  if (typeof index !== "number") return invalidOptions([id], `options ${rule}`);
+  const problem = Array.isArray(given) ? problemOf(given[index]) : undefined;
+  if (problem !== undefined) return invalidOption(id, index, problem);
+  const option = `option ${index + 1}${field.length === 0 ? "" : `'s ${pathText(field)}`}`;
+  return invalidOptions([id], `${option} ${rule}`);
+};
+
+/**
+ * The failure for a request its schema refuses, named after the question whose part broke a
+ * rule, or the question that carries the order, else every question asked.
+ */
+const refusedRequest = (
+  questions: ReadonlyArray<Asked>,
+  orderedBy: string | undefined,
+  issue: ParseResult.ParseIssue,
+) => {
+  const { path, rule } = brokenRule(issue);
+  const [first, at, ...field] = path;
+  const question = first === "questions" && typeof at === "number" ? questions[at] : undefined;
+  if (question !== undefined)
+    return invalidOptions(
+      [question.question.id],
+      `${field.length === 0 ? "it" : pathText(field)} ${rule}`,
+    );
+  // The notice is the order's own text, which the runtime writes from it.
+  if ((first === "order" || first === "notice") && orderedBy !== undefined)
+    return invalidOptions(
+      [orderedBy],
+      `${first === "notice" ? "the order's notice" : pathText(path)} ${rule}`,
+    );
+  return invalidOptions(
+    questions.map((asked) => asked.question.id),
+    `${path.length === 0 ? "the request" : pathText(path)} ${rule}`,
+  );
 };
 
 type GivenSpec = AskSpec | ReadonlyArray<ScriptOption>;
@@ -285,7 +440,7 @@ const cutTo = (text: string, limit: number) => {
 /**
  * A site field's prompt: the page's label whole, and after it the full text of each option its
  * label had to cut, by the option's number from 1, all cut only past `longestPrompt`. An
- * account-specific option's text never joins it: that label shows only on the protected page.
+ * account-specific option's text never joins it: a host that masks shows that label masked.
  */
 const siteFieldPrompt = (label: string, options: ReadonlyArray<ScriptOption> = []) =>
   cutTo(
@@ -302,11 +457,11 @@ const siteFieldPrompt = (label: string, options: ReadonlyArray<ScriptOption> = [
 
 /** The page's options with host-opaque ids, and the value behind each id. */
 const offeredOptions = (id: string, given: ReadonlyArray<ScriptOption> | undefined) => {
-  if (given === undefined) return Either.left(invalidOptions());
+  if (given === undefined) return Either.left(invalidOptions([id], "it has no options"));
   const decoded = Schema.decodeUnknownEither(Schema.Array(ScriptOption), {
     onExcessProperty: "error",
   })(given);
-  if (Either.isLeft(decoded)) return Either.left(refusedOptions(id, given));
+  if (Either.isLeft(decoded)) return Either.left(refusedOptions(id, given, decoded.left.issue));
   const options = decoded.right;
   const seen = new Set<string>();
   const repeated = options.findIndex(({ value }) => {
@@ -337,12 +492,12 @@ const askedQuestion = (
   const label = isOptionList(spec) ? undefined : spec.label;
   // Only a site field takes a label from the page; every other prompt is the declared one.
   if (label !== undefined && !("type" in declaration && declaration.type === "site_field"))
-    return Either.left(invalidOptions());
+    return Either.left(invalidOptions([id], "only a site field takes a label"));
   /** A question that takes no options; giving any is a mistake. */
   const plain = (question: Question) =>
     given === undefined
       ? Either.right({ question, values: new Map<string, string>() })
-      : Either.left(invalidOptions());
+      : Either.left(invalidOptions([id], `a ${question.type} question takes no options`));
   if (!("type" in declaration))
     return Either.map(offeredOptions(id, given), ({ values, offered }) => ({
       question: { id, type: "choice" as const, prompt: declaration.prompt, options: offered },
@@ -383,7 +538,14 @@ const askedQuestion = (
         const minSelections = declaration.minSelections ?? 1;
         const maxSelections = Math.min(declaration.maxSelections ?? offered.length, offered.length);
         return minSelections > maxSelections
-          ? Either.left(invalidOptions())
+          ? Either.left(
+              invalidOptions(
+                [id],
+                offered.length === 0
+                  ? "options is empty"
+                  : `minSelections is ${minSelections} but at most ${maxSelections} can be selected`,
+              ),
+            )
           : Either.right({
               question: {
                 id,
@@ -409,7 +571,8 @@ const askedQuestion = (
       }));
     case "site_field": {
       const pageLabel = typeof label === "string" ? label.trim() : "";
-      if (pageLabel === "") return Either.left(invalidOptions());
+      if (pageLabel === "")
+        return Either.left(invalidOptions([id], "its label is missing, empty or not text"));
       if (given === undefined)
         return Either.right({
           question: { id, type: "text" as const, prompt: siteFieldPrompt(pageLabel) },
@@ -478,6 +641,7 @@ export const makeScriptInput = (
     Effect.gen(function* () {
       const questions: Asked[] = [];
       let order: OrderFacts | undefined;
+      let orderedBy: string | undefined;
       for (const [id, spec] of Object.entries(asked)) {
         const declaration = declared && Object.hasOwn(declared, id) ? declared[id] : undefined;
         if (declaration === undefined) return yield* new ScriptInputFailure({ code: "Undeclared" });
@@ -488,17 +652,26 @@ export const makeScriptInput = (
         if (given === undefined) continue;
         // One order per request, with a choice or a confirm, and only the facts it names.
         const type: string = "type" in declaration ? declaration.type : "choice";
-        if (order !== undefined || (type !== "choice" && type !== "confirm"))
-          return yield* invalidOptions();
+        if (order !== undefined)
+          return yield* invalidOptions([id], "only one question in an ask may carry an order");
+        if (type !== "choice" && type !== "confirm")
+          return yield* invalidOptions(
+            [id],
+            `a ${type} question takes no order; only a choice or a confirm does`,
+          );
         const decoded = Schema.decodeUnknownEither(ScriptOrder, { onExcessProperty: "error" })(
           given,
         );
-        if (Either.isLeft(decoded)) return yield* invalidOptions();
+        if (Either.isLeft(decoded)) {
+          const { path, rule } = brokenRule(decoded.left.issue);
+          return yield* invalidOptions([id], `${pathText(["order", ...path])} ${rule}`);
+        }
         const named = <Line extends { readonly name: string }>(line: Line) => ({
           ...line,
           name: cutTo(line.name.replace(/\s+/gu, " ").trim(), longestItemName),
         });
         const { fees, ...facts } = decoded.right;
+        orderedBy = id;
         order = {
           ...facts,
           items: facts.items.map(named),
@@ -515,7 +688,7 @@ export const makeScriptInput = (
           ...(order === undefined ? {} : { order, notice: orderNotice(order) }),
         },
         { onExcessProperty: "error" },
-      ).pipe(Effect.mapError(invalidOptions));
+      ).pipe(Effect.mapError((error) => refusedRequest(questions, orderedBy, error.issue)));
       if (handle === undefined) return yield* new ScriptInputFailure({ code: "Unavailable" });
       const answers = yield* Effect.acquireUseRelease(
         Effect.sync(() => deadline?.suspend()),

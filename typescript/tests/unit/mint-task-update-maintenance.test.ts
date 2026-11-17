@@ -76,12 +76,13 @@ const propose = async (
   update: object,
   dependencies: Partial<MintDependencies>,
   request: object = repair,
+  question: object = colorQuestion,
 ) => {
   const results: Record<string, unknown>[] = [];
   const f = await fixture(
     (turn) =>
       Effect.gen(function* () {
-        yield* turn.actions.requestInput(colorQuestion);
+        yield* turn.actions.requestInput(question);
         results.push(JSON.parse(yield* turn.actions.updateTask!(update)));
       }),
     dependencies,
@@ -122,6 +123,58 @@ it.each([
   expect(host.reviews).toEqual([]);
   expect(host.applied).toEqual([]);
 });
+
+// A host whose answering person may settle what the task requires, while its callers keep every
+// output the registered contract declares, names `owner_requirements`. Fails while the harness
+// reads that value as nobody, which refuses the requirement change too.
+const colorRequirement = {
+  setting: "requirement",
+  change: "add",
+  text: "Read only the notes saved on the requested day.",
+};
+it.each([
+  {
+    case: "a requirement change its answer confirms",
+    update: { ...dropColor, changes: [colorRequirement] },
+    result: { status: "updated", task: { revision: 1 } },
+    reviewed: true,
+  },
+  {
+    case: "a requirement change that cites no answer",
+    update: { ...dropColor, changes: [colorRequirement], confirmedBy: [] },
+    result: { status: "clarification_required", reason: "confirmation_required" },
+    reviewed: false,
+  },
+  {
+    case: "an output it loosens",
+    update: dropColor,
+    result: { status: "update_refused", reason: "owner_unavailable" },
+    reviewed: false,
+  },
+  {
+    case: "a requirement change beside an output it loosens",
+    update: { ...dropColor, changes: [colorRequirement, dropColor.changes[0]] },
+    result: { status: "update_refused", reason: "owner_unavailable" },
+    reviewed: false,
+  },
+])(
+  "settles $case under owner_requirements as the owner path does, but no loosened output",
+  async ({ update, result, reviewed }) => {
+    const host = updateHost();
+    const answer = await propose(update, {
+      ...host.dependencies,
+      taskUpdateConfirmer: () => Effect.succeed("owner_requirements"),
+    });
+    expect(answer).toMatchObject(result);
+    // Guardian reviews what reaches it as the owner path's, which is all that may.
+    expect(host.reviews.map(({ update }) => update.maintenance)).toEqual(
+      reviewed ? [{ confirmer: "owner" }] : [],
+    );
+    // The refusal names only the output it can't confirm, not the requirement it can.
+    if (answer?.["reason"] === "owner_unavailable")
+      expect(String(answer["instruction"])).not.toContain("requirement");
+  },
+);
 
 it("asks for the owner's confirmation before reviewing a contract change that cites none", async () => {
   const host = updateHost();
@@ -185,6 +238,176 @@ it.each([
   );
   expect(result).toMatchObject({ status: "update_refused", reason: "maintenance_setting" });
   expect(host.reviews).toEqual([]);
+});
+
+// The owner's own requested change runs on the example they sent. When the site finds that value
+// unclear, the owner may pick another in an answer, and the change goes on with it. Fails while
+// maintenance refuses every input change as `maintenance_setting`, so the owner's pick changes
+// nothing and the change can only end blocked.
+const changeRequest = {
+  ...repair,
+  intent: "Change the notes tool as its owner asks: also return each note's title.",
+};
+const dayQuestion = {
+  questions: [
+    {
+      id: "day",
+      type: "choice" as const,
+      prompt: "The notes page lists no notes for 2026-11-01. Which day should the example read?",
+      options: [
+        { id: "next", label: "2026-11-02" },
+        { id: "none", label: "None of these" },
+      ],
+    },
+  ],
+};
+const pickedDay = {
+  summary: "Read the example's notes for 2026-11-02, the day the owner picked.",
+  changes: [{ setting: "input", values: { day: "2026-11-02" } }],
+  confirmedBy: ["day"],
+  recommend: "update",
+};
+const answersNextDay = () => Effect.succeed({ day: { type: "choice" as const, value: "next" } });
+
+it("applies an example input change the owner confirmed in their own requested change", async () => {
+  const host = updateHost();
+  const result = await propose(
+    pickedDay,
+    {
+      ...host.dependencies,
+      askInput: answersNextDay,
+      taskUpdateConfirmer: () => Effect.succeed("owner_request"),
+    },
+    changeRequest,
+    dayQuestion,
+  );
+  expect(result).toMatchObject({ status: "updated", task: { revision: 1 } });
+  // Guardian judged the owner's answer as its confirmation, then the host bound the picked day.
+  expect(host.reviews[0]?.update).toMatchObject({
+    changes: [{ setting: "input", values: { day: "2026-11-02" } }],
+    confirmation: [{ id: "day" }],
+    maintenance: { confirmer: "owner_request" },
+  });
+  expect(host.applied[0]?.next.businessInput).toEqual({ day: "2026-11-02" });
+});
+
+it("asks the owner before reviewing an example input change their requested change cites no answer for", async () => {
+  const host = updateHost();
+  const result = await propose(
+    { ...pickedDay, confirmedBy: [] },
+    {
+      ...host.dependencies,
+      askInput: answersNextDay,
+      taskUpdateConfirmer: () => Effect.succeed("owner_request"),
+    },
+    changeRequest,
+    dayQuestion,
+  );
+  expect(result).toMatchObject({
+    status: "clarification_required",
+    source: "host",
+    reason: "confirmation_required",
+  });
+  expect(host.reviews).toEqual([]);
+  expect(host.applied).toEqual([]);
+});
+
+// A repair of a failed run, a change nobody who owns the tool asked for, and a host whose answering
+// person only settles requirements all keep the run's input.
+it.each(["owner", "owner_requirements", "none"] as const)(
+  "keeps refusing an example input change under %s, though an answer confirms it",
+  async (confirmer) => {
+    const host = updateHost();
+    const result = await propose(
+      pickedDay,
+      {
+        ...host.dependencies,
+        askInput: answersNextDay,
+        taskUpdateConfirmer: () => Effect.succeed(confirmer),
+      },
+      changeRequest,
+      dayQuestion,
+    );
+    expect(result).toMatchObject({ status: "update_refused", reason: "maintenance_setting" });
+    expect(host.reviews).toEqual([]);
+  },
+);
+
+// The owner's own change keeps its task: only the example input may change beside its contract.
+it.each([
+  { setting: "effect", change: { setting: "effect", effect: "write" } },
+  { setting: "site", change: { setting: "site", origin: "https://notes.example.org" } },
+  { setting: "login", change: { setting: "login", change: "sign_in" } },
+])(
+  "still refuses changing the $setting beside the example in the owner's requested change",
+  async ({ change }) => {
+    const host = updateHost();
+    const result = await propose(
+      { ...pickedDay, changes: [...pickedDay.changes, change] },
+      {
+        ...host.dependencies,
+        askInput: answersNextDay,
+        taskUpdateConfirmer: () => Effect.succeed("owner_request"),
+      },
+      changeRequest,
+      dayQuestion,
+    );
+    expect(result).toMatchObject({ status: "update_refused", reason: "maintenance_setting" });
+    expect(host.reviews).toEqual([]);
+  },
+);
+
+// A blocked report's review reads the host's refusals in the decision ledger, the task updates the
+// host refused or held before any review included. Fails while those reach only the minter, so the
+// review reads no refused update and may call a true report false.
+it("gives a blocked report's review the task updates the host refused before review", async () => {
+  const host = updateHost();
+  const ledgers: unknown[] = [];
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        yield* turn.actions.requestInput(dayQuestion);
+        yield* turn.actions.updateTask!({
+          ...dropColor,
+          changes: [colorRequirement],
+          confirmedBy: ["unasked"],
+        });
+        yield* turn.actions.updateTask!(pickedDay);
+        yield* turn.actions.reportBlocked!({
+          reason: "site_lacks_capability",
+          explanation: "The notes page lists no notes for the example's day.",
+        });
+      }),
+    {
+      ...host.dependencies,
+      askInput: answersNextDay,
+      taskUpdateConfirmer: () => Effect.succeed("owner"),
+      reviewQuestion: (_request, options) =>
+        Effect.sync(() => {
+          if (options?.blockedOutcome === true) ledgers.push(options.decisionLedger);
+          return { outcome: "allow_business" as const, rationale: "Consistent." };
+        }),
+    },
+  );
+  await f.run();
+  expect(ledgers).toEqual([
+    expect.objectContaining({
+      hostRefusals: [
+        {
+          tool: "mint_update",
+          code: "confirmation_unanswered",
+          reason: JSON.stringify({ status: "clarification_required", unanswered: 1 }),
+          atUtc: expect.any(String),
+        },
+        {
+          tool: "mint_update",
+          code: "maintenance_setting",
+          reason: JSON.stringify({ status: "update_refused", settings: ["input"] }),
+          atUtc: expect.any(String),
+        },
+      ],
+    }),
+  ]);
 });
 
 it("refuses a recommended new build in maintenance before any review", async () => {
@@ -287,6 +510,35 @@ it.each([
     maintenance: { confirmer: "none" },
   });
   expect(host.applied[0]?.update.changes).toEqual([change]);
+  expect(outcome).toMatchObject({ build: "published", publicationRef: "published-revision" });
+});
+
+// A widened output under `owner_requirements` is refused, yet the repair still publishes: a root
+// branch that only refuses, such as the site declining the account, rides in the source's own
+// output schema, which the harness never holds to the registered contract, so the host's own
+// publication check judges it, not this gate.
+it("refuses a widened output under owner_requirements and still publishes the repair", async () => {
+  const host = updateHost();
+  const { result, outcome, asked } = await repairAndPublish(
+    {
+      summary: "Return the site's refusal when it declines this account.",
+      changes: [
+        {
+          setting: "output",
+          field: "status",
+          change: "widen",
+          text: "The tool may return the site's refusal in place of the notes.",
+        },
+      ],
+      confirmedBy: [],
+      recommend: "update",
+    },
+    { ...host.dependencies, taskUpdateConfirmer: () => Effect.succeed("owner_requirements") },
+  );
+  expect(result).toMatchObject({ status: "update_refused", reason: "owner_unavailable" });
+  expect(asked).toBe(0);
+  expect(host.reviews).toEqual([]);
+  expect(host.applied).toEqual([]);
   expect(outcome).toMatchObject({ build: "published", publicationRef: "published-revision" });
 });
 

@@ -19,7 +19,9 @@ import type { HttpFailure, SiteHttpRequest, SiteHttpResult, SiteHttpService } fr
  * - A throttle is a 429, a 503 or any other 5xx, such as a 529, a rate limit in another shape
  *   (`classifyBatchAnswer`: a 418 or 420 naming its wait, a 2xx JSON answer saying 429), or an
  *   answer whose rate-limit headers say no request remains: `RateLimit-Remaining: 0`, or a
- *   `RateLimit` header whose policy has `r=0`. A throttled batch never makes the next one larger:
+ *   `RateLimit` header whose policy has `r=0`. In `batchFetch`, so is each fetch of a batch whose
+ *   fetches all fail without an answer, after an earlier fetch in the call was answered. A
+ *   throttled batch never makes the next one larger:
  *   it halves the batch size (at least 1), waits the longest `Retry-After` in the batch, else the site's `RateLimit-Reset`,
  *   or a backoff that doubles from `backoffMs` without either, and sends the throttled requests
  *   again first, each at most `maxAttempts` times in all. A wait longer than `maxWaitMs` stops the
@@ -555,6 +557,10 @@ export const batchRead = (
  *   2xx), `not_json`,
  *   `blocked`, `network` or `not_sent`. `stopped` is null, or `{ reason, index }` with `reason` `blocked`,
  *   `rate_limited` or `budget`.
+ * - In a batch whose fetches all fail without an answer, after an earlier fetch in the call was
+ *   answered, as 429s without the site's cross-origin header do in the page, each counts as a
+ *   throttle with no `Retry-After`, its `error` still `network`. A fetch past its `timeoutMs`
+ *   does not.
  *
  * When `stopped` is `blocked` or `rate_limited`, return it from the call and fail the read in the
  * script, after `waitPastChallenge` when the page shows a challenge, as the core skill's 429 rule
@@ -584,6 +590,8 @@ const batchFetch = async (requests, options = {}) => {
     const batchRetryAfterMs = ${batchRetryAfterMs.toString()};
     const batchRateLimitResetMs = ${batchRateLimitResetMs.toString()};
     const snippetOf = (text) => text.replace(/\s+/g, " ").slice(0, 300);
+    let answeredOnce = false;
+    let batch;
     const run = await adaptiveBatch(requests.length, async (index) => {
       const request = requests[index];
       const as = request.as === "text" ? "text" : "json";
@@ -591,6 +599,18 @@ const batchFetch = async (requests, options = {}) => {
       if (as === "json" && !headers.has("accept")) headers.set("accept", "application/json");
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), settings.timeoutMs);
+      // A batch's fetches all start before any settles, so one that finds none open starts a batch.
+      if (batch === undefined || batch.open === 0) {
+        let settle;
+        batch = { open: 0, answered: false, settled: new Promise((resolve) => (settle = resolve)) };
+        batch.settle = settle;
+      }
+      const own = batch;
+      own.open += 1;
+      const close = () => {
+        own.open -= 1;
+        if (own.open === 0) own.settle();
+      };
       try {
         let response;
         try {
@@ -601,8 +621,14 @@ const batchFetch = async (requests, options = {}) => {
             credentials: "include",
             signal: controller.signal,
           });
+          own.answered = true;
+          answeredOnce = true;
+          close();
         } catch (error) {
-          return { kind: "answered", value: { ok: false, error: "network", snippet: snippetOf(String(error?.message ?? error)) } };
+          const timedOut = controller.signal.aborted;
+          close();
+          await own.settled;
+          return { kind: answeredOnce && !own.answered && !timedOut ? "throttled" : "answered", value: { ok: false, error: "network", snippet: snippetOf(String(error?.message ?? error)) } };
         }
         const contentType = response.headers.get("content-type") ?? "";
         const text = await response.text();

@@ -452,7 +452,12 @@ it("confirms an approval after a sent identifier, records it as version 2, and v
   const published = await host.run((recorder) =>
     Effect.gen(function* () {
       const early = yield* recorder.step({ approval: "device" }, undefined, Effect.void);
-      expect(early.result).toMatchObject({ approved: false, failed: "identifier_not_submitted" });
+      expect(early.result).toMatchObject({
+        approved: false,
+        failed: "identifier_not_submitted",
+        nextStep:
+          "Send the identifier screen first, then request signInStep approval for the site's email link or device.",
+      });
       yield* recorder.step(identifierOnly, undefined, Effect.void);
       const approved = yield* recorder.step({ approval: "device" }, undefined, Effect.void);
       expect(approved).toMatchObject({ approved: true, result: { approved: true } });

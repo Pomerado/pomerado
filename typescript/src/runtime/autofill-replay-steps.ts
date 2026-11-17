@@ -445,7 +445,9 @@ export const shownAgain = <E>(
  * for one this replay has not sent, as a site that wants the password entered again with a
  * one-time code does; a code's needs the screen's code boxes, as the host found them
  * (`codeScreens.shown`), to be none of the code screen's that ran before (`codeScreens.earlier`,
- * `takesAnotherCode`). A screen asking for either again any other way is a rejection.
+ * `takesAnotherCode`). A screen asking for either again any other way is a rejection; the replay
+ * ends the password screen just submitted coming back with no error marker as no verdict instead
+ * (`screenReturned`).
  */
 const plannedRefill = (
   step: AutofillStep,

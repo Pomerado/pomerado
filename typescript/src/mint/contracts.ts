@@ -1020,7 +1020,7 @@ export const ExecutionRequest = Schema.Struct({
   cardFillStep: Schema.optional(
     CardFillStep.annotations({
       description:
-        "Only with purpose card_fill, target liveBrowser and entrypoint operation/card-fill-step.json: the payment card fields on the checkout showing now, each the field's own selector, on the site's page or inside the payment provider's frame (the host finds the frame that holds it), and the card handle a request_input answer gave you for it. On a checkout the site opened in a pop-up, also name popup as a sign-in step does. The host types the caller's card into them and clicks nothing.",
+        "Only with purpose card_fill, target liveBrowser and entrypoint operation/card-fill-step.json: the payment card fields on the checkout showing now, each the field's own selector, on the site's page or inside the payment provider's frame (the host finds the frame that holds it), and the card handle a request_input answer gave you for it. Handles only: when the host fills the card from a payment method, call fillCard in the act step that presses pay instead. On a checkout the site opened in a pop-up, also name popup as a sign-in step does. The host types the caller's card into them and clicks nothing.",
     }),
   ),
   /**
@@ -2738,9 +2738,9 @@ export interface LedgerTestFailure {
 
 /**
  * The harness's own record of what this build's reviews decided and its live tests showed, for
- * the review of a blocked explanation, so the review does not depend on what Guardian's
- * conversation still holds. Bounded: the latest denials and failing cases, with counts of what
- * the bound left out.
+ * the review of a blocked explanation or of the last answer a stopped build gave, so the review
+ * does not depend on what Guardian's conversation still holds. Bounded: the latest denials and
+ * failing cases, with counts of what the bound left out.
  */
 export interface DecisionLedger {
   readonly denials: readonly LedgerDenial[];
@@ -2759,11 +2759,18 @@ export interface DecisionLedger {
   readonly testFailures: readonly LedgerTestFailure[];
   readonly omittedTestFailures?: number;
   /**
-   * The host's latest refusals of a live test batch or an execution, such as a cap on live runs:
-   * the tool refused, the failure code or status, the screened reason and when, in ISO time.
+   * The host's latest refusals of a tool call, such as a cap on live runs: the tool refused, the
+   * failure code, status or refusal reason, the screened reason and when, in ISO time, the same
+   * refusal kept once at its latest. An execution's include a hold on a live step
+   * (`ReconciliationRequired`), a saved login another job holds (`login_in_use`, as on
+   * `request_input`'s login) and a failure of the host's own dependency, both with the finite
+   * fields the minter read as the reason. `report_blocked` names a blocked report the host refused,
+   * such as `host_not_refused`, with the reported reason, and `mint_update` a task update the host
+   * held for a confirmation or refused. A host on an older core sends only `live_tests` and
+   * `execute`.
    */
   readonly hostRefusals?: readonly {
-    readonly tool: "live_tests" | "execute";
+    readonly tool: "live_tests" | "execute" | "request_input" | "report_blocked" | "mint_update";
     readonly code: string;
     readonly reason: string;
     readonly atUtc: string;
@@ -2930,9 +2937,9 @@ export interface MintDependencies {
        */
       readonly publicationDecisions?: readonly PublicationDecision[];
       /**
-       * A blocked explanation's review only: the build's Guardian denials and failing live test
-       * cases, already screened. A host that forwards it lets the review judge the report against
-       * them; an older host leaves it out.
+       * A blocked outcome's review only, a stopped build's last answer included: the build's
+       * Guardian denials, failing live test cases and host refusals, already screened. A host that
+       * forwards it lets the review judge the report against them; an older host leaves it out.
        */
       readonly decisionLedger?: DecisionLedger;
       /**
@@ -3098,7 +3105,12 @@ export interface MintDependencies {
    * `none`. The harness asks it before review; `none`, a failure or an absent hook refuses an
    * update that loosens the contract as `owner_unavailable`, so a repair without the owner keeps
    * it. With `owner_request`, an update that cites no answer goes to Guardian, which accepts the
-   * owner's request as confirmation of an output change the request plainly names.
+   * owner's request as confirmation of an output change the request plainly names, and an `input`
+   * change, which the harness refuses as `maintenance_setting` under every other answer, may set
+   * another example input once it cites the owner's answer in this build. With
+   * `owner_requirements`, a requirement or purpose change takes the `owner` path, while an update
+   * that loosens or removes an output is refused as `owner_unavailable` before review, as with
+   * `none`. A harness older than that value reads it as `none`.
    */
   readonly taskUpdateConfirmer?: () => Effect.Effect<TaskUpdateConfirmer, MintFailure>;
   /** Receives the owner's answer to the host's capability question. */

@@ -28,8 +28,8 @@ const ProposedOption = Schema.Struct({
   id: OptionId,
   label: Label,
   /**
-   * A detail of the caller's own account, such as a saved card or a passenger. Its full label
-   * appears only on the protected page; the API and MCP show `maskedLabel`.
+   * A detail of the caller's own account, such as a saved card or a passenger. A host that masks
+   * shows `maskedLabel` in place of its full label.
    */
   accountSpecific: Schema.optional(Schema.Boolean),
   maskedLabel: Schema.optional(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(64))),
@@ -44,7 +44,7 @@ export const InputOption = Schema.Struct({
 });
 export type InputOption = typeof InputOption.Type;
 
-/** An option's label off the owner's protected page: an account-specific one shows masked. */
+/** An option's label where a host masks: an account-specific one shows masked. */
 export const publicOptionLabel = (option: InputOption) =>
   option.accountSpecific === true ? (option.maskedLabel ?? "••••") : option.label;
 

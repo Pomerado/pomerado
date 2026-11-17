@@ -35,6 +35,8 @@ each fine as one tool.
 
 A read build may search, filter and query, but may not fill in or advance a form that
 saves data on the site, save or submit anything; a task that needs that is a write build.
+Opening pages that the site then marks as visited or as progress, without submitting an answer
+or a form, is part of a read, unless the request asks to change that progress.
 Signed out, setting the session's store, location or delivery or pickup mode is part of a
 read, even through a Save button, and so is entering the details the caller gave to set it,
 unless the step creates an account or a lasting record on the site (core skill). Signed in,
@@ -417,7 +419,8 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   evidence for the `http` version; any other write is unintended and must not be in
   the script.
 - Prefer confirming the write from its commit request. Keep the click on the final commit
-  control, such as Save, Send, Submit, Book or Pay, in its own step. In the same call as
+  control, such as Save, Send, Submit, Book or Pay, in its own step, except a pay press after
+  the host's card fill, which goes in the fill's step (caller-input skill). In the same call as
   that click, wait for the site's response to the request it sends, matched by the method
   and path the session saw carry the commit on the site, and by its body where the body
   shows the caller's values, as `references/write-readback.ts` does: a `{ response }` answer of
@@ -708,7 +711,10 @@ account ID, is a free-form input, never an enum member, example or default in th
 public schema (core's input schema rules). The last choice or confirm asked before a commit that
 buys or pays, once the page shows that commit's items and total, passes `order` (the caller-input
 skill). When you change a script whose last such question passes none, add it, whatever the change
-is for. Fill `order` as the checkout shows it: each item's real quantity, its `unit` when sold by
+is for. When a step between that question and the commit can change the total, prefer naming the
+total after that step in `order`; when you can't, re-read the total after that step and ask again
+before the commit when it rose above what the caller approved.
+Fill `order` as the checkout shows it: each item's real quantity, its `unit` when sold by
 weight or measure, and its price each, its line total or both; fees, a tip and a discount go in
 their own fields. When an item's measure is in a unit `unit` does not list, give
 it quantity 1 and its line total, with the measure as the checkout shows it in its name.

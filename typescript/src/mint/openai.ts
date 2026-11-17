@@ -128,6 +128,14 @@ const notRunAfterFailure = JSON.stringify({
     "Not run, nothing was sent. An earlier call in this response did not succeed, and the host runs no call that follows it in the same response. Read that call's result, then send this call again if it is still the next step.",
 });
 
+/** An execute whose patch did not apply: the step did not run. Nothing was sent. */
+const patchNotApplied = {
+  status: "not_run",
+  effect: "not_sent",
+  instruction:
+    "Not run, nothing was sent: a step runs only once every operation of its patch applies. Each operation in patch applied except the last, which failed; any after it were not tried.",
+};
+
 /**
  * Whether a step's result is a completed receipt. An execute or a command that failed, was
  * refused by review, timed out or may have dispatched returns any other result.
@@ -434,13 +442,37 @@ const splitIntent = (input: unknown): { intent: string; request: Record<string, 
   return { intent, request };
 };
 
+/** One edit of execute's `patch`, in the shape of a native apply_patch call's operation. */
+const PatchOperation = Schema.Union(
+  Schema.Struct({
+    type: Schema.Literal("create_file", "update_file"),
+    path: Schema.String,
+    diff: Schema.String,
+  }),
+  Schema.Struct({ type: Schema.Literal("delete_file"), path: Schema.String }),
+);
+const Patch = Schema.Array(PatchOperation).pipe(
+  Schema.minItems(1),
+  Schema.annotations({
+    description:
+      "Edits applied before the step is reviewed and run, as apply_patch operations. If one does not apply, nothing runs.",
+  }),
+);
+
 /**
  * The execute tool's one model-facing schema, for every build: strict, with each optional field
  * required and nullable. `signInStep` is null on a build whose site signs in by the host's
- * managed sign-in, and the host refuses one sent there.
+ * managed sign-in, and the host refuses one sent there. `patch` is the minter's own: it is applied
+ * here and never reaches the host.
  */
 const executeSchema = (() => {
-  const strict = strictToolSchema(inlineReferences(JSONSchema.make(withIntent(ExecutionRequest))));
+  const strict = strictToolSchema(
+    inlineReferences(
+      JSONSchema.make(
+        withIntent(Schema.Struct({ ...ExecutionRequest.fields, patch: Schema.optional(Patch) })),
+      ),
+    ),
+  );
   const properties = strict.parameters["properties"];
   const required = strict.parameters["required"];
   return {
@@ -844,22 +876,38 @@ const openAIMinter = (
                     },
                     run,
                   );
+            /** Workspace edits tried so far, native or a patch's, applied or not. */
+            let edits = 0;
+            /**
+             * The operations execute's last patch applied, and `edits` once it had. The next patch
+             * that starts with them, with no edit since, finds them applied.
+             */
+            let applied:
+              | { readonly operations: readonly string[]; readonly edits: number }
+              | undefined;
+            /** A workspace edit's awaited call and result records, as apply_patch's operation. */
+            const recordEdit = <A>(
+              callId: string | undefined,
+              operation: ApplyPatchOperation,
+              apply: () => Promise<A>,
+            ) =>
+              diagnostics === undefined
+                ? apply()
+                : diagnostics.tool(
+                    {
+                      name: "apply_patch",
+                      ...(callId === undefined ? {} : { callId }),
+                      arguments: JSON.stringify(operation),
+                    },
+                    apply,
+                  );
             // Native apply_patch keeps its own protocol and needs no intent, but each operation
             // still gets awaited call and result records around the host editor.
             const traceEditor = (editor: Editor): Editor => {
               const record = <A>(operation: ApplyPatchOperation, apply: () => Promise<A>) => {
+                edits += 1;
                 const callId = diagnostics?.takeNativeCall();
-                const run = () =>
-                  diagnostics === undefined
-                    ? apply()
-                    : diagnostics.tool(
-                        {
-                          name: "apply_patch",
-                          ...(callId === undefined ? {} : { callId }),
-                          arguments: JSON.stringify(operation),
-                        },
-                        apply,
-                      );
+                const run = () => recordEdit(callId, operation, apply);
                 if (recovery === undefined) return run();
                 if (callId === undefined) throw new MintFailure({ code: "Unavailable" });
                 return turn.runTool(
@@ -1064,11 +1112,54 @@ const openAIMinter = (
               errorFunction: (_context: unknown, error: unknown) =>
                 toolFailure(error, failureInstruction),
             });
+            /**
+             * Applies execute's patch through the editor the native apply_patch tool is built
+             * from, each operation recorded as a native edit is, under the execute's call. At the
+             * first operation that does not apply it returns the step not run; the ones before it
+             * stay applied, as separate apply_patch calls would. A step sent again with its patch,
+             * such as after an unavailable review or the owner's yes, finds the operations the last
+             * patch applied already applied when no edit came since, and they are not applied again.
+             */
+            const applyPatch = async (patch: unknown, callId: string | undefined) => {
+              const decoded = Schema.decodeUnknownEither(Patch)(patch);
+              if (decoded._tag === "Left") throw new MintFailure({ code: "InvalidRequest" });
+              const operations = decoded.right;
+              const editor = turn.session.createEditor?.();
+              if (editor === undefined) throw new MintFailure({ code: "Unavailable" });
+              const keys = operations.map((operation) => JSON.stringify(operation));
+              const done = applied?.edits === edits ? applied.operations : [];
+              let kept = 0;
+              while (kept < keys.length && done[kept] === keys[kept]) kept += 1;
+              const tried: { path: string; status: string; output?: string }[] = operations
+                .slice(0, kept)
+                .map((operation) => ({ path: operation.path, status: "completed" }));
+              for (const operation of operations.slice(kept)) {
+                edits += 1;
+                const result = await recordEdit(callId, operation, () =>
+                  operation.type === "delete_file"
+                    ? editor.deleteFile(operation)
+                    : operation.type === "create_file"
+                      ? editor.createFile({ ...operation, type: operation.type })
+                      : editor.updateFile({ ...operation, type: operation.type }),
+                );
+                tried.push({
+                  path: operation.path,
+                  status: result?.status ?? "completed",
+                  ...(result?.output === undefined ? {} : { output: result.output }),
+                });
+                if (result?.status === "failed") {
+                  applied = { operations: keys.slice(0, tried.length - 1), edits };
+                  return JSON.stringify({ ...patchNotApplied, patch: tried });
+                }
+              }
+              applied = { operations: keys, edits };
+              return undefined;
+            };
             // Every build sends the same descriptions; what differs per build is in its tools
             // message (buildToolsMessage).
             const executeTool = hostTool(
               "execute",
-              `Review then run authored code using host-bound input and the selected execution/test scaffold. For authenticated work, use explore/liveBrowser to discover the public login controls, then authenticate/liveBrowser for trusted host credentials, with a signInStep for each sign-in screen when the build's tools message says signIn host_autofill (when this invocation has no login yet, the host signs in with the saved login for the site, asking the caller which one when several could, or asks the caller for a login, in the same call); business work waits for a successful sign-in. fixtureRefs contains host-published capture paths: savedHTTP response bodies or a session capture.json to replay through SiteHttp, or savedDOM first a DOM snapshot then selected asset response bodies; never an input or operation reference; consult the workspace README's reference sections for available facilities. Reads explore, then run one example; when the host-bound input is empty ({}), pass the tool's input you wrote from the request and the owner's answers as exampleInput (JSON text), and the example runs it; once the tool refused the caller's own input with InvalidInput, an example may pass another record of the same kind as exampleInput in its place. A read runs live tests on inputs you choose: where the build offers live_tests, it plans its cases in test/cases.json and runs them in batches with live_tests, on src/tool.mjs and on src/tool-http.mjs; otherwise it runs them one at a time (testInput), a read signed out a wide, varied first batch of about 10 to 20 cases, and the host may limit how many. A signed-in read runs at most four distinct inputs. It tests src/tool-http.mjs on the same inputs too. A signed-in read runs no test on an input you choose: its example proves the tool, and it checks src/tool-http.mjs once with the caller's input. Run the example last, after your last edit. Writes perform the action once as act steps after sign-in, the first of which claims the write; when the host-bound input is empty or leaves out values the request states, an act step passes exampleInput the same way, keeping every value of that input as sent, and each act step that passes it runs it. A write's act session is its one run; a write build runs no tests beyond it, except one savedHTTP replay of the session for its HTTP version. intent states what this execution should establish; it never authorizes the execution. Prefer sending a step's apply_patch and the execute that runs it in one response: the host applies the edit before it reviews and runs the step. A response's calls other than reads run one at a time in your order, each after the calls before it returned, so send a later call in the same response only when it does not depend on an earlier call's result.`,
+              `Review then run authored code using host-bound input and the selected execution/test scaffold. For authenticated work, use explore/liveBrowser to discover the public login controls, then authenticate/liveBrowser for trusted host credentials, with a signInStep for each sign-in screen when the build's tools message says signIn host_autofill (when this invocation has no login yet, the host signs in with the saved login for the site, asking the caller which one when several could, or asks the caller for a login, in the same call); business work waits for a successful sign-in. fixtureRefs contains host-published capture paths: savedHTTP response bodies or a session capture.json to replay through SiteHttp, or savedDOM first a DOM snapshot then selected asset response bodies; never an input or operation reference; consult the workspace README's reference sections for available facilities. Reads explore, then run one example; when the host-bound input is empty ({}), pass the tool's input you wrote from the request and the owner's answers as exampleInput (JSON text), and the example runs it; once the tool refused the caller's own input with InvalidInput, an example may pass another record of the same kind as exampleInput in its place. A read runs live tests on inputs you choose: where the build offers live_tests, it plans its cases in test/cases.json and runs them in batches with live_tests, on src/tool.mjs and on src/tool-http.mjs; otherwise it runs them one at a time (testInput), a read signed out a wide, varied first batch of about 10 to 20 cases, and the host may limit how many. A signed-in read runs at most four distinct inputs. It tests src/tool-http.mjs on the same inputs too. A signed-in read runs no test on an input you choose: its example proves the tool, and it checks src/tool-http.mjs once with the caller's input. Run the example last, after your last edit. Writes perform the action once as act steps after sign-in, the first of which claims the write; when the host-bound input is empty or leaves out values the request states, an act step passes exampleInput the same way, keeping every value of that input as sent, and each act step that passes it runs it. A write's act session is its one run; a write build runs no tests beyond it, except one savedHTTP replay of the session for its HTTP version. intent states what this execution should establish; it never authorizes the execution. When you edit a step and run it, send the edit as this call's patch: the host applies it before it reviews and runs the step. A response's calls other than reads run one at a time in your order, each after the calls before it returned, so send a later call in the same response only when it does not depend on an earlier call's result.`,
               "Execution did not succeed. Diagnose the root cause and retained evidence. Correct request/source errors within existing authority; preserve prior effects. Another example read requires explicit host repeatableRead:true; never replay a nonrepeatable example or a write that may have committed. After a failed authenticate, fix its cause and call authenticate again.",
               // The step's intent reaches Guardian as the agent's own, untrusted note on it.
               (request, intent) => turn.actions.execute(request, intent),
@@ -1079,17 +1170,21 @@ const openAIMinter = (
               parameters: executeSchema.parameters,
               execute: (input: unknown, context: unknown, details: ToolCallDetails) => {
                 const restored = executeSchema.restore(input);
+                if (typeof restored !== "object" || restored === null)
+                  return executeTool.execute(restored, context, details);
+                // The host gets the request without its patch, and reviews the files it left.
+                const { patch, ...request }: { readonly patch?: unknown } = restored;
                 // Only an autofill site takes a signInStep; the harness decodes the request itself.
-                if (
-                  !turn.autofillSignIn &&
-                  typeof restored === "object" &&
-                  restored !== null &&
-                  "signInStep" in restored
-                )
-                  return dispatch("execute", input, details, undefined, () =>
-                    Promise.resolve(managedSignInStep),
-                  );
-                return executeTool.execute(restored, context, details);
+                const run = () =>
+                  !turn.autofillSignIn && "signInStep" in request
+                    ? dispatch("execute", input, details, undefined, () =>
+                        Promise.resolve(managedSignInStep),
+                      )
+                    : executeTool.execute(request, context, details);
+                if (patch === undefined) return run();
+                return applyPatch(patch, details?.toolCall?.callId).then(
+                  (refused) => refused ?? run(),
+                );
               },
             });
             const retainCapture = tool({
@@ -1142,7 +1237,7 @@ const openAIMinter = (
             const mintUpdate = tool({
                     ...hostTool(
                       "mint_update",
-                      "Change this build's task settings after the caller confirmed the change: input values, a requirement, constraint or prerequisite (add, drop or revise), the purpose, read to write or, before any write was sent, write to read (effect), the target site or the login (sign_in, different_login, or signed_out when the owner chose what the site shows without signing in); in maintenance, only a requirement, the purpose or an output field (output) of the published tool's contract. An output change adds a field (add) or makes one stricter (tighten: optional or nullable to required, or a narrower type) with no confirmation needed, since callers keep everything they received; to fix a gap, such as a fact the page shows that the output lacks, or a needed value the schema lets be null, add or tighten it. Loosening one (optional, nullable, widen) or removing it (remove) needs its owner's confirmation, and remove also needs reason: why the field must go, from what the site shows now. When the build is the owner's own request to change the tool and that request plainly names the output change, the request is their confirmation: confirmedBy may be empty. Ask with request_input first when the request does not already settle the change, then name the answered questions in confirmedBy; the caller picking an option you wrote confirms what that option says, as do their own words. summary says the change in plain words, as the caller would read it. recommend update keeps the same task and workflow: changed values, dates or options, a dropped prerequisite, a read becoming a write or a write build that has sent no write becoming a read, or a sister domain of the same product. recommend new_mint when the caller now wants a different task or another product's workflow, with suggestedRequest, the request they could submit for it; a changed site origin alone decides neither. Guardian reviews the change. Results: updated (continue under the returned task), clarification_required (ask, then call again), reword (revise; nothing changed and the build continues), new_mint_recommended (the build ends blocked and the caller gets the recommendation), review_unavailable (submit the same call again), update_refused (nothing changed; the instruction says why), update_invalid (correct the request and call again). A site, login or effect change always names the caller's confirming answers in confirmedBy. No update removes the requested action itself or allows repeating a write that may have committed. The one exception to the first: a write build that has sent no write may become a read of the same task when the caller confirms that change. The caller's confirmed answer settles a Guardian decision that held a step for their input, authority or confirmation, a scope decision included, but never one made because a step weakens security or safety. A single step Guardian held for the owner's confirmation needs no update: send it again after their yes. intent states the evidence for the change.",
+                      "Change this build's task settings after the caller confirmed the change: input values, a requirement, constraint or prerequisite (add, drop or revise), the purpose, read to write or, before any write was sent, write to read (effect), the target site or the login (sign_in, different_login, or signed_out when the owner chose what the site shows without signing in); in maintenance, only a requirement, the purpose or an output field (output) of the published tool's contract, and in the owner's own request to change the tool, also input values the owner picked in an answer, named in confirmedBy. An output change adds a field (add) or makes one stricter (tighten: optional or nullable to required, or a narrower type) with no confirmation needed, since callers keep everything they received; to fix a gap, such as a fact the page shows that the output lacks, or a needed value the schema lets be null, add or tighten it. Loosening one (optional, nullable, widen) or removing it (remove) needs its owner's confirmation, and remove also needs reason: why the field must go, from what the site shows now. When the build is the owner's own request to change the tool and that request plainly names the output change, the request is their confirmation: confirmedBy may be empty. Ask with request_input first when the request does not already settle the change, then name the answered questions in confirmedBy; the caller picking an option you wrote confirms what that option says, as do their own words. summary says the change in plain words, as the caller would read it. recommend update keeps the same task and workflow: changed values, dates or options, a dropped prerequisite, a read becoming a write or a write build that has sent no write becoming a read, or a sister domain of the same product. recommend new_mint when the caller now wants a different task or another product's workflow, with suggestedRequest, the request they could submit for it; a changed site origin alone decides neither. Guardian reviews the change. Results: updated (continue under the returned task), clarification_required (ask, then call again), reword (revise; nothing changed and the build continues), new_mint_recommended (the build ends blocked and the caller gets the recommendation), review_unavailable (submit the same call again), update_refused (nothing changed; the instruction says why), update_invalid (correct the request and call again). A site, login or effect change always names the caller's confirming answers in confirmedBy. No update removes the requested action itself or allows repeating a write that may have committed. The one exception to the first: a write build that has sent no write may become a read of the same task when the caller confirms that change. The caller's confirmed answer settles a Guardian decision that held a step for their input, authority or confirmation, a scope decision included, but never one made because a step weakens security or safety. A single step Guardian held for the owner's confirmation needs no update: send it again after their yes. intent states the evidence for the change.",
                       "The task was not updated. Inspect the finite failure; correct the request or continue under the current task.",
                       (request) => updateTask?.(request) ?? notOfferedAction(),
                     ),
@@ -1283,8 +1378,8 @@ const openAIMinter = (
               // summary is recorded per response. Reasoning from earlier turns stays rendered
               // after a continuation or host notice, so the cached prompt is never rewritten
               // from the first earlier reasoning item; the applied context is recorded per call.
-              // A build turn may send a step's edit and the execute that runs it in one response;
-              // the effect question turn asks one question.
+              // A build turn may send several calls in one response; the effect question turn asks
+              // one question.
               // The static prefix carries its own 12-hour breakpoint (withCachedPrefix); the rest of
               // the conversation is cached at the implicit breakpoint.
               modelSettings: withPromptCache(
