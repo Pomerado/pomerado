@@ -10,6 +10,37 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+// The person at the terminal owns the account, so an option from it shows in full.
+it("lists an option from the owner's own account by its full label", async () => {
+  const input = new PassThrough();
+  Object.defineProperty(process, "stdin", { value: input, configurable: true });
+  const written: string[] = [];
+  vi.spyOn(process.stderr, "write").mockImplementation((text) => {
+    written.push(String(text));
+    return true;
+  });
+  const asked = Effect.runPromise(
+    makeTerminalAsker()({
+      id: randomUUID(),
+      source: "script",
+      questions: [
+        {
+          id: "address",
+          type: "choice",
+          prompt: "Which saved address?",
+          options: [
+            { id: "home", label: "12 Example Rd, Springfield", accountSpecific: true, maskedLabel: "Home" },
+            { id: "new", label: "A new address" },
+          ],
+        },
+      ],
+    }),
+  );
+  input.end("1\n");
+  expect(await asked).toEqual({ address: { type: "choice", value: "home" } });
+  expect(written.join("")).toContain("1. 12 Example Rd, Springfield\n");
+});
+
 it("reports the owner closing the input at a question as their own cancel, still NoResponse", async () => {
   const input = new PassThrough();
   Object.defineProperty(process, "stdin", { value: input, configurable: true });

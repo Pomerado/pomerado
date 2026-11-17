@@ -1,11 +1,7 @@
 import { createInterface, emitKeypressEvents } from "node:readline";
 import { Effect } from "effect";
 import { makeInputAsker } from "./callback.js";
-import {
-  browserHandoffWaitMs,
-  InputRequestFailure,
-  publicOptionLabel,
-} from "../runtime/input-request.js";
+import { browserHandoffWaitMs, InputRequestFailure } from "../runtime/input-request.js";
 import type { InputAnswers, Question } from "../runtime/input-request.js";
 
 /**
@@ -99,7 +95,7 @@ const answerChoices = (question: Extract<Question, { readonly type: "choice" | "
       typeof question.recommended === "string" ? [question.recommended] : (question.recommended ?? []);
     for (const [index, option] of question.options.entries())
       process.stderr.write(
-        `${index + 1}. ${publicOptionLabel(option)}${recommended.includes(option.id) ? " (recommended)" : ""}\n`,
+        `${index + 1}. ${option.label}${recommended.includes(option.id) ? " (recommended)" : ""}\n`,
       );
     const reply = (yield* line(
       question.type === "multi_choice" ? "Numbers separated by commas: " : "> ",
