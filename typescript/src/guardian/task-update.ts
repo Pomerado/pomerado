@@ -86,9 +86,17 @@ export type TaskUpdateDecision = typeof TaskUpdateDecision.Type;
  * host checked that the person who answers the build's questions is the tool's owner.
  * `owner_request`: the same, and the maintenance is the owner's own request to change the tool,
  * which trusted intent states, so an output change that request plainly names is confirmed by it.
+ * `owner_requirements`: the person who answers may confirm a requirement or purpose change as the
+ * owner does, but nobody can confirm an output change that loosens or removes a field.
  * `none`: nobody can confirm, so only an update that adds or tightens output fields applies.
  */
-export type TaskUpdateConfirmer = "owner" | "owner_request" | "none";
+export type TaskUpdateConfirmer = "owner" | "owner_request" | "owner_requirements" | "none";
+
+/**
+ * Who can confirm, as Guardian reads it. The harness refuses an output an `owner_requirements`
+ * update would loosen before review, so what reaches review takes the owner path, as `owner`.
+ */
+export type ReviewedConfirmer = Exclude<TaskUpdateConfirmer, "owner_requirements">;
 
 /** A task update as Guardian reviews it: every string screened, as the caller would read it. */
 export interface PendingTaskUpdate {
@@ -115,7 +123,7 @@ export interface PendingTaskUpdate {
    * Host fact, in maintenance only: the update changes a published tool's registered contract,
    * and `confirmer` says who can confirm it.
    */
-  readonly maintenance?: { readonly confirmer: TaskUpdateConfirmer };
+  readonly maintenance?: { readonly confirmer: ReviewedConfirmer };
   /** Host fact: the host can't move this build to another site, so a site change needs a new build. */
   readonly siteMoveUnsupported?: true;
 }

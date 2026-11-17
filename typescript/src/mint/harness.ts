@@ -84,6 +84,7 @@ import { publicationFindingId } from "../guardian/publication.js";
 import {
   taskUpdateForReview,
   type PendingTaskUpdate,
+  type ReviewedConfirmer,
   type TaskChange,
   type TaskUpdateConfirmer,
 } from "../guardian/task-update.js";
@@ -211,16 +212,16 @@ const addedOutputFields = (updates: readonly { readonly changes: readonly TaskCh
 };
 
 /**
- * Whether a maintenance update only adds or tightens output fields, or changes one this build
- * added (`addedOutputFields`): callers keep everything the registered contract gives them, so
- * nobody needs to confirm it.
+ * Whether a maintenance change adds or tightens an output field, or changes one this build added
+ * (`addedOutputFields`): callers keep everything the registered contract gives them.
  */
+const keepsOutput = (change: TaskChange, added: ReadonlySet<string>) =>
+  change.setting === "output" &&
+  (change.change === "add" || change.change === "tighten" || added.has(change.field));
+
+/** Whether a maintenance update only keeps outputs (`keepsOutput`): nobody needs to confirm it. */
 const keepsContract = (update: TaskUpdateRequest, added: ReadonlySet<string>) =>
-  update.changes.every(
-    (change) =>
-      change.setting === "output" &&
-      (change.change === "add" || change.change === "tighten" || added.has(change.field)),
-  );
+  update.changes.every((change) => keepsOutput(change, added));
 
 /** Each loosened field and how, for the minter; a host refusal that names none reads as a sentence. */
 const weakenedOutputsText = (weakened: readonly WeakenedOutput[]) =>
@@ -4750,7 +4751,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       ).pipe(
         // A host outside the type, such as a script returning another word, names nobody.
         Effect.map((confirmer): TaskUpdateConfirmer =>
-          confirmer === "owner" || confirmer === "owner_request" ? confirmer : "none",
+          confirmer === "owner" ||
+          confirmer === "owner_request" ||
+          confirmer === "owner_requirements"
+            ? confirmer
+            : "none",
         ),
         Effect.catchAll((error) =>
           reportFailure(error, {
@@ -4762,6 +4767,12 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           }).pipe(Effect.as("none" as const)),
         ),
       );
+      /**
+       * Who can confirm, as Guardian reads it: what reaches review under `owner_requirements` takes
+       * the owner path.
+       */
+      const reviewedConfirmer = (confirmer: TaskUpdateConfirmer): ReviewedConfirmer =>
+        confirmer === "owner_requirements" ? "owner" : confirmer;
       /**
        * The task revision at which Guardian's new_mint on a same-task update went back to the
        * minter to ask the caller. A takeover forgets it, so the caller may be asked once more.
@@ -4777,7 +4788,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       const reviewAndApplyTaskUpdate = (
         submitted: TaskUpdateRequest,
         /** The confirmer the gate already asked the host about, so one update asks once. */
-        asked?: TaskUpdateConfirmer,
+        asked?: ReviewedConfirmer,
       ) =>
         Effect.gen(function* () {
           const review = dependencies.reviewTaskUpdate;
@@ -4805,7 +4816,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               // Who can confirm, as the host says; a change that only adds or tightens output
               // fields reaches review even when nobody can.
               ...(request.mode === "maintenance"
-                ? { maintenance: { confirmer: asked ?? (yield* maintenanceConfirmer) } }
+                ? {
+                    maintenance: {
+                      confirmer: asked ?? reviewedConfirmer(yield* maintenanceConfirmer),
+                    },
+                  }
                 : {}),
               // So Guardian knows a site change here can only be a new build.
               ...(dependencies.siteMoveUnsupported === true
@@ -7985,21 +8000,27 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       );
                     const refusal = taskUpdateRefusal(submitted);
                     if (refusal !== undefined) return taskUpdateAnswer("update_refused", refusal);
-                    let askedConfirmer: TaskUpdateConfirmer | undefined;
-                    if (request.mode === "maintenance" &&
-                      !keepsContract(submitted, addedOutputFields(taskState.updates))) {
+                    let askedConfirmer: ReviewedConfirmer | undefined;
+                    const added = addedOutputFields(taskState.updates);
+                    if (request.mode === "maintenance" && !keepsContract(submitted, added)) {
                       // Only the tool's owner confirms a change that takes from the registered
                       // contract; adding or tightening an output field takes nothing away.
                       const confirmer = yield* maintenanceConfirmer;
-                      askedConfirmer = confirmer;
-                      if (confirmer !== "owner" && confirmer !== "owner_request")
+                      // `owner_requirements` confirms a requirement or purpose change as the
+                      // owner does, and no output the registered contract loses.
+                      const outputsOnly =
+                        confirmer === "owner_requirements" &&
+                        submitted.changes.some(
+                          (change) => change.setting === "output" && !keepsOutput(change, added),
+                        );
+                      askedConfirmer = reviewedConfirmer(confirmer);
+                      if (askedConfirmer === "none" || outputsOnly)
                         return taskUpdateAnswer("update_refused", {
                           reason: "owner_unavailable",
-                          instruction:
-                            "No one who owns this tool can confirm a change that loosens or removes an output, or changes a requirement or the purpose, now, so nothing changed. Keep the registered contract (adding or tightening a field needs no confirmation). Prefer leaving out the part of the request that needs this change: remove any code or output field you added only for it, publish the rest, and name the part you left out in coverage. End with report_blocked, reason site_lacks_capability, naming the field, only when no part of the request can be published.",
+                          instruction: `No one who owns this tool can confirm a change that loosens or removes an output${outputsOnly ? "" : ", or changes a requirement or the purpose,"} now, so nothing changed. Keep the registered contract (adding or tightening a field needs no confirmation). Prefer leaving out the part of the request that needs this change: remove any code or output field you added only for it, publish the rest, and name the part you left out in coverage. End with report_blocked, reason site_lacks_capability, naming the field, only when no part of the request can be published.`,
                         });
                       // The owner's own request may confirm what it names, which Guardian judges.
-                      if (confirmer === "owner" && submitted.confirmedBy.length === 0)
+                      if (askedConfirmer === "owner" && submitted.confirmedBy.length === 0)
                         return taskUpdateAnswer("clarification_required", {
                           source: "host",
                           reason: "confirmation_required",
