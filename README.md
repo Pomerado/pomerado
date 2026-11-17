@@ -191,7 +191,7 @@ This repository is the complete Pomerado core, released under the MIT license. E
 | `typescript/tests/` | Unit tests and browser tests with local fixture sites |
 | `tools/` | Build helpers, the CI scans and the browser shard planner |
 | `docs/` | Guides for users, agents and maintainers |
-| `third-party/` | Licenses for adapted third-party code |
+| `third-party/` | Licenses for adapted third-party code, and PlaceMatch's built address matcher |
 
 [How it works](docs/how-it-works.md#source-layout) lists each module under `typescript/src/`.
 
@@ -214,7 +214,7 @@ Copyright (c) 2026 Pomerado AI, Inc. Licensed under the MIT License (`MIT`). See
 
 Versions 0.1.2 and earlier were published under the GNU Affero General Public License version 3 only (`AGPL-3.0-only`).
 
-Third-party code keeps its own license. The Guardian policy in `typescript/src/guardian/upstream-policy.md` is adapted from [OpenAI Codex](https://github.com/openai/codex) under the Apache License 2.0. Its license and notice are in [third-party/codex/](third-party/codex/) and ship with the npm package. The accessible name computation in `typescript/src/destinations/accessible-name.ts` is adapted from [Playwright](https://github.com/microsoft/playwright) under the Apache License 2.0. Its license and notice are in [third-party/playwright/](third-party/playwright/) and ship with the npm package.
+Third-party code keeps its own license. The Guardian policy in `typescript/src/guardian/upstream-policy.md` is adapted from [OpenAI Codex](https://github.com/openai/codex) under the Apache License 2.0. Its license and notice are in [third-party/codex/](third-party/codex/) and ship with the npm package. The accessible name computation in `typescript/src/destinations/accessible-name.ts` is adapted from [Playwright](https://github.com/microsoft/playwright) under the Apache License 2.0. Its license and notice are in [third-party/playwright/](third-party/playwright/) and ship with the npm package. The address picker's matcher is [PlaceMatch](https://github.com/Pomerado/placematch), MIT, built as WebAssembly at the commit [third-party/placematch/source.json](third-party/placematch/source.json) names, with its license and the notice for the data it embeds; `tools/vendor-placematch.sh` builds it again at a new commit.
 
 ## Star History
 

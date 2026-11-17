@@ -6,10 +6,10 @@ import {
 } from "../support/mint-fixtures.js";
 import { Usage } from "@openai/agents";
 import type { ModelRequest, ModelResponse } from "@openai/agents";
-import { Deferred, Effect, Fiber } from "effect";
+import { Deferred, Effect, Fiber, Schema } from "effect";
 import { afterEach, expect, it } from "vitest";
 import { cardReadbackRefusal } from "../../src/mint/card-readback.js";
-import { MintFailure } from "../../src/mint/contracts.js";
+import { MintFailure, MintHarnessSnapshot } from "../../src/mint/contracts.js";
 import { fileHandleRefusal } from "../../src/mint/file-handles.js";
 import { fileReadbackRefusal } from "../../src/mint/file-readback.js";
 import { makeOpenAIMinter } from "../../src/mint/openai.js";
@@ -2085,8 +2085,15 @@ const declinedExample = {
   explanation: "The site kept showing its sign-in screen, so it declined this example.",
 };
 
+type BlockedReportInput = {
+  readonly reason: string;
+  readonly explanation: string;
+  readonly intent?: string;
+};
+
 /**
- * A build that signs in through `steps`, one authenticate each, then sends `report`. A step that is
+ * A build that signs in through `steps`, one authenticate each, then sends `report`, or each
+ * report in order, a model response in that list sent as it is. A step that is
  * a failure fails its authenticate before its dispatch fence, `{ afterFence }` fails it past the
  * fence, `{ request }` sends that request in place of the authenticate, and a function gives the
  * step's result when the step runs.
@@ -2094,11 +2101,7 @@ const declinedExample = {
 const signInThenDecline = (
   steps: readonly (object | MintFailure | (() => object))[],
   overrides: Parameters<typeof fixture>[1] = {},
-  report: {
-    readonly reason: string;
-    readonly explanation: string;
-    readonly intent?: string;
-  } = declinedExample,
+  report: BlockedReportInput | readonly (BlockedReportInput | ModelResponse)[] = declinedExample,
 ) => {
   let executions = 0;
   return fixture(
@@ -2107,7 +2110,17 @@ const signInThenDecline = (
         ...steps.map((next, step) =>
           call("execute", "request" in next ? next.request : authenticate, `sign_in_${step}`),
         ),
-        call("report_blocked", report),
+        ...[report]
+          .flat()
+          .map((sent, sentIndex) =>
+            "output" in sent
+              ? sent
+              : call(
+                  "report_blocked",
+                  sent,
+                  sentIndex === 0 ? "report_blocked" : `report_blocked_${sentIndex}`,
+                ),
+          ),
       ][index] ?? prose("Stopping."),
     {
       reviewAndExecute: (_submitted, beforeDispatch = () => Effect.void) => {
@@ -2291,6 +2304,89 @@ it("keeps the reviewed explanation of a report ended as sign-in unavailable", as
   expect(reviewed).toEqual([expect.objectContaining({ blockedOutcome: true })]);
 });
 
+// Guardian's request for other words goes back to the minter once, as any blocked report's does,
+// so the caller can still learn why the sign-in stopped. The revised explanation ends the build
+// as sign-in unavailable, with the reason the minter reported.
+it("hands a reworded explanation of a report ended as sign-in unavailable back to the minter once", async () => {
+  const reviewed: string[] = [];
+  const revised = "The site asks for a confirmation link sent by email before it signs in.";
+  const f = await signInThenDecline(
+    [submittedScreen, rejectionUnconfirmed],
+    {
+      reviewQuestion: (candidate) =>
+        Effect.sync(() => {
+          const prompt = candidate.questions[0]?.prompt ?? "";
+          reviewed.push(prompt);
+          return prompt === revised
+            ? { outcome: "allow_business" as const, rationale: "Plain." }
+            : { outcome: "reword" as const, rationale: "It names an email address." };
+        }),
+    },
+    [
+      {
+        reason: "site_lacks_capability",
+        explanation: "The site wants owner@example.test to confirm a link before it signs in.",
+      },
+      { reason: "site_lacks_capability", explanation: revised },
+    ],
+  );
+  const outcome = await f.run();
+  const handedBack = lastResult(f.requests[3]);
+  expect(handedBack).toContain("blocked_explanation_rejected");
+  expect(handedBack).toContain("It names an email address.");
+  expect(outcome).not.toHaveProperty("blocked");
+  expect(outcome).toMatchObject({
+    build: "incomplete",
+    recoveryReason: "sign_in_unavailable",
+    stopReason: "sign_in_failed",
+    stopReportReason: "site_lacks_capability",
+    stopExplanation: revised,
+  });
+  expect(reviewed).toHaveLength(2);
+  expect(JSON.stringify(outcome)).not.toContain("owner@example.test");
+  // The second report ended the build, with no further model call.
+  expect(f.requests).toHaveLength(4);
+});
+
+// A revision Guardian rewords again still ends the build: with the reason the minter reported and
+// no words of its own, never a third round.
+it("ends a report ended as sign-in unavailable with its reason alone when Guardian rewords it twice", async () => {
+  let reviews = 0;
+  const f = await signInThenDecline(
+    [submittedScreen, rejectionUnconfirmed],
+    {
+      reviewQuestion: () =>
+        Effect.sync(() => {
+          reviews += 1;
+          return { outcome: "reword" as const, rationale: "It names an email address." };
+        }),
+    },
+    [
+      {
+        reason: "site_declined",
+        explanation: "The site wants owner@example.test to confirm a link before it signs in.",
+      },
+      {
+        reason: "site_declined",
+        explanation: "The site wants owner@example.test to click a link before it signs in.",
+      },
+    ],
+  );
+  const outcome = await f.run();
+  expect(lastResult(f.requests[3])).toContain("blocked_explanation_rejected");
+  expect(outcome).toMatchObject({
+    recoveryReason: "sign_in_unavailable",
+    stopReason: "sign_in_failed",
+    stopReportReason: "site_declined",
+  });
+  expect(outcome).not.toHaveProperty("stopExplanation");
+  expect(JSON.stringify(outcome)).not.toContain("owner@example.test");
+  expect(reviews).toBe(2);
+  expect(f.requests).toHaveLength(4);
+});
+
+// A minter that never sends its reworded report again, with nothing run since, still ends as
+// sign-in unavailable with the reason it reported; its last answer is reviewed as any is.
 it("keeps no explanation of a report ended as sign-in unavailable that Guardian did not allow", async () => {
   const f = await signInThenDecline(
     [submittedScreen, rejectionUnconfirmed],
@@ -2304,10 +2400,161 @@ it("keeps no explanation of a report ended as sign-in unavailable that Guardian 
     },
   );
   const outcome = await f.run();
-  expect(outcome).toMatchObject({ recoveryReason: "sign_in_unavailable" });
+  expect(lastResult(f.requests[3])).toContain("blocked_explanation_rejected");
+  expect(outcome).toMatchObject({
+    recoveryReason: "sign_in_unavailable",
+    stopReason: "sign_in_failed",
+    stopReportReason: "site_lacks_capability",
+  });
   expect(outcome).not.toHaveProperty("stopExplanation");
   expect(JSON.stringify(outcome)).not.toContain("owner@example.test");
 });
+
+/** A sign-in stop report whose explanation names an address, which Guardian rewords. */
+const namedAddressReport = {
+  reason: "site_lacks_capability",
+  explanation: "The site wants owner@example.test to confirm a link before it signs in.",
+};
+const revisedReport = {
+  reason: "site_lacks_capability",
+  explanation: "The site asks for a confirmation link sent by email before it signs in.",
+};
+/** Guardian's review that rewords the named address and allows anything else. */
+const rewordsAddress = (candidate: { readonly questions: readonly { readonly prompt: string }[] }) =>
+  Effect.succeed(
+    candidate.questions[0]?.prompt.includes("owner@example.test") === true
+      ? { outcome: "reword" as const, rationale: "It names an email address." }
+      : { outcome: "allow_business" as const, rationale: "Plain." },
+  );
+
+// The revision's review is the last: one that fails or outlasts its bound ends the build at
+// once with the reason alone, as the first report's would.
+it.each([
+  { name: "failure", review: () => Effect.fail(new MintFailure({ code: "ReviewUnavailable" })) },
+  { name: "timeout", review: () => Effect.never },
+] as const)(
+  "ends a revised sign-in stop report with its reason alone when its review ends in a $name",
+  async ({ review }) => {
+    let reviews = 0;
+    const f = await signInThenDecline(
+      [submittedScreen, rejectionUnconfirmed],
+      {
+        reviewQuestion: (candidate) => (reviews++ === 0 ? rewordsAddress(candidate) : review()),
+        stopExplanationReviewMs: 20,
+      },
+      [namedAddressReport, revisedReport],
+    );
+    const outcome = await f.run();
+    expect(lastResult(f.requests[3])).toContain("blocked_explanation_rejected");
+    expect(outcome).toMatchObject({
+      recoveryReason: "sign_in_unavailable",
+      stopReason: "sign_in_failed",
+      stopReportReason: "site_lacks_capability",
+    });
+    expect(outcome).not.toHaveProperty("stopExplanation");
+    expect(f.requests).toHaveLength(4);
+  },
+);
+
+// A minter handed its explanation back may try the sign-in again before it reports again. A sign-in
+// that still never confirmed ends the build on the revised report, with no further round.
+it("ends a sign-in stop report sent again after another sign-in step with the revision", async () => {
+  const f = await signInThenDecline(
+    [submittedScreen, rejectionUnconfirmed],
+    { reviewQuestion: rewordsAddress },
+    [namedAddressReport, call("execute", authenticate, "sign_in_again"), revisedReport],
+  );
+  const outcome = await f.run();
+  expect(lastResult(f.requests[3])).toContain("blocked_explanation_rejected");
+  expect(outcome).toMatchObject({
+    recoveryReason: "sign_in_unavailable",
+    stopReason: "sign_in_failed",
+    stopReportReason: "site_lacks_capability",
+    stopExplanation: revisedReport.explanation,
+  });
+  expect(f.requests).toHaveLength(5);
+});
+
+// A minter that never sends its reworded report again says why in its last answer, which its
+// caller reads once Guardian allows it, beside the reason it reported.
+it("keeps the allowed last answer of a minter that never sends its sign-in stop report again", async () => {
+  const last = "The site asks for a confirmation link sent by email before it signs in.";
+  const f = await signInThenDecline(
+    [submittedScreen, rejectionUnconfirmed],
+    { reviewQuestion: rewordsAddress },
+    [namedAddressReport, ...Array.from({ length: 8 }, () => prose(last))],
+  );
+  const outcome = await f.run();
+  expect(lastResult(f.requests[3])).toContain("blocked_explanation_rejected");
+  expect(outcome).toMatchObject({
+    recoveryReason: "sign_in_unavailable",
+    stopReason: "sign_in_failed",
+    stopReportReason: "site_lacks_capability",
+    stopExplanation: last,
+  });
+  expect(JSON.stringify(outcome)).not.toContain("owner@example.test");
+});
+
+// A minter that gave up signing in after its report came back no longer stops on that sign-in, so
+// its stop is its own, never the report it did not send again.
+it("ends a minter that gave up signing in after its sign-in stop report came back by its own stop", async () => {
+  const f = await signInThenDecline(
+    [submittedScreen, rejectionUnconfirmed],
+    {
+      reviewQuestion: rewordsAddress,
+      abandonSignIn: () => Effect.succeed({ outcome: "abandoned" as const }),
+    },
+    [namedAddressReport, giveUpSignIn],
+  );
+  const outcome = await f.run();
+  expect(lastResult(f.requests[3])).toContain("blocked_explanation_rejected");
+  expect(lastResult(f.requests[4])).toContain("sign_in_abandoned");
+  expect(outcome).toMatchObject({ stopReason: "final_text_without_tool" });
+  expect(outcome).not.toHaveProperty("recoveryReason");
+  expect(outcome).not.toHaveProperty("stopReportReason");
+});
+
+// The checkpoint keeps the reported reason with the ending, so a successor reads it back.
+it("keeps a sign-in stop's reported reason in the checkpoint", async () => {
+  let capture: (() => MintHarnessSnapshot) | undefined;
+  const steps = [submittedScreen, rejectionUnconfirmed];
+  const f = await harnessFixture(
+    (turn) =>
+      Effect.gen(function* () {
+        const reportBlocked = turn.actions.reportBlocked;
+        if (reportBlocked === undefined) throw new Error("Missing report_blocked");
+        yield* Effect.either(turn.actions.execute(authenticate));
+        yield* Effect.either(turn.actions.execute(authenticate));
+        yield* reportBlocked({
+          reason: "site_unavailable",
+          explanation: "The site's sign-in page answered with an error.",
+          intent: "Synthetic report_blocked purpose",
+        });
+      }),
+    {
+      reviewAndExecute: (_submitted, beforeDispatch = () => Effect.void) =>
+        beforeDispatch({ reviewId: "review_sign_in", action: "authentication" }).pipe(
+          Effect.as(steps.shift() ?? submittedScreen),
+        ),
+      agentRecovery: {
+        bindHarness: (bound) =>
+          Effect.sync(() => {
+            capture = bound;
+          }),
+        save: () => Effect.void,
+      },
+    },
+  );
+  expect(await f.run()).toMatchObject({ stopReportReason: "site_unavailable" });
+  const harness = Schema.decodeUnknownSync(MintHarnessSnapshot)(
+    JSON.parse(JSON.stringify(capture?.())),
+  );
+  expect(harness.terminal).toMatchObject({
+    recoveryReason: "sign_in_unavailable",
+    stopReportReason: "site_unavailable",
+  });
+});
+
 
 /** What an accepted or rewritten ending's `phase: "blocked"` diagnostic records. */
 const blockedDiagnostic = (outcome: { readonly diagnostics: readonly string[] }) =>
