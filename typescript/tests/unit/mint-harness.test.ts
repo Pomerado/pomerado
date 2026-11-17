@@ -5477,7 +5477,9 @@ it("hands a write repair's unanswered question that asks no consent back with it
           status: "no_answer",
           recommended: { phone_field: "contact" },
           userInputRequired: false,
-          instruction: expect.any(String),
+          instruction: expect.stringContaining(
+            "if you cannot carry it out, prefer ending the build with report_blocked and saying why",
+          ),
         });
         expect(turn.isComplete()).toBe(false);
       }),

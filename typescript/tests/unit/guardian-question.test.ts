@@ -7,7 +7,10 @@ import type { ModelRequest, ModelResponse } from "@openai/agents";
 import { Effect } from "effect";
 import { afterEach, expect, it } from "vitest";
 import { makeOpenAIReviewer } from "../../src/guardian/openai.js";
-import { nativeExecutionEnvironment } from "../../src/guardian/execution-policy.js";
+import {
+  guardianExecutionPolicy,
+  nativeExecutionEnvironment,
+} from "../../src/guardian/execution-policy.js";
 import { ownerNamedOrigins } from "../../src/guardian/owner-named-origins.js";
 import { answersForReview, questionForReview } from "../../src/guardian/question.js";
 import type { PendingQuestion } from "../../src/guardian/question.js";
@@ -284,6 +287,35 @@ it("tells the question review a requested change's request to keep a safety defa
   );
   expect(blockedReport).toMatch(
     /build agent itself declined.*That the tool keeps a safety default is a true reason it may state\./u,
+  );
+});
+
+// A request asked for a form filled in with synthetic details, stopping before its final submit.
+// The execution policy said such words authorize no made-up value, so the agent asked for the
+// values the form required, and the question review reworded each question as already
+// authorized: the agent had no move left. An instruction to use test or synthetic values now
+// supplies the values it leaves open, and a question asking for one asks for what it requests.
+it("lets an instruction to use test or synthetic values supply the values it leaves open", async () => {
+  const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
+  await Effect.runPromise(
+    makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
+      pending,
+      question,
+      unreadable,
+    ),
+  );
+  const execution = guardianExecutionPolicy(nativeExecutionEnvironment);
+  expect(execution).not.toContain("which authorizes no made-up value");
+  expect(execution).toContain(
+    "an instruction in trusted intent or an answer to use or generate test, synthetic, sample or fake values supplies each value or choice among the site's options that it leaves open",
+  );
+  const alreadyRequested = reviewPolicyOf(requests[0])
+    .split("\n")
+    .find((rule) =>
+      rule.startsWith("- asks permission to do what trusted intent already requests"),
+    );
+  expect(alreadyRequested).toContain(
+    "test, synthetic, sample or fake values asks for what it already requests",
   );
 });
 

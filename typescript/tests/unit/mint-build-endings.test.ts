@@ -1258,6 +1258,18 @@ it.each([
     step: { refusalRationale: noMatchRationale },
     absent: "refusalInstruction",
   },
+  // A registry refusal the minter was told it may fix names its fix too.
+  {
+    refusal: new MintFailure({
+      code: "PublicationUnavailable",
+      reason: "registry_conflict",
+      registryIssue: "contract_breaking",
+      registryProblem: "status (output widened)",
+    }),
+    reason: "registry_conflict",
+    step: { refusalInstruction: expect.stringContaining("Restore each named output") },
+    absent: "refusalRationale",
+  },
   // A host refusal listed beside Guardian's denial of the same submission names its fix too.
   {
     refusal: new MintFailure({ ...guardianDenialArgs, alsoRefused: [variantsUnsupported] }),
@@ -1338,6 +1350,31 @@ it.each([
         call("report_blocked", { reason: "host_refused", explanation }, "report"),
       ][index] ?? prose("Stopping."),
     { publish: () => Effect.fail(publicationRefused(refusal)) },
+  );
+  expect(await f.run()).toMatchObject({ blocked: { reason: "host_refused", explanation } });
+});
+
+// A tool another publication advanced is a fixable registry refusal whose instruction offers ending
+// the build, so it names no step: the report is taken at once.
+it("takes host_refused at once after a registry refusal that offers ending the build", async () => {
+  const explanation = "A Pomerado check refused publication, so no tool was published.";
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", pureExample),
+        finishAs(0),
+        call("report_blocked", { reason: "host_refused", explanation }, "report"),
+      ][index] ?? prose("Stopping."),
+    {
+      publish: () =>
+        Effect.fail(
+          new MintFailure({
+            code: "PublicationUnavailable",
+            reason: "registry_conflict",
+            registryIssue: "generation_moved",
+          }),
+        ),
+    },
   );
   expect(await f.run()).toMatchObject({ blocked: { reason: "host_refused", explanation } });
 });
@@ -1745,6 +1782,77 @@ it("keeps no last answer Guardian did not allow", async () => {
   expect(outcome.stopReason).toBe("final_text_without_tool");
   expect(outcome).not.toHaveProperty("stopExplanation");
   expect(JSON.stringify(outcome)).not.toContain("555-0100");
+});
+
+// A last answer that says the host refused the build's steps is true only against the host's own
+// record. Its review reads the decision ledger a blocked report's review reads, with the host's
+// hold on a live step and its refusal of the blocked report beside the refused execution. The
+// report refused again and again keeps one entry, so the execution's refusals stay in the ledger.
+it("reviews the last answer against the host's refusals in the decision ledger", async () => {
+  const explanation = "The host refused the save step and would not take a blocked report.";
+  const refusedStep = "Nothing was executed: a host check refuses this step while it fails.";
+  const hold = "This build has not signed in yet, so example does not run in the browser.";
+  const ledgers: unknown[] = [];
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", pureExample, "refused"),
+        call("execute", { ...pureExample, target: "liveBrowser" }, "held"),
+        ...Array.from({ length: 8 }, (_, report) =>
+          call("report_blocked", { reason: "host_refused", explanation }, `report_${report}`),
+        ),
+      ][index] ?? prose(explanation),
+    {
+      preflight: (submitted) =>
+        submitted.target === "liveBrowser"
+          ? Effect.fail(
+              new MintFailure({ code: "ReconciliationRequired", recoveryGate: { reason: hold } }),
+            )
+          : Effect.succeed({ supported: true }),
+      reviewAndExecute: () =>
+        Effect.succeed({
+          executionId: "execution_refused",
+          status: "unsupported" as const,
+          effect: "not_sent" as const,
+          observations: refusedStep,
+        }),
+      reviewQuestion: (_candidate, context) =>
+        Effect.sync(() => {
+          ledgers.push(context?.decisionLedger);
+          return context?.decisionLedger?.hostRefusals?.length === 3
+            ? { outcome: "allow_business" as const, rationale: "The host recorded each refusal." }
+            : { outcome: "reword" as const, rationale: "No such refusal is on record." };
+        }),
+    },
+  );
+  const outcome = await f.run();
+  expect(lastResult(f.requests[3])).toContain("host_not_refused");
+  expect(ledgers).toEqual([
+    {
+      denials: [],
+      testFailures: [],
+      hostRefusals: [
+        { tool: "execute", code: "unsupported", reason: refusedStep, atUtc: expect.any(String) },
+        {
+          tool: "execute",
+          code: "ReconciliationRequired",
+          reason: hold,
+          atUtc: expect.any(String),
+        },
+        {
+          tool: "report_blocked",
+          code: "host_not_refused",
+          reason: JSON.stringify({ reported: "host_refused" }),
+          atUtc: expect.any(String),
+        },
+      ],
+    },
+  ]);
+  expect(outcome).toMatchObject({
+    build: "incomplete",
+    stopReason: "final_text_without_tool",
+    stopExplanation: explanation,
+  });
 });
 
 it("ends an attempt that spent its model calls as turn_budget_spent", async () => {
