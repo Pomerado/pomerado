@@ -546,6 +546,29 @@ describe("batchFetch in the page", () => {
     expect(answer.results[16]).toMatchObject({ ok: false, error: "network" });
   });
 
+  it.each([
+    ["before", 16, 17],
+    ["after", 17, 16],
+  ])(
+    "counts a quick failure %s a timed-out fetch in a batch with no answer as a throttle",
+    async (_order, quick, hung) => {
+      vi.useFakeTimers();
+      vi.stubGlobal("fetch", (url: string, init: RequestInit) =>
+        idOf(url) === quick
+          ? Promise.reject(new TypeError("Failed to fetch"))
+          : idOf(url) === hung
+            ? new Promise((_resolve, reject) => init.signal?.addEventListener("abort", () => reject(new Error("aborted"))))
+            : Promise.resolve(new Response(JSON.stringify({ id: idOf(url) }), { headers: { "content-type": "application/json" } })),
+      );
+      const pending = runBatchFetch(Array.from({ length: 18 }, (_, index) => ({ url: itemUrl(index) })));
+      await vi.advanceTimersByTimeAsync(60_000);
+      const answer = await pending;
+      // The quick failure is sent again alone; the timed-out fetch is not.
+      expect(answer.batches).toEqual([16, 2, 1, 1]);
+      expect(answer.results[hung]).toMatchObject({ ok: false, error: "network" });
+    },
+  );
+
   it("returns results in input order and stops at a block, marking the rest not sent", async () => {
     const site = scriptedSite((url) =>
       url === itemUrl(6)
