@@ -342,6 +342,35 @@ it.each([
   expect(outcome).toMatchObject({ build: "published", publicationRef: "published-revision" });
 });
 
+// A widened output under `owner_requirements` is refused, yet the repair still publishes: a root
+// branch that only refuses, such as the site declining the account, rides in the source's own
+// output schema, which the harness never holds to the registered contract, so the host's own
+// publication check judges it, not this gate.
+it("refuses a widened output under owner_requirements and still publishes the repair", async () => {
+  const host = updateHost();
+  const { result, outcome, asked } = await repairAndPublish(
+    {
+      summary: "Return the site's refusal when it declines this account.",
+      changes: [
+        {
+          setting: "output",
+          field: "status",
+          change: "widen",
+          text: "The tool may return the site's refusal in place of the notes.",
+        },
+      ],
+      confirmedBy: [],
+      recommend: "update",
+    },
+    { ...host.dependencies, taskUpdateConfirmer: () => Effect.succeed("owner_requirements") },
+  );
+  expect(result).toMatchObject({ status: "update_refused", reason: "owner_unavailable" });
+  expect(asked).toBe(0);
+  expect(host.reviews).toEqual([]);
+  expect(host.applied).toEqual([]);
+  expect(outcome).toMatchObject({ build: "published", publicationRef: "published-revision" });
+});
+
 it("refuses removing an output field without a reason, before any review", async () => {
   const host = updateHost();
   const { reason: _, ...unexplained } = dropColor.changes[0]!;
