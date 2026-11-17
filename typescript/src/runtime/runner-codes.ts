@@ -37,6 +37,8 @@ const runnerErrorCodes = [
   "WriteConfirmationRefused",
   "CommitAlreadySent",
   "ScriptInputFailure",
+  // A host's address matcher that could not answer a tool's address match: the host's fault.
+  "AddressMatchUnavailable",
 ] as const;
 /** A reported runner code, or `unclassified` for anything else, which may be authored text. */
 export const finiteRunnerErrorCode = (value: string | undefined) =>
