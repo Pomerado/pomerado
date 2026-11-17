@@ -234,7 +234,7 @@ During the session:
   the option.
 - Read each typed value back once its field settles, before the step's commit. When the site
   rewrote it as it was typed or on leaving the field, such as an address it standardized, or
-  offered exactly one suggestion for it that matches it cleanly or that `matchAddress` accepted,
+  offered exactly one suggestion for it that matches it cleanly or that `matchAddressRows` accepted,
   take the site's version, as you would a picked
   option: later read-backs, such as a review page, summary or confirmation, compare against
   it, and the output returns it for that field. Ask about any other lone suggestion as about a

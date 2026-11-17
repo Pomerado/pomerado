@@ -533,7 +533,7 @@ const pickerPageCode = String.raw`(element, args) => {
  *   through when the list renders as it scrolls, then closes it: the page's live options for a
  *   caller question or an `available` list.
  * - `pickerTypeAddress(control, address, options?)` types the address into the field as
- *   `matchAddress` asks for it, its unit split off (`addressRequest`), key by key as `pickValue`
+ *   `matchAddressRows` asks for it, its unit split off (`addressRequest`), key by key as `pickValue`
  *   types, and returns that text as `query`. It reads and picks nothing.
  * - `pickerAddressRows(control, options?)` reads the rows the field's list shows now (the list the
  *   field names, else an ARIA popup, else the list closest to the field, unless `listbox` names
@@ -541,9 +541,9 @@ const pickerPageCode = String.raw`(element, args) => {
  *   read }`: each row's whole text, its lines joined by commas, and whether it shows a category of
  *   its own, which `options.category` finds, a CSS selector matching the row or an element in it,
  *   such as a venue type a map pin lacks; that element's text is left out of the row's. `read` is
- *   the run's effect. Return it from the call and pass it to `matchAddress` from
+ *   the run's effect. Return it from the call and pass it to `matchAddressRows` from
  *   `pomerado/runtime` in the script, which matches with PlaceMatch there, never on the page.
- * - `pickerMatchAddress(control, match, options?)` takes `matchAddress`'s answer in the next call,
+ * - `pickerMatchAddress(control, match, options?)` takes `matchAddressRows`'s answer in the next call,
  *   with the options `pickerAddressRows` had: it finds the row it took in the list open now, at its
  *   place with its text, else the first with its text, and returns `{ picked: true, row, label, unit }`, `row` that row's element, for the
  *   tool to click in the same call, and `unit` for the site's own unit field; or the refusal as it
@@ -1724,7 +1724,7 @@ const pickerOptions = async (control, options = {}) => {
   return { kind, options: list.map((option) => ({ label: option.label, text: pickerText(option), value: option.value, disabled: option.disabled })) };
 };
 const pickerAddressRequest = ${String(addressRequest)};
-// Types the text matchAddress asks the site for first: the address with its unit split off.
+// Types the text matchAddressRows asks the site for first: the address with its unit split off.
 const pickerTypeAddress = async (control, address, options = {}) => {
   const { query } = pickerAddressRequest(String(address ?? ""), pickerFold);
   const s = await pickerStart(control, options);
@@ -1737,7 +1737,7 @@ const pickerTypeAddress = async (control, address, options = {}) => {
     s.net.stop();
   }
 };
-// An address row as matchAddress reads it: its lines as comma parts, so a place's name on the line
+// An address row as matchAddressRows reads it: its lines as comma parts, so a place's name on the line
 // above its address stays out of its street, without the category the site shows it with.
 const pickerAddressRow = (option) => {
   const lines = option.category ? (option.lines ?? []).filter((line) => line !== option.category) : option.lines;
@@ -1747,7 +1747,7 @@ const pickerAddressRow = (option) => {
 // The usable rows of the list open now, read once as it shows, in the site's order.
 const pickerAddressScan = async (s) =>
   (await pickerEval(s, "scan", { opened: true })).options.filter((option) => !option.disabled && !option.creation);
-// The rows the field's list shows now, for matchAddress in the script, with the run's effect.
+// The rows the field's list shows now, for matchAddressRows in the script, with the run's effect.
 const pickerAddressRows = async (control, options = {}) => {
   const s = await pickerStart(control, options);
   try {
@@ -1761,11 +1761,11 @@ const pickerAddressRows = async (control, options = {}) => {
     await s.handle?.dispose().catch(() => undefined);
   }
 };
-// The element of the row matchAddress took, found again in the list open now at its place with its
+// The element of the row matchAddressRows took, found again in the list open now at its place with its
 // text (else the first with its text), for the tool to click in the same call; its refusal as it is.
 const pickerMatchAddress = async (control, match, options = {}) => {
   if (match === null || typeof match !== "object" || typeof match.picked !== "boolean" || (match.picked && typeof match.wanted !== "string"))
-    throw new TypeError("pickerMatchAddress takes matchAddress's answer: read the list with pickerAddressRows in one call, match it with matchAddress in the script, then pass its answer here in the next call");
+    throw new TypeError("pickerMatchAddress takes matchAddressRows's answer: read the list with pickerAddressRows in one call, match it with matchAddressRows in the script, then pass its answer here in the next call");
   if (!match.picked) return match;
   const s = await pickerStart(control, options);
   try {

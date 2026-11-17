@@ -45,15 +45,15 @@ export interface AddressRow {
 }
 
 /**
- * What `matchAddress` accepted: the row at `index`, as `label`, the unit, and the caller's address
+ * What `matchAddressRows` accepted: the row at `index`, as `label`, the unit, and the caller's address
  * as `wanted`, which a refusal quotes when the row is gone by the next call; or a refusal.
  */
-export type AddressMatch =
+export type AddressRowsMatch =
   | { readonly picked: true; readonly index: number; readonly label: string; readonly unit: string; readonly wanted: string }
   | AddressRefusal;
 
 /** How to match: a read or a write, and the address's country, such as `US`, when the tool knows it. */
-export interface AddressMatchOptions {
+export interface AddressRowsMatchOptions {
   readonly read?: boolean;
   readonly country?: string;
 }
@@ -147,12 +147,19 @@ const explain = (
   country: string | undefined,
 ): Omit<Explained, "answer"> & { readonly answer: PlaceExplained | undefined } => {
   const labels = rows.map((row) => String(row.text ?? "").replace(/\s+/gu, " ").trim());
-  // A site's own control for the text, such as one listing more results for it, is no row. Neither
-  // is an empty row.
+  // A site's own control for the text, such as one listing more results for it, is no row, however
+  // long the text makes it: one longer than PlaceMatch reads is checked with a short stand-in for
+  // the typed text. Neither is an empty row.
   const tooLongRow = (label: string) => label.length > placeMatchLimits.textLength;
+  const control = (typed: string, label: string) => {
+    if (!tooLongRow(label)) return matcher.isControl(typed, label);
+    const shown = typed === "" ? -1 : label.indexOf(typed);
+    const short = shown < 0 ? label : `${label.slice(0, shown)}x${label.slice(shown + typed.length)}`;
+    return !tooLongRow(short) && matcher.isControl("x", short);
+  };
   const usable = labels
     .flatMap((label, index) => (label === "" ? [] : [index]))
-    .filter((index) => tooLongRow(labels[index] ?? "") || ![wanted, text].some((typed) => matcher.isControl(typed, labels[index] ?? "")));
+    .filter((index) => ![wanted, text].some((typed) => control(typed, labels[index] ?? "")));
   const answer =
     usable.length > placeMatchLimits.rows || usable.some((index) => tooLongRow(labels[index] ?? ""))
       ? undefined
@@ -272,11 +279,11 @@ const crowded = (available: readonly string[], request: ReturnType<typeof addres
  * PlaceMatch can't compare the list whole (more than 100 usable rows, or one longer than 512
  * characters), since no row is cut or left out unseen.
  */
-export const matchAddress = async (
+export const matchAddressRows = async (
   address: string,
   listed: readonly (AddressRow | string)[] | { readonly rows: readonly (AddressRow | string)[]; readonly read?: boolean },
-  options: AddressMatchOptions = {},
-): Promise<AddressMatch> => {
+  options: AddressRowsMatchOptions = {},
+): Promise<AddressRowsMatch> => {
   const given = "rows" in listed ? listed.rows : listed;
   const rows = given.map((row) => (typeof row === "string" ? { text: row } : row));
   const read = options.read ?? ("rows" in listed && listed.read === true);
@@ -305,17 +312,17 @@ export const matchAddress = async (
  * It asks for the address with its unit split off (`addressRequest`), and when that brings no
  * suggestion that is the caller's place, once more with the retry text: joined words split, the ZIP
  * and a unit asked for as typed left out, and stray punctuation dropped. Each answer is matched as
- * `matchAddress` matches rows, PlaceMatch deciding which suggestion is the caller's place; in a
+ * `matchAddressRows` matches rows, PlaceMatch deciding which suggestion is the caller's place; in a
  * read with no such suggestion, the read's rules apply to the first text that brought a usable
  * one. It returns the suggestion it accepted, as `choice` and `label`, the text that brought it as
- * `query`, and the unit for the site's own unit field, or `matchAddress`'s refusal, listing every
+ * `query`, and the unit for the site's own unit field, or `matchAddressRows`'s refusal, listing every
  * suggestion the site gave as `available`.
  */
 export const resolveAddress = async <T = string>(
   address: string,
   suggest: (text: string) => Promise<readonly T[]> | readonly T[],
   label: (item: T) => string = String,
-  options: AddressMatchOptions & { readonly categorized?: (item: T) => boolean } = {},
+  options: AddressRowsMatchOptions & { readonly categorized?: (item: T) => boolean } = {},
 ): Promise<AddressOutcome<T>> => {
   const read = options.read === true;
   const request = addressRequest(String(address ?? ""), foldChoiceText);

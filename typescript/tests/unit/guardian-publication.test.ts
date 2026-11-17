@@ -1307,7 +1307,7 @@ describe("the publication policy", () => {
   // own picker, whose fix names the address resolver too, so the two rules ask for the same fix.
   it("finds a typed street address matched without the address resolver", () => {
     expect(publicationOutputPolicy).toContain(
-      "Own address match: source that matches a street address the caller typed against the site's suggestions with pickValue, rankChoices or matching of its own, instead of matchAddress over the rows pickerAddressRows read, or resolveAddress over the site's own suggestion request. A choice among the account's saved addresses is not this finding.",
+      "Own address match: source that matches a street address the caller typed against the site's suggestions with pickValue, rankChoices or matching of its own, instead of matchAddressRows over the rows pickerAddressRows read, or resolveAddress over the site's own suggestion request. A choice among the account's saved addresses is not this finding.",
     );
     expect(
       publicationOutputPolicy.slice(
@@ -1315,7 +1315,7 @@ describe("the publication policy", () => {
         publicationOutputPolicy.indexOf("Own address match:"),
       ),
     ).toContain(
-      "The fix is pickValue or pickValues, with their options for the site's quirks, such as query, answered, committed, commit or blur; for a street address the caller typed, it is pickerTypeAddress and pickerAddressRows in one call, matchAddress in the script, then pickerMatchAddress in the next call, clicking the row it returns.",
+      "The fix is pickValue or pickValues, with their options for the site's quirks, such as query, answered, committed, commit or blur; for a street address the caller typed, it is pickerTypeAddress and pickerAddressRows in one call, matchAddressRows in the script, then pickerMatchAddress in the next call, clicking the row it returns.",
     );
     expect(guardianPublicationPolicy).toContain(publicationOutputPolicy);
   });

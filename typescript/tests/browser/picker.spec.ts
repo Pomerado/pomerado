@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { Schema } from "effect";
-import { matchAddress } from "../../src/browser/picker-address.js";
+import { matchAddressRows } from "../../src/browser/picker-address.js";
 import { pickChoices } from "../../src/browser/picker.js";
 import { type Api, call, callFailure, callRead, serve, submitted } from "./picker-fixture.js";
 
@@ -273,7 +273,7 @@ list.addEventListener("click", (event) => {
 
 /**
  * Resolves an address as a tool does: one call types it and reads the list's rows, the script
- * matches them with `matchAddress`, and the next call finds the row it took and clicks it.
+ * matches them with `matchAddressRows`, and the next call finds the row it took and clicks it.
  */
 const pickAddressRow = async (page: Page, field: string, address: string, options: { readonly before?: string; readonly read?: boolean; readonly rows?: string } = {}) => {
   const listed = await call(
@@ -285,7 +285,7 @@ return await pickerAddressRows(field, { ...fast, ${options.rows ?? ""} });`,
     20,
     options.read === true ? "read" : "write",
   );
-  const match = await matchAddress(address, Schema.decodeUnknownSync(Listed)(listed.result), { country: "US" });
+  const match = await matchAddressRows(address, Schema.decodeUnknownSync(Listed)(listed.result), { country: "US" });
   const clicked = await call(page, `const { row, ...match } = await pickerMatchAddress(${field}, ${JSON.stringify(match)}, { ...fast, ${options.rows ?? ""} });
 await row?.click();
 return match;`);
@@ -294,7 +294,7 @@ return match;`);
 
 // The address is typed with its unit split off; the rows are read whole, a more-results control
 // among them, and the row that leaves out the caller's suite is taken, the suite for the unit field.
-test("pickerTypeAddress types the address, pickerAddressRows reads the rows, and pickerMatchAddress clicks the row matchAddress took", async ({ page }) => {
+test("pickerTypeAddress types the address, pickerAddressRows reads the rows, and pickerMatchAddress clicks the row matchAddressRows took", async ({ page }) => {
   await serve(page, shortPlaces);
   const field = 'page.getByRole("combobox", { name: "Pickup" })';
   const address = "1 Example Building, Suite 5, Example City, CA 94000";
@@ -368,7 +368,7 @@ input.addEventListener("input", () => {
 
 // A place's name with no house number: the row with that name is taken over a longer name the site
 // lists first, a longer name alone is asked about, and a more-results control is never a row.
-test("matchAddress takes a place by its name from the rows pickerAddressRows read, past a longer name and a more-results control", async ({ page }) => {
+test("matchAddressRows takes a place by its name from the rows pickerAddressRows read, past a longer name and a more-results control", async ({ page }) => {
   const field = 'page.getByRole("combobox", { name: "Address" })';
   const first = 'await page.getByRole("option").first().waitFor();';
   const longer = ["f1", "Example Park Ferry Terminal", "Example City, CA, US"];

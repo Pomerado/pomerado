@@ -66,10 +66,10 @@ export { CalendarDate, formControlsCode } from "./form-controls.js";
 export { outcomeWaitCode } from "./outcome-wait.js";
 export { PickManyOutcome, PickOutcome, pickChoices, pickRefusal, pickerCode } from "./picker.js";
 export { cleanRanks, closestFirst, pickerRanks, rankChoices } from "./picker-rank.js";
-export { matchAddress, resolveAddress } from "./picker-address.js";
+export { matchAddressRows, resolveAddress } from "./picker-address.js";
 export type {
-  AddressMatch,
-  AddressMatchOptions,
+  AddressRowsMatch,
+  AddressRowsMatchOptions,
   AddressOutcome,
   AddressRefusal,
   AddressRow,

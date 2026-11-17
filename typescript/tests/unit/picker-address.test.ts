@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, test } from "vitest";
-import { matchAddress, resolveAddress as resolve } from "../../src/browser/picker-address.js";
+import { matchAddressRows, resolveAddress as resolve } from "../../src/browser/picker-address.js";
 
 // The cases are US addresses, and a tool that knows an address's country passes it, as these do.
 const resolveAddress = <T,>(
@@ -223,11 +223,20 @@ describe("resolveAddress", () => {
 
   // Accepted gaps, kept as they are: a read takes another place of the same kind in the caller's
   // town, and, for a venue the site lists only with words after its name, the site's first row.
-  test("accepted gaps: a read takes another dog park in the caller's town, and a venue listed only with words after its name takes the site's first row", async () => {
+  test("accepted gaps: a read takes a dog park named after the caller's park in the caller's town, and a venue listed only with words after its name takes the site's first row", async () => {
     const park = "Example Dog Park, Springfield, IL, USA";
     expect(await resolveAddress("Springfield Dog Park, Springfield, IL", () => [park], String, { read: true })).toMatchObject({ picked: true, label: park });
     const lines = ["Example Terminal - Example Railroad, Exampleton, CA, USA", "Example Terminal - Sample Line, Exampleton, CA, USA"];
     expect(await resolveAddress("Example Terminal, Exampleton, CA", () => lines, String, { read: true })).toMatchObject({ picked: true, label: lines[0] });
+    // A map pin of the place's own name beside a categorized dog park named after it, in the town
+    // the caller gave: a read takes the dog park, as the venue PlaceMatch prefers, in either order.
+    const pin = "Example Park, Springfield, IL, USA";
+    const dogPark = "Example Dog Park, 1 Sample Rd, Springfield, IL 62701, USA";
+    for (const rows of [[pin, dogPark], [dogPark, pin]])
+      expect(await resolveAddress("Example Park, Springfield, IL", () => rows, String, { categorized: (row) => row === dogPark, read: true })).toMatchObject({
+        picked: true,
+        label: dogPark,
+      });
   });
 
   // PlaceMatch asks between the place's own row and a row named after it: a read asks too, never
@@ -242,7 +251,7 @@ describe("resolveAddress", () => {
       const outcome = await resolveAddress(asked, () => rows, String, { categorized, read: true });
       expect(outcome).not.toMatchObject({ picked: true, label: named });
       answers.push(outcome.picked ? outcome.label : outcome.reason);
-      expect(await matchAddress(asked, { rows: rows.map((text) => ({ text, categorized: categorized(text) })), read: true }, { country: "US" })).not.toMatchObject({ picked: true, label: named });
+      expect(await matchAddressRows(asked, { rows: rows.map((text) => ({ text, categorized: categorized(text) })), read: true }, { country: "US" })).not.toMatchObject({ picked: true, label: named });
     }
     expect(answers[1]).toBe(answers[0]);
   });
@@ -572,26 +581,26 @@ describe("resolveAddress", () => {
   });
 });
 
-describe("matchAddress", () => {
+describe("matchAddressRows", () => {
   const pin = { text: "Example Center, Exampleton, NY, USA", categorized: false };
   const venue = { text: "Jane Q. Example Convention Center, 429 Sample Ave, Exampleton, NY 10001, USA", categorized: true };
 
   test("matches the rows a list showed, as the run's effect the list call read, and returns the row to click", async () => {
     // pickerAddressRows returns the rows with the run's effect; options.read overrides it.
     const asked = "Example Center, Exampleton, NY";
-    expect(await matchAddress(asked, { rows: [pin, venue], read: true }, { country: "US" })).toEqual({
+    expect(await matchAddressRows(asked, { rows: [pin, venue], read: true }, { country: "US" })).toEqual({
       picked: true,
       index: 1,
       label: venue.text,
       unit: "",
       wanted: asked,
     });
-    expect(await matchAddress(asked, { rows: [pin, venue], read: true }, { country: "US", read: false })).toMatchObject({
+    expect(await matchAddressRows(asked, { rows: [pin, venue], read: true }, { country: "US", read: false })).toMatchObject({
       picked: false,
       reason: "option_unclear",
       matches: [pin.text, venue.text],
     });
-    expect(await matchAddress("1 Example Building, Suite 5, Example City, CA 94000", ["Example Building, 1 Example Bldg, Example City, CA 94000, US"], { country: "US" })).toEqual({
+    expect(await matchAddressRows("1 Example Building, Suite 5, Example City, CA 94000", ["Example Building, 1 Example Bldg, Example City, CA 94000, US"], { country: "US" })).toEqual({
       picked: true,
       index: 0,
       label: "Example Building, 1 Example Bldg, Example City, CA 94000, US",
@@ -604,8 +613,8 @@ describe("matchAddress", () => {
     const asked = "Example Museum, Exampleton, NY";
     const control = "See more results for Example Museum, Exampleton, NY";
     const place = "Example Museum, 5 Sample Ave, Exampleton, NY";
-    expect(await matchAddress(asked, [control, "", place], { country: "US" })).toEqual({ picked: true, index: 2, label: place, unit: "", wanted: asked });
-    expect(await matchAddress(asked, [control, ""], { country: "US" })).toEqual({
+    expect(await matchAddressRows(asked, [control, "", place], { country: "US" })).toEqual({ picked: true, index: 2, label: place, unit: "", wanted: asked });
+    expect(await matchAddressRows(asked, [control, ""], { country: "US" })).toEqual({
       picked: false,
       reason: "option_missing",
       wanted: asked,
@@ -615,7 +624,12 @@ describe("matchAddress", () => {
     });
     // A row longer than PlaceMatch compares is never dropped unseen: the list is asked about.
     const long = "x".repeat(600);
-    expect(await matchAddress(asked, [control, long, place], { country: "US" })).toEqual({
+    // A site's control that lists more results for a long address is no row, however long.
+    const street = `1 Example St, ${"Sample Heights ".repeat(31).trim()}, Exampleton, NY`;
+    const more = `See more results for ${street}`;
+    expect(more.length).toBeGreaterThan(512);
+    expect(await matchAddressRows(street, [more], { country: "US" })).toMatchObject({ picked: false, reason: "option_missing", available: [] });
+    expect(await matchAddressRows(asked, [control, long, place], { country: "US" })).toEqual({
       picked: false,
       reason: "option_unclear",
       wanted: asked,
@@ -625,7 +639,7 @@ describe("matchAddress", () => {
       listed: 2,
     });
     // An address longer than any is no address to match: it refuses, listing the rows.
-    expect(await matchAddress(`${"1 Example St ".repeat(50)}, Exampleton`, [place])).toMatchObject({ picked: false, reason: "option_missing", available: [place] });
+    expect(await matchAddressRows(`${"1 Example St ".repeat(50)}, Exampleton`, [place])).toMatchObject({ picked: false, reason: "option_missing", available: [place] });
   });
 
   // PlaceMatch compares at most 100 rows at once. A longer list is asked about, never cut, so the
@@ -635,9 +649,9 @@ describe("matchAddress", () => {
     const place = "12 Example St, Exampleton, IL, USA";
     const others = Array.from({ length: 100 }, (_, at) => `${at + 100} Other St, Exampleton, IL, USA`);
     const crowded = { picked: false, reason: "option_unclear", wanted: asked, available: others, matches: [], unit: "", listed: 101 };
-    expect(await matchAddress(asked, [...others, place], { country: "US" })).toEqual(crowded);
+    expect(await matchAddressRows(asked, [...others, place], { country: "US" })).toEqual(crowded);
     expect(await resolveAddress(asked, () => [...others, place])).toEqual(crowded);
-    expect(await matchAddress(asked, [...others.slice(1), place], { country: "US" })).toMatchObject({ picked: true, index: 99, label: place });
+    expect(await matchAddressRows(asked, [...others.slice(1), place], { country: "US" })).toMatchObject({ picked: true, index: 99, label: place });
   });
 });
 
@@ -676,7 +690,10 @@ describe("answers the pinned PlaceMatch still gives otherwise", () => {
   const towerPin = "Example Tower, Exampleton, NY, USA";
   const nyCenter = "Jane Q. Example Convention Center, 429 Sample Ave, New York, NY 10001, USA";
   const nyPin = "Example Center, New York, NY, USA";
-  const venues = new Set([tower, nyCenter]);
+  const otherPin = "Example Center, Otherton, NY, USA";
+  const zipTower = "Example Tower, 5 Sample Ave, Exampleton, CA 94133, USA";
+  const zipPin = "Example Tower, Exampleton, CA, USA";
+  const venues = new Set([tower, nyCenter, zipTower]);
   /** One case: the caller's address and the site's rows, in a read or a write. */
   interface Pending {
     readonly name: string;
@@ -709,6 +726,12 @@ describe("answers the pinned PlaceMatch still gives otherwise", () => {
     // A town named like its state: a read in the caller's area takes the venue.
     { name: "a read in a town named like its state, the pin first", address: "Example Center, New York, NY", rows: [nyPin, nyCenter], read: true, today: ask, intended: nyCenter },
     { name: "a read in a town named like its state, the venue first", address: "Example Center, New York, NY", rows: [nyCenter, nyPin], read: true, today: ask, intended: nyCenter },
+    // The same with the pin in another town.
+    { name: "a read in a town named like its state, the pin in another town first", address: "Example Center, New York, NY", rows: [otherPin, nyCenter], read: true, today: ask, intended: nyCenter },
+    { name: "a read in a town named like its state, the pin in another town last", address: "Example Center, New York, NY", rows: [nyCenter, otherPin], read: true, today: ask, intended: nyCenter },
+    // A ZIP alone as the area: a read takes the venue in that ZIP.
+    { name: "a read with a ZIP as the area, the pin first", address: "Example Tower, 94133", rows: [zipPin, zipTower], read: true, today: ask, intended: zipTower },
+    { name: "a read with a ZIP as the area, the venue first", address: "Example Tower, 94133", rows: [zipTower, zipPin], read: true, today: ask, intended: zipTower },
   ];
   const answer = async ({ address, rows, read }: Pending) => {
     const outcome = await resolveAddress(address, () => rows, String, { categorized: (row) => venues.has(row), read });
