@@ -294,10 +294,7 @@ return match;`);
 
 // The address is typed with its unit split off; the rows are read whole, a more-results control
 // among them, and the row that leaves out the caller's suite is taken, the suite for the unit field.
-// The pinned PlaceMatch still asks about these rows, which leave out the state: this test turns red
-// once a PlaceMatch commit takes them, and the bump makes it a plain test.
 test("pickerTypeAddress types the address, pickerAddressRows reads the rows, and pickerMatchAddress clicks the row matchAddress took", async ({ page }) => {
-  test.fail();
   await serve(page, shortPlaces);
   const field = 'page.getByRole("combobox", { name: "Pickup" })';
   const address = "1 Example Building, Suite 5, Example City, CA 94000";

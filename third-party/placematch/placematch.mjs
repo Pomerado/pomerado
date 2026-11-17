@@ -4,7 +4,7 @@ const SEPARATOR = "\u0001";
 
 /** The longest query or row text, in UTF-16 code units (JavaScript string length), and the most
  * rows, that a call takes. Longer input is refused with a RangeError, never cut; an address or a
- * site's row is far shorter. Within them, the matcher reads at most 12 comma parts and 192
+ * site's row is far shorter. Within them, the matcher reads at most 16 comma parts and about 256
  * characters of each text, so matching time stays bounded. */
 export const LIMITS = Object.freeze({ textLength: 512, rows: 100 });
 
