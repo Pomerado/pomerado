@@ -156,8 +156,10 @@ const run = async (
   return { result, prompts };
 };
 
-const codePrompt = `Enter the sign-in code ${host} sent you.`;
-const refusedPrompt = `The site refused the last code. Enter the newest sign-in code ${host} sent you.`;
+const boxesLine = "The sign-in screen takes a 6-character code, one character per box.";
+const codePrompt = `Enter the sign-in code ${host} sent you. ${boxesLine}`;
+const refusedPrompt = `The site refused the last code. Enter the newest sign-in code ${host} sent you. ${boxesLine}`;
+const misfitPrompt = `That answer didn't fit the sign-in screen's 6-character code boxes. Nothing was typed, so the website's code still works. Enter the sign-in code ${host} sent you.`;
 
 test("a run signs in through six code boxes that send themselves, asking for the code once, and the site gets it once", async ({
   page,
@@ -203,8 +205,8 @@ test("a run types nothing into six code boxes for a code that does not fit them"
     _tag: "Left",
     left: { code: "NeedsInput", reason: "sign_in_value" },
   });
-  // A code that does not fit the boxes is asked twice more, then the step goes unanswered.
-  expect(prompts).toEqual(["login", codePrompt, codePrompt, codePrompt]);
+  // A code that does not fit the boxes is asked twice more, saying so, then the step goes unanswered.
+  expect(prompts).toEqual(["login", codePrompt, misfitPrompt, misfitPrompt]);
   expect(sent).toEqual([]);
   for (const box of [1, 2, 3, 4, 5, 6]) await expect(page.locator(`#otp-${box}`)).toHaveValue("");
 });
