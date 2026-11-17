@@ -83,7 +83,26 @@ const feedback: Readonly<
     fixable: false,
     instruction: "The registry already holds a different revision under this build's revision id.",
   },
+  // The attempt's first such refusal is fixable (`contractBreakingInstruction`); this is the next.
+  contract_breaking: {
+    fixable: false,
+    instruction:
+      "The registry refused this version again because it would break callers of the shared tool, as registryProblem names.",
+  },
 };
+
+/**
+ * What the minter is told the first time in an attempt the registry refuses a version that would
+ * break callers of a shared tool (`contract_breaking`), beside `registryProblem`. A read runs its
+ * example again, since the edited code needs its own execution; a write publishes its session's
+ * execution again and never runs the write again.
+ */
+export const contractBreakingInstruction = (write: boolean) =>
+  `Not published: the registry refused this version because it would break callers of the shared tool, as registryProblem names. Restore each named output as the published tool has it, add any new meaning as a new field, ${
+    write
+      ? "and call finish_build again with the same executionId; never run the write again for this."
+      : "run the example again with the edited code, and call finish_build with that execution."
+  }`;
 
 /**
  * What the minter is told when a host refuses a publication that changes inputs the published

@@ -7,10 +7,51 @@ import {
   type PublicationDecision,
 } from "../../src/mint/contracts.js";
 import {
+  contractBreakingInstruction,
   inputContractChangedInstruction,
   registryRefusal,
 } from "../../src/mint/registry-feedback.js";
 import { makeMintHarnessFixture, portableJobSession } from "../support/mint-fixtures.js";
+
+// A registry that refuses a version for breaking a shared tool's callers names the check: the
+// write restores the named outputs and publishes its session's execution again once, and a second
+// such refusal ends the attempt as a refusal, not as a host outage.
+it("lets a write fix a contract-breaking registry refusal once, then ends the attempt", async () => {
+  const answers: Record<string, unknown>[] = [];
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        yield* turn.actions.execute({ ...example, purpose: "act" });
+        answers.push(JSON.parse(yield* turn.actions.finish(publicationOf("execution_one"))));
+        expect(turn.isComplete()).toBe(false);
+        answers.push(JSON.parse(yield* turn.actions.finish(publicationOf("execution_one"))));
+        expect(turn.isComplete()).toBe(true);
+      }),
+    {
+      publish: () =>
+        Effect.fail(
+          new MintFailure({
+            code: "PublicationUnavailable",
+            reason: "registry_conflict",
+            registryIssue: "contract_breaking",
+            registryProblem: "status (output widened)",
+          }),
+        ),
+    },
+  );
+  const outcome = await f.run({ ...request, effect: "write" });
+  expect(answers[0]).toMatchObject({
+    registryIssue: "contract_breaking",
+    registryProblem: "status (output widened)",
+    fixRequired: true,
+  });
+  expect(String(answers[0]?.["instruction"]).endsWith(contractBreakingInstruction(true))).toBe(
+    true,
+  );
+  expect(answers[1]).toMatchObject({ registryIssue: "contract_breaking", fixRequired: false });
+  expect(outcome).toMatchObject({ build: "incomplete" });
+  expect(outcome).not.toHaveProperty("hostFailure");
+});
 
 // A host compares the published tool's input schema with the publication's and refuses one that
 // changes an input the tool already declares. The minter reads the fixed instruction and each
