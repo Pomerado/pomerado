@@ -2733,16 +2733,22 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        */
       const taskUpdateRefusal = (
         submitted: TaskUpdateRequest,
+        /** Who may confirm, when the gate asked the host before this check. */
+        confirmer: TaskUpdateConfirmer | undefined,
       ): { readonly reason: string; readonly instruction: string } | undefined => {
         const settings = new Set(submitted.changes.map((change) => change.setting));
         // A repair keeps the published tool's task. Only a change to its contract may apply: a
-        // requirement, the purpose or an output field.
+        // requirement, the purpose or an output field. The owner's own requested change runs on
+        // the example they sent, so it may also take another example input they confirm.
         if (
           request.mode === "maintenance" &&
           (submitted.recommend === "new_mint" ||
             [...settings].some(
               (setting) =>
-                setting !== "requirement" && setting !== "purpose" && setting !== "output",
+                setting !== "requirement" &&
+                setting !== "purpose" &&
+                setting !== "output" &&
+                (setting !== "input" || confirmer !== "owner_request"),
             ))
         )
           return {
@@ -8092,14 +8098,34 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                         submitted.changes,
                         "This update was already applied; nothing changed again.",
                       );
-                    const refusal = taskUpdateRefusal(submitted);
-                    if (refusal !== undefined) return taskUpdateAnswer("update_refused", refusal);
+                    const changesInput = submitted.changes.some(
+                      (change) => change.setting === "input",
+                    );
+                    // Whether an input change may apply in maintenance depends on who confirms,
+                    // so the host is asked first, once for the whole update.
+                    const inputConfirmer =
+                      request.mode === "maintenance" && changesInput
+                        ? yield* maintenanceConfirmer
+                        : undefined;
+                    const refusal = taskUpdateRefusal(submitted, inputConfirmer);
+                    // Recorded, so a blocked report's review reads what the minter was refused.
+                    if (refusal !== undefined)
+                      return yield* heldTaskUpdate(
+                        "update_refused",
+                        refusal,
+                        JSON.stringify({
+                          status: "update_refused",
+                          settings: [
+                            ...new Set(submitted.changes.map((change) => change.setting)),
+                          ],
+                        }),
+                      );
                     let askedConfirmer: ReviewedConfirmer | undefined;
                     const added = addedOutputFields(taskState.updates);
                     if (request.mode === "maintenance" && !keepsContract(submitted, added)) {
                       // Only the tool's owner confirms a change that takes from the registered
                       // contract; adding or tightening an output field takes nothing away.
-                      const confirmer = yield* maintenanceConfirmer;
+                      const confirmer = inputConfirmer ?? (yield* maintenanceConfirmer);
                       // `owner_requirements` confirms a requirement or purpose change as the
                       // owner does, and no output the registered contract loses.
                       const outputsOnly =
@@ -8120,6 +8146,15 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                           reason: "confirmation_required",
                           instruction:
                             "A change to the published tool's contract needs its owner's confirmation, and nothing changed. Ask with request_input, naming the change and what the site no longer shows, then call mint_update again naming the questions answered in confirmedBy.",
+                        });
+                      // An example input applies in maintenance only once the owner picked it in
+                      // an answer in this build; their request alone never names it.
+                      if (changesInput && submitted.confirmedBy.length === 0)
+                        return yield* heldTaskUpdate("clarification_required", {
+                          source: "host",
+                          reason: "confirmation_required",
+                          instruction:
+                            "An example input change needs the owner's answer to a question in this build, and nothing changed. Ask with request_input, naming the new value, then call mint_update again naming the question answered in confirmedBy.",
                         });
                     }
                     // Running signed out narrows what the build may do, on a host that keeps
@@ -8156,12 +8191,20 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       (id) => !answeredQuestions.has(id),
                     );
                     if (unanswered.length > 0)
-                      return taskUpdateAnswer("clarification_required", {
-                        source: "host",
-                        unanswered,
-                        instruction:
-                          "confirmedBy names questions the caller has not answered in this build, so nothing confirms the update and nothing changed. Ask the caller with request_input, then call mint_update again naming the questions they answered.",
-                      });
+                      return yield* recordHostRefusal(
+                        "mint_update",
+                        "confirmation_unanswered",
+                        JSON.stringify({ status: "clarification_required", unanswered }),
+                      ).pipe(
+                        Effect.as(
+                          taskUpdateAnswer("clarification_required", {
+                            source: "host",
+                            unanswered,
+                            instruction:
+                              "confirmedBy names questions the caller has not answered in this build, so nothing confirms the update and nothing changed. Ask the caller with request_input, then call mint_update again naming the questions they answered.",
+                          }),
+                        ),
+                      );
                     return yield* reviewAndApplyTaskUpdate(submitted, askedConfirmer);
                   }).pipe(
                     Effect.catchIf(
