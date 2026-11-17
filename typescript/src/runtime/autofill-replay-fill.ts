@@ -1,7 +1,7 @@
 import { Clock, Duration, Effect } from "effect";
 import type { YieldableError } from "effect/Cause";
 import { timeExecutionStage } from "./sign-in-telemetry.js";
-import { logicalRejectedField, rejectableSlot } from "./autofill-rejection.js";
+import { logicalRejectedField, recordedRejections, rejectableSlot } from "./autofill-rejection.js";
 import type {
   AutofillInspection,
   AutofillSlot,
@@ -115,24 +115,33 @@ const retryRefusal = <E extends YieldableError, V extends string, L extends Auto
 };
 
 /**
- * The screen this replay last submitted, asked for again as a later recorded screen once its
- * password went out with no planned second fill, came back: with no recorded error marker showing,
- * that is no verdict on the login (`credential_screen_returned`), as at the last check.
+ * The password screen this replay last submitted, on the same page, asked for again as a later
+ * recorded screen once its password went out with no planned second fill, came back: with no
+ * recorded error marker showing, that is no verdict on the login (`credential_screen_returned`), as
+ * at the last check. A screen that took a code is the code retry's, as there. The markers are read,
+ * not recorded, so a marker that shows leaves the refusal as it was.
  */
 const screenReturned = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   session: ReplaySession<E, V, L>,
   asked: AutofillStep,
+  inspection: AutofillInspection,
 ) =>
   Effect.gen(function* () {
     const previous = session.progress.ran.at(-1);
     if (
       previous === undefined ||
+      inspection.page !== session.state.steps.at(-1)?.page ||
       !session.sent.maySent.has("password") ||
       !asked.fields.some((field) => field.slot === "password") ||
+      takesCode(previous) ||
       !asked.fields.every((field) => previous.fields.some((ran) => ran.selector === field.selector))
     )
       return false;
-    const shown = yield* session.observeRejections;
+    const shown = yield* recordedRejections(
+      session.hooks,
+      session.resolvedSteps(),
+      session.input.correlation,
+    );
     return shown !== "unavailable" && shown.length === 0;
   });
 
@@ -211,7 +220,7 @@ export const runReplayStep = <E extends YieldableError, V extends string, L exte
     if (
       refused === "credential_already_filled" &&
       codeAgain === undefined &&
-      (yield* screenReturned(session, asked))
+      (yield* screenReturned(session, asked, inspection))
     )
       return "credential_screen_returned" as const;
     if (refused !== undefined) return refused;

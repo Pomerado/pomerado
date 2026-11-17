@@ -591,14 +591,15 @@ it("opens no account page first on a new browser", { timeout: 20_000 }, async ()
 });
 
 it("never fills a password a later screen asks for again after it went out", async () => {
+  // The same box on another page is another screen, not the login screen shown again.
   const againStep = {
     page: `${origin}/again`,
-    fields: [{ selector: "#password-again", slot: "password" as const }],
+    fields: [{ selector: "#password", slot: "password" as const }],
     submit: "#again",
   };
   const fake = scriptedSite({
     entry: "login",
-    screens: { login: loginScreen, again: ["#password-again", "#again"], account: [] },
+    screens: { login: loginScreen, again: ["#password", "#again"], account: [] },
     fill: (page, values) =>
       page === "login" && signedLogin(values) ? { next: "again" } : { next: "account", signIn: true },
   });
