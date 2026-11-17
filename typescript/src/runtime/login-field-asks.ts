@@ -43,19 +43,39 @@ const promptLimit = 2_000;
 const cutTo = (text: string, room: number) =>
   text.length <= room ? text : `${text.slice(0, room - 1).replace(/[\uD800-\uDBFF]$/u, "")}…`;
 
+/** A code screen's code fields when it has several, and whether the last answer did not fit them. */
+interface CodeBoxes {
+  readonly count: number;
+  readonly misfit: boolean;
+}
+
 /**
  * The code question's prompt. With the screen's own instruction for the code (`instruction`), such
  * as to call a number or approve in an app, it quotes that, cut to fit, so the owner does what the
- * site asks; without one it names the code the site sent.
+ * site asks; without one it names the code the site sent. On a screen of several code fields
+ * (`boxes`) it ends naming the code's length; asked again after an answer that did not fit them,
+ * it opens saying so in place of `notice`, and asks for the same code, since nothing was typed.
  */
-const codePrompt = (site: string, notice: string | undefined, instruction: string | undefined) => {
-  const lead = notice === undefined ? "" : `${notice} `;
+const codePrompt = (
+  site: string,
+  notice: string | undefined,
+  instruction: string | undefined,
+  boxes: CodeBoxes | undefined,
+) => {
+  const misfit = boxes?.misfit === true;
+  const said = misfit
+    ? `That answer didn't fit the sign-in screen's ${boxes.count}-character code boxes. Nothing was typed, so the website's code still works.`
+    : notice;
+  const lead = said === undefined ? "" : `${said} `;
+  const newest = notice === undefined || misfit ? "" : "newest ";
+  const end =
+    boxes === undefined || misfit
+      ? ""
+      : ` The sign-in screen takes a ${boxes.count}-character code, one character per box.`;
   if (instruction === undefined)
-    return notice === undefined
-      ? `Enter the sign-in code ${site} sent you.`
-      : `${lead}Enter the newest sign-in code ${site} sent you.`;
+    return `${lead}Enter the ${newest}sign-in code ${site} sent you.${end}`;
   const opening = `${lead}${site} shows this on its sign-in screen: “`;
-  const closing = `” Follow it, then enter the ${notice === undefined ? "" : "newest "}code here.`;
+  const closing = `” Follow it, then enter the ${newest}code here.${end}`;
   return `${opening}${cutTo(instruction, promptLimit - opening.length - closing.length)}${closing}`;
 };
 
@@ -65,6 +85,7 @@ const question = (
   site: string,
   notice?: string,
   instruction?: string,
+  boxes?: CodeBoxes,
 ): Question => {
   const withNotice = (prompt: string) => (notice === undefined ? prompt : `${notice} ${prompt}`);
   // A code asked with a notice is asked again, so it asks for the newest code the site sent.
@@ -75,7 +96,7 @@ const question = (
       id: "code",
       type: "secret",
       secretKind: "one_time_code",
-      prompt: codePrompt(site, notice, instruction),
+      prompt: codePrompt(site, notice, instruction, boxes),
     };
   if (asked === "recovery_code")
     return {
@@ -174,8 +195,9 @@ const askedQuestions = (
   notice: string | undefined,
   offered: Question | undefined,
   instruction: string | undefined,
+  boxes: CodeBoxes | undefined,
 ): Question[] => [
-  question(asked, site, notice, instruction),
+  question(asked, site, notice, instruction, boxes),
   ...(offered !== undefined && asked !== "code" && asked !== "recovery_code" ? [offered] : []),
 ];
 
@@ -242,7 +264,8 @@ export const codeDoesNotFit = "code_does_not_fit_boxes";
  * Asks the owner, in place, for a value the login does not hold, as the same `system` source as
  * every login ask, and registers the answer with the broker. An answer the field cannot take is
  * asked again, twice at most: for a code, also one that does not fill its screen's code fields one
- * character each (`codeBoxes`), whose third ends the step unanswered (`codeDoesNotFit`). An
+ * character each (`codeBoxes`), whose third ends the step unanswered (`codeDoesNotFit`); such a
+ * question names the code's length, and is asked again saying the answer did not fit. An
  * identifier, date of birth or ZIP is kept for the attempt (`given`), and a host's save offer
  * (`saveOffer`) hears the answers; a code is not kept.
  */
@@ -290,6 +313,8 @@ export const makeLoginFieldAsk = <E extends YieldableError>(dependencies: {
     codeBoxes?: number,
     /** A code screen's own instruction for the code, as the host read it (`codeInstruction`). */
     instruction?: string,
+    /** Whether the last answer did not fit `codeBoxes`, so the code is asked again saying so. */
+    didNotFit = false,
   ): Effect.Effect<Unanswered | { slot: AskedSlot; value: string }, E> =>
     Effect.gen(function* () {
       const questions = askedQuestions(
@@ -298,6 +323,7 @@ export const makeLoginFieldAsk = <E extends YieldableError>(dependencies: {
         notice,
         offerSave ? saveOffer?.field : undefined,
         asked === "code" ? instruction : undefined,
+        codeBoxes === undefined ? undefined : { count: codeBoxes, misfit: didNotFit },
       );
       const response = yield* Effect.either(
         asker({
@@ -315,7 +341,16 @@ export const makeLoginFieldAsk = <E extends YieldableError>(dependencies: {
       const misfit = misfitCode(kept, codeBoxes);
       if (kept === undefined || misfit) {
         if (attempt < 2)
-          return yield* ask(asker, asked, notice, offerSave, attempt + 1, codeBoxes, instruction);
+          return yield* ask(
+            asker,
+            asked,
+            notice,
+            offerSave,
+            attempt + 1,
+            codeBoxes,
+            instruction,
+            misfit,
+          );
         return misfit
           ? new Unanswered(codeDoesNotFit)
           : yield* fail("autofill.ask", { check: "answer_kind" });

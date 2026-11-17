@@ -1019,6 +1019,9 @@
     "README.md",
     "third-party/codex/LICENSE",
     "third-party/codex/NOTICE",
+    "third-party/placematch/LICENSE",
+    "third-party/placematch/LICENSE-UNICODE",
+    "third-party/placematch/NOTICE",
     "third-party/playwright/LICENSE",
     "third-party/playwright/NOTICE"
   ],
