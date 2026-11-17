@@ -486,14 +486,26 @@ it("asks once for a screen of code boxes, again for a code that does not fit the
   expect(typedValues(filled.step, filled.values)).toEqual(["1", "2", "3", "4", "5", "6"]);
 });
 
-it("ends a screen of code boxes unanswered after three codes that do not fit them", async () => {
+it("ends a screen of code boxes unanswered after three codes that do not fit them, naming the code's length and saying why it asks again", async () => {
   const { autofill, registered } = values();
   const owner = scripted(["12345", "1234567", "12"]);
   const result = await Effect.runPromise(
     autofill.valuesFor(boxesStep, login({ username: "synthetic-user" }, owner.ask)),
   );
   expect(result).toEqual(new Unanswered(codeDoesNotFit));
-  expect(owner.requests).toHaveLength(3);
+  const question = (prompt: string) => [
+    { id: "code", type: "secret", secretKind: "one_time_code", prompt },
+  ];
+  const again = question(
+    "That answer didn't fit the sign-in screen's 6-character code boxes. Nothing was typed, so the website's code still works. Enter the sign-in code example.test sent you.",
+  );
+  expect(owner.requests.map((request) => request.questions)).toEqual([
+    question(
+      "Enter the sign-in code example.test sent you. The sign-in screen takes a 6-character code, one character per box.",
+    ),
+    again,
+    again,
+  ]);
   expect(registered).toEqual([]);
 });
 

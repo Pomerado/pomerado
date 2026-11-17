@@ -26,6 +26,9 @@ Effect.runPromise(
       "typescript/src/guardian/upstream-policy.md",
       "dist/typescript/src/guardian/upstream-policy.md",
     );
+    // PlaceMatch's loader and module, beside the address picker that loads them.
+    for (const file of ["placematch.mjs", "placematch.wasm"])
+      yield* copy(`third-party/placematch/${file}`, `dist/typescript/src/browser/placematch/${file}`);
     yield* writeRuntimeSources;
   }),
 ).catch((error: unknown) => {

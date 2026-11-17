@@ -1,0 +1,32 @@
+PlaceMatch embeds data from these projects. Their licenses apply to that data.
+
+libpostal address dictionaries
+  https://github.com/openvenues/libpostal (resources/dictionaries)
+  Copyright (c) 2015 libpostal contributors. MIT License.
+  Copied to crates/placematch/data/dict/.
+
+Google libaddressinput country metadata
+  https://github.com/google/libaddressinput (served from chromium-i18n.appspot.com/ssl-address)
+  Copyright Google LLC. Apache License 2.0.
+  Copied to crates/placematch/data/aid/.
+
+OpenCage address-formatting configuration
+  https://github.com/OpenCageData/address-formatting (conf/state_codes.yaml, conf/country2lang.yaml)
+  Copyright (c) OpenCage GmbH. MIT License.
+  Copied to crates/placematch/data/.
+
+Unicode Han Database (Unihan) readings
+  https://www.unicode.org/reports/tr38/ (Unihan_Readings.txt: kMandarin, kHanyuPinyin,
+  kJapaneseOn, kJapaneseKun)
+  Copyright (c) 1991-2026 Unicode, Inc. Unicode License v3; see LICENSE-UNICODE.
+  Reduced by tools/vendor-readings.py to crates/placematch/data/readings/han.txt.
+
+Wikidata city names
+  https://www.wikidata.org (labels of cities of 150,000 people or more)
+  Released into the public domain under CC0 1.0.
+  Reduced by tools/vendor-exonyms.py to crates/placematch/data/extra/exonyms-wikidata.txt.
+
+The benchmark generator in bench/real/ downloads, but does not redistribute, data from
+OpenStreetMap (ODbL 1.0, (c) OpenStreetMap contributors), Overture Maps addresses and
+divisions (each record carries its source license; the generator keeps open licenses
+only), and the Hugging Face dataset ziozzang/korean_address_en-ko (MIT).

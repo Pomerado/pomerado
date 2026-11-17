@@ -150,7 +150,10 @@ test("a run whose recipe recorded no code screen types the code one digit per bo
   const received = await serve(page, boxRow);
   const { result, prompts } = await run(page, noCodeRecipe);
   expect(result).toMatchObject({ _tag: "Right", right: { alreadySignedIn: false } });
-  expect(prompts).toEqual(["login", codePrompt]);
+  expect(prompts).toEqual([
+    "login",
+    `${codePrompt} The sign-in screen takes a 6-character code, one character per box.`,
+  ]);
   expect(received).toEqual([code]);
   await expect(page.locator("#account")).toBeVisible();
 });
