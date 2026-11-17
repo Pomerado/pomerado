@@ -579,6 +579,14 @@ const namedStepReasons: ReadonlySet<string> = new Set([
   "sign_in_version_refused",
 ]);
 /**
+ * Registry refusals, which name their step in core's instruction only when the minter was told it
+ * may fix them (`fixRequired`) and the instruction does not offer ending the build.
+ */
+const registryStepReasons: ReadonlySet<string> = new Set([
+  "registry_conflict",
+  "registry_invalid_definition",
+]);
+/**
  * Refusals a host adds beside core's own, for which core has only its generic instruction: the
  * host names the step in the refusal's review rationale. One names its step only when it carries
  * a rationale, and only then is a `host_refused` report sent back to it.
@@ -882,7 +890,7 @@ const scriptQuestionInstruction: Readonly<
 
 /** What the minter reads when its own question expired unanswered. */
 const noAnswerInstruction =
-  "No answer was given before the question expired. Go on with the answer you recommended for each question in recommended, and list it in finish_build assumptions. For a question without one, decide how to proceed without it: continue with a sensible default and list it in finish_build assumptions, narrow the tool so it does not need the answer, or end the build with report_blocked (reason question_unanswered when only the caller's answer would let it go on). No answer is never consent, and neither is your recommendation: it authorizes no write, sign-in or change of task, so never cite this question in confirmedBy. Ask again only when the answer is essential: after two questions have gone unanswered, the next one left unanswered ends the build.";
+  "No answer was given before the question expired. Go on with the answer you recommended for each question in recommended, and list it in finish_build assumptions; if you cannot carry it out, prefer ending the build with report_blocked and saying why. For a question without one, decide how to proceed without it: continue with a sensible default and list it in finish_build assumptions, narrow the tool so it does not need the answer, or end the build with report_blocked (reason question_unanswered when only the caller's answer would let it go on). No answer is never consent, and neither is your recommendation: it authorizes no write, sign-in or change of task, so never cite this question in confirmedBy. Ask again only when the answer is essential: after two questions have gone unanswered, the next one left unanswered ends the build.";
 
 /**
  * How many unanswered questions go back to the minter in one build, the minter's own and its
@@ -1711,8 +1719,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        */
       const namedStepsOffered = new Set<string>();
       /**
-       * The latest screened instruction each refusal in `namedStepReasons` gave the minter, which
-       * a `host_refused` report sent back to its step repeats.
+       * The latest screened instruction each refusal in `namedStepReasons`, or each registry refusal
+       * the minter may fix, gave the minter, which a `host_refused` report sent back to its step
+       * repeats.
        */
       const namedStepInstructions = new Map<string, string>();
       /**
@@ -2581,8 +2590,21 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   Effect.map((screened) => capped(screened.trim(), ledgerBounds.instructionChars)),
                   Effect.orElseSucceed(() => undefined),
                 );
-          if (pending.reason !== undefined && namedStepReasons.has(pending.reason)) {
-            if (instruction === undefined || instruction === "")
+          const registryStep =
+            pending.reason !== undefined && registryStepReasons.has(pending.reason);
+          if (
+            pending.reason !== undefined &&
+            (namedStepReasons.has(pending.reason) || registryStep)
+          ) {
+            if (
+              instruction === undefined ||
+              instruction === "" ||
+              (registryStep &&
+                parsed?._tag === "Right" &&
+                // A tool another publication advanced may end the build, as its instruction says.
+                (parsed.right.fixRequired !== true ||
+                  parsed.right.registryIssue === "generation_moved"))
+            )
               namedStepInstructions.delete(pending.reason);
             else namedStepInstructions.set(pending.reason, instruction);
           }
@@ -4428,17 +4450,20 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             "host_not_refused",
             "No host check refused a step in this attempt, so the build has not ended. host_refused needs a host check that refused a step the build needs, such as finish_build, a sign-in form or a site change, or live tests the host refuses with no batch left while Guardian's denial of the last publication stands.",
           );
-        // The latest host refusal names its own fix, and neither sign-in screen answer nor a
-        // recorded challenge stands beside it: the first report on its reason goes back with that
-        // step, and the next is taken. Spent live tests never stand beside it: they need Guardian's
-        // denial of the latest publication, and a host refusal of a later one ends that denial.
+        // The latest host refusal names its own fix, a registry refusal's only when the minter may
+        // fix it, and neither sign-in screen answer nor a recorded challenge stands beside it: the
+        // first report on its reason goes back with that step, and the next is taken. Spent live
+        // tests never stand beside it: they need Guardian's denial of the latest publication, and a
+        // host refusal of a later one ends that denial.
         const latestHostRefusal = hostRefused ? standingHostRefusals.at(-1)?.refusal : undefined;
         const namedStep =
           latestHostRefusal?.source === "publication" &&
           latestHostRefusal.reason !== undefined &&
           (namedStepReasons.has(latestHostRefusal.reason) ||
             (rationaleStepReasons.has(latestHostRefusal.reason) &&
-              namedStepRationales.has(latestHostRefusal.reason)))
+              namedStepRationales.has(latestHostRefusal.reason)) ||
+            (registryStepReasons.has(latestHostRefusal.reason) &&
+              namedStepInstructions.has(latestHostRefusal.reason)))
             ? latestHostRefusal.reason
             : undefined;
         if (
@@ -4450,9 +4475,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           !challengeRefused
         ) {
           namedStepsOffered.add(namedStep);
-          const told = namedStepReasons.has(namedStep)
-            ? namedStepInstructions.get(namedStep)
-            : undefined;
+          const told = namedStepInstructions.get(namedStep);
           const rationale = namedStepRationales.get(namedStep);
           return refused(
             "host_refusal_names_step",
