@@ -289,29 +289,29 @@ describe("resolveAddress", () => {
     expect(await resolveAddress("1 Example St, 60000", () => ["1 Example St, Faraway, TX 75001, USA"], String, { read: true })).toMatchObject({ picked: false });
   });
 
-  test("takes a suggestion that leaves out the caller's ZIP or state, asks about one that leaves out the town, and takes none that shows another", async () => {
-    // A state after the town in one part is its own field too, and a street word written short
-    // either way still keeps the street.
+  test("takes a suggestion that leaves out the caller's ZIP, asks about one that leaves out the state or town, and takes none that shows another", async () => {
+    // A state written in full or short is the same state, and a street word written short either
+    // way still keeps the street.
     for (const [wanted, shown] of [
-      ["1 Example St, Exampleton, IL", "1 Example St, Exampleton"],
-      ["1 Example St, Exampleton, IL", "1 Example St Exampleton"],
       ["1 Example St, Exampleton IL", "1 Example St, Exampleton"],
-      ["1 Example Road, Exampleton, IL", "1 Example Rd, Exampleton"],
-      ["1 N Example St, Exampleton, IL", "1 North Example St, Exampleton"],
       ["1 Example St, Exampleton New York", "1 Example St, Exampleton"],
       ["1 Example St, Exampleton, West Virginia", "1 Example St, Exampleton, WV"],
-      ["1 Example St #4B, Exampleton, IL", "1 Example St #4B, Exampleton"],
       ["1 Example St, Exampleton, Illinois, USA", "1 Example St, Exampleton, IL, USA"],
       ["12 Example St, Exampleton IL 60000, USA", "12 Example St, Exampleton, IL, USA"],
       ["1 Example St, Exampleton IL, USA", "1 Example St, Exampleton, IL"],
       ["1 Example St, Exampleton Illinois", "1 Example St, Exampleton, IL"],
       ["1 Example St, Illinois Exampleton, Illinois", "1 Example St, Illinois Exampleton, IL"],
-      ["1 Example St, Illinois Exampleton, IL", "1 Example St, Illinois Exampleton"],
     ])
       expect(await resolveAddress(wanted ?? "", () => [shown ?? ""])).toMatchObject({ picked: true, label: shown });
     expect(await resolveAddress("1 Example Building, Exampleton, IL 60000", () => ["1 Example Bldg, Exampleton, IL"])).toMatchObject({ picked: true });
-    // One that leaves out the caller's town is asked about.
+    // One that leaves out the caller's state or town is asked about.
     for (const [wanted, shown] of [
+      ["1 Example St, Exampleton, IL", "1 Example St, Exampleton"],
+      ["1 Example St, Exampleton, IL", "1 Example St Exampleton"],
+      ["1 Example Road, Exampleton, IL", "1 Example Rd, Exampleton"],
+      ["1 N Example St, Exampleton, IL", "1 North Example St, Exampleton"],
+      ["1 Example St #4B, Exampleton, IL", "1 Example St #4B, Exampleton"],
+      ["1 Example St, Illinois Exampleton, IL", "1 Example St, Illinois Exampleton"],
       ["1 Example St, Exampleton, IL", "1 Example St, IL"],
       ["1 Example St, Exampleton IL", "1 Example St, IL"],
       ["1 Example Building, Exampleton, IL", "1 Example Bldg, IL 60000"],
@@ -350,18 +350,18 @@ describe("resolveAddress", () => {
 
   test("takes the site's first of copies of one row, and lists rows in other states or ZIPs", async () => {
     const items = [
-      { text: "1 Example St, Exampleton", id: "a" },
-      { text: "1 Example St, Exampleton", id: "b" },
+      { text: "1 Example St, Exampleton, IL", id: "a" },
+      { text: "1 Example St, Exampleton, IL", id: "b" },
     ];
     expect(await resolveAddress("1 Example St, Exampleton, IL", () => items.slice(0, 1), (item) => item.text)).toMatchObject({ picked: true, choice: { id: "a" } });
     expect(await resolveAddress("1 Example St, Exampleton, IL", () => items, (item) => item.text)).toMatchObject({ picked: true, choice: { id: "a" } });
-    const zips = ["1 Example St, Exampleton 60000", "1 Example St, Exampleton 70000"];
+    const zips = ["1 Example St, Exampleton 60000", "1 Example St, Exampleton 61000"];
     expect(await resolveAddress("1 Example St, Exampleton, IL", () => zips)).toMatchObject({ picked: false, reason: "option_unclear", matches: zips });
     // Another street, or the street with a unit, is no rival.
-    for (const shown of ["12 Example Ave, Exampleton", "12 Example St Apt 1, Exampleton"])
-      expect(await resolveAddress("12 Example St, Exampleton, IL", () => ["12 Example St, Exampleton", shown])).toMatchObject({
+    for (const shown of ["12 Example Ave, Exampleton, IL", "12 Example St Apt 1, Exampleton, IL"])
+      expect(await resolveAddress("12 Example St, Exampleton, IL", () => ["12 Example St, Exampleton, IL", shown])).toMatchObject({
         picked: true,
-        label: "12 Example St, Exampleton",
+        label: "12 Example St, Exampleton, IL",
       });
   });
 
@@ -441,11 +441,10 @@ describe("resolveAddress", () => {
     expect(await houses("12 Example St, Exampleton, IL", ["12 Hour Sample, 12 Example St, Exampleton, IL, USA"])).toBe(false);
     expect(await houses("12 Example St, Exampleton, IL", ["2 mi, Sample Place, 15 Example St, Exampleton, IL, USA"])).toBe(false);
     // A later part opening with the caller's house number, such as a distance or a town, is not the street.
-    for (const [address, shown] of [
-      ["12 Example St, Exampleton, IL", "12 Example St, Exampleton, IL, USA, 12 min"],
-      ["100 Main St, 100 Mile House, BC", "100 Main St, 100 Mile House, BC, Canada"],
-    ])
-      expect(await houses(address ?? "", [shown ?? ""])).toBe(shown);
+    const later = "12 Example St, Exampleton, IL, USA, 12 min";
+    expect(await houses("12 Example St, Exampleton, IL", [later])).toBe(later);
+    const town = "100 Main St, 100 Mile House, BC, Canada";
+    expect(await resolveAddress("100 Main St, 100 Mile House, BC", () => [town], String, { country: "CA" })).toMatchObject({ picked: true, label: town });
   });
 
   test("keeps the unit when only a place's name or a distance beside the suggestion holds its number", async () => {
@@ -584,12 +583,10 @@ describe("matchAddress", () => {
   });
 });
 
-// Rows the old matcher refused that PlaceMatch, at the commit third-party/placematch/source.json
-// pins, takes: another state, another town, a town only in a place's name, a direction read as a
-// state, or no town at all. Each must be refused; a PlaceMatch commit that refuses one turns its
-// case red here, and the bump makes it a plain case of the tests above.
-describe("rows the pinned PlaceMatch still takes", () => {
-  test.fails.each([
+// Another state, another town, a town only in a place's name, a direction read as a state, or no
+// town at all: none is the caller's place, and each is asked about.
+describe("rows in another place", () => {
+  test.each([
     ["1 Example St, Exampleton, IL 60000", ["1 Example St, Exampleton"]],
     ["1 Example St, Exampleton, MT", ["1 Example St St Exampleton"]],
     ["12 Exampleton Ave, Exampleton, IL", ["12 Exampleton Ave"]],
