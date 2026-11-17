@@ -1,6 +1,15 @@
 import { expect, test } from "@playwright/test";
+import type { Page } from "@playwright/test";
+import { Schema } from "effect";
+import { matchAddressRows } from "../../src/browser/picker-address.js";
 import { pickChoices } from "../../src/browser/picker.js";
 import { type Api, call, callFailure, callRead, serve, submitted } from "./picker-fixture.js";
+
+/** What `pickerAddressRows` returns. */
+const Listed = Schema.Struct({
+  rows: Schema.Array(Schema.Struct({ text: Schema.String, categorized: Schema.Boolean })),
+  read: Schema.Boolean,
+});
 
 // The picker helper, run as a Kernel call body runs it, on synthetic pages that each model one
 // kind of picker or one way a picker misbehaves. Chromium must generate the events: the widgets
@@ -217,38 +226,6 @@ test("pickValue lists the suggestion whose whole name shares the value's stem wh
   expect(await submitted(page)).toEqual({ person: "" });
 });
 
-// An address with a unit after a comma and a street written as one word the site splits: the unit
-// is split off, and the street the site suggests nothing for is typed again tidied.
-test("pickAddress splits off the unit and picks the suggestion a tidied street brings", async ({ page }) => {
-  const addresses = '[["a1","2 N Example Ton St, Exampleton, IL, USA"],["a2","2 N Example Tonne St, Exampleton, IL, USA"]]';
-  await serve(page, combobox.replace("Assignee", "Address").replace(/const people = \[.*\];/, `const people = ${addresses};`));
-  const field = 'page.getByRole("combobox", { name: "Address" })';
-  expect(await call(page, `return await pickAddress(${field}, "2 N ExampleTon St, Suite 5, Exampleton, IL", fast);`)).toEqual({
-    result: {
-      picked: true,
-      kind: "typeahead",
-      label: "2 N Example Ton St, Exampleton, IL, USA",
-      value: "a1",
-      rank: "exact",
-      refills: 0,
-      query: "2 N Example Ton St, Exampleton, IL",
-      unit: "Suite 5",
-    },
-  });
-  expect(await submitted(page)).toEqual({ person: "a1" });
-});
-
-// A suggestion that keeps the house number, street and place under another ZIP is a candidate in a
-// write, and taken in a read.
-test("pickAddress takes the site's address under another ZIP only in a read", async ({ page }) => {
-  const addresses = '[["a1","1 Example St, Exampleton, IL 60001, USA"]]';
-  await serve(page, combobox.replace("Assignee", "Address").replace(/const people = \[.*\];/, `const people = ${addresses};`));
-  const body = `return await pickAddress(page.getByRole("combobox", { name: "Address" }), "1 Example St, Exampleton, IL 60000", fast);`;
-  expect(await call(page, body)).toMatchObject({ result: { picked: false, reason: "option_unclear" } });
-  expect(await callRead(page, body)).toMatchObject({ result: { picked: true, value: "a1" } });
-  expect(await submitted(page)).toEqual({ person: "a1" });
-});
-
 // An address field whose suggestions, every one for any text, show each of their lines in its own
 // element, such as the street on one line and the town on the next.
 const twoLines = (places: string, tag = "div") => `<form><label>Address <input id="address" role="combobox" aria-controls="places" autocomplete="off"></label>
@@ -268,81 +245,6 @@ list.addEventListener("click", (event) => {
   list.hidden = true;
 });
 </script>`;
-
-// Suggestions with the street on one line and the town on the next are read whole, so the town
-// counts; one that keeps the address only in part comes back as a candidate.
-test("pickAddress reads two-line suggestions whole, and lists them when none keeps the address", async ({ page }) => {
-  await serve(page, twoLines(`[["a1", "12 Example St", "Sampleton, NY, USA"], ["a2", "12 Example St", "Exampleton, IL, USA"]]`));
-  const field = 'page.getByRole("combobox", { name: "Address" })';
-  expect(await call(page, `return await pickAddress(${field}, "12 Example St, Exampleton, IL", fast);`)).toMatchObject({
-    result: { picked: true, value: "a2", rank: "exact" },
-  });
-  expect(await submitted(page)).toEqual({ address: "a2" });
-  expect(await call(page, `return await pickAddress(${field}, "12 Example St, Otherton, TX", fast);`)).toEqual({
-    result: {
-      picked: false,
-      reason: "option_unclear",
-      wanted: "12 Example St, Otherton, TX",
-      available: ["12 Example St, Sampleton, NY, USA", "12 Example St, Exampleton, IL, USA"],
-      matches: ["12 Example St, Sampleton, NY, USA", "12 Example St, Exampleton, IL, USA"],
-      unit: "",
-    },
-  });
-});
-
-// Of the same street on either side of town, the one with the caller's direction is taken whatever
-// the site's order; with no direction given, both come back as candidates.
-test("pickAddress takes only the suggestion with the caller's street direction", async ({ page }) => {
-  await serve(page, twoLines(`[["a1", "1 S Example St", "Exampleton, IL, USA"], ["a2", "1 N Example St", "Exampleton, IL, USA"]]`));
-  const field = 'page.getByRole("combobox", { name: "Address" })';
-  expect(await call(page, `return await pickAddress(${field}, "1 N Example St, Exampleton, IL 60000", fast);`)).toMatchObject({
-    result: { picked: true, value: "a2" },
-  });
-  expect(await submitted(page)).toEqual({ address: "a2" });
-  expect(await call(page, `return await pickAddress(${field}, "1 Example St, Exampleton, IL", fast);`)).toMatchObject({
-    result: { picked: false, reason: "option_unclear", matches: ["1 S Example St, Exampleton, IL, USA", "1 N Example St, Exampleton, IL, USA"] },
-  });
-});
-
-// A place's name on the line above its address stays out of its street, so the address keeps its
-// house number first; the site's other places, at another number or none, are not taken.
-test("pickAddress reads a suggestion's place name and address as separate lines", async ({ page }) => {
-  const places = [
-    ["Example Building", "1 Example Bldg, Example City, CA, US"],
-    ["Book Nook (Book Nook Example Building)", "1 Example Bldg, Example City, CA, US"],
-    ["Example City Ferry Terminal (Example Building Gate E)", "1 The Esplanade, Example City, CA, US"],
-    ["Sample Creamery (Sample Creamery One Example Building)", "1 The Esplanade, Example City, CA, US"],
-    ["Sample Creamery Example Building (Example Building)", "Example Plz, Example City, CA, US"],
-    ["Example Building", "301 Sample Trade Ctr, Example City, CA, US"],
-    ["Example City Example Building", "The Esplanade, Example City, CA, US"],
-    ["The Esplanade/Example Building", "The Esplanade, Example City, CA, US"],
-    ["Example City Federal Building", "90 7th St, Example City, CA, US"],
-    ["Sample Coffee (Sample Coffee - Example Building)", "7 Example Building, Example City, CA, US"],
-    ["Sample Building (Example City Building)", "601 Sample St, Example City, CA, US"],
-    ["Medical Building (Example City Medical Building)", "909 Sample St, Example City, CA, US"],
-    ["Central Tower (Central Tower (Formerly Sample Building))", "703 Market St, Example City, CA, US"],
-    ["Set location on map"],
-    ["Search in a different city"],
-  ].map((lines, index) => ["p" + (index + 1), ...lines]);
-  await serve(page, twoLines(JSON.stringify(places), "p"));
-  const field = 'page.getByRole("combobox", { name: "Address" })';
-  expect(await call(page, `return await pickAddress(${field}, "1 Example Building, Example City, CA 94000", fast);`)).toEqual({
-    result: {
-      picked: true,
-      kind: "typeahead",
-      label: "Example Building",
-      value: "p1",
-      rank: "exact",
-      refills: 0,
-      query: "1 Example Building, Example City, CA 94000",
-      unit: "",
-    },
-  });
-  expect(await submitted(page)).toEqual({ address: "p1" });
-  expect(await call(page, `return await pickAddress(${field}, "5 Example Building, Example City, CA 94000", fast);`)).toMatchObject({
-    result: { picked: false, reason: "option_missing", available: places.map(([, ...lines]) => lines.join(", ")) },
-  });
-});
 
 // A place search that lists places by name over a short address with no state or ZIP, and a last
 // row that lists them again with their whole addresses, as some ride sites do.
@@ -369,46 +271,86 @@ list.addEventListener("click", (event) => {
 });
 </script>`;
 
-// The address is typed with its unit split off; the short list is refused, listing no control that
-// lists more results, and once the tool opens the whole addresses, the row taken is the one the
-// tool clicks.
-test("pickerTypeAddress types the address and pickerMatchAddress takes a row of the list open now", async ({ page }) => {
+/**
+ * Resolves an address as a tool does: one call types it and reads the list's rows, the script
+ * matches them with `matchAddressRows`, and the next call finds the row it took and clicks it.
+ */
+const pickAddressRow = async (page: Page, field: string, address: string, options: { readonly before?: string; readonly read?: boolean; readonly rows?: string } = {}) => {
+  const listed = await call(
+    page,
+    `const field = ${field};
+await pickerTypeAddress(field, ${JSON.stringify(address)}, fast);
+${options.before ?? ""}
+return await pickerAddressRows(field, { ...fast, ${options.rows ?? ""} });`,
+    20,
+    options.read === true ? "read" : "write",
+  );
+  const match = await matchAddressRows(address, Schema.decodeUnknownSync(Listed)(listed.result), { country: "US" });
+  const clicked = await call(page, `const { row, ...match } = await pickerMatchAddress(${field}, ${JSON.stringify(match)}, { ...fast, ${options.rows ?? ""} });
+await row?.click();
+return match;`);
+  return { rows: Schema.decodeUnknownSync(Listed)(listed.result).rows.map((row) => row.text), match, clicked: clicked.result };
+};
+
+// The address is typed with its unit split off; the short list, whose rows leave out the state and
+// ZIP, is asked about, listing no control that lists more results; once the tool opens the whole
+// addresses, the row that leaves out the caller's suite is taken, the suite for the unit field, and
+// clicked.
+test("pickerTypeAddress types the address, and the whole row is taken once the tool opens the site's whole addresses", async ({ page }) => {
+  await serve(page, shortPlaces);
+  const field = 'page.getByRole("combobox", { name: "Pickup" })';
+  const address = "1 Example Building, Suite 5, Example City, CA 94000";
+  const typed = await call(page, `return await pickerTypeAddress(${field}, ${JSON.stringify(address)}, fast);`);
+  expect(typed).toEqual({ result: { query: "1 Example Building, Example City, CA 94000" } });
+  const more = 'page.getByRole("option", { name: /^See more results/ })';
+  const short = await pickAddressRow(page, field, address, { before: `await ${more}.waitFor();` });
+  expect(short.match).toEqual({
+    picked: false,
+    reason: "option_unclear",
+    wanted: address,
+    available: ["Example Building, 1 Example Bldg, Example City", "Example Building Garage, 5 Sample St, Example City"],
+    matches: ["Example Building, 1 Example Bldg, Example City"],
+    unit: "Suite 5",
+  });
+  const whole = await pickAddressRow(page, field, address, { before: `await ${more}.click(); await ${more}.waitFor({ state: "detached" });` });
+  expect(whole.clicked).toEqual({ picked: true, label: "Example Building, 1 Example Bldg, Example City, CA 94000, US", unit: "Suite 5" });
+  expect(await submitted(page)).toEqual({ pickup: "w1" });
+});
+
+// A row the list no longer shows, once the page changed it, is no row to click: the refusal quotes
+// the caller's address, not the site's row.
+test("pickerMatchAddress refuses a row the list no longer shows, quoting the caller's address", async ({ page }) => {
   await serve(page, shortPlaces);
   const address = "1 Example Building, Suite 5, Example City, CA 94000";
-  const outcome = await call(
+  const match = { picked: true, index: 0, label: "Example Building, 1 Example Bldg, Example City", unit: "Suite 5", wanted: address };
+  const gone = await call(
     page,
     `const field = page.getByRole("combobox", { name: "Pickup" });
-const more = page.getByRole("option", { name: /^See more results/ });
-const typed = await pickerTypeAddress(field, ${JSON.stringify(address)}, fast);
-await more.waitFor();
-const short = await pickerMatchAddress(field, ${JSON.stringify(address)}, fast);
-await more.click();
-await more.waitFor({ state: "detached" });
-const { row, ...whole } = await pickerMatchAddress(field, ${JSON.stringify(address)}, fast);
-await row.click();
-return { typed, short, whole };`,
+await pickerTypeAddress(field, ${JSON.stringify(address)}, fast);
+await page.getByRole("option", { name: /^See more results/ }).click();
+await page.getByRole("option", { name: /^See more results/ }).waitFor({ state: "detached" });
+const { row, ...refused } = await pickerMatchAddress(field, ${JSON.stringify(match)}, fast);
+return { row: row === undefined ? null : "row", match: refused };`,
   );
-  expect(outcome).toEqual({
+  expect(gone).toEqual({
     result: {
-      typed: { query: "1 Example Building, Example City, CA 94000" },
-      short: {
+      row: null,
+      match: {
         picked: false,
-        reason: "option_unclear",
+        reason: "option_missing",
         wanted: address,
-        available: ["Example Building, 1 Example Bldg, Example City", "Example Building Garage, 5 Sample St, Example City"],
-        matches: ["Example Building, 1 Example Bldg, Example City"],
+        available: ["Example Building, 1 Example Bldg, Example City, CA 94000, US", "Example Building Garage, 5 Sample St, Example City, CA 94000, US"],
+        matches: [],
         unit: "Suite 5",
       },
-      whole: { picked: true, label: "Example Building, 1 Example Bldg, Example City, CA 94000, US", unit: "Suite 5" },
     },
   });
-  expect(await submitted(page)).toEqual({ pickup: "w1" });
 });
 
 // A field that names no list, with the page's other lists about: suggestions in a plain list beside
 // it are read over the page's longer menu, and suggestions in a listbox added to the page's end over
 // a plain list beside it.
-test("pickerMatchAddress reads the popup, else the list closest to a field that names none", async ({ page }) => {
+test("pickerAddressRows reads the popup, else the list closest to a field that names none", async ({ page }) => {
   const field = (list: string) => `<nav><ul><li>Home</li><li>Rides</li><li>Drive</li><li>Business</li><li>Help</li><li>Sign in</li></ul></nav>
 <form><div><label>Pickup <input id="pickup" autocomplete="off"></label>${list}</div><input type="hidden" name="pickup"></form>
 <script>
@@ -424,51 +366,66 @@ input.addEventListener("input", () => {
   list.onclick = (event) => (document.querySelector("[name=pickup]").value = event.target.closest("li").dataset.value);
 });
 </script>`;
-  const address = JSON.stringify("1 Example Building, Example City, CA 94000");
-  const match = `const field = page.getByLabel("Pickup");
-await pickerTypeAddress(field, ${address}, fast);
-await page.locator(".suggestions li").waitFor();
-const { row, ...match } = await pickerMatchAddress(field, ${address}, fast);
-await row.click();
-return match;`;
-  const picked = { result: { picked: true, label: "Example Building, 1 Example Bldg, Example City, CA 94000, US", unit: "" } };
   for (const list of ['<ul class="suggestions"></ul>', '<ul class="rides"><li>Standard</li><li>Comfort</li><li>XL</li></ul>']) {
     await serve(page, field(list));
-    expect(await call(page, match)).toEqual(picked);
+    const picked = await pickAddressRow(page, 'page.getByLabel("Pickup")', "1 Example Building, Example City, CA 94000", { before: 'await page.locator(".suggestions li").waitFor();' });
+    expect(picked.clicked).toEqual({ picked: true, label: "Example Building, 1 Example Bldg, Example City, CA 94000, US", unit: "" });
     expect(await submitted(page)).toEqual({ pickup: "w1" });
   }
 });
 
-// A place's name with no house number: the suggestion with that name is taken over a longer name the
-// site lists first, whatever street follows it, and a longer name alone is a candidate.
-test("pickerMatchAddress takes a place by its name, and lists a longer name, when the caller gave no house number", async ({ page }) => {
+// A place's name with no house number: the row with that name is taken over a longer name the site
+// lists first, a longer name alone is asked about, and a more-results control is never a row.
+test("matchAddressRows takes a place by its name from the rows pickerAddressRows read, past a longer name and a more-results control", async ({ page }) => {
+  const field = 'page.getByRole("combobox", { name: "Address" })';
+  const first = 'await page.getByRole("option").first().waitFor();';
   const longer = ["f1", "Example Park Ferry Terminal", "Example City, CA, US"];
   const place = ["b1", "Example Park", "12 Sample Plaza, Example City, CA, US"];
-  const address = JSON.stringify("Example Park, Example City, CA");
-  const match = `const field = page.getByRole("combobox", { name: "Address" });
-await pickerTypeAddress(field, ${address}, fast);
-await page.getByRole("option").first().waitFor();
-const { row, ...match } = await pickerMatchAddress(field, ${address}, fast);
-await row?.click();
-return match;`;
   await serve(page, twoLines(JSON.stringify([longer, place])));
-  expect(await call(page, match)).toEqual({ result: { picked: true, label: "Example Park, 12 Sample Plaza, Example City, CA, US", unit: "" } });
+  expect((await pickAddressRow(page, field, "Example Park, Example City, CA", { before: first })).clicked).toEqual({
+    picked: true,
+    label: "Example Park, 12 Sample Plaza, Example City, CA, US",
+    unit: "",
+  });
   expect(await submitted(page)).toEqual({ address: "b1" });
   await serve(page, twoLines(JSON.stringify([longer])));
-  expect(await call(page, match)).toMatchObject({
-    result: { picked: false, reason: "option_unclear", matches: ["Example Park Ferry Terminal, Example City, CA, US"] },
+  expect((await pickAddressRow(page, field, "Example Park, Example City, CA", { before: first })).clicked).toMatchObject({
+    picked: false,
+    reason: "option_unclear",
+    matches: ["Example Park Ferry Terminal, Example City, CA, US"],
   });
-  // Nor is the site's control that lists more results for the typed text, listed first.
   const airport = "Example International Airport (EXA), Example City, CA";
   await serve(page, twoLines(JSON.stringify([
     ["m1", "See more results for " + airport],
     ["t2", "Terminal 2", "EXA"],
     ["a1", "Example International Airport (EXA)", "400 Sample Rd, Example City, CA, US"],
   ])));
-  expect(await call(page, match.replaceAll(address, JSON.stringify(airport)))).toEqual({
-    result: { picked: true, label: "Example International Airport (EXA), 400 Sample Rd, Example City, CA, US", unit: "" },
+  expect((await pickAddressRow(page, field, airport, { before: first })).clicked).toEqual({
+    picked: true,
+    label: "Example International Airport (EXA), 400 Sample Rd, Example City, CA, US",
+    unit: "",
   });
   expect(await submitted(page)).toEqual({ address: "a1" });
+});
+
+// A map pin named as typed, beside the venue the site shows with a category: options.category
+// marks the venue's row and leaves the category's text out of it; a write asks, a read in the area the
+// caller gave takes the venue.
+test("pickerAddressRows marks a row the site shows with a category, and a read takes the venue over a same-name pin", async ({ page }) => {
+  const rows = JSON.stringify([
+    ["p1", "Example Center", "Exampleton, NY, USA"],
+    ["v1", "Jane Q. Example Convention Center", "<span class=kind>Convention center</span>", "429 Sample Ave, Exampleton, NY 10001, USA"],
+  ]);
+  const field = 'page.getByRole("combobox", { name: "Address" })';
+  const options = { before: 'await page.getByRole("option").first().waitFor();', rows: 'category: ".kind"' };
+  await serve(page, twoLines(rows));
+  const venue = "Jane Q. Example Convention Center, 429 Sample Ave, Exampleton, NY 10001, USA";
+  const asked = await pickAddressRow(page, field, "Example Center, Exampleton, NY", options);
+  expect(asked.rows).toEqual(["Example Center, Exampleton, NY, USA", venue]);
+  expect(asked.clicked).toMatchObject({ picked: false, reason: "option_unclear", matches: ["Example Center, Exampleton, NY, USA", venue] });
+  const read = await pickAddressRow(page, field, "Example Center, Exampleton, NY", { ...options, read: true });
+  expect(read.clicked).toEqual({ picked: true, label: venue, unit: "" });
+  expect(await submitted(page)).toEqual({ address: "v1" });
 });
 
 test("pickValue picks a native select's option by label, value or another spelling", async ({ page }) => {

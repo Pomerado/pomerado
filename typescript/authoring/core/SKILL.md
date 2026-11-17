@@ -277,12 +277,16 @@ exception: it is optional unless the task can't run without it (below).
   order and return the one it used, as the site labels it, or list those matches as the site
   labels them for the caller to choose one, each selecting exactly one, with a declared choice
   question (.agents/caller-input/SKILL.md) or `pickRefusal`, which lists them as `available`.
-  Resolve a typed address through the site's suggestions with `pickerTypeAddress`, then, once the
-  list shows every suggestion the site offers for it, `pickerMatchAddress` from `pickerCode`,
-  clicking the `row` it returns; or with `resolveAddress` from `pomerado/runtime` over the site's
-  own suggestion request, with `{ read: true }` after its `label` in a read. Fill the site's unit
-  field, or its second address line, with the `unit` it returns, return the suggestion it accepted
-  as the site's version of the address, and throw its `pickRefusal` only when it accepts none.
+  Resolve a typed address through the site's suggestions in two calls: in one, `pickerTypeAddress`,
+  then, once the list shows every suggestion the site offers for it, `pickerAddressRows` from
+  `pickerCode`, returning its answer; in the script, `matchAddressRows(address, answer)` from
+  `pomerado/runtime`; in the next call, `pickerMatchAddress` with that match and the same options,
+  clicking the `row` it returns. Pass `category`, a selector for the category the site shows a
+  venue's row with, when it shows one, and `country` to `matchAddressRows` when the tool knows the
+  address's country. Or use `resolveAddress` from `pomerado/runtime` over the site's own
+  suggestion request, with `{ read: true }` in a read. Fill the site's unit field, or its second
+  address line, with the `unit` it returns, return the suggestion it accepted as the site's
+  version of the address, and throw its `pickRefusal` only when it accepts none.
   Never write address normalization or matching of your own, in the tool or in a file beside it:
   no word lists, street-type or city tables, house-number, unit or postal-code comparisons,
   regular expressions that split an address, similarity scores or "contains" tests. When the
