@@ -161,11 +161,8 @@ describe("resolveAddress", () => {
     expect(await resolveAddress("1 Example St, Exampleton, Illinois 60000", () => choices.slice(0, 2).concat("1 Example St, Exampleton, IL, USA"))).toMatchObject({
       label: "1 Example St, Exampleton, IL, USA",
     });
-    // A ZIP alone is never taken for a house number elsewhere: it asks.
-    expect(await resolveAddress("60000", () => ["60000 Example Rd, Sampleville, NY, USA", "Exampleton, IL 60000, USA"])).toMatchObject({
-      picked: false,
-      reason: "option_unclear",
-    });
+    // A ZIP alone is never taken for a house number elsewhere. Taking the ZIP's own row is an
+    // expected failure below.
     expect(await resolveAddress("60000", () => ["60000 Example Rd, Sampleville, NY, USA"])).toMatchObject({ picked: false });
   });
 
@@ -190,7 +187,6 @@ describe("resolveAddress", () => {
     expect(await resolveAddress("12 Example St, Exampleton, IL 60000", () => joined)).toMatchObject({ picked: true, label: joined[1] });
     const zipped = ["12 Example St Exampleton, IL, USA", "12 Example St, Exampleton, IL 60999, USA"];
     expect(await resolveAddress("12 Example St, Exampleton, IL 60000", () => zipped)).toMatchObject({ picked: true, label: zipped[0] });
-    expect(await resolveAddress("60000-1234", () => ["Exampleton, IL 60000, USA"])).toMatchObject({ picked: false, reason: "option_unclear" });
     // A street only close to the caller's, with no word of it, is usable but not kept.
     expect(await resolveAddress("12 Example Street, Exampleton, IL", () => ["12 Exampel Rd, Exampleton, IL, USA"])).toMatchObject({ picked: false, reason: "option_unclear" });
     // A place word in a suggestion's street never counts: neither is taken.
@@ -448,11 +444,6 @@ describe("resolveAddress", () => {
       ["350 5th Ave, Apt 3, Exampleton, NY", "350 5th Ave Apt 3, Exampleton, NY, USA"],
     ])
       expect(await resolveAddress(address ?? "", () => [shown ?? ""])).toMatchObject({ picked: true, label: shown });
-    // A dotted direction is asked about.
-    expect(await resolveAddress("1600 Example Ave N.W., Exampleton, DC", () => ["1600 Example Ave NW Exampleton, DC, USA"])).toMatchObject({
-      picked: false,
-      reason: "option_unclear",
-    });
     // A unit on the street's own line, which the split leaves in place, is still the caller's unit
     // for the site's unit field, as PlaceMatch reads it.
     expect(await resolveAddress("350 5th Ave Apt 3, Exampleton, NY", () => ["350 5th Ave, Exampleton, NY 10001, USA"])).toMatchObject({
@@ -478,6 +469,7 @@ describe("resolveAddress", () => {
       "12 Example St, Exampleton, IL, USA",
     );
     expect(await houses("12A Example St, Exampleton, IL", ["12A Example St, Exampleton, IL, USA"])).toBe("12A Example St, Exampleton, IL, USA");
+    // The same letter written apart ("12 A") is an expected failure below.
     expect(await houses("2nd Floor, 12 Example St, Exampleton, IL", ["12 Example St, Exampleton, IL, USA"])).toBe("12 Example St, Exampleton, IL, USA");
     expect(await houses("1 Example St, Exampleton, IL", ["100 Example St Apt 1, Exampleton, IL, USA"])).toBe(false);
     // A place's name before its address may open with a number of its own; one that opens with the
@@ -714,6 +706,14 @@ describe("answers the pinned PlaceMatch still gives otherwise", () => {
   }
   const ask = "option_unclear";
   const cases: readonly Pending[] = [
+    // Shapes taken before PlaceMatch, still to be taken: a dotted direction, a ZIP alone or with
+    // its four more digits, Fifth for 5th with a unit on the street's line, and a house number's
+    // letter written apart.
+    { name: "a dotted direction", address: "1600 Example Ave N.W., Exampleton, DC", rows: ["1600 Example Ave NW Exampleton, DC, USA"], read: false, today: ask, intended: "1600 Example Ave NW Exampleton, DC, USA" },
+    { name: "a ZIP alone", address: "60000", rows: ["60000 Example Rd, Sampleville, NY, USA", "Exampleton, IL 60000, USA"], read: false, today: ask, intended: "Exampleton, IL 60000, USA" },
+    { name: "a ZIP+4 alone", address: "60000-1234", rows: ["Exampleton, IL 60000, USA"], read: false, today: ask, intended: "Exampleton, IL 60000, USA" },
+    { name: "Fifth for 5th with a unit", address: "350 Fifth Ave Apt 3, Exampleton, NY", rows: ["350 5th Ave, Exampleton, NY, USA"], read: false, today: ask, intended: "350 5th Ave, Exampleton, NY, USA" },
+    { name: "a house number's letter written apart", address: "12A Example St, Exampleton, IL", rows: ["12 A Example St, Exampleton, IL, USA"], read: false, today: ask, intended: "12 A Example St, Exampleton, IL, USA" },
     // A place's row that leaves out the caller's state and ZIP, as a ride site's short list does: asked
     // about, so the tool opens the site's whole addresses.
     { name: "a place's row that leaves out state and ZIP", address: "1 Example Building, Suite 5, Example City, CA 94000", rows: ["Example Building, 1 Example Bldg, Example City", "Example Building Garage, 5 Sample St, Example City", "See more results for 1 Example Building, Example City, CA 94000"], read: false, today: "Example Building, 1 Example Bldg, Example City", intended: ask },
