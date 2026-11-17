@@ -213,12 +213,160 @@ describe("a script question that can't be asked", () => {
     }
   });
 
-  it("says nothing more for a failure no fixed reason covers", () => {
-    expect(refusal([first, { value: 5, label: "Number value" }])).toBe("");
-    expect(refusal([first, { ...second, maskedLabel: "m".repeat(65) }])).toBe("");
-    expect(refusal([first, "entry-text"])).toBe("");
-    expect(refusal([first, ["entry-list"]])).toBe("");
-    expect(refusal([])).toBe("");
+  it.each([
+    [
+      "a masked label over 64 characters",
+      [first, { ...second, accountSpecific: true, maskedLabel: "Masked 3e8f ".repeat(7).trim() }],
+      "Script question pick could not be asked because option 2's maskedLabel is 83 characters; the limit is 64.",
+    ],
+    [
+      "an empty masked label",
+      [{ ...first, accountSpecific: true, maskedLabel: "" }, second],
+      "Script question pick could not be asked because option 1's maskedLabel is empty.",
+    ],
+    [
+      "a value that is not text",
+      [first, { value: 5, label: "Number value" }],
+      "Script question pick could not be asked because option 2's value must be text.",
+    ],
+    [
+      "a missing label",
+      [first, { value: "entry-third-2b6e" }],
+      "Script question pick could not be asked because option 2's label is missing.",
+    ],
+    [
+      "a flag that is not a boolean",
+      [first, { ...second, declines: "yes" }],
+      "Script question pick could not be asked because option 2's declines must be true or false.",
+    ],
+    [
+      "an option that is text",
+      [first, "entry-text"],
+      "Script question pick could not be asked because option 2 must be an object.",
+    ],
+    [
+      "an option that is a list",
+      [first, ["entry-list"]],
+      "Script question pick could not be asked because option 2 must be an object.",
+    ],
+    [
+      "no options at all",
+      [],
+      "Script question pick could not be asked because options is empty.",
+    ],
+    [
+      "more than 50 options",
+      Array.from({ length: 51 }, (_, index) => ({ value: `v${index}`, label: `L${index}` })),
+      "Script question pick could not be asked because options has 51 entries; the limit is 50.",
+    ],
+  ])("names the field and the rule for %s", (_, options, message) => {
+    expect(refusal(options)).toBe(message);
+  });
+
+  it("never says a masked label, value or label it refuses", () => {
+    const masked = "Masked label 8c1f ".repeat(5);
+    const message = refusal([first, { ...second, accountSpecific: true, maskedLabel: masked }]);
+    expect(message).toMatch(/maskedLabel is 90 characters; the limit is 64\.$/);
+    for (const text of [masked, masked.trim(), "8c1f", second.value, second.label])
+      expect(message).not.toContain(text);
+  });
+
+  /** The failure's message for an ask that is refused before it reaches the caller. */
+  const refused = (
+    declared: ScriptQuestionDeclarations,
+    asked: Parameters<ReturnType<typeof makeScriptInput>["ask"]>[0],
+  ) => {
+    const result = Effect.runSync(
+      Effect.either(makeScriptInput(declared, () => Effect.succeed({})).ask(asked)),
+    );
+    if (Either.isRight(result)) throw new Error("the ask was not refused");
+    expect(result.left).toMatchObject({ _tag: "ScriptInputFailure", code: "InvalidOptions" });
+    return result.left.message;
+  };
+
+  it.each([
+    [
+      "a choice given no options",
+      { pick: {} },
+      "Script question pick could not be asked because it has no options.",
+    ],
+    [
+      "options that are not a list",
+      { pick: { options: "entry-text" } },
+      "Script question pick could not be asked because options must be a list.",
+    ],
+    [
+      "options given to a text question",
+      { note: { options: [first] } },
+      "Script question note could not be asked because a text question takes no options.",
+    ],
+    [
+      "a label given to a question that is not a site field",
+      { pick: { label: "Engraving", options: [first] } },
+      "Script question pick could not be asked because only a site field takes a label.",
+    ],
+    [
+      "a site field with an empty label",
+      { extra: { label: "  " } },
+      "Script question extra could not be asked because its label is missing, empty or not text.",
+    ],
+    [
+      "a site field with a label that is not text",
+      { extra: { label: 5 } },
+      "Script question extra could not be asked because its label is missing, empty or not text.",
+    ],
+    [
+      "a multiple choice given an empty list",
+      { picks: { options: [] } },
+      "Script question picks could not be asked because options is empty.",
+    ],
+    [
+      "more selections needed than options offered",
+      { three: { options: [first, second] } },
+      "Script question three could not be asked because minSelections is 3 but at most 2 can be selected.",
+    ],
+    [
+      "a hand-off asked with another question",
+      { handoff: {}, note: {} },
+      "Script questions handoff, note could not be asked because the request breaks the rule that a browser hand-off is the only question of a script's or the host's request.",
+    ],
+  ])("names the rule for %s", (_, asked, message) => {
+    const declared: ScriptQuestionDeclarations = {
+      ...questions,
+      note: { type: "text", prompt: "Any note?" },
+      extra: { type: "site_field" },
+      three: { type: "multi_choice", prompt: "Which three?", minSelections: 3 },
+      handoff: { type: "browser_handoff", prompt: "Review the form." },
+    };
+    expect(refused(declared, asked as never)).toBe(message);
+  });
+
+  it("says an empty multiple choice that may take none is empty, after every id is checked", () => {
+    const declared: ScriptQuestionDeclarations = {
+      zero: { type: "multi_choice", prompt: "Which entries?", minSelections: 0 },
+    };
+    expect(refused(declared, { zero: { options: [] } })).toBe(
+      "Script question zero could not be asked because options is empty.",
+    );
+    const result = Effect.runSync(
+      Effect.either(
+        makeScriptInput(declared, () => Effect.succeed({})).ask({
+          zero: { options: [] },
+          unknown: {},
+        } as never),
+      ),
+    );
+    expect(result).toEqual(Either.left(expect.objectContaining({ code: "Undeclared" })));
+  });
+
+  it("names the limit for more than eight questions in one ask", () => {
+    const ids = Array.from({ length: 9 }, (_, index) => `q${index + 1}`);
+    const declared = Object.fromEntries(
+      ids.map((id) => [id, { type: "text" as const, prompt: "Which entry?" }]),
+    );
+    expect(refused(declared, ids)).toBe(
+      `Script questions ${ids.join(", ")} could not be asked because questions has 9 entries; the limit is 8.`,
+    );
   });
 
   it("no longer fails on a label over 256 characters, which reaches the caller shortened", () => {
@@ -379,5 +527,126 @@ describe("a purchase confirm's order", () => {
     const refused = asked({ ...order, address: "Synthetic Street 1" });
     expect(refused.result).toEqual(Either.left(expect.objectContaining({ code: "InvalidOptions" })));
     expect(refused.request).toBeUndefined();
+  });
+
+  describe("that can't be asked", () => {
+    const declared: ScriptQuestionDeclarations = {
+      confirm_order: { type: "choice", prompt: "Place this order?" },
+      confirm_again: { type: "confirm", prompt: "Place it now?" },
+      note: { type: "text", prompt: "Any note?" },
+    };
+    const options = [
+      { value: "place", label: "Place order" },
+      { value: "cancel", label: "Cancel", declines: true },
+    ];
+    const order = {
+      currency: "USD",
+      items: [{ name: "Synthetic cable", quantity: 2, price: "4.50" }],
+      total: "9.00",
+    };
+    /** The failure's message for an ask whose order is refused. */
+    const refusal = (asked: unknown) => {
+      const result = Effect.runSync(
+        Effect.either(makeScriptInput(declared, () => Effect.succeed({})).ask(asked as never)),
+      );
+      if (Either.isRight(result)) throw new Error("the order was not refused");
+      expect(result.left).toMatchObject({ _tag: "ScriptInputFailure", code: "InvalidOptions" });
+      return result.left.message;
+    };
+    const because = (reason: string) =>
+      `Script question confirm_order could not be asked because ${reason}.`;
+
+    it.each([
+      [
+        "a field an order does not take",
+        { ...order, address: "Synthetic Street 1" },
+        because("order has a field it does not take: address"),
+      ],
+      [
+        "a field an item does not take",
+        { ...order, items: [{ ...order.items[0], sku: "SKU-0000" }] },
+        because("order.items[0] has a field it does not take: sku"),
+      ],
+      [
+        "a field whose name is not a plain name",
+        { ...order, "Synthetic Street 1": true },
+        because("order has a field it does not take"),
+      ],
+      ["a missing total", { currency: "USD", items: order.items }, because("order.total is missing")],
+      [
+        "an amount that is not decimal text",
+        { ...order, total: "$9.00" },
+        because("order.total must be a string matching the pattern ^\\d{1,9}(?:\\.\\d{1,3})?$"),
+      ],
+      [
+        "an amount that is a number",
+        { ...order, items: [{ ...order.items[0], price: 4.5 }] },
+        because("order.items[0].price must be text"),
+      ],
+      [
+        "a unit it does not know",
+        { ...order, items: [{ ...order.items[0], unit: "stone" }] },
+        because(
+          'order.items[0].unit must be one of "g", "kg", "mg", "oz", "lb", "ml", "L", "fl oz", "pt", "qt", "gal", "mm", "cm", "m", "in", "ft", "yd"',
+        ),
+      ],
+      [
+        "a quantity past its third decimal place, a check with no words of its own",
+        { ...order, items: [{ ...order.items[0], quantity: 1.0001, unit: "kg" }] },
+        because("order.items[0].quantity does not pass its check"),
+      ],
+      [
+        "an item with neither a price nor a line total",
+        { ...order, items: [{ name: "Synthetic cable", quantity: 2 }] },
+        because(
+          "order.items breaks the rule that each item has a price or line total, and a whole quantity unless a unit",
+        ),
+      ],
+      [
+        "more than 20 items",
+        { ...order, items: Array.from({ length: 21 }, () => order.items[0]) },
+        because("order.items has 21 entries; the limit is 20"),
+      ],
+      ["an order that is not an object", "Synthetic order", because("order must be an object")],
+    ])("names the field and the rule for %s", (_, given, message) => {
+      expect(refusal({ confirm_order: { options, order: given } })).toBe(message);
+    });
+
+    it("names the order's notice, with the question that carries the order, when it runs too long", () => {
+      const items = Array.from({ length: 80 }, (_, index) => ({
+        name: `${"Synthetic item ".repeat(13)}${index}`,
+        quantity: 1,
+        price: "1.00",
+      }));
+      for (const asked of [
+        { confirm_order: { options, order: { ...order, items } } },
+        { note: {}, confirm_order: { options, order: { ...order, items } } },
+      ])
+        expect(refusal(asked)).toMatch(
+          /^Script question confirm_order could not be asked because the order's notice is \d+ characters; the limit is 16384\.$/,
+        );
+    });
+
+    it("names the one-order rule", () => {
+      expect(
+        refusal({ confirm_order: { options, order }, confirm_again: { order } }),
+      ).toBe(
+        "Script question confirm_again could not be asked because only one question in an ask may carry an order.",
+      );
+      expect(refusal({ note: { order } })).toBe(
+        "Script question note could not be asked because a text question takes no order; only a choice or a confirm does.",
+      );
+    });
+
+    it("never says an item's name or an amount it refuses", () => {
+      const message = refusal({
+        confirm_order: {
+          options,
+          order: { ...order, items: [{ name: "Synthetic name 4c2d", quantity: 2, price: "$4.50" }] },
+        },
+      });
+      expect(message).toMatch(/^Script question confirm_order could not be asked because order\.items\[0\]\.price /);
+      for (const text of ["4c2d", "$4.50"]) expect(message).not.toContain(text);
+    });
   });
 });
