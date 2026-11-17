@@ -854,6 +854,18 @@ it("has the minter read back a write, accept recent-search saves and look before
   );
 });
 
+// A tool that only copied pages was built as a write because the site marks each page it opens
+// as seen. Opening pages is reading, so the rule on what a read may do says so.
+it("keeps opening pages the site marks as visited or as progress part of a read", async () => {
+  const writes = ((await renderedTexts("typescript/authoring")).get("writes") ?? "").replace(
+    /\s+/g,
+    " ",
+  );
+  expect(writes).toContain(
+    "a task that needs that is a write build. Opening pages that the site then marks as visited or as progress, without submitting an answer or a form, is part of a read, unless the request asks to change that progress. Signed out, setting",
+  );
+});
+
 /*
  * A site rewrote an address as it was typed, writing Parkway as PKWY, and the read-back refused a
  * correct save. A write takes the site's version of a typed value, as it would a picked option,
@@ -1566,11 +1578,11 @@ it("renders the pinned standalone authoring", async () => {
     ["539abe36b602c8e2eff8745dd0462aea41837a20cc0b90cbef7a01cbad6fb89a", "testing"],
     ["d524204c6ed2dc0fa773d6e5cf0aef993e2b48ee9db3fcbf291e40ebe8c9913d", "pagination"],
     ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
-    ["7c6ac2415285039d43d9dbb268467b77cc88c50ba697ddb42f9b5644c9f21769", "writes"],
+    ["5dd3f586f3523de346a9d941fe8ac251c104350ba0063114b3c6f073b8624505", "writes"],
     ["3ff8366fc701a733eb51ae689e681d9b1e3bfadde541832a8ac560f220ef8cc8", "cart"],
     ["3bd0c46940f314c940bcdb3a807ac9d18759123682f349b5c603f94ca14626ad", "caller-input"],
     ["5e831bd1ba21d5ec4b1da3a96152f9d905144cbef58b9bd26381933f27faa97c", "publication"],
-    ["ec2cc828467418585033cb81cb4e2b6d84cbd6ae6d0cec14577ce429ef8d619b", "workspace/AGENTS.md"],
+    ["b646c7edc5ba24b8904bdd6ecca357de4d82e6f1f3f9c715fcc55c7f017f50c8", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);
 });
@@ -1691,7 +1703,7 @@ it("renders the search URL fast path only when a host turns it on", async () => 
     [sha256(on.agents), "workspace/AGENTS.md"],
   ]).toStrictEqual([
     ["e3c82530af60da937a450bd94be81e1fefea6ef2324d9cd54379a52fc1d7c930", "search"],
-    ["c962952b7687c23237248d66a2931e42bffbc233a010ee841fceb0f332060b2d", "workspace/AGENTS.md"],
+    ["2a1404ae49cafb44f35bea183f01ade2e4f8a652b6db9ba2c5f9d177b8325d38", "workspace/AGENTS.md"],
   ]);
   expect(on.digests.filter(([, name]) => name !== "search")).toStrictEqual(
     off.digests.filter(([, name]) => name !== "search"),

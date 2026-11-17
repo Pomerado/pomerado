@@ -172,7 +172,11 @@ import type {
 import type { SiteAccessDiagnostic } from "./site-access-contracts.js";
 import type { ModelDiagnosticTiming } from "../models/model-diagnostic-timing.js";
 import type { RuntimeRecordInput } from "../models/model-runtime-record.js";
-import { inputContractChangedInstruction, registryRefusal } from "./registry-feedback.js";
+import {
+  contractBreakingInstruction,
+  inputContractChangedInstruction,
+  registryRefusal,
+} from "./registry-feedback.js";
 import { publicationBlockFeedback, workspacePath } from "./publication-block.js";
 import { outputChecksRefusal } from "./output-notes.js";
 import { fieldFill, lintOutput, type FieldFill } from "../runtime/output-lint.js";
@@ -3655,11 +3659,14 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           );
         return undefined;
       };
+      /** The attempt's registry refusals for breaking a shared tool's callers. In memory. */
+      let contractBreakingRefusals = 0;
       /**
        * A registry refusal of a reviewed publication. A check the minter's metadata or source
-       * decides goes back to it to fix, with no cap; any other refusal ends the attempt with its
-       * reason. A registry outage the host's retries did not clear may be tried again until the
-       * publication outage budget runs out.
+       * decides goes back to it to fix, with no cap, except a version that breaks a shared tool's
+       * callers, which it may fix once; any other refusal ends the attempt with its reason. A
+       * registry outage the host's retries did not clear may be tried again until the publication
+       * outage budget runs out.
        */
       const registryFeedback = (error: MintFailure) =>
         Effect.gen(function* () {
@@ -3670,7 +3677,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 instruction:
                   "Publication infrastructure (the tool registry, its source store or the host's screening) stayed unavailable through the host's retries, so nothing was published. Call finish_build again with the same executionId; the retained example is not executed again.",
               }
-            : registryRefusal(error.registryIssue, error.registryProblem);
+            : error.registryIssue === "contract_breaking" && ++contractBreakingRefusals === 1
+              ? { fixable: true, instruction: contractBreakingInstruction(buildEffect === "write") }
+              : registryRefusal(error.registryIssue, error.registryProblem);
           if (!refusal.fixable)
             terminal = {
               build: "incomplete",
