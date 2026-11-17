@@ -401,7 +401,8 @@ test("matchAddress takes a place by its name from the rows pickerAddressRows rea
 });
 
 // A map pin named as typed, beside the venue the site shows with a category: options.category
-// marks the venue's row and leaves the category's text out of it; a write asks, a read takes the venue.
+// marks the venue's row and leaves the category's text out of it; a write asks, a read in the area the
+// caller gave takes the venue.
 test("pickerAddressRows marks a row the site shows with a category, and a read takes the venue over a same-name pin", async ({ page }) => {
   const rows = JSON.stringify([
     ["p1", "Example Center", "Exampleton, NY, USA"],
@@ -411,10 +412,10 @@ test("pickerAddressRows marks a row the site shows with a category, and a read t
   const options = { before: 'await page.getByRole("option").first().waitFor();', rows: 'category: ".kind"' };
   await serve(page, twoLines(rows));
   const venue = "Jane Q. Example Convention Center, 429 Sample Ave, Exampleton, NY 10001, USA";
-  const asked = await pickAddressRow(page, field, "example center", options);
+  const asked = await pickAddressRow(page, field, "Example Center, Exampleton, NY", options);
   expect(asked.rows).toEqual(["Example Center, Exampleton, NY, USA", venue]);
   expect(asked.clicked).toMatchObject({ picked: false, reason: "option_unclear", matches: ["Example Center, Exampleton, NY, USA", venue] });
-  const read = await pickAddressRow(page, field, "example center", { ...options, read: true });
+  const read = await pickAddressRow(page, field, "Example Center, Exampleton, NY", { ...options, read: true });
   expect(read.clicked).toEqual({ picked: true, label: venue, unit: "" });
   expect(await submitted(page)).toEqual({ address: "v1" });
 });
