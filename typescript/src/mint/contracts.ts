@@ -2738,9 +2738,9 @@ export interface LedgerTestFailure {
 
 /**
  * The harness's own record of what this build's reviews decided and its live tests showed, for
- * the review of a blocked explanation, so the review does not depend on what Guardian's
- * conversation still holds. Bounded: the latest denials and failing cases, with counts of what
- * the bound left out.
+ * the review of a blocked explanation or of the last answer a stopped build gave, so the review
+ * does not depend on what Guardian's conversation still holds. Bounded: the latest denials and
+ * failing cases, with counts of what the bound left out.
  */
 export interface DecisionLedger {
   readonly denials: readonly LedgerDenial[];
@@ -2759,11 +2759,18 @@ export interface DecisionLedger {
   readonly testFailures: readonly LedgerTestFailure[];
   readonly omittedTestFailures?: number;
   /**
-   * The host's latest refusals of a live test batch or an execution, such as a cap on live runs:
-   * the tool refused, the failure code or status, the screened reason and when, in ISO time.
+   * The host's latest refusals of a tool call, such as a cap on live runs: the tool refused, the
+   * failure code, status or refusal reason, the screened reason and when, in ISO time, the same
+   * refusal kept once at its latest. An execution's include a hold on a live step
+   * (`ReconciliationRequired`), a saved login another job holds (`login_in_use`, as on
+   * `request_input`'s login) and a failure of the host's own dependency, both with the finite
+   * fields the minter read as the reason. `report_blocked` names a blocked report the host refused,
+   * such as `host_not_refused`, with the reported reason, and `mint_update` a task update the host
+   * held for a confirmation or refused. A host on an older core sends only `live_tests` and
+   * `execute`.
    */
   readonly hostRefusals?: readonly {
-    readonly tool: "live_tests" | "execute";
+    readonly tool: "live_tests" | "execute" | "request_input" | "report_blocked" | "mint_update";
     readonly code: string;
     readonly reason: string;
     readonly atUtc: string;
@@ -2930,9 +2937,9 @@ export interface MintDependencies {
        */
       readonly publicationDecisions?: readonly PublicationDecision[];
       /**
-       * A blocked explanation's review only: the build's Guardian denials and failing live test
-       * cases, already screened. A host that forwards it lets the review judge the report against
-       * them; an older host leaves it out.
+       * A blocked outcome's review only, a stopped build's last answer included: the build's
+       * Guardian denials, failing live test cases and host refusals, already screened. A host that
+       * forwards it lets the review judge the report against them; an older host leaves it out.
        */
       readonly decisionLedger?: DecisionLedger;
       /**
