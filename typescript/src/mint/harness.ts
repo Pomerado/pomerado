@@ -2754,7 +2754,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           return {
             reason: "maintenance_setting",
             instruction:
-              "Maintenance repairs the published tool under its own task. Only a change to its contract may apply, as a requirement, purpose or output change; its input, effect, site and login stay, and it never becomes a new build. Repair it as it is, or end the attempt and say in the summary what the caller now wants.",
+              `Maintenance repairs the published tool under its own task. Only a change to its contract may apply, as a requirement, purpose or output change; its ${confirmer === "owner_request" ? "" : "input, "}effect, site and login stay, and it never becomes a new build. Repair it as it is, or end the attempt and say in the summary what the caller now wants.`,
           };
         if (request.mode !== "maintenance" && settings.has("output"))
           return {
@@ -8194,7 +8194,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       return yield* recordHostRefusal(
                         "mint_update",
                         "confirmation_unanswered",
-                        JSON.stringify({ status: "clarification_required", unanswered }),
+                        // The ids are the minter's own words, so the fact keeps only their count.
+                        JSON.stringify({
+                          status: "clarification_required",
+                          unanswered: unanswered.length,
+                        }),
                       ).pipe(
                         Effect.as(
                           taskUpdateAnswer("clarification_required", {

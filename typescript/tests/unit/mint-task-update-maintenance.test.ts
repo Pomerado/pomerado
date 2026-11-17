@@ -333,6 +333,30 @@ it.each(["owner", "owner_requirements", "none"] as const)(
   },
 );
 
+// The owner's own change keeps its task: only the example input may change beside its contract.
+it.each([
+  { setting: "effect", change: { setting: "effect", effect: "write" } },
+  { setting: "site", change: { setting: "site", origin: "https://notes.example.org" } },
+  { setting: "login", change: { setting: "login", change: "sign_in" } },
+])(
+  "still refuses changing the $setting beside the example in the owner's requested change",
+  async ({ change }) => {
+    const host = updateHost();
+    const result = await propose(
+      { ...pickedDay, changes: [...pickedDay.changes, change] },
+      {
+        ...host.dependencies,
+        askInput: answersNextDay,
+        taskUpdateConfirmer: () => Effect.succeed("owner_request"),
+      },
+      changeRequest,
+      dayQuestion,
+    );
+    expect(result).toMatchObject({ status: "update_refused", reason: "maintenance_setting" });
+    expect(host.reviews).toEqual([]);
+  },
+);
+
 // A blocked report's review reads the host's refusals in the decision ledger, the task updates the
 // host refused or held before any review included. Fails while those reach only the minter, so the
 // review reads no refused update and may call a true report false.
@@ -372,7 +396,7 @@ it("gives a blocked report's review the task updates the host refused before rev
         {
           tool: "mint_update",
           code: "confirmation_unanswered",
-          reason: JSON.stringify({ status: "clarification_required", unanswered: ["unasked"] }),
+          reason: JSON.stringify({ status: "clarification_required", unanswered: 1 }),
           atUtc: expect.any(String),
         },
         {
