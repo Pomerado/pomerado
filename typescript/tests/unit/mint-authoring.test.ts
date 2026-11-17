@@ -855,6 +855,18 @@ it("has the minter read back a write, accept recent-search saves and look before
   );
 });
 
+// A tool that only copied pages was built as a write because the site marks each page it opens
+// as seen. Opening pages is reading, so the rule on what a read may do says so.
+it("keeps opening pages the site marks as visited or as progress part of a read", async () => {
+  const writes = ((await renderedTexts("typescript/authoring")).get("writes") ?? "").replace(
+    /\s+/g,
+    " ",
+  );
+  expect(writes).toContain(
+    "a task that needs that is a write build. Opening pages that the site then marks as visited or as progress, without submitting an answer or a form, is part of a read, unless the request asks to change that progress. Signed out, setting",
+  );
+});
+
 /*
  * A site rewrote an address as it was typed, writing Parkway as PKWY, and the read-back refused a
  * correct save. A write takes the site's version of a typed value, as it would a picked option,
@@ -1012,7 +1024,8 @@ it("has a cart tool refuse a product the site has no page for", async () => {
 /*
  * Cart and checkout tools went to repair on cases a skill line would have covered: a page state a
  * sibling tool on the same site already handled, a page-state check that ran before the caller's
- * own over-limit refusal, a "standard" delivery matched by a site-internal option ID, a refusal
+ * own over-limit refusal or failed on a preselected option neither the tool nor the caller set, a
+ * "standard" delivery matched by a site-internal option ID, a refusal
  * whose choices the field could not take or that left the caller's named options out, and a step
  * script that pasted a shared code block twice and could not compile.
  */
@@ -1022,6 +1035,7 @@ it("has cart tools carry over sibling handling, refuse the caller's input first 
   for (const line of [
     "When the site has other cart tools (the core skill, `reference/site-tools.json`), prefer carrying over their handling of the page states this tool shares with them.",
     "Run each refusal of the caller's own input as soon as the page shows what it needs, before any check of the page's state that fails the run.",
+    "Check only the options the tool sets or the caller asked for; read any other preselected option as page state and name it in the confirm, rather than failing.",
     "Where the build runs test cases (testing skill), prefer including an item already in the cart and, for a checkout, a cart under the store's minimum.",
     "and return the state the site shows, in its own words, as the refusal for the item,",
     'A delivery speed left unset, or asked for as "standard", takes the free option the page offers that arrives soonest, for each shipment, in place of the tier the site presents as standard; with no free option, ask the caller which to use, showing each fee.',
@@ -1611,11 +1625,11 @@ it("renders the pinned standalone authoring", async () => {
     ["539abe36b602c8e2eff8745dd0462aea41837a20cc0b90cbef7a01cbad6fb89a", "testing"],
     ["d524204c6ed2dc0fa773d6e5cf0aef993e2b48ee9db3fcbf291e40ebe8c9913d", "pagination"],
     ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
-    ["8c5229d4513adcfd6fa1f7e47a290b8f806278602696435920e128349300d9e6", "writes"],
-    ["3ff8366fc701a733eb51ae689e681d9b1e3bfadde541832a8ac560f220ef8cc8", "cart"],
+    ["83e56c0a1dc388fc51a76726be98f506a89c9731371a1148cc1f895e8f365590", "writes"],
+    ["47b12add96edb1c29ab3df0de1cf5e5a313a269c07525e887a15fe064f9cbc7e", "cart"],
     ["0b4841cd4b8a656d5c9883adbf4712f24f2114a75cf9b96a2bb9ad3264d4659c", "caller-input"],
     ["5e831bd1ba21d5ec4b1da3a96152f9d905144cbef58b9bd26381933f27faa97c", "publication"],
-    ["aa6c505252ff47843596ef4a05b431f34c2a63ffb4bef73c817804c10b7a9042", "workspace/AGENTS.md"],
+    ["0abdab6a68ce07ced766e367583c6259ab49dbfb525602c7755cb6420b2df6a0", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);
 });
@@ -1736,7 +1750,7 @@ it("renders the search URL fast path only when a host turns it on", async () => 
     [sha256(on.agents), "workspace/AGENTS.md"],
   ]).toStrictEqual([
     ["e3c82530af60da937a450bd94be81e1fefea6ef2324d9cd54379a52fc1d7c930", "search"],
-    ["c820005bbc5b2fe5bf53ca243f4825b5d88dbd6c40c1f48563730c0c1f9ed606", "workspace/AGENTS.md"],
+    ["0f53c7bb09d94526ee427a261b86467c7f33418742740004a9c0f81af1c83e1d", "workspace/AGENTS.md"],
   ]);
   expect(on.digests.filter(([, name]) => name !== "search")).toStrictEqual(
     off.digests.filter(([, name]) => name !== "search"),

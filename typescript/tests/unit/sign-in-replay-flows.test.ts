@@ -591,20 +591,34 @@ it("opens no account page first on a new browser", { timeout: 20_000 }, async ()
 });
 
 it("never fills a password a later screen asks for again after it went out", async () => {
+  // The same box on another page is another screen, not the login screen shown again.
   const againStep = {
     page: `${origin}/again`,
-    fields: [{ selector: "#password-again", slot: "password" as const }],
+    fields: [{ selector: "#password", slot: "password" as const }],
     submit: "#again",
   };
   const fake = scriptedSite({
     entry: "login",
-    screens: { login: loginScreen, again: ["#password-again", "#again"], account: [] },
+    screens: { login: loginScreen, again: ["#password", "#again"], account: [] },
     fill: (page, values) =>
       page === "login" && signedLogin(values) ? { next: "again" } : { next: "account", signIn: true },
   });
   const { result } = await signIn(recipe(loginStep, againStep), fake);
   expect(result).toEqual(
     Either.left(new SignInRunFailed({ code: "RecipeFailed", reason: "credential_already_filled" })),
+  );
+  expect(fake.fills.map(({ page }) => page)).toEqual(["login"]);
+});
+
+it("ends with no verdict when the screen just submitted shows again as a later recorded screen with no error marker", async () => {
+  const fake = scriptedSite({
+    entry: "login",
+    screens: { login: loginScreen, account: [] },
+    fill: () => ({}),
+  });
+  const { result } = await signIn(recipe(loginStep, loginStep), fake);
+  expect(result).toEqual(
+    Either.left(new SignInRunFailed({ code: "RecipeFailed", reason: "credential_screen_returned" })),
   );
   expect(fake.fills.map(({ page }) => page)).toEqual(["login"]);
 });

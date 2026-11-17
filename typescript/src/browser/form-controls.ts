@@ -81,6 +81,9 @@ export const CalendarDate = Schema.String.pipe(
  */
 export const blockingFieldsHook = "__pomeradoBlockingFields";
 
+/** Words of a validation message, such as "Required" or "This field is required.", rather than a field's name. */
+export const formControlMessageWords = /\brequired\b|\b(?:is|are) (?:missing|not valid)\b|\bthis field\b|\bplease (?:enter|select|choose|provide|fill|complete|correct)\b|\benter a valid\b|\bmust (?:be|contain|have|match)\b|\bcan(?:not|'t|’t| not) be (?:blank|empty)\b|\binvalid\b|\bist erforderlich\b|\bes (?:obligatorio|requerido)\b|\best (?:obligatoire|requis)\b/i;
+
 /**
  * Page code for a Kernel call body, where `page` is in scope: paste it at the top of the code
  * string, then call its functions with your verified Playwright locators. Every function reads
@@ -188,7 +191,7 @@ export const blockingFieldsHook = "__pomeradoBlockingFields";
 export const formControlsCode = String.raw`
 const formControlFailure = (reason) => Object.assign(new Error(reason), { name: "FormControlFailure" });
 /** Words of a validation message, such as "Required" or "This field is required.", rather than a field's name. */
-const formControlMessageWords = /\brequired\b|\b(?:is|are) (?:missing|not valid)\b|\bthis field\b|\bplease (?:enter|select|choose|provide|fill|complete|correct)\b|\benter a valid\b|\bmust (?:be|contain|have|match)\b|\bcan(?:not|'t|’t| not) be (?:blank|empty)\b|\binvalid\b|\bist erforderlich\b|\bes (?:obligatorio|requerido)\b|\best (?:obligatoire|requis)\b/i;
+const formControlMessageWords = ${String(formControlMessageWords)};
 /** Folds case, accents, spacing and punctuation, so "Joe’s Café" and "joes cafe" name the same option. */
 const formControlText = ${String(foldChoiceText)};
 const formControlFrame = async (control, options) => {

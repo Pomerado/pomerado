@@ -15,4 +15,6 @@ export type RegistryIssue =
   | "generation_moved"
   | "revision_exists"
   /** Another enabled tool in the integration has the same tool name. */
-  | "tool_name_taken";
+  | "tool_name_taken"
+  /** The version would break callers of a shared tool; the registry's problem names each break. */
+  | "contract_breaking";
