@@ -221,6 +221,15 @@ describe("resolveAddress", () => {
     expect(await resolveAddress("Example St, Exampleton, IL", () => ["Example St, Exampleton, IL, USA"])).toMatchObject({ picked: true });
   });
 
+  // Accepted gaps, kept as they are: a read takes another place of the same kind in the caller's
+  // town, and, for a venue the site lists only with words after its name, the site's first row.
+  test("accepted gaps: a read takes another dog park in the caller's town, and a venue listed only with words after its name takes the site's first row", async () => {
+    const park = "Example Dog Park, Springfield, IL, USA";
+    expect(await resolveAddress("Springfield Dog Park, Springfield, IL", () => [park], String, { read: true })).toMatchObject({ picked: true, label: park });
+    const lines = ["Example Terminal - Example Railroad, Exampleton, CA, USA", "Example Terminal - Sample Line, Exampleton, CA, USA"];
+    expect(await resolveAddress("Example Terminal, Exampleton, CA", () => lines, String, { read: true })).toMatchObject({ picked: true, label: lines[0] });
+  });
+
   // PlaceMatch asks between the place's own row and a row named after it: a read asks too, never
   // taking the site's first row of the two, so the answer is the same in either order.
   test("keeps to PlaceMatch's ask in a read, whatever the rows' order, and never takes a row named after the place", async () => {
@@ -591,18 +600,29 @@ describe("matchAddress", () => {
     });
   });
 
-  test("never takes or lists a site's control, an empty row or one too long to be an address", async () => {
+  test("never takes or lists a site's control or an empty row, and asks about a list with a row too long to compare", async () => {
     const asked = "Example Museum, Exampleton, NY";
     const control = "See more results for Example Museum, Exampleton, NY";
     const place = "Example Museum, 5 Sample Ave, Exampleton, NY";
-    expect(await matchAddress(asked, [control, "", "x".repeat(600), place], { country: "US" })).toEqual({ picked: true, index: 3, label: place, unit: "", wanted: asked });
-    expect(await matchAddress(asked, [control, "x".repeat(600)], { country: "US" })).toEqual({
+    expect(await matchAddress(asked, [control, "", place], { country: "US" })).toEqual({ picked: true, index: 2, label: place, unit: "", wanted: asked });
+    expect(await matchAddress(asked, [control, ""], { country: "US" })).toEqual({
       picked: false,
       reason: "option_missing",
       wanted: asked,
       available: [],
       matches: [],
       unit: "",
+    });
+    // A row longer than PlaceMatch compares is never dropped unseen: the list is asked about.
+    const long = "x".repeat(600);
+    expect(await matchAddress(asked, [control, long, place], { country: "US" })).toEqual({
+      picked: false,
+      reason: "option_unclear",
+      wanted: asked,
+      available: [long, place],
+      matches: [],
+      unit: "",
+      listed: 2,
     });
     // An address longer than any is no address to match: it refuses, listing the rows.
     expect(await matchAddress(`${"1 Example St ".repeat(50)}, Exampleton`, [place])).toMatchObject({ picked: false, reason: "option_missing", available: [place] });
@@ -614,7 +634,7 @@ describe("matchAddress", () => {
     const asked = "12 Example St, Exampleton, IL";
     const place = "12 Example St, Exampleton, IL, USA";
     const others = Array.from({ length: 100 }, (_, at) => `${at + 100} Other St, Exampleton, IL, USA`);
-    const crowded = { picked: false, reason: "option_unclear", wanted: asked, available: others, matches: [], unit: "" };
+    const crowded = { picked: false, reason: "option_unclear", wanted: asked, available: others, matches: [], unit: "", listed: 101 };
     expect(await matchAddress(asked, [...others, place], { country: "US" })).toEqual(crowded);
     expect(await resolveAddress(asked, () => [...others, place])).toEqual(crowded);
     expect(await matchAddress(asked, [...others.slice(1), place], { country: "US" })).toMatchObject({ picked: true, index: 99, label: place });
@@ -652,41 +672,57 @@ describe("rows in another place", () => {
 // Answers the pinned PlaceMatch still gives otherwise. Each turns red once a PlaceMatch commit gives
 // the answer here, and the bump makes it a plain case of the tests above.
 describe("answers the pinned PlaceMatch still gives otherwise", () => {
-  // A row that leaves out only the caller's state, its town run on into its street, is the
-  // caller's place.
-  test.fails("takes 1 Example St, Exampleton, IL as 1 Example St Exampleton", async () => {
-    expect(await resolveAddress("1 Example St, Exampleton, IL", () => ["1 Example St Exampleton"])).toMatchObject({ picked: true });
+  const tower = "Example Tower, 5 Sample Ave, Exampleton, NY 10001, USA";
+  const towerPin = "Example Tower, Exampleton, NY, USA";
+  const nyCenter = "Jane Q. Example Convention Center, 429 Sample Ave, New York, NY 10001, USA";
+  const nyPin = "Example Center, New York, NY, USA";
+  const venues = new Set([tower, nyCenter]);
+  /** One case: the caller's address and the site's rows, in a read or a write. */
+  interface Pending {
+    readonly name: string;
+    readonly address: string;
+    readonly rows: readonly string[];
+    readonly read: boolean;
+    /** What the pinned commit answers: the row taken, or the refusal's reason. */
+    readonly today: string;
+    /** What a PlaceMatch fix should answer. */
+    readonly intended: string;
+  }
+  const ask = "option_unclear";
+  const cases: readonly Pending[] = [
+    // A row that leaves out only the caller's state, its town run on into its street.
+    { name: "a row whose town runs on into its street", address: "1 Example St, Exampleton, IL", rows: ["1 Example St Exampleton"], read: false, today: ask, intended: "1 Example St Exampleton" },
+    // Rows asked about: one that leaves out the caller's state and ZIP, one with no state beside the
+    // same address in another state, and a misspelled town.
+    { name: "a row that leaves out state and ZIP", address: "1 Example St, Exampleton, IL 60000", rows: ["1 Example St, Exampleton"], read: false, today: "1 Example St, Exampleton", intended: ask },
+    { name: "a row with no state beside one in another state", address: "1 Example St, Exampleton, IL", rows: ["1 Example St, Exampleton, WI", "1 Example St, Exampleton"], read: false, today: "1 Example St, Exampleton", intended: ask },
+    { name: "a misspelled town", address: "1 Example St, Exampletn IL", rows: ["1 Example St, Exampleton, NY, USA", "1 Example St, Exampleton, IL, USA"], read: false, today: "1 Example St, Exampleton, IL, USA", intended: ask },
+    // A same-name pin beside the categorized venue: a read in the caller's area takes the venue,
+    // a read with no area asks, and a write always asks.
+    { name: "a read in the area, the pin first", address: "Example Tower, Exampleton, NY", rows: [towerPin, tower], read: true, today: towerPin, intended: tower },
+    { name: "a read with no area, the pin first", address: "Example Tower", rows: [towerPin, tower], read: true, today: towerPin, intended: ask },
+    { name: "a read with no area, the venue first", address: "Example Tower", rows: [tower, towerPin], read: true, today: tower, intended: ask },
+    { name: "a write in the area, the pin first", address: "Example Tower, Exampleton, NY", rows: [towerPin, tower], read: false, today: towerPin, intended: ask },
+    { name: "a write in the area, the venue first", address: "Example Tower, Exampleton, NY", rows: [tower, towerPin], read: false, today: tower, intended: ask },
+    { name: "a write with no area, the pin first", address: "Example Tower", rows: [towerPin, tower], read: false, today: towerPin, intended: ask },
+    { name: "a write with no area, the venue first", address: "Example Tower", rows: [tower, towerPin], read: false, today: tower, intended: ask },
+    // A town named like its state: a read in the caller's area takes the venue.
+    { name: "a read in a town named like its state, the pin first", address: "Example Center, New York, NY", rows: [nyPin, nyCenter], read: true, today: ask, intended: nyCenter },
+    { name: "a read in a town named like its state, the venue first", address: "Example Center, New York, NY", rows: [nyCenter, nyPin], read: true, today: ask, intended: nyCenter },
+  ];
+  const answer = async ({ address, rows, read }: Pending) => {
+    const outcome = await resolveAddress(address, () => rows, String, { categorized: (row) => venues.has(row), read });
+    return outcome.picked ? outcome.label : outcome.reason;
+  };
+  // Today's answer, so a case that throws or that no fix reaches never passes unseen. Delete each
+  // with its expected failure below once a pin gives the intended answer.
+  test.each(cases)("today: $name", async (pending) => {
+    expect(await answer(pending)).toBe(pending.today);
   });
-
-  // Rows the pinned PlaceMatch takes that are asked about: a row that leaves out the caller's state
-  // and ZIP, a row with no state beside the same address in another state, and a misspelled town.
-  test.fails.each([
-    ["1 Example St, Exampleton, IL 60000", ["1 Example St, Exampleton"]],
-    ["1 Example St, Exampleton, IL", ["1 Example St, Exampleton, WI", "1 Example St, Exampleton"]],
-    ["1 Example St, Exampletn IL", ["1 Example St, Exampleton, NY, USA", "1 Example St, Exampleton, IL, USA"]],
-  ] as const)("asks about %s among %j", async (address, rows) => {
-    expect(await resolveAddress(address, () => rows)).toMatchObject({ picked: false, reason: "option_unclear" });
-  });
-
-  // The map pin listed first, beside the categorized venue of its own name: a read in the caller's
-  // area takes the venue.
-  test.fails("takes the categorized venue over a same-name pin listed first in a read in the caller's area", async () => {
-    const tower = "Example Tower, 5 Sample Ave, Exampleton, NY 10001, USA";
-    const rows = ["Example Tower, Exampleton, NY, USA", tower];
-    expect(await resolveAddress("Example Tower, Exampleton, NY", () => rows, String, { categorized: (row) => row === tower, read: true })).toMatchObject({
-      picked: true,
-      label: tower,
-    });
-  });
-
-  // With no area to place it, a read asks between a same-name pin and the venue, in either order.
-  const pins = [
-    ["Example Tower", "Example Tower, Exampleton, NY, USA", "Example Tower, 5 Sample Ave, Exampleton, NY 10001, USA"],
-    ["Example Tower", "Example Tower, 5 Sample Ave, Exampleton, NY 10001, USA", "Example Tower, Exampleton, NY, USA"],
-  ] as const;
-  test.fails.each(pins)("asks about %s among %s and %s in a read", async (asked, first, second) => {
-    const categorized = (row: string) => row.includes("Sample Ave");
-    expect(await resolveAddress(asked, () => [first, second], String, { categorized, read: true })).toMatchObject({ picked: false, reason: "option_unclear" });
+  // Each turns red once a PlaceMatch commit gives the intended answer, and the bump makes it a
+  // plain case of the tests above.
+  test.fails.each(cases)("intended: $name", async (pending) => {
+    expect(await answer(pending)).toBe(pending.intended);
   });
 });
 

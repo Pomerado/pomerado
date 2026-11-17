@@ -27,6 +27,11 @@ export interface AddressRefusal {
   readonly available: readonly string[];
   readonly matches: readonly string[];
   readonly unit: string;
+  /**
+   * How many usable rows the site listed, when PlaceMatch could not compare them all at once: more
+   * than 100, or one longer than 512 characters. `available` then holds at most the first 100.
+   */
+  readonly listed?: number;
 }
 
 /**
@@ -130,8 +135,9 @@ interface Explained {
 }
 
 /**
- * PlaceMatch's answer about the rows one text brought, or `undefined` when more rows are usable
- * than PlaceMatch compares at once: no row is left out unseen, so such a list is asked about.
+ * PlaceMatch's answer about the rows one text brought, or `undefined` when it can't compare them all
+ * at once, more than 100 usable rows or one longer than 512 characters: no row is cut or left out
+ * unseen, so such a list is asked about.
  */
 const explain = (
   matcher: PlaceMatch,
@@ -142,12 +148,13 @@ const explain = (
 ): Omit<Explained, "answer"> & { readonly answer: PlaceExplained | undefined } => {
   const labels = rows.map((row) => String(row.text ?? "").replace(/\s+/gu, " ").trim());
   // A site's own control for the text, such as one listing more results for it, is no row. Neither
-  // is an empty row, nor one longer than PlaceMatch reads, which is no address.
+  // is an empty row.
+  const tooLongRow = (label: string) => label.length > placeMatchLimits.textLength;
   const usable = labels
-    .flatMap((label, index) => (label === "" || label.length > placeMatchLimits.textLength ? [] : [index]))
-    .filter((index) => ![wanted, text].some((typed) => matcher.isControl(typed, labels[index] ?? "")));
+    .flatMap((label, index) => (label === "" ? [] : [index]))
+    .filter((index) => tooLongRow(labels[index] ?? "") || ![wanted, text].some((typed) => matcher.isControl(typed, labels[index] ?? "")));
   const answer =
-    usable.length > placeMatchLimits.rows
+    usable.length > placeMatchLimits.rows || usable.some((index) => tooLongRow(labels[index] ?? ""))
       ? undefined
       : matcher.pickExplained(
           wanted,
@@ -157,7 +164,7 @@ const explain = (
   return { labels, usable, answer, text };
 };
 
-/** Whether PlaceMatch answered: it did unless the list held more usable rows than it compares. */
+/** Whether PlaceMatch answered: it did unless it could not compare the list whole. */
 const answered = (found: ReturnType<typeof explain>): found is Explained => found.answer !== undefined;
 
 /** A text's words, folded, between single spaces. */
@@ -183,7 +190,7 @@ const placeRow = (found: Explained, unit: string) =>
 
 /**
  * In a read, with no row that is the caller's place: the row PlaceMatch says a read may take (the
- * categorized venue beside a same-name row, when the caller gave an area it fits); else, for a
+ * categorized venue beside a same-name row, when it is in the area the caller gave); else, for a
  * place's name with no house number that PlaceMatch found no row for, the site's first usable row
  * when it is in the caller's area and does not show the caller's whole text after words of its own,
  * as a control may (rows PlaceMatch asks about stay asked about, whatever their order); else, for a
@@ -191,9 +198,9 @@ const placeRow = (found: Explained, unit: string) =>
  * postcode.
  */
 const readRow = (matcher: PlaceMatch, found: Explained, wanted: string, unit: string, country: string | undefined) => {
-  const preferred = found.answer.prefer_on_read;
-  if (preferred !== null) return take(found, preferred, unit);
   const label = (at: number) => found.labels[found.usable[at] ?? -1] ?? "";
+  const preferred = found.answer.prefer_on_read;
+  if (preferred !== null) return matcher.inArea(wanted, label(preferred), country) ? take(found, preferred, unit) : undefined;
   if (!/\d/u.test(wanted.split(",")[0] ?? "")) {
     const first = label(0);
     return found.answer.outcome === "none" && found.usable.length > 0 && !matcher.showsTypedText(wanted, first) && matcher.inArea(wanted, first, country)
@@ -226,7 +233,10 @@ const refusal = (
 
 const tooLong = (request: ReturnType<typeof addressRequest>) => request.wanted.length > placeMatchLimits.textLength;
 
-/** A list with more usable rows than PlaceMatch compares at once: asked about, never cut. */
+/**
+ * A list PlaceMatch can't compare whole, more than 100 usable rows or one longer than 512
+ * characters: asked about, never cut, with how many rows it held as `listed`.
+ */
 const crowded = (available: readonly string[], request: ReturnType<typeof addressRequest>): AddressRefusal => ({
   picked: false,
   reason: "option_unclear",
@@ -234,6 +244,7 @@ const crowded = (available: readonly string[], request: ReturnType<typeof addres
   available: [...new Set(available)].slice(0, 100),
   matches: [],
   unit: request.unit,
+  listed: available.length,
 });
 
 /**
@@ -257,8 +268,9 @@ const crowded = (available: readonly string[], request: ReturnType<typeof addres
  * whole text after words of its own; else, for a street address, the site's first row with the
  * caller's house, street and town under another postcode. Otherwise it refuses: `option_missing`
  * when no row is usable or a read of a street address found no near row, else `option_unclear` with
- * the rows to ask about as `matches`, or with none when the list holds more usable rows than
- * PlaceMatch compares at once (100), since no row is left out unseen.
+ * the rows to ask about as `matches`, or with none, and the count of usable rows as `listed`, when
+ * PlaceMatch can't compare the list whole (more than 100 usable rows, or one longer than 512
+ * characters), since no row is cut or left out unseen.
  */
 export const matchAddress = async (
   address: string,
@@ -321,7 +333,7 @@ export const resolveAddress = async <T = string>(
     const found = explain(matcher, request.wanted, text, rows, options.country);
     seen.push(...found.usable.map((index) => found.labels[index] ?? ""));
     if (found.usable.length === 0) continue;
-    if (!answered(found)) return crowded(seen, request);
+    if (!answered(found)) return crowded(found.usable.map((index) => found.labels[index] ?? ""), request);
     first ??= { found, items };
     const row = placeRow(found, request.unit);
     if (row !== undefined)

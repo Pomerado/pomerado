@@ -1764,7 +1764,7 @@ const pickerAddressRows = async (control, options = {}) => {
 // The element of the row matchAddress took, found again in the list open now at its place with its
 // text (else the first with its text), for the tool to click in the same call; its refusal as it is.
 const pickerMatchAddress = async (control, match, options = {}) => {
-  if (match === null || typeof match !== "object" || typeof match.picked !== "boolean")
+  if (match === null || typeof match !== "object" || typeof match.picked !== "boolean" || (match.picked && typeof match.wanted !== "string"))
     throw new TypeError("pickerMatchAddress takes matchAddress's answer: read the list with pickerAddressRows in one call, match it with matchAddress in the script, then pass its answer here in the next call");
   if (!match.picked) return match;
   const s = await pickerStart(control, options);
@@ -1774,7 +1774,7 @@ const pickerMatchAddress = async (control, match, options = {}) => {
     const at = texts[match.index] === match.label ? match.index : texts.indexOf(match.label);
     // The row is gone: the refusal quotes the caller's address, never the site's row.
     if (at < 0)
-      return { picked: false, reason: "option_missing", wanted: typeof match.wanted === "string" ? match.wanted : match.label, available: [...new Set(texts)].slice(0, 100), matches: [], unit: match.unit };
+      return { picked: false, reason: "option_missing", wanted: match.wanted, available: [...new Set(texts)].slice(0, 100), matches: [], unit: match.unit };
     const tag = rows[at].tag;
     const hit = pickerTag(s, "data-pomerado-pick-hit", tag);
     const row = await ((await hit.count()) > 0 ? hit : pickerTag(s, "data-pomerado-pick", tag)).elementHandle(s.act());
