@@ -1036,7 +1036,7 @@ it("has cart tools carry over sibling handling, refuse the caller's input first 
   for (const line of [
     "When the site has other cart tools (the core skill, `reference/site-tools.json`), prefer carrying over their handling of the page states this tool shares with them.",
     "Run each refusal of the caller's own input as soon as the page shows what it needs, before any check of the page's state that fails the run.",
-    "Check only the options the tool sets or the caller asked for; read any other preselected option as page state and name it in the confirm, rather than failing.",
+    "Check only the options the tool sets or the caller asked for; read any other preselected option, except a membership, subscription, trial or safety default the tool turns off, as page state and name it in the confirm, rather than failing.",
     "Check the caller's limit against the total the page shows before the purchase click. When tax, fees or shipping aren't shown until after it, check the limit against what is shown, name in the confirm what isn't included yet, and don't refuse for it.",
     "Where the build runs test cases (testing skill), prefer including an item already in the cart and, for a checkout, a cart under the store's minimum.",
     "and return the state the site shows, in its own words, as the refusal for the item,",
@@ -1601,6 +1601,15 @@ it("tells the minter a collected file's download link appears only when the publ
   );
 });
 
+// A 429 without the site's cross-origin header reaches the page only as a failed fetch, which
+// batchFetch backs off on, so the minter adds no pacing of its own around it.
+it("tells the minter batchFetch backs off on a failed fetch, so it adds no pacing of its own", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  expect((texts.get("core") ?? "").replace(/\s+/g, " ")).toContain(
+    "Add no sleep, interval or fixed delay between independent requests or batches sent through them. A site's backend may rate-limit a burst: they halve on a 429 or a 5xx, and `batchFetch` on a failed fetch too, and wait as long as the site's `Retry-After` asks, so add no retry loop, throttle or pacing of your own to requests sent through them.",
+  );
+});
+
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 
 /*
@@ -1621,14 +1630,14 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["761c7ebfe3f6d6068cf97b266a4ba8350eb4e00bf16d44e7c323e47088846852", "core"],
+    ["a2bfbdde02d94c20c50129c029315a46beaff67d3b22305b91f585481cab581e", "core"],
     ["7c3be765ee7c1c62b13a4876cc5453bbeb8acc7948b51511574f36f2aed09c4a", "search"],
     ["b64347efc8ee8a099cd2ac3f6550bdbe5425765f0b43d89011167a87b0c91151", "auth"],
     ["539abe36b602c8e2eff8745dd0462aea41837a20cc0b90cbef7a01cbad6fb89a", "testing"],
     ["d524204c6ed2dc0fa773d6e5cf0aef993e2b48ee9db3fcbf291e40ebe8c9913d", "pagination"],
     ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
     ["83e56c0a1dc388fc51a76726be98f506a89c9731371a1148cc1f895e8f365590", "writes"],
-    ["f1b6997e1b71e430c90e7a65995cac31f881e9860e1943d31175a434a790a540", "cart"],
+    ["ab2cacdaf78da396c1ed4217b66c514cf595ea6c0c2827ea5dd87ab0276a7a63", "cart"],
     ["88044110409fabba1277fd66fe5bdc40f0e15f56edd97be23d0678abeb109442", "caller-input"],
     ["5e831bd1ba21d5ec4b1da3a96152f9d905144cbef58b9bd26381933f27faa97c", "publication"],
     ["0abdab6a68ce07ced766e367583c6259ab49dbfb525602c7755cb6420b2df6a0", "workspace/AGENTS.md"],
