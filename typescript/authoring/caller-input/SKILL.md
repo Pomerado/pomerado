@@ -235,9 +235,10 @@ already asked for, or to solve a CAPTCHA.
      it, and a host may refuse to fill it again once a request that may have charged went
      out. So never leave the checkout once the card is in: when something must change
      after that, such as a pickup time that moved from 12:15 to 12:30, don't go back to
-     change it, and don't press again in a later step after a press failed. Report it
-     instead: a build ends with `report_blocked` naming it, and a run fails saying so,
-     before the order's commit mark when it can. A tool that pays never reads a field's
+     change it, and don't press again in a later step after a press failed, unless the
+     host says the press never reached the site. Report it instead: a build ends with
+     `report_blocked` naming it, and a run fails saying so, before the order's commit
+     mark when it can. A tool that pays never reads a field's
      value or the page's markup, runs or plants code in the page, opens a DevTools
      session, takes an accessibility snapshot, screenshot or PDF of the page, records the
      page, or reads a request body, in any step: write every act step that way from the

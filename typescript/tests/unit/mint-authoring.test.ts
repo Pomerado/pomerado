@@ -1406,7 +1406,7 @@ it("has a paying step fill the card and press through to pay in one reviewed ste
     "then fill the card and press pay in that one step, with no question between them unless the checkout itself requires one.",
   );
   expect(flat("caller-input")).toContain(
-    "such as a pickup time that moved from 12:15 to 12:30, don't go back to change it, and don't press again in a later step after a press failed. Report it instead: a build ends with `report_blocked` naming it, and a run fails saying so, before the order's commit mark when it can.",
+    "such as a pickup time that moved from 12:15 to 12:30, don't go back to change it, and don't press again in a later step after a press failed, unless the host says the press never reached the site. Report it instead: a build ends with `report_blocked` naming it, and a run fails saying so, before the order's commit mark when it can.",
   );
   expect(flat("writes")).toContain(
     "Keep the click on the final commit control, such as Save, Send, Submit, Book or Pay, in its own step, except a pay press after the host's card fill, which goes in the fill's step (caller-input skill).",
@@ -1652,7 +1652,7 @@ it("renders the pinned standalone authoring", async () => {
     ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
     ["b59b77c1b0c506873a90e6cb989173f05be2c152716730aabd5bde80b804eefd", "writes"],
     ["ab2cacdaf78da396c1ed4217b66c514cf595ea6c0c2827ea5dd87ab0276a7a63", "cart"],
-    ["88044110409fabba1277fd66fe5bdc40f0e15f56edd97be23d0678abeb109442", "caller-input"],
+    ["9139df065d6db3d0dcaa476fa076f8c22b4108f592ed38e888eda90455c61356", "caller-input"],
     ["5e831bd1ba21d5ec4b1da3a96152f9d905144cbef58b9bd26381933f27faa97c", "publication"],
     ["0abdab6a68ce07ced766e367583c6259ab49dbfb525602c7755cb6420b2df6a0", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
