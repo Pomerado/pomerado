@@ -774,8 +774,12 @@ call needs many independent
 lookups or detail reads, such as one for each returned row, prefer running them in parallel
 batches over one after another, such as the site's own data request for each row sent together
 in one `evaluate` with the runtime's `batchFetch` (paste `batchFetchCode`), or with `batchRead`
-in an HTTP version. They start at 16 at once, halve on a 429 or a 5xx, grow again after clean
-batches and stop at a block, and give each read 8 s unless it names its own `timeoutMs`. Send no
+in an HTTP version. They start at 16 at once, grow again after clean batches and stop at a block,
+and give each read 8 s unless it names its own `timeoutMs`. Add no sleep, interval or fixed delay
+between independent requests or batches sent through them. A site's backend may rate-limit a
+burst: they halve on a 429 or a 5xx, and `batchFetch` on a failed fetch too, and wait as long as
+the site's `Retry-After` asks, so add no retry loop, throttle or pacing of your own to requests
+sent through them. Send no
 more at once than the build showed the site handling without
 refusing or challenging (their `max`), and fewer, spaced out, where it refused or challenged; a
 block at run time still fails the call, as the 429 rule above says.

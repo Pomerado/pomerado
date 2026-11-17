@@ -555,6 +555,9 @@ export const batchRead = (
  *   2xx), `not_json`,
  *   `blocked`, `network` or `not_sent`. `stopped` is null, or `{ reason, index }` with `reason` `blocked`,
  *   `rate_limited` or `budget`.
+ * - A fetch that fails without an answer, as a 429 without the site's cross-origin header does in
+ *   the page, counts as a throttle with no `Retry-After`, its `error` still `network`. A fetch
+ *   past its `timeoutMs` does not.
  *
  * When `stopped` is `blocked` or `rate_limited`, return it from the call and fail the read in the
  * script, after `waitPastChallenge` when the page shows a challenge, as the core skill's 429 rule
@@ -602,7 +605,7 @@ const batchFetch = async (requests, options = {}) => {
             signal: controller.signal,
           });
         } catch (error) {
-          return { kind: "answered", value: { ok: false, error: "network", snippet: snippetOf(String(error?.message ?? error)) } };
+          return { kind: controller.signal.aborted ? "answered" : "throttled", value: { ok: false, error: "network", snippet: snippetOf(String(error?.message ?? error)) } };
         }
         const contentType = response.headers.get("content-type") ?? "";
         const text = await response.text();

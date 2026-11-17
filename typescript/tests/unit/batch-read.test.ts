@@ -1,6 +1,6 @@
 import { Effect, Either } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { batchFetchCode, batchRead } from "../../src/browser/index.js";
+import { batchFetchCode, batchRead, batchReadDefaults } from "../../src/browser/index.js";
 import type {
   BatchClock,
   BatchReadResult,
@@ -488,6 +488,21 @@ describe("batchFetch in the page", () => {
     expect(answer).toBeUndefined();
     await vi.advanceTimersByTimeAsync(3_000);
     expect(answer?.results).toMatchObject([{ ok: false, error: "network" }]);
+  });
+
+  it("halves and waits on a fetch that fails without an answer, as a 429 without CORS headers does", async () => {
+    vi.useFakeTimers();
+    const sentAt: number[] = [];
+    vi.stubGlobal("fetch", async () => {
+      sentAt.push(Date.now());
+      throw new TypeError("Failed to fetch");
+    });
+    const pending = runBatchFetch(Array.from({ length: 40 }, (_, index) => ({ url: itemUrl(index) })));
+    await vi.advanceTimersByTimeAsync(5_000);
+    const answer = await pending;
+    expect(answer.batches).toEqual([16, 8]);
+    expect((sentAt[16] ?? 0) - (sentAt[0] ?? 0)).toBe(batchReadDefaults.backoffMs);
+    expect(answer.stopped).toEqual({ reason: "rate_limited", index: 0 });
   });
 
   it("returns results in input order and stops at a block, marking the rest not sent", async () => {

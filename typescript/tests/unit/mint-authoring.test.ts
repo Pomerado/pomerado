@@ -1601,7 +1601,16 @@ it("tells the minter a collected file's download link appears only when the publ
   );
 });
 
-const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
+// A 429 without the site's cross-origin header reaches the page only as a failed fetch, which
+// batchFetch backs off on, so the minter adds no pacing of its own around it.
+it("tells the minter batchFetch backs off on a failed fetch, so it adds no pacing of its own", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  expect((texts.get("core") ?? "").replace(/\s+/g, " ")).toContain(
+    "Add no sleep, interval or fixed delay between independent requests or batches sent through them. A site's backend may rate-limit a burst: they halve on a 429 or a 5xx, and `batchFetch` on a failed fetch too, and wait as long as the site's `Retry-After` asks, so add no retry loop, throttle or pacing of your own to requests sent through them.",
+  );
+});
+
+const sha256 =(text: string) => createHash("sha256").update(text).digest("hex");
 
 /*
  * Pins everything the package gives a standalone minting model: each skill's name, description,
@@ -1621,7 +1630,7 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["761c7ebfe3f6d6068cf97b266a4ba8350eb4e00bf16d44e7c323e47088846852", "core"],
+    ["521f98c0202606cf65ee02cb7d467e7735bfca2912c1f3f355377e5b0e0687c9", "core"],
     ["7c3be765ee7c1c62b13a4876cc5453bbeb8acc7948b51511574f36f2aed09c4a", "search"],
     ["b64347efc8ee8a099cd2ac3f6550bdbe5425765f0b43d89011167a87b0c91151", "auth"],
     ["539abe36b602c8e2eff8745dd0462aea41837a20cc0b90cbef7a01cbad6fb89a", "testing"],
