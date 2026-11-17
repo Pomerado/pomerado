@@ -1770,11 +1770,15 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           }
         });
       /**
-       * The host's refusals of a live test batch or an execution in this attempt, the latest kept,
-       * for the same review. A takeover starts them again.
+       * The host's refusals of the minter's tool calls in this attempt, the latest kept, for the
+       * same review and the review of a stopped build's last answer. A takeover starts them again.
        */
       const ledgerHostRefusals: NonNullable<DecisionLedger["hostRefusals"]>[number][] = [];
-      const recordHostRefusal = (tool: "live_tests" | "execute", code: string, reason: unknown) =>
+      const recordHostRefusal = (
+        tool: NonNullable<DecisionLedger["hostRefusals"]>[number]["tool"],
+        code: string,
+        reason: unknown,
+      ) =>
         Effect.gen(function* () {
           const screened = yield* screenMintText(dependencies, reason).pipe(
             Effect.orElseSucceed(() => "[reason withheld]"),
@@ -1787,6 +1791,27 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           });
           if (ledgerHostRefusals.length > ledgerBounds.hostRefusals) ledgerHostRefusals.shift();
         });
+      /**
+       * An execution's failure the minter reads as the tool's own, recorded when the host made it:
+       * a hold on a live step, or a failure of the host's own dependency. Its reason is the hold's,
+       * else the failure's finite fields as the minter read them.
+       */
+      const recordHostFailure = (error: MintFailure) => {
+        const rootCause = failureRootCause(error);
+        return error.code !== "ReconciliationRequired" && rootCause === undefined
+          ? Effect.void
+          : recordHostRefusal(
+              "execute",
+              error.code,
+              error.recoveryGate?.reason ??
+                JSON.stringify({
+                  code: error.code,
+                  reason: error.reason,
+                  reconciliationStage: error.reconciliationStage,
+                  rootCause,
+                }),
+            );
+      };
       /** Unanswered questions handed back to the minter in this build, up to the limit. */
       let noAnswerHandBacks = recovered?.noAnswerHandBacks ?? 0;
       /**
@@ -3872,6 +3897,12 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 }),
               ),
             ),
+            // The host's own answer that another job holds the login is a host fact.
+            Effect.tap(() =>
+              signIn === loginInUseAnswer
+                ? recordHostRefusal("execute", loginInUseAnswer.code, loginInUseAnswer.notice)
+                : Effect.void,
+            ),
             Effect.tap((answer) =>
               ending === "none" ? Effect.void : endForUnavailableSignIn(error, answer),
             ),
@@ -4274,12 +4305,19 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
              */
             readonly apartFromSignIn?: true;
           }
-        | { readonly refusal: string } => {
+        | {
+            readonly refusal: string;
+            /** The refusal's reason and instruction, for the decision ledger. */
+            readonly code: string;
+            readonly instruction: string;
+          } => {
         const refused = (
           reason: string,
           instruction: string,
           details: Readonly<Record<string, unknown>> = {},
         ) => ({
+          code: reason,
+          instruction,
           refusal: JSON.stringify({
             status: "blocked_refused",
             reason,
@@ -4569,9 +4607,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       /**
        * The minter's last final answer as its caller may read it, when it stopped without a tool
        * call: the pipeline a blocked explanation takes (credential screen, host-private
-       * redaction, Guardian's question review of a blocked outcome), cut to the explanation's
-       * bound, and kept only when Guardian allowed it. The model is gone, so nothing is offered
-       * back: any other outcome or failure keeps nothing.
+       * redaction, Guardian's question review of a blocked outcome with the same publication
+       * refusals and decision ledger), cut to the explanation's bound, and kept only when Guardian
+       * allowed it. The model is gone, so nothing is offered back: any other outcome or failure
+       * keeps nothing.
        */
       const reviewedStopExplanation = (text: string | undefined) =>
         Effect.gen(function* () {
@@ -4582,9 +4621,16 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             blockedExplanationLimit,
           );
           if (screened === "") return undefined;
+          const publicationDecisions = yield* publicationRefusals;
+          const ledger = decisionLedger();
           const decision = yield* review(
             { questions: [{ id: "blocked", type: "text", prompt: screened }] },
-            { blockedOutcome: true, ...(yield* publicationRefusals), ...decidedBuildEffect() },
+            {
+              blockedOutcome: true,
+              ...publicationDecisions,
+              ...(ledger === undefined ? {} : { decisionLedger: ledger }),
+              ...decidedBuildEffect(),
+            },
           ).pipe(
             Effect.timeoutFail({
               duration: dependencies.stopExplanationReviewMs ?? 60_000,
@@ -4612,6 +4658,20 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         status: TaskUpdateStatus,
         fields: Readonly<Record<string, unknown>>,
       ): string => JSON.stringify({ status, userInputRequired: false, ...fields });
+      /**
+       * A `mint_update` result for a task update the host held for a confirmation, refused or
+       * failed to apply, recorded as a host fact: `fact`, else the host's notice, else the
+       * instruction.
+       */
+      const heldTaskUpdate = (
+        status: "clarification_required" | "update_refused",
+        fields: { readonly reason: string; readonly instruction: string; readonly notice?: string } &
+          Readonly<Record<string, unknown>>,
+        fact = fields.notice ?? fields.instruction,
+      ) =>
+        recordHostRefusal("mint_update", fields.reason, fact).pipe(
+          Effect.as(taskUpdateAnswer(status, fields)),
+        );
       /** The task an update makes: the current one with its changes applied in order. */
       const nextTaskState = (
         changes: readonly TaskChange[],
@@ -4880,17 +4940,21 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               subCause: "mint_host_dependency_failed",
               correlation: dependencies.reportCorrelation ?? "process",
             });
-            return taskUpdateAnswer("update_refused", {
-              reason: "host_failed",
-              code: applied.left.code,
-              ...failureDetailMetadata(applied.left),
-              instruction:
-                "Guardian allowed the update, but the host could not apply it, so nothing changed. failureDetail says which step failed. You may call mint_update again once; otherwise continue under the current task, or end the attempt and say in the summary that the caller confirmed a change the host could not apply.",
-            });
+            return yield* heldTaskUpdate(
+              "update_refused",
+              {
+                reason: "host_failed",
+                code: applied.left.code,
+                ...failureDetailMetadata(applied.left),
+                instruction:
+                  "Guardian allowed the update, but the host could not apply it, so nothing changed. failureDetail says which step failed. You may call mint_update again once; otherwise continue under the current task, or end the attempt and say in the summary that the caller confirmed a change the host could not apply.",
+              },
+              JSON.stringify({ code: applied.left.code, rootCause: failureRootCause(applied.left) }),
+            );
           }
           const result = applied.right;
           if (result.outcome === "clarification_required")
-            return taskUpdateAnswer("clarification_required", {
+            return yield* heldTaskUpdate("clarification_required", {
               source: "host",
               reason: result.reason,
               notice: yield* screenMintText(dependencies, result.notice),
@@ -4902,7 +4966,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             // harness's refusals before review, and one the host failed to apply, are no host
             // check refusing a step.
             refuseByHost({ source: "task_update", reason: taskUpdateRefusalCode(result.reason) });
-            return taskUpdateAnswer("update_refused", {
+            return yield* heldTaskUpdate("update_refused", {
               reason: result.reason,
               notice: yield* screenMintText(dependencies, result.notice),
               instruction:
@@ -5083,10 +5147,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         ),
       );
       /**
-       * The blocked explanation review's decision ledger: this attempt's denials and host
-       * refusals, each case's latest verdict counted, the latest cases that did not pass, a
-       * replaced failure included, and each no-match case's latest verdict. Undefined when there
-       * is nothing to record.
+       * The decision ledger the reviews of a blocked explanation and of a stopped build's last
+       * answer read: this attempt's denials and host refusals, each case's latest verdict counted,
+       * the latest cases that did not pass, a replaced failure included, and each no-match case's
+       * latest verdict. Undefined when there is nothing to record.
        */
       const decisionLedger = (): DecisionLedger | undefined => {
         const latest = [...liveTestRecords.playwright.values(), ...liveTestRecords.http.values()];
@@ -6501,6 +6565,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   error.reason === "login_in_use",
                 isAuthenticate(input),
               ),
+              Effect.tapError(recordHostFailure),
             ),
           ),
         finish: (input) =>
@@ -7530,7 +7595,12 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       instruction: loginDeclinedInstruction(login),
                     });
                   }
-                  if (login === "in_use")
+                  if (login === "in_use") {
+                    yield* recordHostRefusal(
+                      "request_input",
+                      loginInUseAnswer.code,
+                      loginInUseAnswer.notice,
+                    );
                     return JSON.stringify({
                       status: "login_request",
                       login,
@@ -7540,6 +7610,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       userInputRequired: false,
                       instruction: loginInUseAnswer.notice,
                     });
+                  }
                   return JSON.stringify({
                     status: "login_request",
                     login,
@@ -7669,14 +7740,17 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     // The host's own end, not the task's: no explanation reaches the caller, so
                     // none is reviewed, and the outcome names the host's cause.
                     if (report.reason === "host_unavailable") {
-                      if (!hostIsUnavailable())
+                      if (!hostIsUnavailable()) {
+                        const instruction =
+                          "The host still offers live execution, so host_unavailable does not apply. Run what the build needs, such as the example again, then call finish_build.";
+                        yield* recordHostRefusal("report_blocked", "host_available", instruction);
                         return JSON.stringify({
                           status: "blocked_refused",
                           reason: "host_available",
                           userInputRequired: false,
-                          instruction:
-                            "The host still offers live execution, so host_unavailable does not apply. Run what the build needs, such as the example again, then call finish_build.",
+                          instruction,
                         });
+                      }
                       terminal ??= unavailableHostTerminal();
                       yield* diagnose({ phase: "blocked", reason: "host_unavailable" });
                       return JSON.stringify({
@@ -7745,7 +7819,12 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       liveTestsRefusal,
                       report.intent,
                     );
-                    if ("refusal" in ending) return ending.refusal;
+                    // A report the host refused on its basis is a host fact, for the reviews of a
+                    // later blocked report and of the build's last answer.
+                    if ("refusal" in ending) {
+                      yield* recordHostRefusal("report_blocked", ending.code, ending.instruction);
+                      return ending.refusal;
+                    }
                     // An ending the checks above accepted, while the build's latest sign-in
                     // never confirmed and either no earlier confirmed sign-in still stands
                     // (`confirmedSignInStands`) or the host saw the site lose its session after
@@ -7970,14 +8049,14 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       const confirmer = yield* maintenanceConfirmer;
                       askedConfirmer = confirmer;
                       if (confirmer !== "owner" && confirmer !== "owner_request")
-                        return taskUpdateAnswer("update_refused", {
+                        return yield* heldTaskUpdate("update_refused", {
                           reason: "owner_unavailable",
                           instruction:
                             "No one who owns this tool can confirm a change that loosens or removes an output, or changes a requirement or the purpose, now, so nothing changed. Keep the registered contract (adding or tightening a field needs no confirmation). Prefer leaving out the part of the request that needs this change: remove any code or output field you added only for it, publish the rest, and name the part you left out in coverage. End with report_blocked, reason site_lacks_capability, naming the field, only when no part of the request can be published.",
                         });
                       // The owner's own request may confirm what it names, which Guardian judges.
                       if (confirmer === "owner" && submitted.confirmedBy.length === 0)
-                        return taskUpdateAnswer("clarification_required", {
+                        return yield* heldTaskUpdate("clarification_required", {
                           source: "host",
                           reason: "confirmation_required",
                           instruction:
@@ -8007,7 +8086,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     ) {
                       // The agent's next questions are reviewed knowing the host needs this yes.
                       hostConfirmation = { changes: widening };
-                      return taskUpdateAnswer("clarification_required", {
+                      return yield* heldTaskUpdate("clarification_required", {
                         source: "host",
                         reason: "confirmation_required",
                         instruction:
