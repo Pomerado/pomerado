@@ -391,11 +391,16 @@ no input, only where varying it would be unsafe or meaningless (.agents/core/SKI
 schema). An
 answer that gives only this run's value, such as which customer or date, is this run's input. A
 costly choice stays a required input or a declared question for every caller, with only the
-defaults .agents/writes/SKILL.md allows. No request or answer authorizes made-up values:
-words such as synthetic, sample or test data settle no value or choice. A caller that wants
-invented values supplies them itself, as its answers to your questions. Guardian denies a live
-step that types or submits a value none of those supplied, naming the field, except the one
-made-up record key the writes and testing skills allow. Signed out,
+defaults .agents/writes/SKILL.md allows. A mention of synthetic, sample or test data settles no
+value or choice, but a request or answer that tells you to use or generate test, synthetic,
+sample or fake values supplies each value it leaves open: prefer generating plausible values in
+the site's required format over asking, ones that can't identify a real person, as this run's
+input rather than the tool's defaults. Take each value it names from it, never generate a
+sign-in credential, one-time code or payment detail, and keep any stop it names, such as before
+the final submit. Without such an instruction, a caller that wants invented values supplies them
+itself, as its answers to your questions. Guardian denies a live step that types or submits a
+value none of those supplied, naming the field, except the one made-up record key the writes
+and testing skills allow. Signed out,
 picking one of the page's own options for state a read needs, such as a pickup mode that opens
 the store picker, is part of the read, and so is picking one for a signed-in session's per-visit
 location.
