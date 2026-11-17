@@ -781,7 +781,7 @@ burst: they halve on a 429 or a 5xx, and `batchFetch` on a failed fetch too, and
 the site's `Retry-After` asks, so add no retry loop, throttle or pacing of your own to requests
 sent through them. Send no
 more at once than the build showed the site handling without
-refusing or challenging (their `max`), and fewer, spaced out, where it refused or challenged; a
+refusing or challenging (their `max`), and fewer where it refused or challenged; a
 block at run time still fails the call, as the 429 rule above says.
 Prefer the page's own structured data, its embedded JSON or the data response it renders from,
 to its rendered cards when it holds the same fields for the same records, and check on the

@@ -490,19 +490,30 @@ describe("batchFetch in the page", () => {
     expect(answer?.results).toMatchObject([{ ok: false, error: "network" }]);
   });
 
-  it("halves and waits on a fetch that fails without an answer, as a 429 without CORS headers does", async () => {
+  it("halves and waits once fetches fail without an answer after 20 answered, as a 429 without CORS headers does", async () => {
     vi.useFakeTimers();
     const sentAt: number[] = [];
-    vi.stubGlobal("fetch", async () => {
+    vi.stubGlobal("fetch", async (url: string) => {
       sentAt.push(Date.now());
-      throw new TypeError("Failed to fetch");
+      if (sentAt.length > 20) throw new TypeError("Failed to fetch");
+      return new Response(JSON.stringify({ id: idOf(url) }), { headers: { "content-type": "application/json" } });
     });
     const pending = runBatchFetch(Array.from({ length: 40 }, (_, index) => ({ url: itemUrl(index) })));
-    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(10_000);
     const answer = await pending;
-    expect(answer.batches).toEqual([16, 8]);
-    expect((sentAt[16] ?? 0) - (sentAt[0] ?? 0)).toBe(batchReadDefaults.backoffMs);
-    expect(answer.stopped).toEqual({ reason: "rate_limited", index: 0 });
+    expect(answer.batches).toEqual([16, 16, 8, 4]);
+    expect((sentAt[32] ?? 0) - (sentAt[31] ?? 0)).toBe(batchReadDefaults.backoffMs);
+    expect(answer.stopped).toEqual({ reason: "rate_limited", index: 20 });
+  });
+
+  it("returns a network error for each request, without stopping, when every fetch fails from the first", async () => {
+    vi.stubGlobal("fetch", async () => {
+      throw new TypeError("Failed to fetch");
+    });
+    const answer = await runBatchFetch(Array.from({ length: 40 }, (_, index) => ({ url: itemUrl(index) })));
+    expect(answer.batches).toEqual([16, 16, 8]);
+    expect(answer.stopped).toBeNull();
+    expect(answer.results.map((result) => result.error)).toEqual(Array.from({ length: 40 }, () => "network"));
   });
 
   it("returns results in input order and stops at a block, marking the rest not sent", async () => {
