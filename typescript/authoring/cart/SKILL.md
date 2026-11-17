@@ -169,8 +169,13 @@ A checkout that takes a limit of the caller's, such as
 a maximum total, reads the final total and compares it before the order's commit mark, and
 refuses with `InvalidInput`, `field` that input and `kind: "over_price_limit"`, giving the total
 and the limit (the caller-input skill). Run each refusal of the caller's own input as soon as the
-page shows what it needs, before any check of the page's state that fails the run. Never add
-items, raise a quantity or change the delivery method to meet a limit. While building, ask the
+page shows what it needs, before any check of the page's state that fails the run. Check only the
+options the tool sets or the caller asked for; read any other preselected option as page state and
+name it in the confirm, rather than failing. Check the caller's limit against the total the page
+shows before the purchase click. When tax, fees or shipping aren't shown until after it, check the
+limit against what is shown, name in the confirm what isn't included yet, and don't refuse for it.
+Never add items, raise a quantity or change the
+delivery method to meet a limit. While building, ask the
 caller to revise or stop, as `AGENTS.md` says. When they stop, or their answer cannot be met
 either, end with `report_blocked` and explain the site's limit: a build that only reached the
 limit never completed the write, so it never publishes.

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Script } from "node:vm";
 import type { SkillDescriptor } from "@openai/agents/sandbox";
-import { Effect, Either, Schema } from "effect";
+import { Effect, Either, JSONSchema, Schema } from "effect";
 import { expect, it } from "vitest";
 import parser from "../../authoring/examples/parser.js";
 import { detailNavigation } from "../../authoring/examples/navigation.js";
@@ -26,6 +26,7 @@ import {
   guardianExecutionPolicy,
   nativeExecutionEnvironment,
 } from "../../src/guardian/execution-policy.js";
+import { ExecutionRequest } from "../../src/mint/contracts.js";
 import { inputFeedbackInstruction } from "../../src/mint/input-feedback.js";
 import {
   type AuthoringOptions,
@@ -1023,7 +1024,9 @@ it("has a cart tool refuse a product the site has no page for", async () => {
 /*
  * Cart and checkout tools went to repair on cases a skill line would have covered: a page state a
  * sibling tool on the same site already handled, a page-state check that ran before the caller's
- * own over-limit refusal, a "standard" delivery matched by a site-internal option ID, a refusal
+ * own over-limit refusal or failed on a preselected option neither the tool nor the caller set, a
+ * price limit refused because tax, fees or shipping show only after the purchase click, a
+ * "standard" delivery matched by a site-internal option ID, a refusal
  * whose choices the field could not take or that left the caller's named options out, and a step
  * script that pasted a shared code block twice and could not compile.
  */
@@ -1033,6 +1036,8 @@ it("has cart tools carry over sibling handling, refuse the caller's input first 
   for (const line of [
     "When the site has other cart tools (the core skill, `reference/site-tools.json`), prefer carrying over their handling of the page states this tool shares with them.",
     "Run each refusal of the caller's own input as soon as the page shows what it needs, before any check of the page's state that fails the run.",
+    "Check only the options the tool sets or the caller asked for; read any other preselected option as page state and name it in the confirm, rather than failing.",
+    "Check the caller's limit against the total the page shows before the purchase click. When tax, fees or shipping aren't shown until after it, check the limit against what is shown, name in the confirm what isn't included yet, and don't refuse for it.",
     "Where the build runs test cases (testing skill), prefer including an item already in the cart and, for a checkout, a cart under the store's minimum.",
     "and return the state the site shows, in its own words, as the refusal for the item,",
     'A delivery speed left unset, or asked for as "standard", takes the free option the page offers that arrives soonest, for each shipment, in place of the tier the site presents as standard; with no free option, ask the caller which to use, showing each fee.',
@@ -1178,7 +1183,7 @@ it("has a write confirm from its own commit request, and read back only when tha
   const texts = await renderedTexts("typescript/authoring");
   const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
   expect(text("writes")).toContain(
-    '- Prefer confirming the write from its commit request. Keep the click on the final commit control, such as Save, Send, Submit, Book or Pay, in its own step. In the same call as that click, wait for the site\'s response to the request it sends, matched by the method and path the session saw carry the commit on the site, and by its body where the body shows the caller\'s values, as `references/write-readback.ts` does: a `{ response }` answer of `waitForOutcomeResult`, beside every way the page can answer, listing the site\'s error or validation message (`{ invalid: form }`) first. The write went through when that response is 2xx or 3xx, a body the call can read shows no error, and the page shows no error or validation message after it. A 201 whose Location names the new record went through as soon as it arrives, with no wait for the page. A 200 whose body reports an error, as GraphQL can, did not go through. A 202, or a 2xx whose body says the work is queued, went through too; return that in the output as a status in the core notation, such as `queued`, with the site\'s own word in a `status_label` field. Then read what the output promises from that response or from the page the commit left, match it to the caller\'s values, and call `verified()` with no argument just before returning, also when the page shows no confirmation, since that response already confirms the write. Declare `write: { confirmation: "readback" }`. Prefer not opening another page, such as a list, a history or an account screen, only to prove the write: a commit that went through, with the new record\'s id, already proves it. Return the tool\'s whole output from the step that confirms the write, read from the commit\'s response or the page it left: the caller or the site may cancel, refund or delete the record soon after, and a later read-back then shows less. In the same call as the click, read a success message that disappears on its own. When a commit step returned without calling `verified()` and its `stateChangingRequests` list the commit request with a 2xx or 3xx status, prefer confirming it in the next step from that response, with no error in its body or on the page as it stands, over waiting for a message that may be gone. Make no execute call after `verified()`: a later call reopens the effect. After the confirming step, further `act` steps are refused.',
+    '- Prefer confirming the write from its commit request. Keep the click on the final commit control, such as Save, Send, Submit, Book or Pay, in its own step, except a pay press after the host\'s card fill, which goes in the fill\'s step (caller-input skill). In the same call as that click, wait for the site\'s response to the request it sends, matched by the method and path the session saw carry the commit on the site, and by its body where the body shows the caller\'s values, as `references/write-readback.ts` does: a `{ response }` answer of `waitForOutcomeResult`, beside every way the page can answer, listing the site\'s error or validation message (`{ invalid: form }`) first. The write went through when that response is 2xx or 3xx, a body the call can read shows no error, and the page shows no error or validation message after it. A 201 whose Location names the new record went through as soon as it arrives, with no wait for the page. A 200 whose body reports an error, as GraphQL can, did not go through. A 202, or a 2xx whose body says the work is queued, went through too; return that in the output as a status in the core notation, such as `queued`, with the site\'s own word in a `status_label` field. Then read what the output promises from that response or from the page the commit left, match it to the caller\'s values, and call `verified()` with no argument just before returning, also when the page shows no confirmation, since that response already confirms the write. Declare `write: { confirmation: "readback" }`. Prefer not opening another page, such as a list, a history or an account screen, only to prove the write: a commit that went through, with the new record\'s id, already proves it. Return the tool\'s whole output from the step that confirms the write, read from the commit\'s response or the page it left: the caller or the site may cancel, refund or delete the record soon after, and a later read-back then shows less. In the same call as the click, read a success message that disappears on its own. When a commit step returned without calling `verified()` and its `stateChangingRequests` list the commit request with a 2xx or 3xx status, prefer confirming it in the next step from that response, with no error in its body or on the page as it stands, over waiting for a message that may be gone. Make no execute call after `verified()`: a later call reopens the effect. After the confirming step, further `act` steps are refused.',
   );
   // Every case the request cannot settle keeps a read-back.
   expect(text("writes")).toContain(
@@ -1363,6 +1368,50 @@ it("has a re-check before a commit match the approved choice by its kind or name
     "or right before the card fill when the host fills the card. There, and in any other re-check before a commit, match the choice the caller approved by its kind or name and any time it shows that stays fixed, not by a time that moves with the clock, check the price it shows against the caller's limits as above, and keep it as approved when only that time changed, even when the page leaves out a value an earlier check read. For a choice whose shown time moves with the clock, `readBackMatches` and `sameText` from `pomerado/runtime` take `{ ignoreClockTimes: true }` to compare its kind or name without its times. When the site answers the click",
   );
   expect(guardianPublicationPolicy).toContain(publicationApprovedChoicePolicy);
+});
+
+// A card the host fills from a payment method works only minutes, and a review after the fill can
+// outlast it. So the step that fills it presses straight through to pay, any submit that sends the
+// card included, and Guardian judges that whole step before the cardholder approves; a later step
+// that sends the card or presses pay without filling again is denied. A card_fill execution, which
+// clicks nothing, takes card handles only, so a payment method's card is never filled in a step of
+// its own.
+it("has a paying step fill the card and press through to pay in one reviewed step", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const flat = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
+  expect(flat("caller-input")).toContain(
+    "call `fillCard({ fields: [{ selector, slot }], total })` in the act step that presses pay, never as a `card_fill` execution,",
+  );
+  expect(JSON.stringify(JSONSchema.make(ExecutionRequest))).toContain(
+    "Handles only: when the host fills the card from a payment method, call fillCard in the act step that presses pay instead.",
+  );
+  expect(flat("caller-input")).toContain(
+    "The host fills the card and clicks nothing, so the step that calls `fillCard` goes straight on to every press after it, under the write's commit rules: any submit that sends the card, then pay. The host reviews that whole step before the cardholder approves, then runs it through with no other review.",
+  );
+  expect(flat("caller-input")).toContain(
+    "then fill the card and press pay in that one step, with no question between them unless the checkout itself requires one.",
+  );
+  expect(flat("caller-input")).toContain(
+    "such as a pickup time that moved from 12:15 to 12:30, don't go back to change it, and don't press again in a later step after a press failed. Report it instead: a build ends with `report_blocked` naming it, and a run fails saying so, before the order's commit mark when it can.",
+  );
+  expect(flat("writes")).toContain(
+    "Keep the click on the final commit control, such as Save, Send, Submit, Book or Pay, in its own step, except a pay press after the host's card fill, which goes in the fill's step (caller-input skill).",
+  );
+  expect(guardianExecutionPolicy(nativeExecutionEnvironment)).toContain(
+    "The order must go out right after the fill, in the same step, so that step is judged whole before the cardholder approves: deny source that calls fillCard unless it goes straight on to every press after it through pay, any submit that sends the card included, with no question between them that the checkout doesn't require. At that pay press check only that the total equals the card-fill step's total and is within any trusted_authority.paymentLimit, and that the pay press enters its commit mark, presses once and changes nothing else, and allow it. After a payment-method fill, deny a later step that sends the card or presses pay without filling the card again.",
+  );
+});
+
+// Guardian judges a save setting by what the page shows a person, and an earlier execution's
+// change by its commit record and source, not by a test attribute or a guess.
+it("has Guardian judge saved payment and earlier writes only from what shows them", () => {
+  const policy = guardianExecutionPolicy(nativeExecutionEnvironment);
+  expect(policy).toContain(
+    "Optional saved payment/private information is off unless explicitly authorized, judged only from a control or label the page shows: a data-test attribute names a test hook, never a setting.",
+  );
+  expect(policy).toContain(
+    "unless a listed write's own source could have made the same change without that mark. Never claim an earlier execution made a change that neither its sent nor its own source shows.",
+  );
 });
 
 // A screen right before the commit, such as a confirm screen, can leave out a value the write
@@ -1578,9 +1627,9 @@ it("renders the pinned standalone authoring", async () => {
     ["539abe36b602c8e2eff8745dd0462aea41837a20cc0b90cbef7a01cbad6fb89a", "testing"],
     ["d524204c6ed2dc0fa773d6e5cf0aef993e2b48ee9db3fcbf291e40ebe8c9913d", "pagination"],
     ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
-    ["5dd3f586f3523de346a9d941fe8ac251c104350ba0063114b3c6f073b8624505", "writes"],
-    ["3ff8366fc701a733eb51ae689e681d9b1e3bfadde541832a8ac560f220ef8cc8", "cart"],
-    ["bacc3e4b61817707e55dfe7bf9712703761f5e5722ccdef44d9593df9ed898c3", "caller-input"],
+    ["83e56c0a1dc388fc51a76726be98f506a89c9731371a1148cc1f895e8f365590", "writes"],
+    ["f1b6997e1b71e430c90e7a65995cac31f881e9860e1943d31175a434a790a540", "cart"],
+    ["88044110409fabba1277fd66fe5bdc40f0e15f56edd97be23d0678abeb109442", "caller-input"],
     ["5e831bd1ba21d5ec4b1da3a96152f9d905144cbef58b9bd26381933f27faa97c", "publication"],
     ["0abdab6a68ce07ced766e367583c6259ab49dbfb525602c7755cb6420b2df6a0", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
