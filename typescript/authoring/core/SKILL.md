@@ -874,7 +874,8 @@ answer beside them (writes skill).
 For an unknown destination, inspect after the document transition; do not invent a
 selector or repeat the action in a follow-up read.
 Import `waitCode` from the runtime (`outcomeWaitCode` declares `waitForOutcome` alone, for code
-written before; paste one, never both), paste it once at the top of the call's code, and wait with `waitForOutcome({ refused, failed, unavailable, empty,
+written before; paste one, never both), paste it once at the top of the call's code, and each
+other shared code block once too, even in code joined from several parts, and wait with `waitForOutcome({ refused, failed, unavailable, empty,
 results }, { action, loading, region })`, one scoped locator per answer, each an element only
 that answer has and the step can cause, such as a results list that holds a
 row. Prefer closing a banner, tour or dialog that opens on its own with `waitForReady`'s

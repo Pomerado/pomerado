@@ -1009,6 +1009,33 @@ it("has a cart tool refuse a product the site has no page for", async () => {
 });
 
 /*
+ * Cart and checkout tools went to repair on cases a skill line would have covered: a page state a
+ * sibling tool on the same site already handled, a page-state check that ran before the caller's
+ * own over-limit refusal, a "standard" delivery matched by a site-internal option ID, a refusal
+ * whose choices the field could not take or that left the caller's named options out, and a step
+ * script that pasted a shared code block twice and could not compile.
+ */
+it("has cart tools carry over sibling handling, refuse the caller's input first and list choices the caller can send", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
+  for (const line of [
+    "When the site has other cart tools (the core skill, `reference/site-tools.json`), prefer carrying over their handling of the page states this tool shares with them.",
+    "Run each refusal of the caller's own input as soon as the page shows what it needs, before any check of the page's state.",
+    "Where the build runs test cases, prefer including an item already in the cart and, for a checkout, a cart under the store's minimum.",
+    "and return the state the site shows, in its own words, as the refusal for the item,",
+    'A delivery left unset, or asked for as "standard", takes the free option the page offers that arrives soonest, for each shipment; with no free option, ask the caller which to use, showing each fee.',
+  ]) {
+    expect(text("cart")).toContain(line);
+  }
+  expect(text("caller-input")).toContain(
+    "`available` lists only values the caller could send back in that field, and a range goes in the message. When a refusal lists choices, list the site's standalone named options before entries from a broader list or picker.",
+  );
+  expect(text("core")).toContain(
+    "paste it once at the top of the call's code, and each other shared code block once too, even in code joined from several parts,",
+  );
+});
+
+/*
  * An accounting app's invoice list already showed the sent invoice, and the minter kept reading
  * other pages for minutes, some of them refused for not proving the record or for reading without
  * bound. The first bounded read-back that matches confirms the write, and nothing from before the
@@ -1533,15 +1560,15 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["b97d03f456b3ca7c7c8a4b25615d4f0fcc8db8361cf53fd00cd1a33b74d89123", "core"],
+    ["761c7ebfe3f6d6068cf97b266a4ba8350eb4e00bf16d44e7c323e47088846852", "core"],
     ["7c3be765ee7c1c62b13a4876cc5453bbeb8acc7948b51511574f36f2aed09c4a", "search"],
     ["b64347efc8ee8a099cd2ac3f6550bdbe5425765f0b43d89011167a87b0c91151", "auth"],
     ["539abe36b602c8e2eff8745dd0462aea41837a20cc0b90cbef7a01cbad6fb89a", "testing"],
     ["d524204c6ed2dc0fa773d6e5cf0aef993e2b48ee9db3fcbf291e40ebe8c9913d", "pagination"],
     ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
     ["54284ef5a6dd2a2e01dc75b920ee0c9da968c7a41df8c8406ca7d17f0f225924", "writes"],
-    ["f5a961311d1c32086aac2dac03208f9f735ad18ea50cf34ae23d1342f292a418", "cart"],
-    ["b1bf6ce5a4df84fb1fbe88a03337e7a62ffe3892db3f30e5ee9298607b83a554", "caller-input"],
+    ["367c54b75ec46dc9c564fc190713f7f659bc282817d40d008ac45b10bee72233", "cart"],
+    ["3bd0c46940f314c940bcdb3a807ac9d18759123682f349b5c603f94ca14626ad", "caller-input"],
     ["5e831bd1ba21d5ec4b1da3a96152f9d905144cbef58b9bd26381933f27faa97c", "publication"],
     ["aa6c505252ff47843596ef4a05b431f34c2a63ffb4bef73c817804c10b7a9042", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
