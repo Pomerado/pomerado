@@ -171,8 +171,8 @@ refuses with `InvalidInput`, `field` that input and `kind: "over_price_limit"`, 
 and the limit (the caller-input skill). Run each refusal of the caller's own input as soon as the
 page shows what it needs, before any check of the page's state that fails the run. Check only the
 options the tool sets or the caller asked for; read any other preselected option, except a
-membership, trial or safety default the tool turns off, as page state and name it in the confirm,
-rather than failing. Check the caller's limit against the total the page
+membership, subscription, trial or safety default the tool turns off, as page state and name it in
+the confirm, rather than failing. Check the caller's limit against the total the page
 shows before the purchase click. When tax, fees or shipping aren't shown until after it, check the
 limit against what is shown, name in the confirm what isn't included yet, and don't refuse for it.
 Never add items, raise a quantity or change the

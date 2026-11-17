@@ -1036,7 +1036,7 @@ it("has cart tools carry over sibling handling, refuse the caller's input first 
   for (const line of [
     "When the site has other cart tools (the core skill, `reference/site-tools.json`), prefer carrying over their handling of the page states this tool shares with them.",
     "Run each refusal of the caller's own input as soon as the page shows what it needs, before any check of the page's state that fails the run.",
-    "Check only the options the tool sets or the caller asked for; read any other preselected option, except a membership, trial or safety default the tool turns off, as page state and name it in the confirm, rather than failing.",
+    "Check only the options the tool sets or the caller asked for; read any other preselected option, except a membership, subscription, trial or safety default the tool turns off, as page state and name it in the confirm, rather than failing.",
     "Check the caller's limit against the total the page shows before the purchase click. When tax, fees or shipping aren't shown until after it, check the limit against what is shown, name in the confirm what isn't included yet, and don't refuse for it.",
     "Where the build runs test cases (testing skill), prefer including an item already in the cart and, for a checkout, a cart under the store's minimum.",
     "and return the state the site shows, in its own words, as the refusal for the item,",
@@ -1628,7 +1628,7 @@ it("renders the pinned standalone authoring", async () => {
     ["d524204c6ed2dc0fa773d6e5cf0aef993e2b48ee9db3fcbf291e40ebe8c9913d", "pagination"],
     ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
     ["83e56c0a1dc388fc51a76726be98f506a89c9731371a1148cc1f895e8f365590", "writes"],
-    ["32838799c850f47d05745bfca374f88b438cd6ffc9f7c9a04b03487a84716241", "cart"],
+    ["ab2cacdaf78da396c1ed4217b66c514cf595ea6c0c2827ea5dd87ab0276a7a63", "cart"],
     ["88044110409fabba1277fd66fe5bdc40f0e15f56edd97be23d0678abeb109442", "caller-input"],
     ["5e831bd1ba21d5ec4b1da3a96152f9d905144cbef58b9bd26381933f27faa97c", "publication"],
     ["0abdab6a68ce07ced766e367583c6259ab49dbfb525602c7755cb6420b2df6a0", "workspace/AGENTS.md"],
