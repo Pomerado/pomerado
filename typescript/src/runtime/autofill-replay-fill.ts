@@ -115,6 +115,28 @@ const retryRefusal = <E extends YieldableError, V extends string, L extends Auto
 };
 
 /**
+ * The screen this replay last submitted, asked for again as a later recorded screen once its
+ * password went out with no planned second fill, came back: with no recorded error marker showing,
+ * that is no verdict on the login (`credential_screen_returned`), as at the last check.
+ */
+const screenReturned = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  session: ReplaySession<E, V, L>,
+  asked: AutofillStep,
+) =>
+  Effect.gen(function* () {
+    const previous = session.progress.ran.at(-1);
+    if (
+      previous === undefined ||
+      !session.sent.maySent.has("password") ||
+      !asked.fields.some((field) => field.slot === "password") ||
+      !asked.fields.every((field) => previous.fields.some((ran) => ran.selector === field.selector))
+    )
+      return false;
+    const shown = yield* session.observeRejections;
+    return shown !== "unavailable" && shown.length === 0;
+  });
+
+/**
  * A code screen whose fill found it closed in place once every field was typed (`closedInPlace`),
  * as one that sends itself on its last digit and takes its submit away does, sent its code only
  * when the sign-in's own check says so: the replay reads the recipe's marker on the page
@@ -186,6 +208,12 @@ export const runReplayStep = <E extends YieldableError, V extends string, L exte
       planned,
       inspection,
     );
+    if (
+      refused === "credential_already_filled" &&
+      codeAgain === undefined &&
+      (yield* screenReturned(session, asked))
+    )
+      return "credential_screen_returned" as const;
     if (refused !== undefined) return refused;
     // A recorded password refill with no second factor goes out only while the site shows no
     // error: a screen that asks for the password alone again may be one that refused it.

@@ -609,6 +609,19 @@ it("never fills a password a later screen asks for again after it went out", asy
   expect(fake.fills.map(({ page }) => page)).toEqual(["login"]);
 });
 
+it("ends with no verdict when the screen just submitted shows again as a later recorded screen with no error marker", async () => {
+  const fake = scriptedSite({
+    entry: "login",
+    screens: { login: loginScreen, account: [] },
+    fill: () => ({}),
+  });
+  const { result } = await signIn(recipe(loginStep, loginStep), fake);
+  expect(result).toEqual(
+    Either.left(new SignInRunFailed({ code: "RecipeFailed", reason: "credential_screen_returned" })),
+  );
+  expect(fake.fills.map(({ page }) => page)).toEqual(["login"]);
+});
+
 // A site that asks for the password again with a one-time code: the first password submit is
 // answered with a screen that shows the password field empty beside a code field.
 const lateCodeStep = {
