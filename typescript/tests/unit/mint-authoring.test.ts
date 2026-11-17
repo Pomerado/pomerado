@@ -1023,7 +1023,8 @@ it("has a cart tool refuse a product the site has no page for", async () => {
 /*
  * Cart and checkout tools went to repair on cases a skill line would have covered: a page state a
  * sibling tool on the same site already handled, a page-state check that ran before the caller's
- * own over-limit refusal, a "standard" delivery matched by a site-internal option ID, a refusal
+ * own over-limit refusal or failed on a preselected option neither the tool nor the caller set, a
+ * "standard" delivery matched by a site-internal option ID, a refusal
  * whose choices the field could not take or that left the caller's named options out, and a step
  * script that pasted a shared code block twice and could not compile.
  */
@@ -1033,6 +1034,7 @@ it("has cart tools carry over sibling handling, refuse the caller's input first 
   for (const line of [
     "When the site has other cart tools (the core skill, `reference/site-tools.json`), prefer carrying over their handling of the page states this tool shares with them.",
     "Run each refusal of the caller's own input as soon as the page shows what it needs, before any check of the page's state that fails the run.",
+    "Check only the options the tool sets or the caller asked for; read any other preselected option as page state and name it in the confirm, rather than failing.",
     "Where the build runs test cases (testing skill), prefer including an item already in the cart and, for a checkout, a cart under the store's minimum.",
     "and return the state the site shows, in its own words, as the refusal for the item,",
     'A delivery speed left unset, or asked for as "standard", takes the free option the page offers that arrives soonest, for each shipment, in place of the tier the site presents as standard; with no free option, ask the caller which to use, showing each fee.',
@@ -1579,7 +1581,7 @@ it("renders the pinned standalone authoring", async () => {
     ["d524204c6ed2dc0fa773d6e5cf0aef993e2b48ee9db3fcbf291e40ebe8c9913d", "pagination"],
     ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
     ["5dd3f586f3523de346a9d941fe8ac251c104350ba0063114b3c6f073b8624505", "writes"],
-    ["3ff8366fc701a733eb51ae689e681d9b1e3bfadde541832a8ac560f220ef8cc8", "cart"],
+    ["47b12add96edb1c29ab3df0de1cf5e5a313a269c07525e887a15fe064f9cbc7e", "cart"],
     ["3bd0c46940f314c940bcdb3a807ac9d18759123682f349b5c603f94ca14626ad", "caller-input"],
     ["5e831bd1ba21d5ec4b1da3a96152f9d905144cbef58b9bd26381933f27faa97c", "publication"],
     ["0abdab6a68ce07ced766e367583c6259ab49dbfb525602c7755cb6420b2df6a0", "workspace/AGENTS.md"],
