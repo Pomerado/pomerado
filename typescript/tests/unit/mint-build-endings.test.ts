@@ -2085,8 +2085,15 @@ const declinedExample = {
   explanation: "The site kept showing its sign-in screen, so it declined this example.",
 };
 
+type BlockedReportInput = {
+  readonly reason: string;
+  readonly explanation: string;
+  readonly intent?: string;
+};
+
 /**
- * A build that signs in through `steps`, one authenticate each, then sends `report`. A step that is
+ * A build that signs in through `steps`, one authenticate each, then sends `report`, or each
+ * report in order. A step that is
  * a failure fails its authenticate before its dispatch fence, `{ afterFence }` fails it past the
  * fence, `{ request }` sends that request in place of the authenticate, and a function gives the
  * step's result when the step runs.
@@ -2094,11 +2101,7 @@ const declinedExample = {
 const signInThenDecline = (
   steps: readonly (object | MintFailure | (() => object))[],
   overrides: Parameters<typeof fixture>[1] = {},
-  report: {
-    readonly reason: string;
-    readonly explanation: string;
-    readonly intent?: string;
-  } = declinedExample,
+  report: BlockedReportInput | readonly BlockedReportInput[] = declinedExample,
 ) => {
   let executions = 0;
   return fixture(
@@ -2107,7 +2110,15 @@ const signInThenDecline = (
         ...steps.map((next, step) =>
           call("execute", "request" in next ? next.request : authenticate, `sign_in_${step}`),
         ),
-        call("report_blocked", report),
+        ...[report]
+          .flat()
+          .map((sent, sentIndex) =>
+            call(
+              "report_blocked",
+              sent,
+              sentIndex === 0 ? "report_blocked" : `report_blocked_${sentIndex}`,
+            ),
+          ),
       ][index] ?? prose("Stopping."),
     {
       reviewAndExecute: (_submitted, beforeDispatch = () => Effect.void) => {
@@ -2291,6 +2302,89 @@ it("keeps the reviewed explanation of a report ended as sign-in unavailable", as
   expect(reviewed).toEqual([expect.objectContaining({ blockedOutcome: true })]);
 });
 
+// Guardian's request for other words goes back to the minter once, as any blocked report's does,
+// so the caller can still learn why the sign-in stopped. The revised explanation ends the build
+// as sign-in unavailable, with the reason the minter reported.
+it("hands a reworded explanation of a report ended as sign-in unavailable back to the minter once", async () => {
+  const reviewed: string[] = [];
+  const revised = "The site asks for a confirmation link sent by email before it signs in.";
+  const f = await signInThenDecline(
+    [submittedScreen, rejectionUnconfirmed],
+    {
+      reviewQuestion: (candidate) =>
+        Effect.sync(() => {
+          const prompt = candidate.questions[0]?.prompt ?? "";
+          reviewed.push(prompt);
+          return prompt === revised
+            ? { outcome: "allow_business" as const, rationale: "Plain." }
+            : { outcome: "reword" as const, rationale: "It names an email address." };
+        }),
+    },
+    [
+      {
+        reason: "site_lacks_capability",
+        explanation: "The site wants owner@example.test to confirm a link before it signs in.",
+      },
+      { reason: "site_lacks_capability", explanation: revised },
+    ],
+  );
+  const outcome = await f.run();
+  const handedBack = lastResult(f.requests[3]);
+  expect(handedBack).toContain("blocked_explanation_rejected");
+  expect(handedBack).toContain("It names an email address.");
+  expect(outcome).not.toHaveProperty("blocked");
+  expect(outcome).toMatchObject({
+    build: "incomplete",
+    recoveryReason: "sign_in_unavailable",
+    stopReason: "sign_in_failed",
+    stopReportReason: "site_lacks_capability",
+    stopExplanation: revised,
+  });
+  expect(reviewed).toHaveLength(2);
+  expect(JSON.stringify(outcome)).not.toContain("owner@example.test");
+  // The second report ended the build, with no further model call.
+  expect(f.requests).toHaveLength(4);
+});
+
+// A revision Guardian rewords again still ends the build: with the reason the minter reported and
+// no words of its own, never a third round.
+it("ends a report ended as sign-in unavailable with its reason alone when Guardian rewords it twice", async () => {
+  let reviews = 0;
+  const f = await signInThenDecline(
+    [submittedScreen, rejectionUnconfirmed],
+    {
+      reviewQuestion: () =>
+        Effect.sync(() => {
+          reviews += 1;
+          return { outcome: "reword" as const, rationale: "It names an email address." };
+        }),
+    },
+    [
+      {
+        reason: "site_declined",
+        explanation: "The site wants owner@example.test to confirm a link before it signs in.",
+      },
+      {
+        reason: "site_declined",
+        explanation: "The site wants owner@example.test to click a link before it signs in.",
+      },
+    ],
+  );
+  const outcome = await f.run();
+  expect(lastResult(f.requests[3])).toContain("blocked_explanation_rejected");
+  expect(outcome).toMatchObject({
+    recoveryReason: "sign_in_unavailable",
+    stopReason: "sign_in_failed",
+    stopReportReason: "site_declined",
+  });
+  expect(outcome).not.toHaveProperty("stopExplanation");
+  expect(JSON.stringify(outcome)).not.toContain("owner@example.test");
+  expect(reviews).toBe(2);
+  expect(f.requests).toHaveLength(4);
+});
+
+// A minter that never sends its reworded report again, with nothing run since, still ends as
+// sign-in unavailable with the reason it reported; its last answer is reviewed as any is.
 it("keeps no explanation of a report ended as sign-in unavailable that Guardian did not allow", async () => {
   const f = await signInThenDecline(
     [submittedScreen, rejectionUnconfirmed],
@@ -2304,7 +2398,12 @@ it("keeps no explanation of a report ended as sign-in unavailable that Guardian 
     },
   );
   const outcome = await f.run();
-  expect(outcome).toMatchObject({ recoveryReason: "sign_in_unavailable" });
+  expect(lastResult(f.requests[3])).toContain("blocked_explanation_rejected");
+  expect(outcome).toMatchObject({
+    recoveryReason: "sign_in_unavailable",
+    stopReason: "sign_in_failed",
+    stopReportReason: "site_lacks_capability",
+  });
   expect(outcome).not.toHaveProperty("stopExplanation");
   expect(JSON.stringify(outcome)).not.toContain("owner@example.test");
 });

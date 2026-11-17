@@ -59,6 +59,7 @@ import {
   MintServices,
   PublicationRequest,
   publicReasonLimit,
+  type SessionLoss,
   SignedInMarkerCheckRequest,
   TaskUpdateRequest,
   withOwnWords,
@@ -1632,6 +1633,18 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        * executions the build had then: a report before a new one stands on the same evidence.
        */
       let contradictedReport: { readonly executions: number } | undefined;
+      /**
+       * The blocked report ended as sign-in unavailable whose explanation Guardian asked to reword,
+       * handed back to the minter once in the attempt to revise: the reason it reported, the
+       * session loss it ended on and how many executions the build had then.
+       */
+      let signInStopReworded:
+        | {
+            readonly reported: (typeof BlockedReport.Type)["reason"];
+            readonly sessionLoss: SessionLoss | undefined;
+            readonly executions: number;
+          }
+        | undefined;
       const reviewCompleted = Effect.sync(() => {
         reviewOutageStartedAt = undefined;
         blockedReviewUnavailable = false;
@@ -4643,14 +4656,13 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             );
       };
       /**
-       * The minter's last final answer as its caller may read it, when it stopped without a tool
-       * call: the pipeline a blocked explanation takes (credential screen, host-private
-       * redaction, Guardian's question review of a blocked outcome with the same publication
-       * refusals and decision ledger), cut to the explanation's bound, and kept only when Guardian
-       * allowed it. The model is gone, so nothing is offered back: any other outcome or failure
-       * keeps nothing.
+       * The minter's stop explanation through the pipeline a blocked explanation takes (credential
+       * screen, host-private redaction, Guardian's question review of a blocked outcome with the
+       * same publication refusals and decision ledger), cut to the explanation's bound, with
+       * Guardian's decision. Nothing about it may change how the build ends: an empty text, no
+       * review, or a failed screen or review gives nothing.
        */
-      const reviewedStopExplanation = (text: string | undefined) =>
+      const reviewStopExplanation = (text: string | undefined) =>
         Effect.gen(function* () {
           const review = dependencies.reviewQuestion;
           if (text === undefined || text.trim() === "" || review === undefined) return undefined;
@@ -4675,7 +4687,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               onTimeout: () => new MintFailure({ code: "ReviewUnavailable" }),
             }),
           );
-          return decision.outcome === "allow_business" ? screened : undefined;
+          return { screened, decision };
         }).pipe(
           // Nothing about the explanation may change how the build ended: a failed screen or
           // review, a defect included, keeps nothing. Only an interruption goes on.
@@ -4691,6 +4703,32 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 }).pipe(Effect.as(undefined)),
           ),
         );
+      /**
+       * The minter's last final answer as its caller may read it, when it stopped without a tool
+       * call: kept only when Guardian allowed it. The model is gone, so nothing is offered back:
+       * any other outcome or failure keeps nothing.
+       */
+      const reviewedStopExplanation = (text: string | undefined) =>
+        reviewStopExplanation(text).pipe(
+          Effect.map((review) =>
+            review?.decision.outcome === "allow_business" ? review.screened : undefined,
+          ),
+        );
+      /**
+       * A blocked report the harness ends as sign-in unavailable: the reason the minter reported,
+       * and its explanation once Guardian allowed it.
+       */
+      const signInStopTerminal = (
+        reported: (typeof BlockedReport.Type)["reason"],
+        sessionLoss: SessionLoss | undefined,
+        stopExplanation: string | undefined,
+      ) => ({
+        build: "incomplete" as const,
+        recoveryReason: "sign_in_unavailable" as const,
+        stopReportReason: reported,
+        ...(stopExplanation === undefined ? {} : { stopExplanation }),
+        summary: signInUnavailableSummary(undefined, undefined, sessionLoss),
+      });
       /** A `mint_update` result for the agent: its status and what the host says. */
       const taskUpdateAnswer = (
         status: TaskUpdateStatus,
@@ -7921,16 +7959,40 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     ) {
                       // The minter's explanation still says why, kept only as a last answer is:
                       // once Guardian's review of a blocked outcome allows its caller to read it.
-                      const stopExplanation =
+                      const stopReview =
                         terminal === undefined
-                          ? yield* reviewedStopExplanation(explanation)
+                          ? yield* reviewStopExplanation(explanation)
                           : undefined;
-                      terminal ??= {
-                        build: "incomplete",
-                        recoveryReason: "sign_in_unavailable",
-                        ...(stopExplanation === undefined ? {} : { stopExplanation }),
-                        summary: signInUnavailableSummary(undefined, undefined, sessionLoss),
-                      };
+                      const reworded =
+                        stopReview !== undefined &&
+                        stopReview.decision.outcome !== "allow_business";
+                      // Guardian asked for other words: the first time in the attempt, the
+                      // report goes back to the minter to revise them, as any blocked report's
+                      // does. The build ends as sign-in unavailable either way, after one
+                      // revision at most, with the reason the minter reported.
+                      if (reworded && signInStopReworded === undefined) {
+                        signInStopReworded = {
+                          reported: report.reason,
+                          sessionLoss,
+                          executions: executions.length,
+                        };
+                        yield* diagnose({
+                          phase: "blocked",
+                          reason: "sign_in_unavailable",
+                          reported: report.reason,
+                          explanationReview: stopReview.decision.outcome,
+                        });
+                        return JSON.stringify({
+                          status: "blocked_explanation_rejected",
+                          reason: report.reason,
+                          rationale: yield* screenRationale(stopReview.decision.rationale),
+                          userInputRequired: false,
+                          instruction:
+                            "Guardian did not allow this explanation to reach the caller. The build's sign-in never confirmed, so it ends as sign-in unavailable with the reason you reported either way. Revise the explanation using the rationale and call report_blocked again. That review is the last: an explanation it does not allow leaves the caller the reason alone.",
+                        });
+                      }
+                      const stopExplanation = reworded ? undefined : stopReview?.screened;
+                      terminal ??= signInStopTerminal(report.reason, sessionLoss, stopExplanation);
                       yield* diagnose({
                         phase: "blocked",
                         reason: "sign_in_unavailable",
@@ -9004,6 +9066,29 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         terminal = signInUnavailable.outcome;
       // Live execution ended and the model stopped without publishing its retained receipt.
       if (terminal === undefined && executionClosed) terminal = unavailableHostTerminal();
+      // A sign-in stop handed back to revise its explanation that the minter never sent again,
+      // with nothing run since, still ends as sign-in unavailable with the reason it reported.
+      // Its last answer may say why, kept only once Guardian allows it.
+      if (
+        terminal === undefined &&
+        signInStopReworded !== undefined &&
+        signInStopReworded.executions === executions.length
+      ) {
+        const stopExplanation = yield* reviewedStopExplanation(
+          Exit.isSuccess(modelResult) ? modelResult.value.finalText : undefined,
+        );
+        terminal = signInStopTerminal(
+          signInStopReworded.reported,
+          signInStopReworded.sessionLoss,
+          stopExplanation,
+        );
+        yield* diagnose({
+          phase: "blocked",
+          reason: "sign_in_unavailable",
+          reported: signInStopReworded.reported,
+          explanationShown: stopExplanation !== undefined,
+        });
+      }
       if (
         terminal === undefined &&
         Exit.isSuccess(modelResult) &&
