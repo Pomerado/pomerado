@@ -379,10 +379,11 @@ When an observed screen asks the caller to follow an email link or approve on an
 submit `signInStep: { approval: "email_link" }` or `{ approval: "device" }`, with the same popup
 relation if that screen is in the popup. When an approval screen shows a number the owner must
 pick on their device, name the element that shows it as `matchSelector`; the host shows that
-number in the owner's confirmation. The host asks the caller through a protected confirmation
-after the identifier was submitted. Never ask an ordinary question for this approval or request
-the link, code or device contents. After confirmation, explore the account page and submit its
-signed-in indicator; confirmation alone does not verify the session.
+number in the owner's confirmation. After the identifier is submitted, the host asks the owner to
+approve a device, or to paste the newest link the site emailed. When the request rules out pasting
+a link or code, prefer its own fallback over the email-link step. Never ask an ordinary question
+for this approval or request the link, code or device contents. After confirmation, explore the
+account page and submit its signed-in indicator; confirmation alone does not verify the session.
 When the request asks for a person to sign in, prefer a hand-off sign-in: send
 `signInStep: { approval: "handoff" }`, with no popup or `matchSelector`, on the site's sign-in
 page, even when that page also shows a password form. The host hands the browser to a person

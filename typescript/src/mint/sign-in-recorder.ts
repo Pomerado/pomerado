@@ -665,7 +665,7 @@ export const makeSignInRecorder = (input: {
             approved: false,
             failed: "identifier_not_submitted",
             nextStep:
-              "Send the identifier screen first, then request protected confirmation of the site's email link or device approval.",
+              "Send the identifier screen first, then request signInStep approval for the site's email link or device.",
           },
         };
       const screen = yield* browser.inspect({
