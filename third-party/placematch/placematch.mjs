@@ -12,7 +12,7 @@ const checkText = (what, s) => {
   if (s.length > LIMITS.textLength) throw new RangeError(`${what} is ${s.length} characters; PlaceMatch takes at most ${LIMITS.textLength}`);
 };
 
-const NONE = Object.freeze({ outcome: "none", index: null, same: [], reasons: [], notes: [], cross_script: false, prefer_on_read: null, rows: [] });
+const NONE = Object.freeze({ outcome: "none", index: null, same: [], reasons: [], notes: [], cross_script: false, prefer_on_read: null, rows: [], unit: null, inferred_country: null });
 
 export async function load(bytes) {
   const t0 = performance.now();
@@ -32,18 +32,27 @@ export async function load(bytes) {
       x = fresh;
     } catch {
       // where a large module cannot be instantiated synchronously (a browser's main thread)
-      pending = WebAssembly.instantiate(mod, {}).then((i) => {
-        i.exports.am_init();
-        x = i.exports;
-        pending = null;
-      });
+      pending = WebAssembly.instantiate(mod, {})
+        .then((i) => {
+          i.exports.am_init();
+          x = i.exports;
+        })
+        .catch(() => {
+          // the next call tries again
+        })
+        .finally(() => {
+          pending = null;
+        });
     }
   };
   const enc = new TextEncoder();
   const dec = new TextDecoder();
   // call export `name` with the texts written into the module's memory, freed on every path
   const call = (name, texts, read) => {
-    if (!x) throw new Error("PlaceMatch is reloading after an internal error; try again");
+    if (!x) {
+      if (!pending) restart();
+      if (!x) throw new Error("PlaceMatch is reloading after an internal error; try again");
+    }
     const args = [];
     try {
       for (const t of texts) {
@@ -96,7 +105,9 @@ export async function load(bytes) {
     },
     /**
      * The outcome with the rows that are the caller's place, each row's verdict and reasons, why an
-     * ambiguous answer asks, notes beside a match, and the row a read may take (`prefer_on_read`).
+     * ambiguous answer asks, notes beside a match, the row a read may take (`prefer_on_read`), the
+     * caller's unit as written (`unit`), and the country read from the texts when none is given
+     * (`inferred_country`). With no rows, `unit` and `inferred_country` are null.
      * `rows`: strings, or `{ text, categorized }` where `categorized` says the site shows the row
      * with a category of its own (a venue type), as it does not for a dropped pin. `options` may
      * be omitted or null. Input over `LIMITS` throws a RangeError.
