@@ -363,8 +363,8 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   only what a change since the checks would make wrong and its page shows, such as the total
   and items they read, and when one moved it returns before clicking and the script throws
   `OperationFailure` naming the change, such as `total_changed`; otherwise it clicks once
-  and waits for the confirmation. That guard is expected. Name the in-between state the site
-  can show after the click, beside its final answers, in that wait's `pending`: it holds up to
+  and waits for the confirmation. That guard is expected. Add the in-between state the site
+  can show after the click as an outcome beside its final answers, and name its key in that wait's `pending`: it holds up to
   60 s from when that state shows, and `confirmCommit` reports one still showing then as
   `pending`. An entered mark counts as possibly sent even when its call stopped before the
   click, so a check that can refuse placed there
