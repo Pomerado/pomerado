@@ -1786,7 +1786,8 @@ it("keeps no last answer Guardian did not allow", async () => {
 
 // A last answer that says the host refused the build's steps is true only against the host's own
 // record. Its review reads the decision ledger a blocked report's review reads, with the host's
-// hold on a live step and its refusal of the blocked report beside the refused execution.
+// hold on a live step and its refusal of the blocked report beside the refused execution. The
+// report refused again and again keeps one entry, so the execution's refusals stay in the ledger.
 it("reviews the last answer against the host's refusals in the decision ledger", async () => {
   const explanation = "The host refused the save step and would not take a blocked report.";
   const refusedStep = "Nothing was executed: a host check refuses this step while it fails.";
@@ -1797,7 +1798,9 @@ it("reviews the last answer against the host's refusals in the decision ledger",
       [
         call("execute", pureExample, "refused"),
         call("execute", { ...pureExample, target: "liveBrowser" }, "held"),
-        call("report_blocked", { reason: "host_refused", explanation }, "report"),
+        ...Array.from({ length: 8 }, (_, report) =>
+          call("report_blocked", { reason: "host_refused", explanation }, `report_${report}`),
+        ),
       ][index] ?? prose(explanation),
     {
       preflight: (submitted) =>
@@ -1839,7 +1842,7 @@ it("reviews the last answer against the host's refusals in the decision ledger",
         {
           tool: "report_blocked",
           code: "host_not_refused",
-          reason: expect.stringContaining("No host check refused a step"),
+          reason: JSON.stringify({ reported: "host_refused" }),
           atUtc: expect.any(String),
         },
       ],

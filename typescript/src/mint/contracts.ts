@@ -2760,13 +2760,14 @@ export interface DecisionLedger {
   readonly omittedTestFailures?: number;
   /**
    * The host's latest refusals of a tool call, such as a cap on live runs: the tool refused, the
-   * failure code, status or refusal reason, the screened reason and when, in ISO time. An
-   * execution's include a hold on a live step (`ReconciliationRequired`), a saved login another
-   * job holds (`login_in_use`, as on `request_input`'s login) and a failure of the host's own
-   * dependency, whose reason then gives the failure's finite fields. `report_blocked` names a
-   * blocked report the host refused, such as `host_not_refused`, and `mint_update` a task update
-   * the host held for a confirmation or refused. A host on an older core sends only `live_tests`
-   * and `execute`.
+   * failure code, status or refusal reason, the screened reason and when, in ISO time, the same
+   * refusal kept once at its latest. An execution's include a hold on a live step
+   * (`ReconciliationRequired`), a saved login another job holds (`login_in_use`, as on
+   * `request_input`'s login) and a failure of the host's own dependency, both with the finite
+   * fields the minter read as the reason. `report_blocked` names a blocked report the host refused,
+   * such as `host_not_refused`, with the reported reason, and `mint_update` a task update the host
+   * held for a confirmation or refused. A host on an older core sends only `live_tests` and
+   * `execute`.
    */
   readonly hostRefusals?: readonly {
     readonly tool: "live_tests" | "execute" | "request_input" | "report_blocked" | "mint_update";

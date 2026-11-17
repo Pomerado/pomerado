@@ -1780,7 +1780,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         });
       /**
        * The host's refusals of the minter's tool calls in this attempt, the latest kept, for the
-       * same review and the review of a stopped build's last answer. A takeover starts them again.
+       * same review and the review of a stopped build's last answer. The same refusal again moves
+       * to the end, so repeats push no other refusal out. A takeover starts them again.
        */
       const ledgerHostRefusals: NonNullable<DecisionLedger["hostRefusals"]>[number][] = [];
       const recordHostRefusal = (
@@ -1792,10 +1793,15 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           const screened = yield* screenMintText(dependencies, reason).pipe(
             Effect.orElseSucceed(() => "[reason withheld]"),
           );
+          const kept = capped(screened, ledgerBounds.rationaleChars);
+          const same = ledgerHostRefusals.findIndex(
+            (refusal) => refusal.tool === tool && refusal.code === code && refusal.reason === kept,
+          );
+          if (same !== -1) ledgerHostRefusals.splice(same, 1);
           ledgerHostRefusals.push({
             tool,
             code,
-            reason: capped(screened, ledgerBounds.rationaleChars),
+            reason: kept,
             atUtc: new Date(yield* Clock.currentTimeMillis).toISOString(),
           });
           if (ledgerHostRefusals.length > ledgerBounds.hostRefusals) ledgerHostRefusals.shift();
@@ -3922,7 +3928,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             // The host's own answer that another job holds the login is a host fact.
             Effect.tap(() =>
               signIn === loginInUseAnswer
-                ? recordHostRefusal("execute", loginInUseAnswer.code, loginInUseAnswer.notice)
+                ? recordHostRefusal(
+                    "execute",
+                    loginInUseAnswer.code,
+                    JSON.stringify(loginInUseAnswer.fields),
+                  )
                 : Effect.void,
             ),
             Effect.tap((answer) =>
@@ -4329,9 +4339,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           }
         | {
             readonly refusal: string;
-            /** The refusal's reason and instruction, for the decision ledger. */
+            /** The refusal's reason, for the decision ledger. */
             readonly code: string;
-            readonly instruction: string;
           } => {
         const refused = (
           reason: string,
@@ -4339,7 +4348,6 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           details: Readonly<Record<string, unknown>> = {},
         ) => ({
           code: reason,
-          instruction,
           refusal: JSON.stringify({
             status: "blocked_refused",
             reason,
@@ -4684,13 +4692,13 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       /**
        * A `mint_update` result for a task update the host held for a confirmation, refused or
        * failed to apply, recorded as a host fact: `fact`, else the host's notice, else the
-       * instruction.
+       * result's status.
        */
       const heldTaskUpdate = (
         status: "clarification_required" | "update_refused",
         fields: { readonly reason: string; readonly instruction: string; readonly notice?: string } &
           Readonly<Record<string, unknown>>,
-        fact = fields.notice ?? fields.instruction,
+        fact = fields.notice ?? JSON.stringify({ status }),
       ) =>
         recordHostRefusal("mint_update", fields.reason, fact).pipe(
           Effect.as(taskUpdateAnswer(status, fields)),
@@ -7622,7 +7630,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     yield* recordHostRefusal(
                       "request_input",
                       loginInUseAnswer.code,
-                      loginInUseAnswer.notice,
+                      JSON.stringify(loginInUseAnswer.fields),
                     );
                     return JSON.stringify({
                       status: "login_request",
@@ -7764,14 +7772,17 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     // none is reviewed, and the outcome names the host's cause.
                     if (report.reason === "host_unavailable") {
                       if (!hostIsUnavailable()) {
-                        const instruction =
-                          "The host still offers live execution, so host_unavailable does not apply. Run what the build needs, such as the example again, then call finish_build.";
-                        yield* recordHostRefusal("report_blocked", "host_available", instruction);
+                        yield* recordHostRefusal(
+                          "report_blocked",
+                          "host_available",
+                          JSON.stringify({ reported: report.reason }),
+                        );
                         return JSON.stringify({
                           status: "blocked_refused",
                           reason: "host_available",
                           userInputRequired: false,
-                          instruction,
+                          instruction:
+                            "The host still offers live execution, so host_unavailable does not apply. Run what the build needs, such as the example again, then call finish_build.",
                         });
                       }
                       terminal ??= unavailableHostTerminal();
@@ -7845,7 +7856,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     // A report the host refused on its basis is a host fact, for the reviews of a
                     // later blocked report and of the build's last answer.
                     if ("refusal" in ending) {
-                      yield* recordHostRefusal("report_blocked", ending.code, ending.instruction);
+                      yield* recordHostRefusal(
+                        "report_blocked",
+                        ending.code,
+                        JSON.stringify({ reported: report.reason }),
+                      );
                       return ending.refusal;
                     }
                     // An ending the checks above accepted, while the build's latest sign-in
