@@ -881,6 +881,33 @@ it("keeps opening pages the site marks as visited or as progress part of a read"
   );
 });
 
+// A read that lists what a site's checkout offers was switched to a write when it opened the
+// checkout, though it chose, entered and saved nothing there. Every rule on what a read may do says
+// opening a checkout only to read it stays a read, and the requests its page sends with it.
+it("keeps opening a checkout only to read what it offers part of a read", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
+  const opening = "open a checkout only to read what it offers, choosing, entering and saving nothing";
+  expect(text("workspace/AGENTS.md")).toContain(
+    `A read build may fill in and submit a search, filter or query form to read results, and ${opening}, but may not fill in or advance a form that saves data on the site`,
+  );
+  expect(text("writes")).toContain(
+    `A read build may search, filter and query, and ${opening}, but may not fill in or advance a form that saves data on the site, save or submit anything;`,
+  );
+  expect(text("forms")).toContain(
+    "(core skill). So does opening a checkout only to read what it offers, choosing, entering and saving nothing. A signed-out quote",
+  );
+  expect(text("cart")).toContain(
+    `checks out a cart. A read tool may ${opening}. For a write,`,
+  );
+  expect(text("core")).toContain(
+    "such as adding an item to a cart, submitting a form or saving a preference. If you find one,",
+  );
+  expect(text("core")).toContain(
+    "not a saved preference (the input schema above). So is opening a checkout only to read what it offers, choosing, entering and saving nothing, with the requests its page sends.",
+  );
+});
+
 /*
  * A site rewrote an address as it was typed, writing Parkway as PKWY, and the read-back refused a
  * correct save. A write takes the site's version of a typed value, as it would a picked option,
@@ -1644,17 +1671,17 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["44fd9d8f89417abe4ba11f85f57ee7a87875e62be7e3f0b4412b92defb8bade9", "core"],
+    ["c78bda2060c4cb66cc442483f3529242d52853daec0053d7783fae031d4e8f9b", "core"],
     ["7c3be765ee7c1c62b13a4876cc5453bbeb8acc7948b51511574f36f2aed09c4a", "search"],
     ["5918d38595593c4dfbf5028322c5b678c3082d6c473573f454f53f511b2f5f53", "auth"],
     ["539abe36b602c8e2eff8745dd0462aea41837a20cc0b90cbef7a01cbad6fb89a", "testing"],
     ["d524204c6ed2dc0fa773d6e5cf0aef993e2b48ee9db3fcbf291e40ebe8c9913d", "pagination"],
-    ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
-    ["b59b77c1b0c506873a90e6cb989173f05be2c152716730aabd5bde80b804eefd", "writes"],
-    ["ab2cacdaf78da396c1ed4217b66c514cf595ea6c0c2827ea5dd87ab0276a7a63", "cart"],
+    ["deb1a987b3f5b432bf822ccb81c4f41e1c79cf50909de72827803e8ce5d3c1cc", "forms"],
+    ["760baad33ec136392da2c2e68e1353c3df2e2dbfc25c65f5aa101b4a61a29928", "writes"],
+    ["53ed93b6104eda75b8f16f571a72328a3340a2158d5f33079a1d7bb53b474ac1", "cart"],
     ["88044110409fabba1277fd66fe5bdc40f0e15f56edd97be23d0678abeb109442", "caller-input"],
     ["5e831bd1ba21d5ec4b1da3a96152f9d905144cbef58b9bd26381933f27faa97c", "publication"],
-    ["0abdab6a68ce07ced766e367583c6259ab49dbfb525602c7755cb6420b2df6a0", "workspace/AGENTS.md"],
+    ["092d416c498b1398b744a83aa92a8193ed4cba8fb2223534ae27c7e47e629eaa", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);
 });
@@ -1775,7 +1802,7 @@ it("renders the search URL fast path only when a host turns it on", async () => 
     [sha256(on.agents), "workspace/AGENTS.md"],
   ]).toStrictEqual([
     ["e3c82530af60da937a450bd94be81e1fefea6ef2324d9cd54379a52fc1d7c930", "search"],
-    ["0f53c7bb09d94526ee427a261b86467c7f33418742740004a9c0f81af1c83e1d", "workspace/AGENTS.md"],
+    ["fdba47c3b8ac22b356e74212ff901c626141d118b7fd62f1ac494741a91201cd", "workspace/AGENTS.md"],
   ]);
   expect(on.digests.filter(([, name]) => name !== "search")).toStrictEqual(
     off.digests.filter(([, name]) => name !== "search"),
