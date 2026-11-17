@@ -15,6 +15,7 @@ import {
   type SignInReplayBrowser,
 } from "../../src/runtime/sign-in-replay.js";
 import type { AutofillReplayTiming } from "../../src/runtime/autofill-replay-steps.js";
+import { parseHtml } from "../../src/runtime/html.js";
 import { localSignInLogin } from "../../src/standalone/authentication.js";
 import { runSignInBefore } from "../../src/standalone/session-sign-in.js";
 
@@ -51,6 +52,8 @@ interface SiteScript {
   readonly signedInPages?: readonly string[];
   /** The text each page's elements show, by page name and selector. */
   readonly texts?: Readonly<Record<string, Readonly<Record<string, string>>>>;
+  /** Markup a page shows besides its listed controls, whose one match of a selector is a control. */
+  readonly markup?: Readonly<Record<string, string>>;
 }
 
 /** A scripted site and the run's trace on it: page loads, fills and the owner's questions. */
@@ -69,7 +72,13 @@ const scriptedSite = (script: SiteScript) => {
     state.markers = new Set();
     state.kept = new Set();
   };
-  const shows = (selector: string) => script.screens[state.page]?.includes(selector) === true;
+  const markup = (page: string) => {
+    const html = script.markup?.[page];
+    return html === undefined ? undefined : parseHtml(`<html><body>${html}</body></html>`);
+  };
+  const shows = (selector: string) =>
+    script.screens[state.page]?.includes(selector) === true ||
+    markup(state.page)?.select(selector).length === 1;
   const browser: SignInReplayBrowser<never> = {
     inspect: (step) =>
       Effect.sync((): AutofillInspection | { readonly outcome: "refused"; readonly reason: "not_found" } => {
@@ -933,6 +942,40 @@ it("asks the owner to paste a recorded email link and opens it on the run's brow
   expect(steps(fake)).toEqual(["ask:missing_credentials", "fill:login", "ask:sign_in_link"]);
   expect(fake.trace).toContain("open:/magic/AbCdEf0123456789");
 });
+
+// A site that emailed a link when the tool was built may text or email a code this time, on the
+// screen where the link's approval was recorded: the code goes in, and nobody is asked for a link.
+const codeInPlaceOfLinkSite = () =>
+  scriptedSite({
+    entry: "login",
+    screens: { login: loginScreen, approve: [], account: [] },
+    markup: {
+      approve:
+        '<form><input name="code" inputmode="numeric" maxlength="6"><button type="submit">Submit</button></form>',
+    },
+    fill: (page, values) =>
+      page === "login"
+        ? signedLogin(values)
+          ? { next: "approve" }
+          : {}
+        : values[0] === code
+          ? { next: "account", signIn: true }
+          : {},
+  });
+
+it.each([
+  ["pasted", pasteStep],
+  ["opened", { page: `${origin}/approve`, fields: [], approval: "email_link" as const }],
+] as const)(
+  "types the code a recorded %s email link's screen asks for this time, asking for no link",
+  async (_kind, approval) => {
+    const fake = codeInPlaceOfLinkSite();
+    const { result } = await signIn(recipe(loginStep, approval), fake);
+    expect(result).toEqual(Either.right({ alreadySignedIn: false }));
+    expect(steps(fake)).toEqual(["ask:missing_credentials", "fill:login", "ask:code", "fill:approve"]);
+    expect(fake.filled("approve")).toEqual([[code]]);
+  },
+);
 
 it("fails RecipeFailed when the owner declines a recorded approval", async () => {
   const fake = approvalSite("approve");

@@ -428,6 +428,15 @@ const runScreen = <E extends YieldableError, V extends string, L extends Autofil
       );
       if (approval === "signed_in") return approval;
       if (approval === "screen_changed") return replay.outcome(approval);
+      // A site that emailed a sign-in link when the recipe was recorded may text or email a code
+      // this time, and show its box where the link's screen was: the code goes in as on a code
+      // screen the recipe never recorded (`runFoundCodeScreen`), and nobody is asked for a link.
+      // While no code may have gone out, so the look never sends a second one.
+      if (recorded.approval === "email_link" && !replay.sent.maySent.has("code")) {
+        const code = yield* runFoundCodeScreen(input, replay);
+        if (code === "ran") return "continue" as const;
+        if (code !== "none") return replay.outcome(code);
+      }
       // A site whose emailed link signs in only the browser that opens it: the owner pastes the
       // link, and the replay opens it itself (`openPastedLink`).
       if (recorded.approval === "email_link" && recorded.delivery === "paste") {
@@ -633,27 +642,23 @@ const retryCode = <E extends YieldableError, V extends string, L extends Autofil
   });
 
 /**
- * A code screen the recipe never recorded, looked for once and only while no code may have gone
- * out, so the look never sends a second one (`findCodeScreen`, `onSignInOrigin`). A code field in
- * no form with a submit is filled with no submit, so the page's own send counts (`page`). A field
- * that is the first of a row of one-character boxes takes the whole row, or nothing (`codeBoxRow`).
- * Its code comes as a recorded code screen's does: the host's own, else the owner's answer to the
- * host's question; after it refuses a code, its retries never take the host generator's (see
- * `runReplayStep`). The screen this replay last submitted still showing is the site's
- * answer to it, such as a password screen shown again or a refused recovery code, so a code box on
- * it takes no code. A fill that typed no code leaves the sign-in as it was, its step dropped from
- * the screens that ran, for the full check to decide; one that typed it and sent nothing stops, as
- * the code it holds would count as sent there.
+ * A code screen the recipe never recorded, where one shows (`findCodeScreen`, `onSignInOrigin`). A
+ * code field in no form with a submit is filled with no submit, so the page's own send counts
+ * (`page`). A field that is the first of a row of one-character boxes takes the whole row, or
+ * nothing (`codeBoxRow`). Its code comes as a recorded code screen's does: the host's own, else the
+ * owner's answer to the host's question; after it refuses a code, its retries never take the host
+ * generator's (see `runReplayStep`). The screen this replay last submitted still showing is the
+ * site's answer to it, such as a password screen shown again or a refused recovery code, so a code
+ * box on it takes no code. A fill that typed no code leaves the sign-in as it was, its step dropped
+ * from the screens that ran; one that typed it and sent nothing stops, as the code it holds would
+ * count as sent there.
  * `ran` when the code went out, `none` when none shows, or why it stopped.
  */
-const unrecordedCode = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+const runFoundCodeScreen = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   input: AutofillReplayInput<E, V, L>,
   replay: Replay<E, V, L>,
-  probed: { current: boolean },
 ) =>
   Effect.gen(function* () {
-    if (probed.current || replay.sent.maySent.has("code")) return "none" as const;
-    probed.current = true;
     const field = yield* findCodeScreen(input.hooks);
     const found = "outcome" in field ? field : yield* codeBoxRow(input.hooks, field);
     if ("outcome" in found || !onSignInOrigin(replay.signInOrigins(), found.inspection))
@@ -667,6 +672,22 @@ const unrecordedCode = <E extends YieldableError, V extends string, L extends Au
       return failed ?? "sign_in_check_failed";
     replay.progress.ran.splice(before);
     return "none" as const;
+  });
+
+/**
+ * A code screen the recipe never recorded, after the screens: looked for once and only while no
+ * code may have gone out, so the look never sends a second one (`runFoundCodeScreen`). A fill that
+ * typed no code leaves the full check to decide.
+ */
+const unrecordedCode = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  input: AutofillReplayInput<E, V, L>,
+  replay: Replay<E, V, L>,
+  probed: { current: boolean },
+) =>
+  Effect.gen(function* () {
+    if (probed.current || replay.sent.maySent.has("code")) return "none" as const;
+    probed.current = true;
+    return yield* runFoundCodeScreen(input, replay);
   });
 
 /**
