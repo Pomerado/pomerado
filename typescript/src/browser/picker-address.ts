@@ -39,9 +39,12 @@ export interface AddressRow {
   readonly categorized?: boolean;
 }
 
-/** What `matchAddress` accepted: the row at `index`, as `label`, and the unit, or a refusal. */
+/**
+ * What `matchAddress` accepted: the row at `index`, as `label`, the unit, and the caller's address
+ * as `wanted`, which a refusal quotes when the row is gone by the next call; or a refusal.
+ */
 export type AddressMatch =
-  | { readonly picked: true; readonly index: number; readonly label: string; readonly unit: string }
+  | { readonly picked: true; readonly index: number; readonly label: string; readonly unit: string; readonly wanted: string }
   | AddressRefusal;
 
 /** How to match: a read or a write, and the address's country, such as `US`, when the tool knows it. */
@@ -126,27 +129,36 @@ interface Explained {
   readonly text: string;
 }
 
+/**
+ * PlaceMatch's answer about the rows one text brought, or `undefined` when more rows are usable
+ * than PlaceMatch compares at once: no row is left out unseen, so such a list is asked about.
+ */
 const explain = (
   matcher: PlaceMatch,
   wanted: string,
   text: string,
   rows: readonly AddressRow[],
   country: string | undefined,
-): Explained => {
+): Omit<Explained, "answer"> & { readonly answer: PlaceExplained | undefined } => {
   const labels = rows.map((row) => String(row.text ?? "").replace(/\s+/gu, " ").trim());
   // A site's own control for the text, such as one listing more results for it, is no row. Neither
   // is an empty row, nor one longer than PlaceMatch reads, which is no address.
   const usable = labels
     .flatMap((label, index) => (label === "" || label.length > placeMatchLimits.textLength ? [] : [index]))
-    .filter((index) => ![wanted, text].some((typed) => matcher.isControl(typed, labels[index] ?? "")))
-    .slice(0, placeMatchLimits.rows);
-  const answer = matcher.pickExplained(
-    wanted,
-    usable.map((index) => ({ text: labels[index] ?? "", categorized: rows[index]?.categorized === true })),
-    country,
-  );
+    .filter((index) => ![wanted, text].some((typed) => matcher.isControl(typed, labels[index] ?? "")));
+  const answer =
+    usable.length > placeMatchLimits.rows
+      ? undefined
+      : matcher.pickExplained(
+          wanted,
+          usable.map((index) => ({ text: labels[index] ?? "", categorized: rows[index]?.categorized === true })),
+          country,
+        );
   return { labels, usable, answer, text };
 };
+
+/** Whether PlaceMatch answered: it did unless the list held more usable rows than it compares. */
+const answered = (found: ReturnType<typeof explain>): found is Explained => found.answer !== undefined;
 
 /** A text's words, folded, between single spaces. */
 const phrase = (text: string) => ` ${foldChoiceText(text).split(/[^\p{L}\p{N}]+/u).filter(Boolean).join(" ")} `;
@@ -171,10 +183,12 @@ const placeRow = (found: Explained, unit: string) =>
 
 /**
  * In a read, with no row that is the caller's place: the row PlaceMatch says a read may take (the
- * categorized venue beside a same-name row); else, for a place's name with no house number, the
- * site's first usable row when it is in the caller's area and does not show the caller's whole text
- * after words of its own, as a control may; else, for a street address, the site's first row with
- * the caller's house, street and town under another postcode.
+ * categorized venue beside a same-name row, when the caller gave an area it fits); else, for a
+ * place's name with no house number that PlaceMatch found no row for, the site's first usable row
+ * when it is in the caller's area and does not show the caller's whole text after words of its own,
+ * as a control may (rows PlaceMatch asks about stay asked about, whatever their order); else, for a
+ * street address, the site's first row with the caller's house, street and town under another
+ * postcode.
  */
 const readRow = (matcher: PlaceMatch, found: Explained, wanted: string, unit: string, country: string | undefined) => {
   const preferred = found.answer.prefer_on_read;
@@ -182,7 +196,7 @@ const readRow = (matcher: PlaceMatch, found: Explained, wanted: string, unit: st
   const label = (at: number) => found.labels[found.usable[at] ?? -1] ?? "";
   if (!/\d/u.test(wanted.split(",")[0] ?? "")) {
     const first = label(0);
-    return found.usable.length > 0 && !matcher.showsTypedText(wanted, first) && matcher.inArea(wanted, first, country)
+    return found.answer.outcome === "none" && found.usable.length > 0 && !matcher.showsTypedText(wanted, first) && matcher.inArea(wanted, first, country)
       ? take(found, 0, unit)
       : undefined;
   }
@@ -212,12 +226,22 @@ const refusal = (
 
 const tooLong = (request: ReturnType<typeof addressRequest>) => request.wanted.length > placeMatchLimits.textLength;
 
+/** A list with more usable rows than PlaceMatch compares at once: asked about, never cut. */
+const crowded = (available: readonly string[], request: ReturnType<typeof addressRequest>): AddressRefusal => ({
+  picked: false,
+  reason: "option_unclear",
+  wanted: request.wanted,
+  available: [...new Set(available)].slice(0, 100),
+  matches: [],
+  unit: request.unit,
+});
+
 /**
  * Matches an address the caller typed against the rows a site's address list shows now, as
  * `pickerAddressRows` reads them in a Kernel call body: it runs in the script, never on the page.
  * `listed` is that call's answer, `{ rows, read }`, or the rows alone; `options.read` overrides
  * the run's effect the call read, and `options.country` names the address's country when the
- * tool knows it. It returns `{ picked: true, index, label, unit }`, the row to pass to
+ * tool knows it. It returns `{ picked: true, index, label, unit, wanted }`, the row to pass to
  * `pickerMatchAddress` in the next call, which clicks it, or a refusal for `pickRefusal`.
  *
  * Matching is PlaceMatch's (third-party/placematch): a row is taken when PlaceMatch says it is the
@@ -227,12 +251,14 @@ const tooLong = (request: ReturnType<typeof addressRequest>) => request.wanted.l
  * word. Pass `country` when the tool knows the address's country: PlaceMatch reads an address by
  * its country's conventions, and asks more often without one. A site's control that lists more results for
  * the typed text is never a row. In a read, with no row that is the place, it takes the row
- * PlaceMatch says a read may take, such as a categorized venue beside a map pin of the same name;
- * else, for a place's name with no house number, the site's first row when it is in the caller's
- * area and does not show the caller's whole text after words of its own; else, for a street
- * address, the site's first row with the caller's house, street and town under another postcode.
- * Otherwise it refuses: `option_missing` when no row is usable or a read of a street address found
- * no near row, else `option_unclear` with the rows to ask about as `matches`.
+ * PlaceMatch says a read may take, such as a categorized venue beside a map pin of the same name
+ * in the area the caller gave; else, for a place's name with no house number that PlaceMatch found
+ * no row for, the site's first row when it is in the caller's area and does not show the caller's
+ * whole text after words of its own; else, for a street address, the site's first row with the
+ * caller's house, street and town under another postcode. Otherwise it refuses: `option_missing`
+ * when no row is usable or a read of a street address found no near row, else `option_unclear` with
+ * the rows to ask about as `matches`, or with none when the list holds more usable rows than
+ * PlaceMatch compares at once (100), since no row is left out unseen.
  */
 export const matchAddress = async (
   address: string,
@@ -249,10 +275,11 @@ export const matchAddress = async (
   const found = explain(matcher, request.wanted, request.query, rows, options.country);
   const available = found.usable.map((index) => found.labels[index] ?? "");
   if (found.usable.length === 0) return refusal(undefined, available, request, read);
+  if (!answered(found)) return crowded(available, request);
   const row = placeRow(found, request.unit) ?? (read ? readRow(matcher, found, request.wanted, request.unit, options.country) : undefined);
   return row === undefined
     ? refusal(found, available, request, read)
-    : { picked: true, index: row.index, label: found.labels[row.index] ?? "", unit: row.unit };
+    : { picked: true, index: row.index, label: found.labels[row.index] ?? "", unit: row.unit, wanted: request.wanted };
 };
 
 /**
@@ -294,6 +321,7 @@ export const resolveAddress = async <T = string>(
     const found = explain(matcher, request.wanted, text, rows, options.country);
     seen.push(...found.usable.map((index) => found.labels[index] ?? ""));
     if (found.usable.length === 0) continue;
+    if (!answered(found)) return crowded(seen, request);
     first ??= { found, items };
     const row = placeRow(found, request.unit);
     if (row !== undefined)

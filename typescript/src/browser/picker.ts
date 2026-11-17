@@ -1772,8 +1772,9 @@ const pickerMatchAddress = async (control, match, options = {}) => {
     const rows = await pickerAddressScan(s);
     const texts = rows.map((option) => pickerAddressRow(option).text);
     const at = texts[match.index] === match.label ? match.index : texts.indexOf(match.label);
+    // The row is gone: the refusal quotes the caller's address, never the site's row.
     if (at < 0)
-      return { picked: false, reason: "option_missing", wanted: match.label, available: [...new Set(texts)].slice(0, 100), matches: [], unit: match.unit };
+      return { picked: false, reason: "option_missing", wanted: typeof match.wanted === "string" ? match.wanted : match.label, available: [...new Set(texts)].slice(0, 100), matches: [], unit: match.unit };
     const tag = rows[at].tag;
     const hit = pickerTag(s, "data-pomerado-pick-hit", tag);
     const row = await ((await hit.count()) > 0 ? hit : pickerTag(s, "data-pomerado-pick", tag)).elementHandle(s.act());
