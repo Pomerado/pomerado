@@ -579,6 +579,14 @@ const namedStepReasons: ReadonlySet<string> = new Set([
   "sign_in_version_refused",
 ]);
 /**
+ * Registry refusals, which name their step in core's instruction only when the minter was told it
+ * may fix them (`fixRequired`).
+ */
+const registryStepReasons: ReadonlySet<string> = new Set([
+  "registry_conflict",
+  "registry_invalid_definition",
+]);
+/**
  * Refusals a host adds beside core's own, for which core has only its generic instruction: the
  * host names the step in the refusal's review rationale. One names its step only when it carries
  * a rationale, and only then is a `host_refused` report sent back to it.
@@ -1711,8 +1719,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        */
       const namedStepsOffered = new Set<string>();
       /**
-       * The latest screened instruction each refusal in `namedStepReasons` gave the minter, which
-       * a `host_refused` report sent back to its step repeats.
+       * The latest screened instruction each refusal in `namedStepReasons`, or each registry refusal
+       * the minter may fix, gave the minter, which a `host_refused` report sent back to its step
+       * repeats.
        */
       const namedStepInstructions = new Map<string, string>();
       /**
@@ -2581,8 +2590,17 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   Effect.map((screened) => capped(screened.trim(), ledgerBounds.instructionChars)),
                   Effect.orElseSucceed(() => undefined),
                 );
-          if (pending.reason !== undefined && namedStepReasons.has(pending.reason)) {
-            if (instruction === undefined || instruction === "")
+          const registryStep =
+            pending.reason !== undefined && registryStepReasons.has(pending.reason);
+          if (
+            pending.reason !== undefined &&
+            (namedStepReasons.has(pending.reason) || registryStep)
+          ) {
+            if (
+              instruction === undefined ||
+              instruction === "" ||
+              (registryStep && parsed?._tag === "Right" && parsed.right.fixRequired !== true)
+            )
               namedStepInstructions.delete(pending.reason);
             else namedStepInstructions.set(pending.reason, instruction);
           }
@@ -4329,8 +4347,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         // changes. A host refusal of a submission the host already refused, sent again unchanged
         // after a later finish_build got past that refusal, is no new refusal and sets none. When
         // the latest host refusal names a step that fixes it, in core's instruction
-        // (`namedStepReasons`) or a host's rationale (`rationaleStepReasons`), the first report on
-        // its reason goes back with that step, and the next is taken. The owner's no to a
+        // (`namedStepReasons`, or a registry refusal the minter may fix) or a host's rationale
+        // (`rationaleStepReasons`), the first report on its reason goes back with that step, and
+        // the next is taken. The owner's no to a
         // confirm question, or to a login, is `owner_declined`; a question handed back unanswered
         // is `question_unanswered`: no answer is no consent, so the minter may end the build
         // safely instead of going on past what it asked. A policy report that stands only on
@@ -4438,7 +4457,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           latestHostRefusal.reason !== undefined &&
           (namedStepReasons.has(latestHostRefusal.reason) ||
             (rationaleStepReasons.has(latestHostRefusal.reason) &&
-              namedStepRationales.has(latestHostRefusal.reason)))
+              namedStepRationales.has(latestHostRefusal.reason)) ||
+            (registryStepReasons.has(latestHostRefusal.reason) &&
+              namedStepInstructions.has(latestHostRefusal.reason)))
             ? latestHostRefusal.reason
             : undefined;
         if (
@@ -4450,9 +4471,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           !challengeRefused
         ) {
           namedStepsOffered.add(namedStep);
-          const told = namedStepReasons.has(namedStep)
-            ? namedStepInstructions.get(namedStep)
-            : undefined;
+          const told = namedStepInstructions.get(namedStep);
           const rationale = namedStepRationales.get(namedStep);
           return refused(
             "host_refusal_names_step",

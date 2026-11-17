@@ -1258,6 +1258,18 @@ it.each([
     step: { refusalRationale: noMatchRationale },
     absent: "refusalInstruction",
   },
+  // A registry refusal the minter was told it may fix names its fix too.
+  {
+    refusal: new MintFailure({
+      code: "PublicationUnavailable",
+      reason: "registry_conflict",
+      registryIssue: "contract_breaking",
+      registryProblem: "status (output widened)",
+    }),
+    reason: "registry_conflict",
+    step: { refusalInstruction: expect.stringContaining("Restore each named output") },
+    absent: "refusalRationale",
+  },
   // A host refusal listed beside Guardian's denial of the same submission names its fix too.
   {
     refusal: new MintFailure({ ...guardianDenialArgs, alsoRefused: [variantsUnsupported] }),
