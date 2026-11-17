@@ -580,7 +580,7 @@ const namedStepReasons: ReadonlySet<string> = new Set([
 ]);
 /**
  * Registry refusals, which name their step in core's instruction only when the minter was told it
- * may fix them (`fixRequired`).
+ * may fix them (`fixRequired`) and the instruction does not offer ending the build.
  */
 const registryStepReasons: ReadonlySet<string> = new Set([
   "registry_conflict",
@@ -2599,7 +2599,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             if (
               instruction === undefined ||
               instruction === "" ||
-              (registryStep && parsed?._tag === "Right" && parsed.right.fixRequired !== true)
+              (registryStep &&
+                parsed?._tag === "Right" &&
+                // A tool another publication advanced may end the build, as its instruction says.
+                (parsed.right.fixRequired !== true ||
+                  parsed.right.registryIssue === "generation_moved"))
             )
               namedStepInstructions.delete(pending.reason);
             else namedStepInstructions.set(pending.reason, instruction);
@@ -4347,9 +4351,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         // changes. A host refusal of a submission the host already refused, sent again unchanged
         // after a later finish_build got past that refusal, is no new refusal and sets none. When
         // the latest host refusal names a step that fixes it, in core's instruction
-        // (`namedStepReasons`, or a registry refusal the minter may fix) or a host's rationale
-        // (`rationaleStepReasons`), the first report on its reason goes back with that step, and
-        // the next is taken. The owner's no to a
+        // (`namedStepReasons`) or a host's rationale (`rationaleStepReasons`), the first report on
+        // its reason goes back with that step, and the next is taken. The owner's no to a
         // confirm question, or to a login, is `owner_declined`; a question handed back unanswered
         // is `question_unanswered`: no answer is no consent, so the minter may end the build
         // safely instead of going on past what it asked. A policy report that stands only on
@@ -4447,10 +4450,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             "host_not_refused",
             "No host check refused a step in this attempt, so the build has not ended. host_refused needs a host check that refused a step the build needs, such as finish_build, a sign-in form or a site change, or live tests the host refuses with no batch left while Guardian's denial of the last publication stands.",
           );
-        // The latest host refusal names its own fix, and neither sign-in screen answer nor a
-        // recorded challenge stands beside it: the first report on its reason goes back with that
-        // step, and the next is taken. Spent live tests never stand beside it: they need Guardian's
-        // denial of the latest publication, and a host refusal of a later one ends that denial.
+        // The latest host refusal names its own fix, a registry refusal's only when the minter may
+        // fix it, and neither sign-in screen answer nor a recorded challenge stands beside it: the
+        // first report on its reason goes back with that step, and the next is taken. Spent live
+        // tests never stand beside it: they need Guardian's denial of the latest publication, and a
+        // host refusal of a later one ends that denial.
         const latestHostRefusal = hostRefused ? standingHostRefusals.at(-1)?.refusal : undefined;
         const namedStep =
           latestHostRefusal?.source === "publication" &&

@@ -1354,6 +1354,31 @@ it.each([
   expect(await f.run()).toMatchObject({ blocked: { reason: "host_refused", explanation } });
 });
 
+// A tool another publication advanced is a fixable registry refusal whose instruction offers ending
+// the build, so it names no step: the report is taken at once.
+it("takes host_refused at once after a registry refusal that offers ending the build", async () => {
+  const explanation = "A Pomerado check refused publication, so no tool was published.";
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", pureExample),
+        finishAs(0),
+        call("report_blocked", { reason: "host_refused", explanation }, "report"),
+      ][index] ?? prose("Stopping."),
+    {
+      publish: () =>
+        Effect.fail(
+          new MintFailure({
+            code: "PublicationUnavailable",
+            reason: "registry_conflict",
+            registryIssue: "generation_moved",
+          }),
+        ),
+    },
+  );
+  expect(await f.run()).toMatchObject({ blocked: { reason: "host_refused", explanation } });
+});
+
 // A sign-in screen the host refused because the password's fills are spent stands beside a refusal
 // that names its step, so the report is taken at once.
 it("takes host_refused at once when a refused password refill stands beside a named step", async () => {
