@@ -140,7 +140,7 @@ export interface KernelOperationContext<
   /**
    * The IANA zone the job's browser runs in, such as `America/New_York`, as the host set or read
    * it: the zone a page writes the times it computes from a timestamp in, which can differ from
-   * the caller's and the script's own. Undefined when the host knows none, such as offline.
+   * the caller's and the script's own. Undefined when the host knows none.
    */
   readonly browserTimeZone: string | undefined;
   readonly input: Input;

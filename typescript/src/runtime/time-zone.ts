@@ -10,6 +10,8 @@ const pad = (value: number) => String(value).padStart(2, "0");
 
 /** The wall clock in `timeZone` at instant `ms`, read as if it were UTC's, to the second. */
 const wallAt = (ms: number, timeZone: string) => {
+  // `Intl` reads a missing zone as the process's own, which is never the site's.
+  if (typeof timeZone !== "string") throw new RangeError("A time zone is an IANA name");
   const parts = new Map(
     new Intl.DateTimeFormat("en-US", {
       timeZone,
