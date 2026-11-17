@@ -19,7 +19,9 @@ import type { HttpFailure, SiteHttpRequest, SiteHttpResult, SiteHttpService } fr
  * - A throttle is a 429, a 503 or any other 5xx, such as a 529, a rate limit in another shape
  *   (`classifyBatchAnswer`: a 418 or 420 naming its wait, a 2xx JSON answer saying 429), or an
  *   answer whose rate-limit headers say no request remains: `RateLimit-Remaining: 0`, or a
- *   `RateLimit` header whose policy has `r=0`. A throttled batch never makes the next one larger:
+ *   `RateLimit` header whose policy has `r=0`. In `batchFetch`, so is each fetch of a batch whose
+ *   fetches all fail without an answer, after an earlier fetch in the call was answered. A
+ *   throttled batch never makes the next one larger:
  *   it halves the batch size (at least 1), waits the longest `Retry-After` in the batch, else the site's `RateLimit-Reset`,
  *   or a backoff that doubles from `backoffMs` without either, and sends the throttled requests
  *   again first, each at most `maxAttempts` times in all. A wait longer than `maxWaitMs` stops the
@@ -623,9 +625,10 @@ const batchFetch = async (requests, options = {}) => {
           answeredOnce = true;
           close();
         } catch (error) {
+          const timedOut = controller.signal.aborted;
           close();
           await own.settled;
-          return { kind: answeredOnce && !own.answered && !controller.signal.aborted ? "throttled" : "answered", value: { ok: false, error: "network", snippet: snippetOf(String(error?.message ?? error)) } };
+          return { kind: answeredOnce && !own.answered && !timedOut ? "throttled" : "answered", value: { ok: false, error: "network", snippet: snippetOf(String(error?.message ?? error)) } };
         }
         const contentType = response.headers.get("content-type") ?? "";
         const text = await response.text();
