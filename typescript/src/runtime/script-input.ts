@@ -537,12 +537,13 @@ const askedQuestion = (
       return Either.flatMap(offeredOptions(id, given), ({ values, offered }) => {
         const minSelections = declaration.minSelections ?? 1;
         const maxSelections = Math.min(declaration.maxSelections ?? offered.length, offered.length);
-        if (offered.length === 0) return Either.left(invalidOptions([id], "options is empty"));
         return minSelections > maxSelections
           ? Either.left(
               invalidOptions(
                 [id],
-                `minSelections is ${minSelections} but at most ${maxSelections} can be selected`,
+                offered.length === 0
+                  ? "options is empty"
+                  : `minSelections is ${minSelections} but at most ${maxSelections} can be selected`,
               ),
             )
           : Either.right({

@@ -341,6 +341,24 @@ describe("a script question that can't be asked", () => {
     expect(refused(declared, asked as never)).toBe(message);
   });
 
+  it("says an empty multiple choice that may take none is empty, after every id is checked", () => {
+    const declared: ScriptQuestionDeclarations = {
+      zero: { type: "multi_choice", prompt: "Which entries?", minSelections: 0 },
+    };
+    expect(refused(declared, { zero: { options: [] } })).toBe(
+      "Script question zero could not be asked because options is empty.",
+    );
+    const result = Effect.runSync(
+      Effect.either(
+        makeScriptInput(declared, () => Effect.succeed({})).ask({
+          zero: { options: [] },
+          unknown: {},
+        } as never),
+      ),
+    );
+    expect(result).toEqual(Either.left(expect.objectContaining({ code: "Undeclared" })));
+  });
+
   it("names the limit for more than eight questions in one ask", () => {
     const ids = Array.from({ length: 9 }, (_, index) => `q${index + 1}`);
     const declared = Object.fromEntries(
