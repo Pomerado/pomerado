@@ -391,14 +391,15 @@ no input, only where varying it would be unsafe or meaningless (.agents/core/SKI
 schema). An
 answer that gives only this run's value, such as which customer or date, is this run's input. A
 costly choice stays a required input or a declared question for every caller, with only the
-defaults .agents/writes/SKILL.md allows. A mention of synthetic, sample or test data settles no
-value or choice, but a request or answer that tells you to use or generate test, synthetic,
-sample or fake values supplies each value it leaves open: prefer generating plausible values in
-the site's required format over asking, ones that can't identify a real person, as this run's
-input rather than the tool's defaults. Take each value it names from it, never generate a
-sign-in credential, one-time code or payment detail, and keep any stop it names, such as before
-the final submit. Without such an instruction, a caller that wants invented values supplies them
-itself, as its answers to your questions. Guardian denies a live step that types or submits a
+defaults .agents/writes/SKILL.md allows. A mention of test, synthetic, sample or fake data
+settles no value or choice, but a request or answer that tells you to use or generate test,
+synthetic, sample or fake values supplies each value or choice among the site's options that it
+leaves open: prefer generating plausible values in the site's required format that can't
+identify a real person over asking, as this run's input rather than a literal in source or the
+tool's defaults. Take each value it names from it, never generate a sign-in credential,
+one-time code, payment detail or signature, and keep any stop it names. Without such an
+instruction, a caller that wants invented values supplies them itself, as its answers to your
+questions. Guardian denies a live step that types or submits a
 value none of those supplied, naming the field, except the one made-up record key the writes
 and testing skills allow. Signed out,
 picking one of the page's own options for state a read needs, such as a pickup mode that opens

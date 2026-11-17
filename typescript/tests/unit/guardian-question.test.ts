@@ -307,7 +307,7 @@ it("lets an instruction to use test or synthetic values supply the values it lea
   const execution = guardianExecutionPolicy(nativeExecutionEnvironment);
   expect(execution).not.toContain("which authorizes no made-up value");
   expect(execution).toContain(
-    "an instruction in trusted intent or an answer to use or generate test, synthetic, sample or fake values supplies each value it leaves open",
+    "an instruction in trusted intent or an answer to use or generate test, synthetic, sample or fake values supplies each value or choice among the site's options that it leaves open",
   );
   const alreadyRequested = reviewPolicyOf(requests[0])
     .split("\n")
