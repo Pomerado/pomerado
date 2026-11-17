@@ -95,7 +95,7 @@ export default defineOperation(
     if (offer.seats.length === 0 || offer.travelers.length === 0)
       throw new errors.OperationFailure("The flight offers no seat or traveler");
     // A saved traveler is the caller's own account detail, so it is account-specific and carries
-    // a masked label for the API and MCP. The run waits here with this page open until the caller
+    // a masked label for a host that masks. The run waits here with this page open until the caller
     // answers, then continues in place. No answer in time fails the run as no_response.
     const answer = await ask({
       seat: { options: offer.seats },

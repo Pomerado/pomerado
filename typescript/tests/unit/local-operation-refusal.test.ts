@@ -2,7 +2,7 @@ import { Effect } from "effect";
 import { expect, it } from "vitest";
 import { runLocalOperation } from "../../src/execution/local-operation.js";
 import { createLocalWorkspace } from "../../src/execution/local-workspace.js";
-import { operationErrors } from "../../src/runtime/operation-failure.js";
+import { boundedRefusalDetail, operationErrors } from "../../src/runtime/operation-failure.js";
 import { runOutcomeFailure } from "../../src/standalone/run-report.js";
 
 // A script that refuses its caller's value in the local operation child, against a browser that
@@ -93,6 +93,12 @@ it("keeps a choice from the caller's own account marked", () => {
     "Pick up in store",
     { label: "12 Example Rd, Springfield 99999", accountSpecific: true, maskedLabel: "Home" },
     { label: "14 Example Rd", accountSpecific: true },
+  ]);
+  // A host that calls it without `fullLabels` still reads each by its mask.
+  expect(boundedRefusalDetail(refusal).available).toEqual([
+    "Pick up in store",
+    "Home",
+    "Saved option 3",
   ]);
 });
 

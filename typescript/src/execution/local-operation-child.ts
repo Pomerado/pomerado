@@ -561,7 +561,7 @@ await Effect.runPromise(
             // A script's refusal names its input and the choices the page offers, when it read them,
             // one from the caller's own account by its full label, as the local host shows it.
             ...("_tag" in error && error._tag === "InvalidInput"
-              ? refusalOf(boundedRefusalDetail(error, true))
+              ? refusalOf(boundedRefusalDetail(error, { fullLabels: true }))
               : {}),
             // An input the script could not apply, with what the page kept instead.
             ...(() => {

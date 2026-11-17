@@ -129,7 +129,10 @@ const publicChoice = (choice: RefusalChoice, index: number) =>
  * masked label, or "Saved option N" by its place without one, or with `fullLabels`, for a host that
  * shows the account's own entries, as its label.
  */
-export const boundedRefusalDetail = (detail: unknown, fullLabels = false): InputRefusalDetail => {
+export const boundedRefusalDetail = (
+  detail: unknown,
+  { fullLabels = false }: { readonly fullLabels?: boolean } = {},
+): InputRefusalDetail => {
   if (typeof detail !== "object" || detail === null) return {};
   const field: unknown = Reflect.get(detail, "field");
   const kind: unknown = Reflect.get(detail, "kind");
