@@ -1258,6 +1258,18 @@ it.each([
     step: { refusalRationale: noMatchRationale },
     absent: "refusalInstruction",
   },
+  // A registry refusal the minter was told it may fix names its fix too.
+  {
+    refusal: new MintFailure({
+      code: "PublicationUnavailable",
+      reason: "registry_conflict",
+      registryIssue: "contract_breaking",
+      registryProblem: "status (output widened)",
+    }),
+    reason: "registry_conflict",
+    step: { refusalInstruction: expect.stringContaining("Restore each named output") },
+    absent: "refusalRationale",
+  },
   // A host refusal listed beside Guardian's denial of the same submission names its fix too.
   {
     refusal: new MintFailure({ ...guardianDenialArgs, alsoRefused: [variantsUnsupported] }),
@@ -1338,6 +1350,31 @@ it.each([
         call("report_blocked", { reason: "host_refused", explanation }, "report"),
       ][index] ?? prose("Stopping."),
     { publish: () => Effect.fail(publicationRefused(refusal)) },
+  );
+  expect(await f.run()).toMatchObject({ blocked: { reason: "host_refused", explanation } });
+});
+
+// A tool another publication advanced is a fixable registry refusal whose instruction offers ending
+// the build, so it names no step: the report is taken at once.
+it("takes host_refused at once after a registry refusal that offers ending the build", async () => {
+  const explanation = "A Pomerado check refused publication, so no tool was published.";
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", pureExample),
+        finishAs(0),
+        call("report_blocked", { reason: "host_refused", explanation }, "report"),
+      ][index] ?? prose("Stopping."),
+    {
+      publish: () =>
+        Effect.fail(
+          new MintFailure({
+            code: "PublicationUnavailable",
+            reason: "registry_conflict",
+            registryIssue: "generation_moved",
+          }),
+        ),
+    },
   );
   expect(await f.run()).toMatchObject({ blocked: { reason: "host_refused", explanation } });
 });
