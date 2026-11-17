@@ -295,13 +295,13 @@ return match;`);
 // The address is typed with its unit split off; the short list, whose rows leave out the state and
 // ZIP, is asked about, listing no control that lists more results; once the tool opens the whole
 // addresses, the row that leaves out the caller's suite is taken, the suite for the unit field, and
-// clicked. The pinned PlaceMatch still takes the short row: this turns red once a commit asks, and
-// the bump makes it a plain test and deletes the next one, today's answer.
+// clicked.
 test("pickerTypeAddress types the address, and the whole row is taken once the tool opens the site's whole addresses", async ({ page }) => {
-  test.fail();
   await serve(page, shortPlaces);
   const field = 'page.getByRole("combobox", { name: "Pickup" })';
   const address = "1 Example Building, Suite 5, Example City, CA 94000";
+  const typed = await call(page, `return await pickerTypeAddress(${field}, ${JSON.stringify(address)}, fast);`);
+  expect(typed).toEqual({ result: { query: "1 Example Building, Example City, CA 94000" } });
   const more = 'page.getByRole("option", { name: /^See more results/ })';
   const short = await pickAddressRow(page, field, address, { before: `await ${more}.waitFor();` });
   expect(short.match).toEqual({
@@ -315,22 +315,6 @@ test("pickerTypeAddress types the address, and the whole row is taken once the t
   const whole = await pickAddressRow(page, field, address, { before: `await ${more}.click(); await ${more}.waitFor({ state: "detached" });` });
   expect(whole.clicked).toEqual({ picked: true, label: "Example Building, 1 Example Bldg, Example City, CA 94000, US", unit: "Suite 5" });
   expect(await submitted(page)).toEqual({ pickup: "w1" });
-});
-
-// Today's answer at the pinned PlaceMatch: the short row is taken. Delete at the bump.
-test("pickerTypeAddress types the address, pickerAddressRows reads the rows, and pickerMatchAddress clicks the row matchAddressRows took", async ({ page }) => {
-  await serve(page, shortPlaces);
-  const field = 'page.getByRole("combobox", { name: "Pickup" })';
-  const address = "1 Example Building, Suite 5, Example City, CA 94000";
-  const typed = await call(page, `return await pickerTypeAddress(${field}, ${JSON.stringify(address)}, fast);`);
-  expect(typed).toEqual({ result: { query: "1 Example Building, Example City, CA 94000" } });
-  const picked = await pickAddressRow(page, field, address, { before: 'await page.getByRole("option", { name: /^See more results/ }).waitFor();' });
-  expect(picked).toEqual({
-    rows: ["Example Building, 1 Example Bldg, Example City", "Example Building Garage, 5 Sample St, Example City", "See more results for 1 Example Building, Example City, CA 94000"],
-    match: { picked: true, index: 0, label: "Example Building, 1 Example Bldg, Example City", unit: "Suite 5", wanted: address },
-    clicked: { picked: true, label: "Example Building, 1 Example Bldg, Example City", unit: "Suite 5" },
-  });
-  expect(await submitted(page)).toEqual({ pickup: "s1" });
 });
 
 // A row the list no longer shows, once the page changed it, is no row to click: the refusal quotes

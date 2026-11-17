@@ -161,8 +161,7 @@ describe("resolveAddress", () => {
     expect(await resolveAddress("1 Example St, Exampleton, Illinois 60000", () => choices.slice(0, 2).concat("1 Example St, Exampleton, IL, USA"))).toMatchObject({
       label: "1 Example St, Exampleton, IL, USA",
     });
-    // A ZIP alone is never taken for a house number elsewhere. Taking the ZIP's own row is an
-    // expected failure below.
+    // A ZIP alone is never taken for a house number elsewhere; its own row is taken (below).
     expect(await resolveAddress("60000", () => ["60000 Example Rd, Sampleville, NY, USA"])).toMatchObject({ picked: false });
   });
 
@@ -469,7 +468,7 @@ describe("resolveAddress", () => {
       "12 Example St, Exampleton, IL, USA",
     );
     expect(await houses("12A Example St, Exampleton, IL", ["12A Example St, Exampleton, IL, USA"])).toBe("12A Example St, Exampleton, IL, USA");
-    // The same letter written apart ("12 A") is an expected failure below.
+    // The same letter written apart ("12 A") is taken (below).
     expect(await houses("2nd Floor, 12 Example St, Exampleton, IL", ["12 Example St, Exampleton, IL, USA"])).toBe("12 Example St, Exampleton, IL, USA");
     expect(await houses("1 Example St, Exampleton, IL", ["100 Example St Apt 1, Exampleton, IL, USA"])).toBe(false);
     // A place's name before its address may open with a number of its own; one that opens with the
@@ -682,9 +681,9 @@ describe("rows in another place", () => {
   });
 });
 
-// Answers the pinned PlaceMatch still gives otherwise. Each turns red once a PlaceMatch commit gives
-// the answer here, and the bump makes it a plain case of the tests above.
-describe("answers the pinned PlaceMatch still gives otherwise", () => {
+// Same-name pins and venues, place rows that leave out part of the caller's address, and shapes
+// the earlier picker took.
+describe("answers same-name pins, short rows and the earlier picker's shapes", () => {
   const tower = "Example Tower, 5 Sample Ave, Exampleton, NY 10001, USA";
   const towerPin = "Example Tower, Exampleton, NY, USA";
   const nyCenter = "Jane Q. Example Convention Center, 429 Sample Ave, New York, NY 10001, USA";
@@ -694,68 +693,56 @@ describe("answers the pinned PlaceMatch still gives otherwise", () => {
   const zipPin = "Example Tower, Exampleton, CA, USA";
   const venues = new Set([tower, nyCenter, zipTower]);
   /** One case: the caller's address and the site's rows, in a read or a write. */
-  interface Pending {
+  interface Case {
     readonly name: string;
     readonly address: string;
     readonly rows: readonly string[];
     readonly read: boolean;
-    /** What the pinned commit answers: the row taken, or the refusal's reason. */
-    readonly today: string;
-    /** What a PlaceMatch fix should answer. */
-    readonly intended: string;
+    /** The row taken, or the refusal's reason. */
+    readonly answer: string;
   }
   const ask = "option_unclear";
-  const cases: readonly Pending[] = [
-    // Shapes taken before PlaceMatch, still to be taken: a dotted direction, a ZIP alone or with
+  const cases: readonly Case[] = [
+    // Shapes the earlier picker took, still taken: a dotted direction, a ZIP alone or with
     // its four more digits, Fifth for 5th with a unit on the street's line, and a house number's
     // letter written apart.
-    { name: "a dotted direction", address: "1600 Example Ave N.W., Exampleton, DC", rows: ["1600 Example Ave NW Exampleton, DC, USA"], read: false, today: ask, intended: "1600 Example Ave NW Exampleton, DC, USA" },
-    { name: "a ZIP alone", address: "60000", rows: ["60000 Example Rd, Sampleville, NY, USA", "Exampleton, IL 60000, USA"], read: false, today: ask, intended: "Exampleton, IL 60000, USA" },
-    { name: "a ZIP+4 alone", address: "60000-1234", rows: ["Exampleton, IL 60000, USA"], read: false, today: ask, intended: "Exampleton, IL 60000, USA" },
-    { name: "Fifth for 5th with a unit", address: "350 Fifth Ave Apt 3, Exampleton, NY", rows: ["350 5th Ave, Exampleton, NY, USA"], read: false, today: ask, intended: "350 5th Ave, Exampleton, NY, USA" },
-    { name: "a house number's letter written apart", address: "12A Example St, Exampleton, IL", rows: ["12 A Example St, Exampleton, IL, USA"], read: false, today: ask, intended: "12 A Example St, Exampleton, IL, USA" },
+    { name: "a dotted direction", address: "1600 Example Ave N.W., Exampleton, DC", rows: ["1600 Example Ave NW Exampleton, DC, USA"], read: false, answer: "1600 Example Ave NW Exampleton, DC, USA" },
+    { name: "a ZIP alone", address: "60000", rows: ["60000 Example Rd, Sampleville, NY, USA", "Exampleton, IL 60000, USA"], read: false, answer: "Exampleton, IL 60000, USA" },
+    { name: "a ZIP+4 alone", address: "60000-1234", rows: ["Exampleton, IL 60000, USA"], read: false, answer: "Exampleton, IL 60000, USA" },
+    { name: "Fifth for 5th with a unit", address: "350 Fifth Ave Apt 3, Exampleton, NY", rows: ["350 5th Ave, Exampleton, NY, USA"], read: false, answer: "350 5th Ave, Exampleton, NY, USA" },
+    { name: "a house number's letter written apart", address: "12A Example St, Exampleton, IL", rows: ["12 A Example St, Exampleton, IL, USA"], read: false, answer: "12 A Example St, Exampleton, IL, USA" },
     // A place's row that leaves out the caller's state and ZIP, as a ride site's short list does: asked
     // about, so the tool opens the site's whole addresses.
-    { name: "a place's row that leaves out state and ZIP", address: "1 Example Building, Suite 5, Example City, CA 94000", rows: ["Example Building, 1 Example Bldg, Example City", "Example Building Garage, 5 Sample St, Example City", "See more results for 1 Example Building, Example City, CA 94000"], read: false, today: "Example Building, 1 Example Bldg, Example City", intended: ask },
+    { name: "a place's row that leaves out state and ZIP", address: "1 Example Building, Suite 5, Example City, CA 94000", rows: ["Example Building, 1 Example Bldg, Example City", "Example Building Garage, 5 Sample St, Example City", "See more results for 1 Example Building, Example City, CA 94000"], read: false, answer: ask },
     // A row that leaves out only the caller's state, its town run on into its street.
-    { name: "a row whose town runs on into its street", address: "1 Example St, Exampleton, IL", rows: ["1 Example St Exampleton"], read: false, today: ask, intended: "1 Example St Exampleton" },
+    { name: "a row whose town runs on into its street", address: "1 Example St, Exampleton, IL", rows: ["1 Example St Exampleton"], read: false, answer: "1 Example St Exampleton" },
     // Rows asked about: one that leaves out the caller's state and ZIP, one with no state beside the
     // same address in another state, and a misspelled town.
-    { name: "a row that leaves out state and ZIP", address: "1 Example St, Exampleton, IL 60000", rows: ["1 Example St, Exampleton"], read: false, today: "1 Example St, Exampleton", intended: ask },
-    { name: "a row with no state beside one in another state", address: "1 Example St, Exampleton, IL", rows: ["1 Example St, Exampleton, WI", "1 Example St, Exampleton"], read: false, today: "1 Example St, Exampleton", intended: ask },
-    { name: "a misspelled town", address: "1 Example St, Exampletn IL", rows: ["1 Example St, Exampleton, NY, USA", "1 Example St, Exampleton, IL, USA"], read: false, today: "1 Example St, Exampleton, IL, USA", intended: ask },
+    { name: "a row that leaves out state and ZIP", address: "1 Example St, Exampleton, IL 60000", rows: ["1 Example St, Exampleton"], read: false, answer: ask },
+    { name: "a row with no state beside one in another state", address: "1 Example St, Exampleton, IL", rows: ["1 Example St, Exampleton, WI", "1 Example St, Exampleton"], read: false, answer: ask },
+    { name: "a misspelled town", address: "1 Example St, Exampletn IL", rows: ["1 Example St, Exampleton, NY, USA", "1 Example St, Exampleton, IL, USA"], read: false, answer: ask },
     // A same-name pin beside the categorized venue: a read in the caller's area takes the venue,
     // a read with no area asks, and a write always asks.
-    { name: "a read in the area, the pin first", address: "Example Tower, Exampleton, NY", rows: [towerPin, tower], read: true, today: towerPin, intended: tower },
-    { name: "a read with no area, the pin first", address: "Example Tower", rows: [towerPin, tower], read: true, today: towerPin, intended: ask },
-    { name: "a read with no area, the venue first", address: "Example Tower", rows: [tower, towerPin], read: true, today: tower, intended: ask },
-    { name: "a write in the area, the pin first", address: "Example Tower, Exampleton, NY", rows: [towerPin, tower], read: false, today: towerPin, intended: ask },
-    { name: "a write in the area, the venue first", address: "Example Tower, Exampleton, NY", rows: [tower, towerPin], read: false, today: tower, intended: ask },
-    { name: "a write with no area, the pin first", address: "Example Tower", rows: [towerPin, tower], read: false, today: towerPin, intended: ask },
-    { name: "a write with no area, the venue first", address: "Example Tower", rows: [tower, towerPin], read: false, today: tower, intended: ask },
+    { name: "a read in the area, the pin first", address: "Example Tower, Exampleton, NY", rows: [towerPin, tower], read: true, answer: tower },
+    { name: "a read with no area, the pin first", address: "Example Tower", rows: [towerPin, tower], read: true, answer: ask },
+    { name: "a read with no area, the venue first", address: "Example Tower", rows: [tower, towerPin], read: true, answer: ask },
+    { name: "a write in the area, the pin first", address: "Example Tower, Exampleton, NY", rows: [towerPin, tower], read: false, answer: ask },
+    { name: "a write in the area, the venue first", address: "Example Tower, Exampleton, NY", rows: [tower, towerPin], read: false, answer: ask },
+    { name: "a write with no area, the pin first", address: "Example Tower", rows: [towerPin, tower], read: false, answer: ask },
+    { name: "a write with no area, the venue first", address: "Example Tower", rows: [tower, towerPin], read: false, answer: ask },
     // A town named like its state: a read in the caller's area takes the venue.
-    { name: "a read in a town named like its state, the pin first", address: "Example Center, New York, NY", rows: [nyPin, nyCenter], read: true, today: ask, intended: nyCenter },
-    { name: "a read in a town named like its state, the venue first", address: "Example Center, New York, NY", rows: [nyCenter, nyPin], read: true, today: ask, intended: nyCenter },
+    { name: "a read in a town named like its state, the pin first", address: "Example Center, New York, NY", rows: [nyPin, nyCenter], read: true, answer: nyCenter },
+    { name: "a read in a town named like its state, the venue first", address: "Example Center, New York, NY", rows: [nyCenter, nyPin], read: true, answer: nyCenter },
     // The same with the pin in another town.
-    { name: "a read in a town named like its state, the pin in another town first", address: "Example Center, New York, NY", rows: [otherPin, nyCenter], read: true, today: ask, intended: nyCenter },
-    { name: "a read in a town named like its state, the pin in another town last", address: "Example Center, New York, NY", rows: [nyCenter, otherPin], read: true, today: ask, intended: nyCenter },
+    { name: "a read in a town named like its state, the pin in another town first", address: "Example Center, New York, NY", rows: [otherPin, nyCenter], read: true, answer: nyCenter },
+    { name: "a read in a town named like its state, the pin in another town last", address: "Example Center, New York, NY", rows: [nyCenter, otherPin], read: true, answer: nyCenter },
     // A ZIP alone as the area: a read takes the venue in that ZIP.
-    { name: "a read with a ZIP as the area, the pin first", address: "Example Tower, 94133", rows: [zipPin, zipTower], read: true, today: ask, intended: zipTower },
-    { name: "a read with a ZIP as the area, the venue first", address: "Example Tower, 94133", rows: [zipTower, zipPin], read: true, today: ask, intended: zipTower },
+    { name: "a read with a ZIP as the area, the pin first", address: "Example Tower, 94133", rows: [zipPin, zipTower], read: true, answer: zipTower },
+    { name: "a read with a ZIP as the area, the venue first", address: "Example Tower, 94133", rows: [zipTower, zipPin], read: true, answer: zipTower },
   ];
-  const answer = async ({ address, rows, read }: Pending) => {
+  test.each(cases)("$name", async ({ address, rows, read, answer }) => {
     const outcome = await resolveAddress(address, () => rows, String, { categorized: (row) => venues.has(row), read });
-    return outcome.picked ? outcome.label : outcome.reason;
-  };
-  // Today's answer, so a case that throws or that no fix reaches never passes unseen. Delete each
-  // with its expected failure below once a pin gives the intended answer.
-  test.each(cases)("today: $name", async (pending) => {
-    expect(await answer(pending)).toBe(pending.today);
-  });
-  // Each turns red once a PlaceMatch commit gives the intended answer, and the bump makes it a
-  // plain case of the tests above.
-  test.fails.each(cases)("intended: $name", async (pending) => {
-    expect(await answer(pending)).toBe(pending.intended);
+    expect(outcome.picked ? outcome.label : outcome.reason).toBe(answer);
   });
 });
 
