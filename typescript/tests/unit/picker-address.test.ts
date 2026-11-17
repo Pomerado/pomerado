@@ -61,6 +61,13 @@ describe("resolveAddress", () => {
     const named = ["Example Park, Exampleton", "Example Park, Exampleton, CA, USA", place];
     expect(await resolveAddress(asked, () => named)).toMatchObject({ picked: true, label: named[1] });
     expect(await resolveAddress(asked, () => [named[0] ?? "", place, named[1] ?? ""])).toMatchObject({ picked: true, label: place });
+    // With no categories from the site, a same-name map pin beside the place's row with its street
+    // is the same place: a write takes the site's first, in either order.
+    const pin = "Example Park, Exampleton, CA, USA";
+    for (const rows of [[pin, place], [place, pin]])
+      expect(await resolveAddress(asked, () => rows)).toMatchObject({ picked: true, label: rows[0] });
+    for (const rows of [[pin, place], [place, pin]])
+      expect(await matchAddressRows(asked, rows, { country: "US" })).toMatchObject({ picked: true, index: 0, label: rows[0] });
     // A place whose name holds a numbered street is taken by that name.
     const market = "5th Street Market, 40 Sample St, Exampleton, CA";
     expect(await resolveAddress("5th Street Market, Exampleton, CA", () => ["5th Street Market Garage, Exampleton, CA", market])).toMatchObject({
