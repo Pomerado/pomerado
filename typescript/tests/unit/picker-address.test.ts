@@ -471,10 +471,10 @@ describe("resolveAddress", () => {
     // The same letter written apart ("12 A") is taken (below).
     expect(await houses("2nd Floor, 12 Example St, Exampleton, IL", ["12 Example St, Exampleton, IL, USA"])).toBe("12 Example St, Exampleton, IL, USA");
     expect(await houses("1 Example St, Exampleton, IL", ["100 Example St Apt 1, Exampleton, IL, USA"])).toBe(false);
-    // A place's name before its address may open with a number of its own; one that opens with the
-    // caller's house number is asked about.
-    expect(await houses("12 Example St, Exampleton, IL", ["24 Hour Sample, 12 Example St, Exampleton, IL, USA"])).toBe("24 Hour Sample, 12 Example St, Exampleton, IL, USA");
-    expect(await houses("12 Example St, Exampleton, IL", ["12 Hour Sample, 12 Example St, Exampleton, IL, USA"])).toBe(false);
+    // A place's name before its address may open with a number of its own, the caller's house number
+    // included.
+    for (const name of ["24 Hour Sample", "12 Hour Sample"])
+      expect(await houses("12 Example St, Exampleton, IL", [`${name}, 12 Example St, Exampleton, IL, USA`])).toBe(`${name}, 12 Example St, Exampleton, IL, USA`);
     expect(await houses("12 Example St, Exampleton, IL", ["2 mi, Sample Place, 15 Example St, Exampleton, IL, USA"])).toBe(false);
     // A later part opening with the caller's house number, such as a distance or a town, is not the street.
     const later = "12 Example St, Exampleton, IL, USA, 12 min";
@@ -489,15 +489,17 @@ describe("resolveAddress", () => {
       ["12 Example St, Apt 2, Exampleton, IL", "Sample Cafe, 12 Example St, Exampleton, IL, USA, 2 mi", "Apt 2"],
       ["12 Example St, Apt 2, Exampleton, IL", "Sample Cafe, 12 Example St, Exampleton, IL, USA, 1.2 mi", "Apt 2"],
       ["12 Example St, Suite 39, Exampleton, IL", "Pier 39, 12 Example St, Exampleton, IL, USA", "Suite 39"],
-    ])
-      expect(await resolveAddress(address ?? "", () => [shown ?? ""])).toMatchObject({ picked: true, label: shown, unit });
-    // A place's name opening with the caller's house number, or a distance before the place, is
-    // asked about, with the unit still split off.
-    for (const [address, shown, unit] of [
+      // A place's name opening with the caller's house number, and a distance before the place.
       ["5 Sample Blvd, Suite 5, Example City, IL", "5 Sample Bar, 5 Sample Blvd, Example City, IL, USA", "Suite 5"],
       ["12 Example St, Apt 2, Exampleton, IL", "0.2 mi, Sample Cafe, 12 Example St, Exampleton, IL, USA", "Apt 2"],
     ])
-      expect(await resolveAddress(address ?? "", () => [shown ?? ""])).toMatchObject({ picked: false, reason: "option_unclear", unit });
+      expect(await resolveAddress(address ?? "", () => [shown ?? ""])).toMatchObject({ picked: true, label: shown, unit });
+    // A named place after a distance, with no street, is asked about, the unit still split off.
+    expect(await resolveAddress("12 Example St, Apt 2, Exampleton, IL", () => ["0.2 mi, Sample Cafe, Exampleton, IL, USA"])).toMatchObject({
+      picked: false,
+      reason: "option_unclear",
+      unit: "Apt 2",
+    });
   });
 
   test("refuses when no form brings a suggestion with the caller's house number and street name, asking about the street with no number", async () => {
