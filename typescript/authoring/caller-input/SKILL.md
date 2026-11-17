@@ -132,8 +132,8 @@ separately are both applied as given, even when they're far apart.
    take the first and return the one it used, or a read's looser match, returning the option it
    used, but never for an address, pickup or drop-off value (core skill), and never report a
    refused or unapplied value in the output instead of throwing, such as a `sort_applied: false`
-   flag or a
-   "best-effort" or "lookup-only" description. The cases above that return results with what
+   flag or a "best-effort" or "lookup-only" description. The cases above that return results
+   with what
    applied, and a declared refusal, are the only exceptions.
 
 ## Ask the caller during a run

@@ -119,7 +119,8 @@ lacks, one a write matches only loosely (`option_unclear`), or several options t
 comes back as `{ picked: false, reason, available, matches }`: decode it with `PickOutcome` and
 throw `pickRefusal(outcome, field)`, which lists options that tie as `available`, or ask the
 caller to choose among `matches`, as the core skill says for `option_unclear`. In a tool that takes the first of options that tie instead (each tool decides,
-core skill), pass `tie: "first"`, so the picker takes the first of them in the site's order and
+but never for an address, pickup or drop-off value, core skill), pass `tie: "first"`, so the
+picker takes the first of them in the site's order and
 returns the one it used, and return that option's label in the tool's output. In a read whose
 typed field is the site's own search, when `pickValue` returns `option_missing` with an empty
 `available`, prefer a person's fallback: type the caller's own text into the field again, then

@@ -250,9 +250,9 @@ exception: it is optional unless the task can't run without it (below).
   them with `rankChoices` and `spellingsOf` too, never with matching of its own: it returns the
   best matches, and with none, the site's rows in the site's order as candidates, saying so.
   With `rankChoices` on options or rows read as data, as in an HTTP version, take the clean
-  ranks from `cleanRanks` in `pomerado/runtime` and follow `pickValue`'s rule: a read takes the
-  best match at any rank and returns the option it used, and a write asks the caller about a
-  looser one.
+  ranks from `cleanRanks` in `pomerado/runtime` and follow `pickValue`'s rule, except for an
+  address, pickup or drop-off value (below): a read takes the best match at any rank and returns
+  the option it used, and a write asks the caller about a looser one.
   `pickValue` types the caller's value into the site's own search,
   reads every suggestion, tries the usual other forms of the value's words, such as 5th
   and Fifth, St and Street or Saint, or a state's code and name, and picks the best match. A
@@ -263,10 +263,10 @@ exception: it is optional unless the task can't run without it (below).
   `place` needs options read with their `lines`. A match on an option's
   first line alone is a candidate, never a pick, when an option a typeahead lists before it
   holds the value's text before its first comma, as whole words, in its first line, and the
-  value's later comma parts in its text. In a read, a looser best match for anything but an
-  address, pickup or drop-off value, such as a name with words the value lacks, or the site's
-  first result that shares a word with the value, is
-  picked with `loose: true`: return the option it used, as the site labels it. In a write,
+  value's later comma parts in its text. In a read, a looser best match, such as a name with
+  words the value lacks, or the site's first result that shares a word with the value, is
+  picked with `loose: true`, except for an address, pickup or drop-off value (below): return the
+  option it used, as the site labels it. In a write,
   `pickValue` returns it as `option_unclear`, with the site's options, each by its full text:
   before the first commit mark, ask the caller with a declared choice question with
   `allowOther`, offering `pickChoices(outcome)`, then pick the answer with `query` set to the
@@ -276,10 +276,12 @@ exception: it is optional unless the task can't run without it (below).
   `InvalidInput` with `field` and `available`, the entries the site showed, even when the site
   offered only one. With one, use it. With several, decide per tool, except for an address,
   pickup or drop-off value, which only the address helpers below choose: take the first in
-  the site's own order and return the one it used, as the site labels it, or list those matches as the site
-  labels them for the caller to choose one, each selecting exactly one, with a declared choice
-  question (.agents/caller-input/SKILL.md) or `pickRefusal`, which lists them as `available`.
-  Resolve a typed address through the site's suggestions in two calls: in one, `pickerTypeAddress`,
+  the site's own order and return the one it used, as the site labels it, or list those
+  matches as the site labels them for the caller to choose one, each selecting exactly one,
+  with a declared choice question (.agents/caller-input/SKILL.md) or `pickRefusal`, which lists
+  them as `available`.
+  Resolve a typed address, pickup or drop-off value through the site's suggestions in two calls:
+  in one, `pickerTypeAddress`,
   then, once the list shows every suggestion the site offers for it, `pickerAddressRows` from
   `pickerCode`, returning its answer; in the script, `matchAddressRows(address, answer)` from
   `pomerado/runtime`; in the next call, `pickerMatchAddress` with that match and the same options,
