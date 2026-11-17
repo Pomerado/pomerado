@@ -133,7 +133,7 @@ const patchNotApplied = {
   status: "not_run",
   effect: "not_sent",
   instruction:
-    "Not run, nothing was sent: a step runs only once every operation of its patch applies. Each operation in patch applied except the last, which did not; any after it were not tried.",
+    "Not run, nothing was sent: a step runs only once every operation of its patch applies. Each operation in patch applied except the last, which failed; any after it were not tried.",
 };
 
 /**
@@ -876,6 +876,15 @@ const openAIMinter = (
                     },
                     run,
                   );
+            /** Workspace edits tried so far, native or a patch's, applied or not. */
+            let edits = 0;
+            /**
+             * The operations execute's last patch applied, and `edits` once it had. The next patch
+             * that starts with them, with no edit since, finds them applied.
+             */
+            let applied:
+              | { readonly operations: readonly string[]; readonly edits: number }
+              | undefined;
             /** A workspace edit's awaited call and result records, as apply_patch's operation. */
             const recordEdit = <A>(
               callId: string | undefined,
@@ -896,6 +905,7 @@ const openAIMinter = (
             // still gets awaited call and result records around the host editor.
             const traceEditor = (editor: Editor): Editor => {
               const record = <A>(operation: ApplyPatchOperation, apply: () => Promise<A>) => {
+                edits += 1;
                 const callId = diagnostics?.takeNativeCall();
                 const run = () => recordEdit(callId, operation, apply);
                 if (recovery === undefined) return run();
@@ -1106,14 +1116,25 @@ const openAIMinter = (
              * Applies execute's patch through the editor the native apply_patch tool is built
              * from, each operation recorded as a native edit is, under the execute's call. At the
              * first operation that does not apply it returns the step not run; the ones before it
-             * stay applied, as separate apply_patch calls would.
+             * stay applied, as separate apply_patch calls would. A step sent again with its patch,
+             * such as after an unavailable review or the owner's yes, finds the operations the last
+             * patch applied already applied when no edit came since, and they are not applied again.
              */
             const applyPatch = async (patch: unknown, callId: string | undefined) => {
-              const operations = await turn.runTool(Schema.decodeUnknown(Patch)(patch));
+              const decoded = Schema.decodeUnknownEither(Patch)(patch);
+              if (decoded._tag === "Left") throw new MintFailure({ code: "InvalidRequest" });
+              const operations = decoded.right;
               const editor = turn.session.createEditor?.();
               if (editor === undefined) throw new MintFailure({ code: "Unavailable" });
-              const tried: { path: string; status: string; output?: string }[] = [];
-              for (const operation of operations) {
+              const keys = operations.map((operation) => JSON.stringify(operation));
+              const done = applied?.edits === edits ? applied.operations : [];
+              let kept = 0;
+              while (kept < keys.length && done[kept] === keys[kept]) kept += 1;
+              const tried: { path: string; status: string; output?: string }[] = operations
+                .slice(0, kept)
+                .map((operation) => ({ path: operation.path, status: "completed" }));
+              for (const operation of operations.slice(kept)) {
+                edits += 1;
                 const result = await recordEdit(callId, operation, () =>
                   operation.type === "delete_file"
                     ? editor.deleteFile(operation)
@@ -1126,9 +1147,12 @@ const openAIMinter = (
                   status: result?.status ?? "completed",
                   ...(result?.output === undefined ? {} : { output: result.output }),
                 });
-                if (result?.status === "failed")
+                if (result?.status === "failed") {
+                  applied = { operations: keys.slice(0, tried.length - 1), edits };
                   return JSON.stringify({ ...patchNotApplied, patch: tried });
+                }
               }
+              applied = { operations: keys, edits };
               return undefined;
             };
             // Every build sends the same descriptions; what differs per build is in its tools
@@ -1146,22 +1170,20 @@ const openAIMinter = (
               parameters: executeSchema.parameters,
               execute: (input: unknown, context: unknown, details: ToolCallDetails) => {
                 const restored = executeSchema.restore(input);
-                // Only an autofill site takes a signInStep; the harness decodes the request itself.
-                if (
-                  !turn.autofillSignIn &&
-                  typeof restored === "object" &&
-                  restored !== null &&
-                  "signInStep" in restored
-                )
-                  return dispatch("execute", input, details, undefined, () =>
-                    Promise.resolve(managedSignInStep),
-                  );
-                if (typeof restored !== "object" || restored === null || !("patch" in restored))
+                if (typeof restored !== "object" || restored === null)
                   return executeTool.execute(restored, context, details);
                 // The host gets the request without its patch, and reviews the files it left.
-                const { patch, ...request } = restored;
+                const { patch, ...request }: { readonly patch?: unknown } = restored;
+                // Only an autofill site takes a signInStep; the harness decodes the request itself.
+                const run = () =>
+                  !turn.autofillSignIn && "signInStep" in request
+                    ? dispatch("execute", input, details, undefined, () =>
+                        Promise.resolve(managedSignInStep),
+                      )
+                    : executeTool.execute(request, context, details);
+                if (patch === undefined) return run();
                 return applyPatch(patch, details?.toolCall?.callId).then(
-                  (refused) => refused ?? executeTool.execute(request, context, details),
+                  (refused) => refused ?? run(),
                 );
               },
             });
@@ -1356,8 +1378,8 @@ const openAIMinter = (
               // summary is recorded per response. Reasoning from earlier turns stays rendered
               // after a continuation or host notice, so the cached prompt is never rewritten
               // from the first earlier reasoning item; the applied context is recorded per call.
-              // A build turn may send a step's edit and the execute that runs it in one response;
-              // the effect question turn asks one question.
+              // A build turn may send several calls in one response; the effect question turn asks
+              // one question.
               // The static prefix carries its own 12-hour breakpoint (withCachedPrefix); the rest of
               // the conversation is cached at the implicit breakpoint.
               modelSettings: withPromptCache(

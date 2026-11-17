@@ -202,7 +202,7 @@ it("starts every job's request with the same tools and static prefix, ending at 
   expect(toolsMessage(other).hostTools.offered).toContain("captcha_state");
 });
 
-it("refuses a tool the build does not offer and a signInStep on a managed sign-in, running nothing", async () => {
+it("refuses a tool the build does not offer and a signInStep on a managed sign-in, running nothing but the step's patch", async () => {
   const wire = wireMinter(
     (index) =>
       [
@@ -216,6 +216,13 @@ it("refuses a tool the build does not offer and a signInStep on a managed sign-i
               target: "liveBrowser",
               loginUrl: "https://example.com/login",
               signInStep: { signedIn: { selector: "role=link[name=\"Sign out\"]", urlPath: null, openPath: null } },
+              patch: [
+                {
+                  type: "update_file",
+                  path: "src/tool.ts",
+                  diff: "@@\n-export default {};\n+export default { signedIn: true };",
+                },
+              ],
             },
             "sign_in",
           ),
@@ -241,6 +248,10 @@ it("refuses a tool the build does not offer and a signInStep on a managed sign-i
     effect: "not_sent",
   });
   expect(f.counts().executed).toBe(0);
+  // A refused step keeps its patch, as after a separate edit.
+  expect(await f.workspace.readFile!({ path: "src/tool.ts" })).toBe(
+    "export default { signedIn: true };",
+  );
 });
 
 it("runs an execute call sent in strict form, with null for each absent field", async () => {
