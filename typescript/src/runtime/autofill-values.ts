@@ -43,6 +43,15 @@ export { heldField } from "./login-values.js";
 
 type CorrectionField = AnsweredLoginField | "recovery_code";
 
+/** Why the owner is asked for a field again after the site refused the value sent. */
+const refusedValueNotice = "The site did not accept the last value, so it needs a correction.";
+/**
+ * Why the owner is asked again, at once, when their correction repeats a value the site already
+ * refused: it was not sent, so the site did not refuse it a second time.
+ */
+const repeatedValueNotice =
+  "That's the value the site already refused, so it wasn't sent again. Enter a different one.";
+
 /**
  * A saved private identifier, date of birth or ZIP the site has not refused: the owner's edit of
  * the saved login. A refused saved value is never read again.
@@ -373,11 +382,11 @@ export const makeAutofillValues = <
       // Do not infer a secondary email from the primary after rejection.
       if (!login.correctionRequests) return new Unanswered("correction_history_unavailable");
       const offerSave = yield* login.secondaryCorrectionSave ?? Effect.succeed(false);
-      return yield* correctedValue(login, slot, (triesLeft) =>
+      return yield* correctedValue(login, slot, (triesLeft, repeated) =>
         ask(
           login.ask,
           requested,
-          `The site did not accept the last value, so it needs a correction. ${correctionTriesLeft(triesLeft)}`,
+          `${repeated ? repeatedValueNotice : refusedValueNotice} ${correctionTriesLeft(triesLeft)}`,
           offerSave,
         ),
       );

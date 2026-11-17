@@ -159,6 +159,27 @@ it("bounds rejected secondary answers without filling the rejected value", async
   expect(correctionRequests.phone).toBe(2);
 });
 
+it("tells the owner a correction repeats the value the site refused, which was not sent again", async () => {
+  const { autofill } = values();
+  const refused = "+1 415 555 0142";
+  const owner = scripted([refused, "+1 415 555 0199"], "text");
+  const filled = await Effect.runPromise(
+    autofill.valuesFor(phoneStep, {
+      ...login({ username: "primary-owner", phone: refused }, owner.ask),
+      rejectedValues: { phone: new Set([refused]) },
+      correctionRequests: { phone: 0 },
+    }),
+  );
+  expect(filled).toMatchObject({ values: ["+1 415 555 0199"] });
+  const [first, second] = owner.requests.map((request) => request.questions[0]?.prompt);
+  expect(first).toMatch(/^The site did not accept the last value, so it needs a correction\./u);
+  // Asked again at once, since nothing went to the site: the question says why, and that the
+  // site did not refuse it a second time.
+  expect(second).toMatch(
+    /^That's the value the site already refused, so it wasn't sent again\. Enter a different one\. This is your last try\./u,
+  );
+});
+
 it("fills a username slot with the stored identifier, even one that looks like a phone number", async () => {
   const { autofill } = values();
   const filled = await Effect.runPromise(
