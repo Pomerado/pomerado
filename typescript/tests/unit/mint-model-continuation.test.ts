@@ -2474,44 +2474,78 @@ it("runs a step after its edits when an earlier call of the response did not par
   ]);
 });
 
+/** A host's observer, as the SDK drives one: it names a native edit's call just before the edit
+ * runs, and `traced` gets each tool record in order. */
+const hostObserver =
+  (
+    traced: { readonly name: string; readonly callId: string; readonly arguments: string }[] = [],
+  ): ModelObserverFactory =>
+  () => {
+    let announced: string | undefined;
+    return {
+      attach: (runner) => {
+        runner.on("agent_tool_start", (_context, _agent, _tool, details) => {
+          if (details.toolCall.type === "apply_patch_call") announced = details.toolCall.callId;
+        });
+      },
+      tool: (call, invoke) => {
+        traced.push({ name: call.name, callId: call.callId ?? "", arguments: call.arguments });
+        return invoke();
+      },
+      provider: (provider) => provider,
+      started: () => undefined,
+      skillsInstalled: () => undefined,
+      segment: () => undefined,
+      completed: () => undefined,
+      failed: () => undefined,
+      takeNativeCall: () => {
+        const callId = announced;
+        announced = undefined;
+        return callId;
+      },
+      durabilityFailure: () => undefined,
+      terminal: () => ({
+        phase: "terminal",
+        timing: {
+          phase: "terminal",
+          sequence: 0,
+          occurredAtUtc: new Date().toISOString(),
+          occurredMonotonicMs: performance.now(),
+          queueMs: 0,
+        },
+        value: {},
+      }),
+      flush: async () => undefined,
+    };
+  };
+
+/** The minter over `responses` in order, each request kept in `requests`, with a host's ports. */
+const scriptedMinter = (
+  responses: readonly ModelResponse[],
+  requests: ModelRequest[],
+  ports: Parameters<typeof makeOpenAIMinter>[3],
+) =>
+  makeOpenAIMinter(
+    {
+      getModel: () => ({
+        getResponse: async (request) => {
+          requests.push(request);
+          return responses[requests.length - 1] ?? prose();
+        },
+        getStreamedResponse: () => {
+          throw new Error("Unused stream");
+        },
+      }),
+    },
+    "medium",
+    {},
+    ports,
+  );
+
 it("gives a host's recovery and observer each call of a response with a write once, in order", async () => {
   let f: Awaited<ReturnType<typeof fixture>> | undefined;
   const review = reviewingSource(() => f!.workspace.readFile!({ path: "src/tool.ts" }));
   const recorded: string[] = [];
-  let announced: string | undefined;
-  // As a host's observer does: the SDK names a native edit's call just before the edit runs.
-  const observerFactory: ModelObserverFactory = () => ({
-    attach: (runner) => {
-      runner.on("agent_tool_start", (_context, _agent, _tool, details) => {
-        if (details.toolCall.type === "apply_patch_call") announced = details.toolCall.callId;
-      });
-    },
-    tool: (_call, invoke) => invoke(),
-    provider: (provider) => provider,
-    started: () => undefined,
-    skillsInstalled: () => undefined,
-    segment: () => undefined,
-    completed: () => undefined,
-    failed: () => undefined,
-    takeNativeCall: () => {
-      const callId = announced;
-      announced = undefined;
-      return callId;
-    },
-    durabilityFailure: () => undefined,
-    terminal: () => ({
-      phase: "terminal",
-      timing: {
-        phase: "terminal",
-        sequence: 0,
-        occurredAtUtc: new Date().toISOString(),
-        occurredMonotonicMs: performance.now(),
-        queueMs: 0,
-      },
-      value: {},
-    }),
-    flush: async () => undefined,
-  });
   // A recovery boundary that records each call before it runs, as a host's does.
   const recoveryFactory: MintRecoveryFactory = () =>
     Effect.succeed({
@@ -2527,22 +2561,10 @@ it("gives a host's recovery and observer each call of a response with a write on
   ];
   const requests: ModelRequest[] = [];
   f = await fixture(() => prose(), {
-    model: makeOpenAIMinter(
-      {
-        getModel: () => ({
-          getResponse: async (request) => {
-            requests.push(request);
-            return responses[requests.length - 1] ?? prose();
-          },
-          getStreamedResponse: () => {
-            throw new Error("Unused stream");
-          },
-        }),
-      },
-      "medium",
-      {},
-      { observerFactory, recoveryFactory },
-    ),
+    model: scriptedMinter(responses, requests, {
+      observerFactory: hostObserver(),
+      recoveryFactory,
+    }),
     reviewAndExecute: review.reviewAndExecute,
     agentRecovery: { save: () => Effect.void },
   });
@@ -2552,6 +2574,285 @@ it("gives a host's recovery and observer each call of a response with a write on
     { purpose: "example", source: expect.stringContaining("step: 2") },
   ]);
   expect(requests).toHaveLength(2);
+});
+
+/** The step's edit as execute's own patch: the operation the native edit sends. */
+const executePatch = [
+  {
+    type: "update_file",
+    path: "src/tool.ts",
+    diff: "@@\n-export default {};\n+export default { step: 2 };",
+  },
+];
+
+it("edits a step and runs it from one execute call, reviewed on the patched source", async () => {
+  let f: Awaited<ReturnType<typeof fixture>> | undefined;
+  const review = reviewingSource(() => f!.workspace.readFile!({ path: "src/tool.ts" }));
+  const traced: { readonly name: string; readonly callId: string; readonly arguments: string }[] =
+    [];
+  const recorded: string[] = [];
+  const recoveryFactory: MintRecoveryFactory = () =>
+    Effect.succeed({
+      model: (_state, _counters, invoke) => invoke,
+      tool: (call, invoke) =>
+        Effect.sync(() => recorded.push(`${call.name}:${call.callId}`)).pipe(
+          Effect.zipRight(invoke),
+        ),
+    });
+  const requests: ModelRequest[] = [];
+  f = await fixture(() => prose(), {
+    model: scriptedMinter(
+      [
+        call("execute", { ...execution, patch: executePatch }, "run_step"),
+        call("finish_build", publication, "publish"),
+      ],
+      requests,
+      { observerFactory: hostObserver(traced), recoveryFactory },
+    ),
+    reviewAndExecute: review.reviewAndExecute,
+    agentRecovery: { save: () => Effect.void },
+  });
+  expect(await f.run()).toMatchObject({ build: "published" });
+  // The review read the patched bytes, and one model turn both edited and ran the step.
+  expect(review.reviewed).toEqual([
+    { purpose: "example", source: expect.stringContaining("step: 2") },
+  ]);
+  expect(requests).toHaveLength(2);
+  expect(toolResult(requests[1], "run_step")).toMatchObject({ status: "completed" });
+  // The edit has the native edit's own record, under the execute's call, before the step's.
+  expect(traced.map((entry) => `${entry.name}:${entry.callId}`)).toEqual([
+    "apply_patch:run_step",
+    "execute:run_step",
+    "finish_build:publish",
+  ]);
+  expect(JSON.parse(traced[0]!.arguments)).toEqual(executePatch[0]);
+  expect(recorded).toEqual(["execute:run_step", "finish_build:publish"]);
+});
+
+it("runs nothing when execute's patch does not apply, and returns apply_patch's own failure", async () => {
+  let f: Awaited<ReturnType<typeof fixture>> | undefined;
+  const review = reviewingSource(() => f!.workspace.readFile!({ path: "src/tool.ts" }));
+  const stale = {
+    type: "update_file" as const,
+    path: "src/tool.ts",
+    diff: "@@\n-export default { missing: true };\n+export default { step: 2 };",
+  };
+  f = await fixture(
+    (_request, index) =>
+      [
+        patch(stale, "native_edit"),
+        call("execute", { ...execution, patch: [stale] }, "run_step"),
+        call("execute", { ...execution, patch: executePatch }, "run_step_again"),
+        call("finish_build", publication),
+      ][index] ?? prose(),
+    { reviewAndExecute: review.reviewAndExecute },
+  );
+  expect(await f.run()).toMatchObject({ build: "published" });
+  const native = (Array.isArray(f.requests[1]?.input) ? f.requests[1].input : []).find(
+    (item) => item.type === "apply_patch_call_output" && item.callId === "native_edit",
+  );
+  expect(native).toMatchObject({ status: "failed" });
+  expect(toolResult(f.requests[2], "run_step")).toMatchObject({
+    status: "not_run",
+    effect: "not_sent",
+    patch: [
+      {
+        path: "src/tool.ts",
+        status: "failed",
+        output: (native as { output: string }).output,
+      },
+    ],
+  });
+  // Only the execute whose patch applied was reviewed, on the patched bytes.
+  expect(review.reviewed).toEqual([
+    { purpose: "example", source: expect.stringContaining("step: 2") },
+  ]);
+});
+
+it("keeps execute's patch applied when Guardian denies the step, as after a separate edit", async () => {
+  let f: Awaited<ReturnType<typeof fixture>> | undefined;
+  const review = reviewingSource(() => f!.workspace.readFile!({ path: "src/tool.ts" }));
+  let reviews = 0;
+  f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", { ...execution, patch: executePatch }, "denied_step"),
+        call("execute", execution, "allowed_step"),
+        call("finish_build", publication),
+      ][index] ?? prose(),
+    {
+      reviewAndExecute: (input, beforeDispatch) =>
+        ++reviews === 1
+          ? review.reviewAndExecute(input, () =>
+              Effect.fail(
+                new MintFailure({
+                  code: "ReviewDenied",
+                  review: {
+                    outcome: "deny",
+                    reviewId: "review_denied",
+                    rationale: "Synthetic deny of the patched step.",
+                  },
+                }),
+              ),
+            )
+          : review.reviewAndExecute(input, beforeDispatch),
+    },
+  );
+  expect(await f.run()).toMatchObject({ build: "published" });
+  expect(resultOf(f.requests[1], "denied_step")).toContain("Synthetic deny of the patched step.");
+  // The deny left the edit in place: the next run is reviewed on the same patched bytes.
+  expect(review.reviewed).toEqual([
+    { purpose: "example", source: expect.stringContaining("step: 2") },
+    { purpose: "example", source: expect.stringContaining("step: 2") },
+  ]);
+});
+
+/** An edit that only inserts a line after its context, so it applies again to its own result. */
+const insertion = {
+  type: "update_file" as const,
+  path: "src/tool.ts",
+  diff: "@@\n export default {};\n+// inserted\n",
+};
+const unavailableReview = () =>
+  Effect.fail(new MintFailure({ code: "ReviewUnavailable", reviewFailure: "Unavailable" }));
+
+it("applies execute's patch once when the same step is sent again after an unavailable review", async () => {
+  let f: Awaited<ReturnType<typeof fixture>> | undefined;
+  const review = reviewingSource(() => f!.workspace.readFile!({ path: "src/tool.ts" }));
+  let reviews = 0;
+  f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", { ...execution, patch: [insertion] }, "unreviewed_step"),
+        call("execute", { ...execution, patch: [insertion] }, "same_step_again"),
+        call("finish_build", publication),
+      ][index] ?? prose(),
+    {
+      reviewAndExecute: (input, beforeDispatch) =>
+        review.reviewAndExecute(input, ++reviews === 1 ? unavailableReview : beforeDispatch),
+    },
+  );
+  expect(await f.run()).toMatchObject({ build: "published" });
+  expect(toolResult(f.requests[1], "unreviewed_step")).toMatchObject({
+    status: "review_unavailable",
+  });
+  // The step sent again ran on the source its first send left, with the line inserted once.
+  expect(review.reviewed.map((entry) => entry.source.match(/inserted/g)?.length)).toEqual([1, 1]);
+  expect(await f.workspace.readFile!({ path: "src/tool.ts" })).toBe(
+    "export default {};\n// inserted",
+  );
+});
+
+it("stops at the first operation of execute's patch that fails, and applies the rest once it is fixed", async () => {
+  let f: Awaited<ReturnType<typeof fixture>> | undefined;
+  const review = reviewingSource(() => f!.workspace.readFile!({ path: "src/tool.ts" }));
+  const stale = {
+    type: "update_file" as const,
+    path: "src/tool.ts",
+    diff: "@@\n-export default { missing: true };\n+export default { step: 2 };",
+  };
+  const extra = { type: "create_file" as const, path: "src/extra.ts", diff: "+export {};" };
+  f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", { ...execution, patch: [insertion, stale, extra] }, "half_applied"),
+        call("execute", { ...execution, patch: [insertion, executePatch[0]] }, "fixed_step"),
+        call("finish_build", publication),
+      ][index] ?? prose(),
+    { reviewAndExecute: review.reviewAndExecute },
+  );
+  expect(await f.run()).toMatchObject({ build: "published" });
+  expect(toolResult(f.requests[1], "half_applied")).toMatchObject({
+    status: "not_run",
+    effect: "not_sent",
+    patch: [
+      { path: "src/tool.ts", status: "completed" },
+      { path: "src/tool.ts", status: "failed" },
+    ],
+  });
+  expect(await f.workspace.pathExists!("src/extra.ts")).toBe(false);
+  // The failed send ran nothing; the fixed one found its first operation applied and ran once.
+  expect(review.reviewed).toEqual([
+    { purpose: "example", source: "export default { step: 2 };\n// inserted" },
+  ]);
+});
+
+it("refuses execute's patch outside the authored files and runs nothing", async () => {
+  let f: Awaited<ReturnType<typeof fixture>> | undefined;
+  const review = reviewingSource(() => f!.workspace.readFile!({ path: "src/tool.ts" }));
+  const forged = { type: "create_file" as const, path: "captures/index.json", diff: "+{}" };
+  f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", { ...execution, patch: [forged] }, "forged_step"),
+        call("execute", execution, "run_step"),
+        call("finish_build", publication),
+      ][index] ?? prose(),
+    { reviewAndExecute: review.reviewAndExecute },
+  );
+  expect(await f.run()).toMatchObject({ build: "published" });
+  expect(toolResult(f.requests[1], "forged_step")).toMatchObject({
+    status: "not_run",
+    patch: [
+      {
+        path: "captures/index.json",
+        status: "failed",
+        output: "Workspace edit unavailable or outside allowed source paths.",
+      },
+    ],
+  });
+  expect(await f.workspace.pathExists!("captures/index.json")).toBe(false);
+  expect(review.reviewed).toHaveLength(1);
+});
+
+it("refuses an execute whose patch is not a list of apply_patch operations as an invalid request", async () => {
+  let f: Awaited<ReturnType<typeof fixture>> | undefined;
+  const review = reviewingSource(() => f!.workspace.readFile!({ path: "src/tool.ts" }));
+  f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", { ...execution, patch: [{ type: "move_file", path: "src/tool.ts" }] }, "bad"),
+        call("execute", execution, "run_step"),
+        call("finish_build", publication),
+      ][index] ?? prose(),
+    { reviewAndExecute: review.reviewAndExecute },
+  );
+  expect(await f.run()).toMatchObject({ build: "published" });
+  expect(toolResult(f.requests[1], "bad")).toMatchObject({ code: "InvalidRequest" });
+  expect(review.reviewed).toHaveLength(1);
+});
+
+it("applies no patch again when a takeover replays the execute that carried it", async () => {
+  let f: Awaited<ReturnType<typeof fixture>> | undefined;
+  const review = reviewingSource(() => f!.workspace.readFile!({ path: "src/tool.ts" }));
+  // As a host's recovery replays a step the previous worker ran: its retained result comes back
+  // and nothing runs again, its patch included.
+  const recoveryFactory: MintRecoveryFactory = () =>
+    Effect.succeed({
+      model: (_state, _counters, invoke) => invoke,
+      tool: (call, invoke) =>
+        call.callId === "replayed_step"
+          ? Effect.succeed(
+              JSON.stringify({ executionId: "execution_replayed", status: "failed" }),
+            )
+          : invoke,
+    });
+  const requests: ModelRequest[] = [];
+  f = await fixture(() => prose(), {
+    model: scriptedMinter(
+      [
+        call("execute", { ...execution, patch: [insertion] }, "replayed_step"),
+        call("execute", execution, "run_step"),
+        call("finish_build", publication),
+      ],
+      requests,
+      { recoveryFactory },
+    ),
+    reviewAndExecute: review.reviewAndExecute,
+    agentRecovery: { save: () => Effect.void },
+  });
+  expect(await f.run()).toMatchObject({ build: "published" });
+  expect(review.reviewed).toEqual([{ purpose: "example", source: "export default {};" }]);
 });
 
 it("still runs a step written in one response and executed in the next", async () => {

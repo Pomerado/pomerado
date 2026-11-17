@@ -30,7 +30,7 @@ The workspace root is `/workspace`. Paths below are relative to it.
   They are published only when a published file imports them, or with every other source file
   there when a published module's imports cannot be read statically, so keep private data out.
 - `captures/`: host-published evidence, exactly as the site sent it except masked credentials. It appears after the first live execution:
-  `captures/index.json` (read it first after each live probe), `captures/routes.json` and the
+  `captures/index.json` (read it first after each live probe whose result names no snapshots), `captures/routes.json` and the
   capture files the index lists. `captures/routes.json` (version 2) is an index of references: a
   header line with counts, then one route per line whose bodies are `{state, reason, path, bytes,
   sourceBytes}`, each read at its `path` (`reference/captures.md`). After each sign-in step whose
@@ -42,7 +42,7 @@ The workspace root is `/workspace`. Paths below are relative to it.
   `failures/original/manifest.json` (`reference/maintenance.md`).
 
 Edit only `src/`, `explore/`, `test/`, `scratch/` and the two notes files, with the native
-`apply_patch` editor. Read files with `read_source`; an offline command sees only a copy of
+`apply_patch` editor or execute's `patch`. Read files with `read_source`; an offline command sees only a copy of
 the source files, never captures.
 
 ## Tools
