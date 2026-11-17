@@ -52,7 +52,10 @@ separately are both applied as given, even when they're far apart.
    - `InvalidInput`: the caller's value is wrong or the site does not offer it. It breaks a rule
      above, or is not among the options the page lists, such as a store missing from its
      picker. Pass `field`, and `available`, every option the page offers
-     as selectable, exactly as shown, whenever the page lists them. An option taken from the
+     as selectable, exactly as shown, whenever the page lists them. `available` lists only values
+     the caller could send back in that field, and a range goes in the message. When a refusal
+     lists choices, list the site's standalone named options before entries from a broader list
+     or picker. An option taken from the
      caller's own account goes in `available` as `{ label, accountSpecific: true, maskedLabel }`,
      marked as a question's option is ("Declare, read, ask", step 3). When the page refuses the
      value with an error of its own, prefer passing as `field` the input that error belongs to,
