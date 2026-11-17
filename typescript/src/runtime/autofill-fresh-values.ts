@@ -39,18 +39,23 @@ export const makeFreshAutofillValues = <E extends YieldableError>({
   const correctedValue = (
     login: AutofillLogin,
     slot: AnsweredLoginField | "recovery_code",
-    /** Asks once, given the tries left with this one. */
-    request: (triesLeft: number) => ReturnType<typeof ask>,
+    /**
+     * Asks once, given the tries left with this one, and whether the last answer repeated a value
+     * the site already refused, which was not sent.
+     */
+    request: (triesLeft: number, repeated: boolean) => ReturnType<typeof ask>,
   ) =>
     Effect.gen(function* () {
       const counts = login.correctionRequests;
       if (!counts) return new Unanswered("correction_history_unavailable");
+      let repeated = false;
       while ((counts[slot] ?? 0) < 2) {
         const triesLeft = 2 - (counts[slot] ?? 0);
         counts[slot] = (counts[slot] ?? 0) + 1;
-        const answered = yield* request(triesLeft);
+        const answered = yield* request(triesLeft, repeated);
         if (answered instanceof Unanswered || !login.rejectedValues?.[slot]?.has(answered.value))
           return answered;
+        repeated = true;
       }
       return new Unanswered("field_corrections_exhausted", slot);
     });
