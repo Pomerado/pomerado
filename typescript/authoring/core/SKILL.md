@@ -283,6 +283,9 @@ exception: it is optional unless the task can't run without it (below).
   own suggestion request, with `{ read: true }` after its `label` in a read. Fill the site's unit
   field, or its second address line, with the `unit` it returns, return the suggestion it accepted
   as the site's version of the address, and throw its `pickRefusal` only when it accepts none.
+  The site's own resolution of the suggestion the helper picked, such as its formatted address
+  with local spelling, a postal code or a district, is the applied address: return it as the site
+  wrote it, report what differs from the caller's text, and never refuse for its wording alone.
   Never write address normalization or matching of your own, in the tool or in a file beside it:
   no word lists, street-type or city tables, house-number, unit or postal-code comparisons,
   regular expressions that split an address, similarity scores or "contains" tests. When the
