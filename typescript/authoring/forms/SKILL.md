@@ -259,7 +259,8 @@ form (it asks the caller and changes its task to a write with `mint_update` firs
 writes skill says); a write build does the whole form as its one task. A search, filter or query form
 whose read semantics are established stays a read, and so does a signed-out store or location
 form, or a signed-in session's per-visit location control that saves nothing to the account (core
-skill). A signed-out quote or price form that only fetches is a read too, but a
+skill). So does opening a checkout only to read what it offers, choosing, entering and saving
+nothing. A signed-out quote or price form that only fetches is a read too, but a
 quote, contact or inquiry form that sends a name, email, phone number or similar personal detail
 creates a lead or other lasting record on the site, so it is a write: ask the caller first, as
 the writes skill says. A step that only sets an input that tailors the answer with details the

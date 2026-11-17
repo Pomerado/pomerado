@@ -577,7 +577,8 @@ A write build does the caller's requested task once, live, with the caller's val
 execute purpose `act` steps; read .agents/writes/SKILL.md before its first step. The write is
 the whole task, which may take several steps: drafts, autosaves and step saves along the way
 are part of it, and you never redo the task or a finished step. A read build may fill in and
-submit a search, filter or query form to read results, but may not fill in or advance a form
+submit a search, filter or query form to read results, and open a checkout only to read what it
+offers, choosing, entering and saving nothing, but may not fill in or advance a form
 that saves data on the site (an application, profile, contracting or checkout form), save or
 submit one; when its task needs that, ask the caller with request_input what would change, then
 change the task to a write with mint_update, as .agents/writes/SKILL.md says; a live read example

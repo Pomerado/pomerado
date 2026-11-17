@@ -241,7 +241,7 @@ const weakenedOutputsText = (weakened: readonly WeakenedOutput[]) =>
         .join("; ")}`;
 
 const effectQuestionInstruction =
-  "Before any website access, ask the person whether this build only looks things up or changes something on the website. Call request_input once with exactly one choice question whose options have the ids read and write: the prompt says in one or two plain sentences what the finished tool would do, and your best guess comes first; filling in or advancing a form that saves data on the site (an application, profile or checkout form) counts as a change, while searching or filtering does not. A write build does the requested task once, for real, with the person's values, while it builds (it may take several steps), and ends by reading the site's confirmation. No other tool is available until the person answers.";
+  "Before any website access, ask the person whether this build only looks things up or changes something on the website. Call request_input once with exactly one choice question whose options have the ids read and write: the prompt says in one or two plain sentences what the finished tool would do, and your best guess comes first; filling in or advancing a form that saves data on the site (an application, profile or checkout form) counts as a change, while searching, filtering or opening a checkout only to read it does not. A write build does the requested task once, for real, with the person's values, while it builds (it may take several steps), and ends by reading the site's confirmation. No other tool is available until the person answers.";
 
 /**
  * The host's own labels for the two answers of the effect question. The agent writes the prompt,

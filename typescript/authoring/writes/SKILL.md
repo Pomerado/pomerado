@@ -33,7 +33,8 @@ several items, each added to that order before its one final submit, one action 
 over many targets, such as a send to a group picked in one form, and a read of many things are
 each fine as one tool.
 
-A read build may search, filter and query, but may not fill in or advance a form that
+A read build may search, filter and query, and open a checkout only to read what it offers,
+choosing, entering and saving nothing, but may not fill in or advance a form that
 saves data on the site, save or submit anything; a task that needs that is a write build.
 Opening pages that the site then marks as visited or as progress, without submitting an answer
 or a form, is part of a read, unless the request asks to change that progress.
