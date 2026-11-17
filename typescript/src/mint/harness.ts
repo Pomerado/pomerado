@@ -9067,12 +9067,16 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       // Live execution ended and the model stopped without publishing its retained receipt.
       if (terminal === undefined && executionClosed) terminal = unavailableHostTerminal();
       // A sign-in stop handed back to revise its explanation that the minter never sent again,
-      // with nothing run since, still ends as sign-in unavailable with the reason it reported.
-      // Its last answer may say why, kept only once Guardian allows it.
+      // with nothing run since, still ends as sign-in unavailable with the reason it reported,
+      // while the sign-in is still unconfirmed and the minter neither gave it up nor had the
+      // owner decline the login. Its last answer may say why, kept only once Guardian allows it.
       if (
         terminal === undefined &&
         signInStopReworded !== undefined &&
-        signInStopReworded.executions === executions.length
+        signInStopReworded.executions === executions.length &&
+        signInUnconfirmed &&
+        loginDeclined === undefined &&
+        !signInAbandoned
       ) {
         const stopExplanation = yield* reviewedStopExplanation(
           Exit.isSuccess(modelResult) ? modelResult.value.finalText : undefined,
