@@ -49,6 +49,8 @@ export interface LocalOperationOptions {
   readonly browser?: { readonly sessionId: string; readonly executeResponse: BrowserExecute };
   readonly siteOrigin?: string;
   readonly siteDomain?: string;
+  /** The zone the browser runs in, the script's `browserTimeZone` (`PlaywrightExecutor.timeZone`). */
+  readonly browserTimeZone?: string;
   readonly timeoutMs?: number;
   readonly mode?: "run" | "contract";
   readonly validateInput?: boolean;
@@ -598,6 +600,9 @@ export const runLocalOperation = (
           : { settledCommits: options.settledCommits }),
         ...(options.siteOrigin === undefined ? {} : { siteOrigin: options.siteOrigin }),
         ...(options.siteDomain === undefined ? {} : { siteDomain: options.siteDomain }),
+        ...(options.browserTimeZone === undefined
+          ? {}
+          : { browserTimeZone: options.browserTimeZone }),
         ...(options.files !== undefined ? { files: true } : {}),
         ...(options.list === undefined ? {} : { list: options.list }),
         ...(options.http === undefined || options.mode === "contract"

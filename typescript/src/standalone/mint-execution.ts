@@ -702,6 +702,7 @@ const authoredExecution = (
                 ...(siteDomain(context.siteOrigin) === undefined
                   ? {}
                   : { siteDomain: siteDomain(context.siteOrigin) ?? "" }),
+                ...(browser.timeZone === undefined ? {} : { browserTimeZone: browser.timeZone }),
                 timeoutMs: execution.timeoutSeconds * 1000,
                 mode: "run",
                 target: live ? "browser" : "pureFiles",
