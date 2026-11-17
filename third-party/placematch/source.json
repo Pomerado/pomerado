@@ -1,9 +1,9 @@
 {
   "repository": "https://github.com/Pomerado/placematch.git",
-  "commit": "07ae60fbbf29c9f16e3631e46e4acd2365bc98e1",
+  "commit": "1bd6bfe235c15d467a8045f472db54c2a689f8a6",
   "sha256": {
     "placematch.mjs": "1d0beb482cc3f131c3987689e3f81e94fca9e7b6062f121cf1da608bce152077",
-    "placematch.wasm": "01f6ef45127e4da25d16d5588dbb836b87a6348fd381797f69681d239cfe0bf2"
+    "placematch.wasm": "f990796f8fe9b8b00b692f4697b32f5ec5c38e99cda4bf617a1bd69892426324"
   },
   "toolchain": "1.100.0"
 }
