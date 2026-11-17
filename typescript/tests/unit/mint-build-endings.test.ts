@@ -1747,6 +1747,74 @@ it("keeps no last answer Guardian did not allow", async () => {
   expect(JSON.stringify(outcome)).not.toContain("555-0100");
 });
 
+// A last answer that says the host refused the build's steps is true only against the host's own
+// record. Its review reads the decision ledger a blocked report's review reads, with the host's
+// hold on a live step and its refusal of the blocked report beside the refused execution.
+it("reviews the last answer against the host's refusals in the decision ledger", async () => {
+  const explanation = "The host refused the save step and would not take a blocked report.";
+  const refusedStep = "Nothing was executed: a host check refuses this step while it fails.";
+  const hold = "This build has not signed in yet, so example does not run in the browser.";
+  const ledgers: unknown[] = [];
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", pureExample, "refused"),
+        call("execute", { ...pureExample, target: "liveBrowser" }, "held"),
+        call("report_blocked", { reason: "host_refused", explanation }, "report"),
+      ][index] ?? prose(explanation),
+    {
+      preflight: (submitted) =>
+        submitted.target === "liveBrowser"
+          ? Effect.fail(
+              new MintFailure({ code: "ReconciliationRequired", recoveryGate: { reason: hold } }),
+            )
+          : Effect.succeed({ supported: true }),
+      reviewAndExecute: () =>
+        Effect.succeed({
+          executionId: "execution_refused",
+          status: "unsupported" as const,
+          effect: "not_sent" as const,
+          observations: refusedStep,
+        }),
+      reviewQuestion: (_candidate, context) =>
+        Effect.sync(() => {
+          ledgers.push(context?.decisionLedger);
+          return context?.decisionLedger?.hostRefusals?.length === 3
+            ? { outcome: "allow_business" as const, rationale: "The host recorded each refusal." }
+            : { outcome: "reword" as const, rationale: "No such refusal is on record." };
+        }),
+    },
+  );
+  const outcome = await f.run();
+  expect(lastResult(f.requests[3])).toContain("host_not_refused");
+  expect(ledgers).toEqual([
+    {
+      denials: [],
+      testFailures: [],
+      hostRefusals: [
+        { tool: "execute", code: "unsupported", reason: refusedStep, atUtc: expect.any(String) },
+        {
+          tool: "execute",
+          code: "ReconciliationRequired",
+          reason: hold,
+          atUtc: expect.any(String),
+        },
+        {
+          tool: "report_blocked",
+          code: "host_not_refused",
+          reason: expect.stringContaining("No host check refused a step"),
+          atUtc: expect.any(String),
+        },
+      ],
+    },
+  ]);
+  expect(outcome).toMatchObject({
+    build: "incomplete",
+    stopReason: "final_text_without_tool",
+    stopExplanation: explanation,
+  });
+});
+
 it("ends an attempt that spent its model calls as turn_budget_spent", async () => {
   const f = await fixture(
     () => call("read_source", { path: "src/tool.ts", offset: null, limit: null }),
