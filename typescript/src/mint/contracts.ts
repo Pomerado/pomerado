@@ -1241,7 +1241,9 @@ export type ScriptQuestionOutcome =
 export const ExecutionRefusal: Schema.Schema<NonNullable<ExecutionEvidence["refusal"]>> =
   Schema.Struct({
     field: Schema.optionalWith(Schema.String, { exact: true }),
-    available: Schema.Array(Schema.Union(Schema.String, Schema.Number, Schema.Boolean)),
+    available: Schema.Array(
+      Schema.Union(Schema.String, Schema.Number.pipe(Schema.finite()), Schema.Boolean),
+    ),
   });
 
 export interface ExecutionEvidence {

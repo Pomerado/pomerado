@@ -752,7 +752,9 @@ export const LiveTestRecord: Schema.Schema<LiveTestRecord> = Schema.Struct({
     Schema.Struct({
       field: Schema.optionalWith(Schema.String, { exact: true }),
       available: Schema.optionalWith(
-        Schema.Array(Schema.Union(Schema.String, Schema.Number, Schema.Boolean)),
+        Schema.Array(
+          Schema.Union(Schema.String, Schema.Number.pipe(Schema.finite()), Schema.Boolean),
+        ),
         { exact: true },
       ),
     }),
