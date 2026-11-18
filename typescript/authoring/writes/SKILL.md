@@ -784,7 +784,9 @@ it a result. A failure the host can prove sent nothing (its marks show no commit
 step entered and the page sent only reads) may retry on a new browser, and a retry
 that fails too goes to maintenance. On a host that repairs, a failure whose marks show no
 commit step entered reports that it changed nothing, and its repair fixes the code and runs
-the write once, without reading the site back. Anything
+the write once, without reading the site back. In a repair or a requested change, before a step
+asks the caller to confirm a write, put the change in the tool's own code and run the tool from
+its entrypoint: only code the tool runs publishes, and the caller is asked to confirm once. Anything
 else, including a run that finished without its confirmation or lost its page
 before reporting its marks, returns <!-- pomerado:section writes.uncertain-status:start
 `may_have_applied`
