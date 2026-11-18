@@ -17,25 +17,36 @@ export default defineOperation({ input: Schema.Struct({ size: Schema.String }), 
     if (input.size !== "One Size") throw new errors.InvalidInput("Size " + input.size + " is not offered"${detail});
     return { size: input.size };
   });`;
+/** A synthetic cart line sold by the item, so a part of one is refused with the nearest whole ones. */
+const wholeQuantity = `import { Schema } from "effect";
+import { defineOperation } from "../../runtime/index.js";
+export default defineOperation({ input: Schema.Struct({ quantity: Schema.Number }), output: Schema.Struct({ quantity: Schema.Number }) },
+  async ({ input, errors }) => {
+    if (!Number.isInteger(input.quantity)) throw new errors.InvalidInput("Quantity " + input.quantity + " is not offered", { field: "quantity", available: [Math.floor(input.quantity), Math.ceil(input.quantity)] });
+    return { quantity: input.quantity };
+  });`;
 const browser = {
   sessionId: "local",
   executeResponse: () => Effect.succeed({ success: true, result: null }),
 };
-const outcomeOf = (detail: string) =>
-  Effect.runPromise(
-    Effect.scoped(
-      Effect.gen(function* () {
-        const workspace = yield* createLocalWorkspace();
-        return yield* runLocalOperation({
-          workspace,
-          entrypoint,
-          sources: [[entrypoint, refusing(detail)]],
-          input: { size: "M" },
-          browser,
-        }).pipe(Effect.flip, Effect.map(runOutcomeFailure("read", "operation")));
-      }),
-    ),
+const run = (source: string, input: unknown) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const workspace = yield* createLocalWorkspace();
+      return yield* runLocalOperation({
+        workspace,
+        entrypoint,
+        sources: [[entrypoint, source]],
+        input,
+        browser,
+      });
+    }),
   );
+const refusalOf = (source: string, input: unknown) =>
+  Effect.runPromise(
+    run(source, input).pipe(Effect.flip, Effect.map(runOutcomeFailure("read", "operation"))),
+  );
+const outcomeOf = (detail: string) => refusalOf(refusing(detail), { size: "M" });
 
 it("tells the caller the choices the page offers when a script refuses a value with them", async () => {
   const failure = await outcomeOf(`, { field: "size", available: ["One Size"] }`);
@@ -67,14 +78,24 @@ it.each([
   expect(refusal.available).toEqual(kept);
 });
 
-// A script may list a true/false or number choice as the value itself, so the refusal keeps it as
-// its text rather than listing no choices.
-it("keeps a true/false or number choice as its text", () => {
+// A script may list a true/false or number choice as the value itself, so the refusal keeps that
+// value, which a caller sends back into the input as it is.
+it("keeps a true/false or number choice as its value", () => {
   const refusal = new operationErrors.InvalidInput("Out of stock items are not offered", {
     field: "include_out_of_stock",
     available: [false, 2, null] as never,
   });
-  expect(refusal.available).toEqual(["false", "2"]);
+  expect(refusal.available).toEqual([false, 2]);
+});
+
+it("tells the caller a number choice as the number, which the input takes back as it is", async () => {
+  const failure = await refusalOf(wholeQuantity, { quantity: 1.5 });
+  expect(failure.outcome.details).toMatchObject({ field: "quantity", available: [1, 2] });
+  expect(failure.message).toContain("Available for quantity: 1, 2.");
+  const [choice] = failure.outcome.details["available"] as readonly unknown[];
+  await expect(Effect.runPromise(run(wholeQuantity, { quantity: choice }))).resolves.toMatchObject({
+    output: { quantity: 1 },
+  });
 });
 
 // A choice taken from the caller's own account, such as a saved address, is marked as a question's

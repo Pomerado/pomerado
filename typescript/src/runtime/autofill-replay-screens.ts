@@ -263,10 +263,11 @@ const loginUnproved = <E extends YieldableError, V extends string>(
  * (`atDeadline`), and a code screen that never showed leaves the sign-in check to decide, which may
  * still end on such a page, as when a site skips its code screen this time (`codeScreenMissing`).
  * A browser that started empty is past no sign-in before its login's password or code went in
- * (`loginUnproved`), so its wait runs on to the screen's deadline.
+ * (`loginUnproved`), so its wait runs on to the screen's deadline. A check without values whose
+ * screen never showed by then reads that page as its landing all the same, as before.
  */
 const landedCantTell = <E extends YieldableError, V extends string>(
-  input: Pick<AutofillReplayInput<E, V>, "hooks" | "recipe">,
+  input: Pick<AutofillReplayInput<E, V>, "hooks" | "recipe" | "credentials">,
   progress: ScreenWaitProgress<V>,
   awaited: AutofillStep,
   off: OffScreens | undefined,
@@ -276,7 +277,7 @@ const landedCantTell = <E extends YieldableError, V extends string>(
   screens: ReplayScreens,
 ) =>
   input.hooks.confirmCantTell !== undefined &&
-  !loginUnproved(input, progress) &&
+  (!loginUnproved(input, progress) || (input.credentials === undefined && now >= until)) &&
   !awaited.fields.some((field) => field.slot === "code") &&
   off !== undefined &&
   (now - off.since >= landingSettleMs || now >= until) &&

@@ -2001,6 +2001,16 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               (entry.confirmation !== undefined || entry.withheldConfirmation !== undefined)) ||
             dependencies.canPublishRepair?.(entry.executionId) === true,
         );
+      // A read build's latest example that passed: a site-blocked report goes back once while it
+      // can still publish, so the host may publish what that example ran.
+      let examplePublishOffered = false;
+      const passedExample = () =>
+        executions.findLast(
+          (entry) =>
+            purposes.get(entry.executionId) === "example" &&
+            entry.status === "completed" &&
+            entry.resultRef !== undefined,
+        );
       const hostIsUnavailable = () => dependencies.executionAvailability?.() === "host_unavailable";
       /** Ends live execution; the attempt itself ends only without a publishable receipt. */
       const closeExecution = () => {
@@ -4448,8 +4458,15 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         // A challenge the host recorded and could not get past is read only for host_refused.
         const challengeRefused =
           reason === "host_refused" && dependencies.hostChallengeRefused?.() === true;
+        // So is the host's refusal to verify a sign-in that submitted no identifier with a secret.
+        const signInCheckRefused =
+          reason === "host_refused" && dependencies.signInCheckRefused?.() === true;
         const hostCheckRefusing =
-          hostRefused || refillRefused || signInDestinationRefused || challengeRefused;
+          hostRefused ||
+          refillRefused ||
+          signInDestinationRefused ||
+          challengeRefused ||
+          signInCheckRefused;
         const liveTestsSpent = liveTestsRefusal !== undefined && !liveTestsRefusal.reserveOpen;
         const hostRefusing = hostCheckRefusing || liveTestsSpent;
         if (reason === "owner_declined" && !ownerRefused && stopDeclined)
@@ -4538,7 +4555,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           !namedStepsOffered.has(namedStep) &&
           !refillRefused &&
           !signInDestinationRefused &&
-          !challengeRefused
+          !challengeRefused &&
+          !signInCheckRefused
         ) {
           namedStepsOffered.add(namedStep);
           const told = namedStepInstructions.get(namedStep);
@@ -4580,6 +4598,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         const others: HostRefusalBasis[] = [
           ...(refillRefused ? [{ source: "sign_in_refill" as const }] : []),
           ...(signInDestinationRefused ? [{ source: "sign_in_destination" as const }] : []),
+          ...(signInCheckRefused ? [{ source: "sign_in_check" as const }] : []),
           ...(liveTestsSpent ? [{ source: "live_tests_spent" as const }] : []),
           ...(challengeRefused ? [{ source: "challenge" as const }] : []),
         ];
@@ -7854,6 +7873,28 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                         status: "host_unavailable",
                         notice:
                           "The build ended because the host has no live execution for what it still needs. It ends as the host's failure, not as blocked; nothing more runs in this attempt.",
+                      });
+                    }
+                    const passed =
+                      !examplePublishOffered &&
+                      request.mode !== "maintenance" &&
+                      buildEffect !== "write" &&
+                      (report.reason === "site_declined" || report.reason === "site_unavailable")
+                        ? passedExample()
+                        : undefined;
+                    if (passed !== undefined) {
+                      examplePublishOffered = true;
+                      yield* diagnose({
+                        phase: "blocked",
+                        reason: "example_publishable",
+                        reported: report.reason,
+                      });
+                      return JSON.stringify({
+                        status: "blocked_refused",
+                        reason: "example_publishable",
+                        executionId: passed.executionId,
+                        userInputRequired: false,
+                        instruction: `Not ended: execution ${passed.executionId} passed the example and can still be published. Call finish_build with that executionId. If publication is refused, call report_blocked again to end the build.`,
                       });
                     }
                     // Sign-in is unavailable in this build, and a retained receipt held its
