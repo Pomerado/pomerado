@@ -263,29 +263,40 @@ export type ReplaySession<
   L extends AutofillLogin = AutofillLogin,
 > = ReturnType<typeof makeReplaySession<E, V, L>>;
 /**
+ * The credential screen the replay submitted last, come back: its password field, else its
+ * identifier field, went out and still shows. Never a screen that took a code, which the code
+ * retry answers. Its step, that field and the screen as the host inspected it.
+ */
+export const returnedScreen = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  session: Pick<ReplaySession<E, V, L>, "progress" | "sent" | "hooks">,
+) =>
+  Effect.gen(function* () {
+    const { progress, sent, hooks } = session;
+    const previous = progress.ran.at(-1);
+    if (previous === undefined || previous.fields.some((field) => field.slot === "code"))
+      return undefined;
+    const field =
+      previous.fields.find((one) => one.slot === "password") ??
+      previous.fields.find((one) => isIdentifier(one.slot));
+    if (field === undefined || !rejectableSlot(field.slot) || !sent.seenSent(field.slot))
+      return undefined;
+    const inspection = yield* hooks.inspect({
+      fields: [field],
+      ...(previous.popup === undefined ? {} : { popup: previous.popup }),
+    });
+    if ("outcome" in inspection) return undefined;
+    return { step: previous, slot: field.slot, inspection };
+  });
+/**
  * A submitted credential screen returning with no recorded error marker is no verdict on the login:
  * the replay ends with the login unmarked (`credential_screen_returned`).
  */
 export const returnedCredential = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   session: Pick<ReplaySession<E, V, L>, "progress" | "sent" | "hooks">,
 ) =>
-  Effect.gen(function* () {
-    const { progress, sent, hooks } = session;
-    const previous = progress.ran.at(-1);
-    if (previous !== undefined && !previous.fields.some((field) => field.slot === "code")) {
-      const field =
-        previous.fields.find((one) => one.slot === "password") ??
-        previous.fields.find((one) => isIdentifier(one.slot));
-      if (field !== undefined && rejectableSlot(field.slot) && sent.seenSent(field.slot)) {
-        const returned = yield* hooks.inspect({
-          fields: [field],
-          ...(previous.popup === undefined ? {} : { popup: previous.popup }),
-        });
-        if (!("outcome" in returned)) return "credential_screen_returned" as const;
-      }
-    }
-    return undefined;
-  });
+  Effect.map(returnedScreen(session), (returned) =>
+    returned === undefined ? undefined : ("credential_screen_returned" as const),
+  );
 /**
  * Resolve current rejection evidence before waiting for a later screen. The submitted screen still
  * showing is the site's answer only at the wait's deadline (`due`), as a site may look the account
@@ -504,6 +515,7 @@ export const makeReplay = <E extends YieldableError, V extends string, L extends
     resolve: (request: AutofillStepRequest) => session.values.resolve(request, input.credentials),
     shownAgain: (slot: AutofillSecret) =>
       shownAgain(session.hooks, session.progress.ran, session.sent.maySent, slot),
+    returnedScreen: returnedScreen(session),
     refuseShownAnswer: refuseShownAnswer(session),
     pickMethod: (methods: readonly SignInMethodOption[]) => pickMethod(input, methods),
   };
