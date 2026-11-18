@@ -125,13 +125,16 @@ const shownScreen = (step: AutofillStep, inspection: AutofillInspection): ShownS
   inspection,
 });
 
+/** The two-factor methods that sign in with a code the login's owner types. */
+const codeMethods: ReadonlySet<string> = new Set(["sms", "call", "email", "totp"]);
+
 /**
  * The recorded screen as it runs now: a method choice clicks the method this run picks, or
  * chooses its option in a native select. A way in that the recorded sign-in picked there, a
  * password or an identifier, is the run's route: it clicks that, asking nothing, and otherwise
  * picks only among the choice's two-factor methods, taking a lone one beside a way in unasked. A
- * login without a password never takes the password way where the choice offers a two-factor
- * method too: it picks among those.
+ * login without a password never takes the password way where every two-factor method the choice
+ * offers is a code (`codeMethods`): it picks among those.
  */
 const screenFor = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   input: AutofillReplayInput<E, V, L>,
@@ -169,7 +172,10 @@ const screenFor = <E extends YieldableError, V extends string, L extends Autofil
     // Picking a method may send a code: a value-free replay stops before it.
     if (replay.valueFree) return valuesNeeded;
     const twoFactor = recorded.methods.filter(isTwoFactorOption);
-    const codeOnly = input.credentials?.password === undefined && twoFactor.length > 0;
+    const codeOnly =
+      input.credentials?.password === undefined &&
+      twoFactor.length > 0 &&
+      twoFactor.every((method) => codeMethods.has(method.method));
     const picked =
       recorded.methods.find(
         (method) =>
@@ -837,9 +843,10 @@ const settle = <E extends YieldableError, V extends string, L extends AutofillLo
 /**
  * The recorded screen the page shows now among those that have neither acted in this sign-in nor
  * had the walk restart at them: its controls as the progression check finds them
- * (`screenProbes`), on its own recorded page, and not only a button on the page of the screen the
- * walk last ran (`showsAnotherScreen`). Of several, the one with the most controls found, then the
- * first recorded. A hand-off screen, or one with no control to find, never shows here.
+ * (`screenProbes`), on its own recorded page, and another screen than the one the walk waited for
+ * or last ran by the progression check's rule (`showsAnotherScreen`). Of several, the one with the
+ * most controls found, then the first recorded. A hand-off screen, or one with no control to find,
+ * never shows here.
  */
 const showingScreen = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   input: AutofillReplayInput<E, V, L>,
@@ -871,12 +878,24 @@ const showingScreen = <E extends YieldableError, V extends string, L extends Aut
   });
 
 /**
+ * A sign-in check that ended with no verdict on the login (`sign_in_check_failed`), with no code
+ * it typed and never sent, which stops the sign-in where it is (`runFoundCodeScreen`).
+ */
+const noVerdict = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  replay: Replay<E, V, L>,
+  settled: { readonly outcome: string; readonly reason?: string },
+) =>
+  settled.outcome !== "signed_in" &&
+  settled.reason === "sign_in_check_failed" &&
+  !(replay.state.filled.has("code") && !replay.sent.maySent.has("code"));
+
+/**
  * One walk of the recorded screens from `walk.from`, and the sign-in check after them: how the
  * replay ends, or, where it would end because a screen it waited for never showed or the check
- * after the last screen failed, that ending (`failed`), which stands only when no other recorded
- * screen shows (`showingScreen`). A recorded code screen that never showed leaves the sign-in
- * check to decide first, which looks for a code screen the recipe never recorded: one that signs
- * in, or sends a code, stands.
+ * found no verdict on the login (`noVerdict`), that ending (`failed`), which stands only when no
+ * other recorded screen shows (`showingScreen`). A recorded code screen that never showed leaves
+ * the sign-in check to decide first, which looks for a code screen the recipe never recorded: one
+ * that signs in, or sends a code, stands.
  */
 const walkScreens = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   input: AutofillReplayInput<E, V, L>,
@@ -887,15 +906,16 @@ const walkScreens = <E extends YieldableError, V extends string, L extends Autof
     const stopped = yield* runScreens(input, replay, walk);
     if (stopped === undefined) {
       const settled = yield* settle(input, replay);
-      return settled.outcome !== "signed_in" && settled.reason === "sign_in_check_failed"
-        ? { failed: Effect.succeed(settled) }
-        : settled;
+      return noVerdict(replay, settled) ? { failed: Effect.succeed(settled) } : settled;
     }
     if ("notShown" in stopped) return { failed: refusedScreen(input, replay, stopped.notShown) };
     if (!("codeScreenMissing" in stopped)) return stopped;
     const settled = yield* settle(input, replay);
-    if (settled.outcome === "signed_in" || replay.sent.maySent.has("code")) return settled;
-    return { failed: refusedScreen(input, replay, stopped.codeScreenMissing) };
+    if (settled.outcome === "signed_in") return settled;
+    const ending = replay.sent.maySent.has("code")
+      ? Effect.succeed(settled)
+      : refusedScreen(input, replay, stopped.codeScreenMissing);
+    return noVerdict(replay, settled) ? { failed: ending } : yield* ending;
   });
 
 /**
