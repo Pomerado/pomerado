@@ -925,7 +925,8 @@ const walkScreens = <E extends YieldableError, V extends string, L extends Autof
  * the owner to open a sign-in link it emailed (`hosted.replyAskedLink`): the owner pastes the link,
  * which the replay opens in its own browser (`openPastedLink`), trusted as the returned screen's
  * page trusts it, and the sign-in's check after the screens decides (`settle`). Any other ending
- * stands, and so does this one when the host reads no such answer or the screen is gone.
+ * stands, and so does this one when no password went out, the password field no longer shows, an
+ * emailed link already went in this sign-in, or the host reads no such answer.
  */
 const linkAfterReply = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   input: AutofillReplayInput<E, V, L>,
@@ -934,20 +935,22 @@ const linkAfterReply = <E extends YieldableError, V extends string, L extends Au
 ) =>
   Effect.gen(function* () {
     const read = input.hosted?.replyAskedLink;
-    const returned = replay.progress.ran.at(-1);
     if (
       ended.outcome === "signed_in" ||
       ended.reason !== "credential_screen_returned" ||
       read === undefined ||
-      returned === undefined ||
-      !(yield* read())
+      !replay.sent.seenSent("password") ||
+      replay.state.steps.some((step) => step.approval === "email_link")
     )
       return ended;
+    const returned = yield* replay.shownAgain("password");
+    const field = returned?.fields.find((one) => one.slot === "password");
+    if (returned === undefined || field === undefined) return ended;
     const screen = yield* input.hooks.inspect({
-      fields: returned.fields,
+      fields: [field],
       ...(returned.popup === undefined ? {} : { popup: returned.popup }),
     });
-    if ("outcome" in screen) return ended;
+    if ("outcome" in screen || !(yield* read())) return ended;
     yield* input.emit({ stage: "approval", approval: "email_link", reason: "site_reply" });
     const opened = yield* openPastedLink(input, screen);
     if (opened !== "opened") return replay.outcome(opened);

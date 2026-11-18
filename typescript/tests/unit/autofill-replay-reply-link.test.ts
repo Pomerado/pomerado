@@ -9,8 +9,8 @@ import type { AutofillHooks } from "../../src/runtime/autofill-state.js";
 // A site that answers a password with an emailed sign-in link instead of signing in: its answer
 // leaves the password screen showing, and the link signs in only the browser that opens it. A host
 // that reads the site's answer as asking for that link (`hosted.replyAskedLink`) has the replay ask
-// the owner to paste it, open it and check the marker. Without that read, the replay ends as the
-// returned password screen always has.
+// the owner to paste it and open it, and the usual check after the screens decides. Without that
+// read, the replay ends as the returned password screen always has.
 
 class TestFailure extends Data.TaggedError("TestFailure")<{ readonly code: string }> {}
 
@@ -18,7 +18,7 @@ const origin = "https://example.test";
 const login = `${origin}/login`;
 const account = `${origin}/account`;
 const link = `${origin}/magic/example?token=xxxxxxxxxxxxxxxx`;
-const recipe = signInRecipe(
+const passwordScreen = signInRecipe(
   [
     {
       page: login,
@@ -28,6 +28,18 @@ const recipe = signInRecipe(
       ],
       submit: "#sign-in",
     },
+  ],
+  { selector: "#account" },
+);
+// An identifier screen, then a password screen of its own.
+const identifierFirst = signInRecipe(
+  [
+    {
+      page: login,
+      fields: [{ selector: "#user", slot: "username", accepts: ["username"] }],
+      submit: "#next",
+    },
+    { page: login, fields: [{ selector: "#password", slot: "password" }], submit: "#sign-in" },
   ],
   { selector: "#account" },
 );
@@ -41,12 +53,20 @@ const target = {
 };
 
 /**
- * One replay on the site, which signs in at once when `signsIn`, else keeps the password screen
- * with the host's read of its answer (`replyAskedLink`, none when undefined): what it asked, what
- * it opened, how many times the host read the answer and how it ended.
+ * One replay of `recipe` on the site, whose login page shows `shown` (the username and password
+ * fields by default) and which signs in at once when `signsIn`, else keeps its page after each
+ * submit, its password field gone after one when `passwordGone`, with the host's read of its answer
+ * (`replyAskedLink`, none when undefined): what it asked, what it opened, how many times the host
+ * read the answer and how it ended.
  */
-const replay = (options: { readonly signsIn?: true; readonly replyAskedLink?: boolean }) => {
-  const state = { page: login };
+const replay = (options: {
+  readonly recipe?: typeof passwordScreen;
+  readonly shown?: readonly string[];
+  readonly signsIn?: true;
+  readonly passwordGone?: true;
+  readonly replyAskedLink?: boolean;
+}) => {
+  const state = { page: login, shown: new Set(options.shown ?? ["#user", "#password"]) };
   const asked: string[] = [];
   const opened: string[] = [];
   const reads = { current: 0 };
@@ -66,7 +86,9 @@ const replay = (options: { readonly signsIn?: true; readonly replyAskedLink?: bo
     confirm: check,
     inspect: (step) =>
       Effect.sync(() =>
-        state.page === login && step.fields.length > 0
+        state.page === login &&
+        step.fields.length > 0 &&
+        step.fields.every((field) => state.shown.has(field.selector))
           ? ({
               page: login,
               siteOrigin: origin,
@@ -82,6 +104,7 @@ const replay = (options: { readonly signsIn?: true; readonly replyAskedLink?: bo
     fill: ({ step }) =>
       Effect.sync(() => {
         if (options.signsIn === true) state.page = account;
+        if (options.passwordGone === true) state.shown.delete("#password");
         return {
           outcome: "filled" as const,
           fields: step.fields.map((field) => ({ slot: field.slot, status: "filled" as const })),
@@ -103,7 +126,7 @@ const replay = (options: { readonly signsIn?: true; readonly replyAskedLink?: bo
   const read = options.replyAskedLink;
   return Effect.runPromise(
     replayAutofillRecipe({
-      recipe,
+      recipe: options.recipe ?? passwordScreen,
       hooks,
       entryUrl: login,
       credentials: { username: "synthetic-owner", password: "synthetic-password" },
@@ -158,4 +181,25 @@ it("asks nothing when the site's answer asked for no link, or the site signed in
   expect(signedIn.asked).toEqual([]);
   expect(signedIn.outcome).toMatchObject({ outcome: "signed_in" });
   expect(signedIn.reads).toBe(0);
+});
+
+// Only a password that went out and whose field still shows is the answer's: an identifier screen
+// that came back with no password sent, or a password screen whose field is gone, never consults
+// the host, and ends as before.
+it("never asks for a link when no password went out or its field is gone", async () => {
+  const identifierBack = await replay({
+    recipe: identifierFirst,
+    shown: ["#user"],
+    replyAskedLink: true,
+  });
+  expect(identifierBack.asked).toEqual([]);
+  expect(identifierBack.reads).toBe(0);
+  expect(identifierBack.outcome).toEqual({
+    outcome: "unclear",
+    reason: "credential_screen_returned",
+  });
+  const passwordGone = await replay({ passwordGone: true, replyAskedLink: true });
+  expect(passwordGone.asked).toEqual([]);
+  expect(passwordGone.reads).toBe(0);
+  expect(passwordGone.outcome).not.toMatchObject({ outcome: "signed_in" });
 });
