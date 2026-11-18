@@ -589,6 +589,42 @@ it("signs a read in where its login address sends a browser this host already si
   expect(fake.trace).toEqual(["open:/login"]);
 });
 
+// On a browser this host already signed in whose session ended, the local host reads no page
+// state, so its untouched entry page never ends a read's check without values: it waits for the
+// login form the page draws late, then asks.
+it("asks a read's login on a browser this host typed into whose session ended, when its login form draws late", { timeout: 20_000 }, async () => {
+  const fake = scriptedSite({
+    entry: "login",
+    screens: { login: loginScreen, account: [] },
+    fill: (_page, values) => (signedLogin(values) ? { next: "account", signIn: true } : {}),
+  });
+  let openedAt = Date.now();
+  const browser: SignInReplayBrowser<never> = {
+    ...fake.browser,
+    open: (url) =>
+      fake.browser.open(url).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            openedAt = Date.now();
+          }),
+        ),
+      ),
+    inspect: (step) =>
+      Date.now() - openedAt < 2_500
+        ? Effect.succeed({ outcome: "refused" as const, reason: "not_found" as const })
+        : fake.browser.inspect(step),
+  };
+  const result = await signInBefore(fake, browser, true, true);
+  expect(result).toEqual(Either.right({ alreadySignedIn: false }));
+  expect(fake.trace).toEqual([
+    "open:/account",
+    "open:/login",
+    "ask:missing_credentials",
+    "open:/login",
+    "fill:login",
+  ]);
+});
+
 it("replays after the account page on a browser this host typed into whose session ended", { timeout: 20_000 }, async () => {
   const fake = scriptedSite({
     entry: "login",

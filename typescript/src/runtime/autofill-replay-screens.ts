@@ -246,6 +246,7 @@ const loginUnproved = <E extends YieldableError, V extends string>(
   progress: ScreenWaitProgress<V>,
 ) =>
   input.hooks.startedEmpty === true &&
+  input.hooks.signedInBefore !== true &&
   !progress.ran.some((step) => step.fields.some((field) => provesLogin(field.slot))) &&
   input.recipe.steps.some((step) =>
     step.fields.some((field) => "slot" in field && provesLogin(field.slot)),

@@ -135,15 +135,16 @@ type ReplayFailure<E> = SignInRunFailed | ReplayBrowserFailed<E>;
  * The shared replay's page hooks over the local browser: `check` reads the marker once, `confirm`
  * waits for a marker drawn late (`settledMarkerCheck`), and a read's sign-in may end on a page that
  * can't tell (`confirmCantTell`). An entry page that does not load fails `entry_page_unavailable`.
- * A sign-in sets `startedEmpty` unless its browser is one this host already signed in
- * (`startedEmpty: false`), so a check without values on a new browser never ends on a login entry
- * that can't tell. The engine reads `pageState` only for that, so none is given.
+ * Every sign-in sets `startedEmpty`, so a check without values never ends on a login entry that
+ * can't tell. The engine reads `pageState` only for that, so none is given. A browser this host
+ * already signed in sets `signedInBefore`, so its landing before a password or code went in may
+ * still end the wait.
  */
 const replayHooks = <E>(
   browser: SignInReplayBrowser<E>,
   allowCantTell: boolean,
   settle: MarkerSettle | undefined,
-  startedEmpty: boolean,
+  signedInBefore: boolean,
 ): AutofillHooks<ReplayFailure<E>> => {
   const failed = (error: E) => new ReplayBrowserFailed({ error });
   const checkOn: AutofillHooks<ReplayFailure<E>>["confirm"] = (
@@ -190,7 +191,8 @@ const replayHooks = <E>(
             readNumber.call(browser, selector, screenPage, popup).pipe(Effect.mapError(failed)),
         }),
     ...(allowCantTell ? { confirmCantTell: () => Effect.void } : {}),
-    startedEmpty,
+    startedEmpty: true,
+    ...(signedInBefore ? { signedInBefore } : {}),
   };
 };
 
@@ -353,11 +355,8 @@ export const signInForRun = <E>(input: {
   readonly onWorkspaceEvent?: (event: WorkspaceOriginEvent) => void;
   /** Whether a page that can't tell signs it in, as a read's may. */
   readonly allowCantTell?: boolean;
-  /**
-   * Whether the browser started new and empty, never one this host already signed in; true unless
-   * a caller says otherwise.
-   */
-  readonly startedEmpty?: boolean;
+  /** Whether this host already signed in on this browser; false unless a caller says so. */
+  readonly signedInBefore?: boolean;
   /**
    * The values the site rejected and the corrections asked, kept across the sign-ins of one run;
    * a new one by default. A verified sign-in clears it.
@@ -392,7 +391,7 @@ export const signInForRun = <E>(input: {
       input.browser,
       input.allowCantTell === true,
       input.markerSettle,
-      input.startedEmpty !== false,
+      input.signedInBefore === true,
     );
     const broker = localSecretBroker(input.secrets);
     const given = { current: {} };
