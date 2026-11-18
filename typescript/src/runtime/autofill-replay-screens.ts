@@ -89,9 +89,10 @@ const controlsOf = (step: AutofillStep) => {
  * such as the step that last ran) has a field the probe lacks, and each control the probe lacks
  * of any of them is gone. A button gone alone
  * proves nothing, as a required choice may draw after the fields beside it, or a code screen take
- * its own button away. A probe with no field needs a button of its own besides, so a
- * coincident same-page button, such as a shared Continue, never proves a screen, nor does any
- * button while the current screen's other controls still show.
+ * its own button away. The probe needs a control of its own besides, none of theirs, so neither
+ * a coincident same-page button, such as a shared Continue, nor a screen they hold all of, as one
+ * still drawing or come back shows, proves a screen, nor does any button while the current
+ * screen's other controls still show.
  */
 export const showsAnotherScreen = <E>(
   hooks: Pick<AutofillHooks<E>, "inspect">,
@@ -114,8 +115,7 @@ export const showsAnotherScreen = <E>(
     const fields = [current, ...before].flatMap((step) => step.fields);
     if (fields.every((field) => own.has(field.selector))) return false;
     const others = new Map([...before, current].flatMap((step) => [...controlsOf(step)]));
-    if (probe.fields.length === 0 && [...own.keys()].every((selector) => others.has(selector)))
-      return false;
+    if ([...own.keys()].every((selector) => others.has(selector))) return false;
     for (const [selector, control] of others)
       if (!own.has(selector) && (yield* shows(hooks, control))) return false;
     return true;
