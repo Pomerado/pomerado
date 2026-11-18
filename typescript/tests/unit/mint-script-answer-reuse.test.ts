@@ -5,7 +5,9 @@
 // reuse changes the answer's shape; a host reading kept answers back decodes one it cannot read,
 // or refuses one an earlier release kept with more fields; a purchase confirm asks again for the
 // same order its owner said yes to, or reuses a yes to another order, a no, another job's yes or
-// a yes after a commit step ran.
+// a yes after a commit step ran; a script question Guardian rewords as a repeat takes an answer the
+// owner never gave: against a named no or another pick, from a yes among several options that go
+// on, over a condition the owner set beside their answer, or for an agent's own question.
 import { Effect, Either, Option, Schema } from "effect";
 import { describe, expect, it } from "vitest";
 import {
@@ -444,6 +446,54 @@ describe("a script question Guardian rewords as a repeat of the owner's earlier 
     const small: AnsweredQuestion = { id: "size_pick", question: "Which size should the tool order?", answer: "Small" };
     const chose = repeat([{ question: "size", option: "Small", confirmed: null }], ["size_pick", "decline"]);
     expect(repeatedScriptAnswers(size, chose, [small, declined], live)).toBeUndefined();
+  });
+
+  it("never answers a yes or an option that goes on when a named answer carries the owner's condition", () => {
+    const plan = request([
+      {
+        id: "plan",
+        type: "choice",
+        prompt: "Add the protection plan?",
+        options: [
+          { id: "add", label: "Add plan ($12)" },
+          { id: "skip", label: "Skip", declines: true },
+        ],
+      },
+    ]);
+    const addConfirm = request([{ id: "plan", type: "confirm", prompt: "Add plan ($12)?" }]);
+    const checkout: AnsweredQuestion = { id: "checkout", question: "May the tool check out?", answer: { confirmed: true } };
+    const asked = (answer: AnsweredQuestion["answer"], beside: Partial<AnsweredQuestion> = {}): AnsweredQuestion => ({
+      id: "said",
+      question: "Should the tool add the protection plan?",
+      answer,
+      ...beside,
+    });
+    const add = repeat([{ question: "plan", option: "Add plan ($12)", confirmed: null }], ["checkout", "said"]);
+    const yes = repeat([{ question: "plan", option: null, confirmed: true }], ["checkout", "said"]);
+    // Plain, the owner's yes and pick settle it.
+    expect(repeatedScriptAnswers(plan, add, [checkout, asked("Add plan ($12)")], live)).toEqual({
+      plan: { type: "choice", value: "add" },
+    });
+    expect(repeatedScriptAnswers(addConfirm, yes, [checkout, asked({ confirmed: true })], live)).toEqual({
+      plan: { type: "confirm", value: { confirmed: true } },
+    });
+    for (const said of [
+      asked("Yes, add it", { note: "Only if it costs under $10" }),
+      asked("Only if it costs under $10"),
+      asked(["Add plan ($12)"], { note: "Only if it costs under $10" }),
+      asked(["Add plan ($12)"], { other: "Only if it costs under $10" }),
+      asked({ confirmed: true, text: "Only if it costs under $10" }),
+      asked("Add plan ($12)", { note: "Only if it costs under $10" }),
+    ]) {
+      expect(repeatedScriptAnswers(plan, add, [checkout, said], live)).toBeUndefined();
+      expect(repeatedScriptAnswers(addConfirm, yes, [checkout, said], live)).toBeUndefined();
+    }
+  });
+
+  it("never answers an agent's own question", () => {
+    const agents = { ...pay, source: "agent" } satisfies InputRequest;
+    expect(repeatedScriptAnswers(pay, card, [approval], live)).toEqual(paid);
+    expect(repeatedScriptAnswers(agents, card, [approval], live)).toBeUndefined();
   });
 
   it("never answers yes to a confirm that takes a follow-up text", () => {

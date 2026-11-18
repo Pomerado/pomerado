@@ -197,16 +197,25 @@ const confirmedAnswer = ({ answer }: AnsweredQuestion) =>
  * The answers a script's question takes when Guardian's question review rewords it as a repeat of
  * the owner's earlier answers and names, for each of its questions, the answer they give
  * (`answers`) and which answered questions they are (`answeredBy`); undefined to go on as the
- * review says. Each id named is exactly one answer in `answered`, the answers the review trusted,
- * and the owner's latest to its prompt. Each question gets exactly one answer of its own kind, a
- * choice the one option its label names. A confirm's yes rests on a named yes, never with a
- * follow-up text. An option that doesn't decline rests on a named pick of it without a note, or a
- * named yes when it is the question's only such option; no named pick of another option stands
- * against it; and nothing that goes on rests on a named no. A
- * purchase, which carries its order, takes only a yes, or an option that doesn't decline, resting
- * on a named yes that `orderYes` says may still answer this order: the host's record that the owner
- * gave it since a step last may have placed one, and, for a yes to a script's own purchase, to the
- * same order. Never a code, a secret, a login, a hand-off, a text or a multiple choice.
+ * review says.
+ *
+ * - Each id named is exactly one answer in `answered`, the answers the review trusted, and the
+ *   owner's latest to its prompt. Each question gets exactly one answer of its own kind, a choice
+ *   the one option its label names.
+ * - Nothing that goes on rests on a named no, or on a named answer that carries the owner's own
+ *   words, a note, an own option or several picks: the script would never get the condition.
+ * - A confirm's yes rests on a named yes, never with a follow-up text.
+ * - An option that doesn't decline rests on a named pick of it, or on a named yes when it is the
+ *   question's only such option. A named pick of another option, of an option whose label two
+ *   options share, or of an account's option shown with no masked label stands against it.
+ * - A purchase, which carries its order, takes only a yes, or an option that doesn't decline,
+ *   resting on a named yes that `orderYes` says may still answer this order: the host's record
+ *   that the owner gave it since a step last may have placed one, and, for a yes to a script's own
+ *   purchase, to the same order.
+ * - Never a code, a secret, a login, a hand-off, a text or a multiple choice.
+ *
+ * The host also never repeats over an answer to the same prompt the review didn't name, which only
+ * it can match, since it screens the prompts.
  */
 export const repeatedScriptAnswers = (
   asked: InputRequest,
@@ -232,6 +241,19 @@ export const repeatedScriptAnswers = (
     cited.some((entry) => answered.findLast((later) => later.question === entry.question) !== entry)
   )
     return undefined;
+  // A named answer that isn't a plain yes, no or pick of an asked option carries the owner's own
+  // words, a note, an own option or several picks: a condition the script would never get, so
+  // nothing that goes on rests on it.
+  const plain = ({ answer, note, other }: AnsweredQuestion) =>
+    note === undefined &&
+    other === undefined &&
+    (typeof answer === "string"
+      ? asked.questions.some(
+          (question) =>
+            question.type === "choice" && optionsRepeatedBy(question.options, answer).length > 0,
+        )
+      : "confirmed" in answer && answer.text === undefined);
+  const qualified = !cited.every(plain);
   const saidNo = cited.some((entry) => confirmedAnswer(entry) === false);
   const saidYes = cited.some((entry) => confirmedAnswer(entry) === true);
   const orderSaidYes = cited.some((entry) => confirmedAnswer(entry) === true && orderYes(entry));
@@ -243,7 +265,7 @@ export const repeatedScriptAnswers = (
     if (question.type === "confirm" && answer.confirmed !== null) {
       const yes = answer.confirmed;
       if (
-        (yes && (saidNo || !saidYes || question.followUp !== undefined)) ||
+        (yes && (saidNo || qualified || !saidYes || question.followUp !== undefined)) ||
         (asked.order !== undefined && (!yes || !orderSaidYes))
       )
         return undefined;
@@ -275,7 +297,7 @@ export const repeatedScriptAnswers = (
       const settled =
         picks.some(({ ids }) => ids.length > 0) || (saidYes && going.length === 1);
       if (
-        (proceeds && (saidNo || !settled)) ||
+        (proceeds && (saidNo || qualified || !settled)) ||
         (asked.order !== undefined && (!proceeds || !orderSaidYes))
       )
         return undefined;
