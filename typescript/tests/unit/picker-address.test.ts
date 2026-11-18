@@ -651,6 +651,19 @@ describe("matchAddressRows", () => {
         expect(await matchAddressRows(asked, { rows: rows.map((text) => ({ text, categorized: false })), read }, { country: "US" })).toEqual({ picked: true, index, label: plain, unit: "", wanted: asked });
   });
 
+  test("reads a postal district written after its town as that town, and two districts as two places", async () => {
+    const rowsOf = (...texts: string[]) => ({ rows: texts.map((text) => ({ text, categorized: false })) });
+    const dublin = "1 Example Street, Dublin 2, Ireland";
+    expect(await matchAddressRows(dublin, rowsOf("1 Example Street, Dublin, Ireland"), { country: "IE" })).toMatchObject({ picked: true, index: 0 });
+    expect(await matchAddressRows(dublin, rowsOf("1 Example Street, Dublin 4, Ireland"), { country: "IE" })).toMatchObject({ picked: false });
+    const copenhagen = "Eksempelvej 1, 1050 København K, Denmark";
+    for (const row of ["Eksempelvej 1, Copenhagen, Denmark", "Eksempelvej 1, 1050 Copenhagen Municipality, Denmark"])
+      expect(await matchAddressRows(copenhagen, rowsOf(row), { country: "DK" })).toMatchObject({ picked: true, index: 0, label: row });
+    // A US address of the same shape answers as before.
+    const us = "1 Example St, Dublin 2, CA 94568";
+    expect(await matchAddressRows(us, rowsOf("1 Example St, Dublin, CA 94568"), { country: "US" })).toMatchObject({ picked: true, index: 0 });
+  });
+
   // PlaceMatch compares at most 100 rows at once. A longer list is asked about, never cut, so the
   // caller's place past the 100th row is never left out unseen.
   test("asks about a list with more rows than PlaceMatch compares, and leaves none out", async () => {
