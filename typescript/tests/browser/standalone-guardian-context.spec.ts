@@ -535,9 +535,10 @@ test("a step reuses the owner's answer each time its script asks the same questi
 });
 
 /**
- * Mints a write whose agent asks its own confirm, which the owner says yes to, then whose step's
- * script asks `asked`; the question review rewords that script's question as a repeat of the
- * agent's confirm, naming the answer it gives.
+ * Mints a write whose agent asks its own confirm, which the owner says yes to, and with `agentNo`
+ * a confirm with that prompt, which the owner says no to, then whose step's script asks `asked`;
+ * the question review rewords that script's question as a repeat of the agent's yes, naming the
+ * answer it gives.
  */
 const repeatOfAgentYes = async (asked: string, agentNo?: string) => {
   const site = await startSite((_request, response) =>
@@ -589,7 +590,7 @@ const repeatOfAgentYes = async (asked: string, agentNo?: string) => {
   }
 };
 
-test("a script's question the review calls a repeat of the owner's yes takes that yes, but a purchase does not", async () => {
+test("a script's question the review calls a repeat of the owner's yes takes that yes, but not a purchase nor over the owner's unnamed no", async () => {
   test.setTimeout(180_000);
   const answered = await repeatOfAgentYes(
     "return { first: await ask('approve'), second: await ask('approve') };",

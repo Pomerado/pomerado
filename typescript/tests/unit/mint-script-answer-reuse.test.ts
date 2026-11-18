@@ -357,6 +357,48 @@ describe("a script question Guardian rewords as a repeat of the owner's earlier 
     expect(repeatedScriptAnswers(size, named("Large"), [small], live)).toBeUndefined();
   });
 
+  it("never takes an option that goes on against a named pick of another, or from a yes that names none", () => {
+    const submit = request([
+      {
+        id: "submit",
+        type: "choice",
+        prompt: "Submit the claim?",
+        options: [
+          { id: "go", label: "Submit" },
+          { id: "express", label: "Express review" },
+          { id: "stop", label: "Do not submit", declines: true },
+        ],
+      },
+    ]);
+    const fill: AnsweredQuestion = { id: "fill", question: "May the tool fill in the claim form?", answer: { confirmed: true } };
+    const pick = (answer: string, note?: string): AnsweredQuestion => ({
+      id: "pick",
+      question: "Submit the claim once it's filled in?",
+      answer,
+      ...(note === undefined ? {} : { note }),
+    });
+    const chose = (option: string, answeredBy = ["fill", "pick"]) =>
+      repeat([{ question: "submit", option, confirmed: null }], answeredBy);
+    // The owner's pick of the decline, or of another option that goes on, stands against it.
+    expect(repeatedScriptAnswers(submit, chose("Submit"), [fill, pick("Do not submit")], live)).toBeUndefined();
+    expect(repeatedScriptAnswers(submit, chose("Express review"), [fill, pick("Submit")], live)).toBeUndefined();
+    expect(repeatedScriptAnswers(submit, chose("Submit"), [fill, pick("Submit")], live)).toEqual({
+      submit: { type: "choice", value: "go" },
+    });
+    // A pick that carries the owner's note settles nothing: the script would never get the note.
+    expect(repeatedScriptAnswers(submit, chose("Submit"), [fill, pick("Submit", "Only after noon")], live)).toBeUndefined();
+    // A yes alone settles an option that goes on only when its prompt names that one option.
+    expect(repeatedScriptAnswers(submit, chose("Submit", ["fill"]), [fill], live)).toBeUndefined();
+    const express: AnsweredQuestion = {
+      id: "fill",
+      question: "May the tool send the claim for express review?",
+      answer: { confirmed: true },
+    };
+    expect(repeatedScriptAnswers(submit, chose("Express review", ["fill"]), [express], live)).toEqual({
+      submit: { type: "choice", value: "express" },
+    });
+  });
+
   it("never answers yes to a confirm that takes a follow-up text", () => {
     const dialog = request([
       { id: "accept", type: "confirm", prompt: "Accept the dialog?", followUp: { prompt: "What should it say?" } },
@@ -370,7 +412,20 @@ describe("a script question Guardian rewords as a repeat of the owner's earlier 
       { id: "code", type: "secret", secretKind: "one_time_code", prompt: "What code did the site send?" },
     ]);
     const note = request([{ id: "note", type: "text", prompt: "Any delivery note?" }]);
-    for (const asked of [code, note])
+    const extras = request([
+      {
+        id: "extras",
+        type: "multi_choice",
+        prompt: "Which extras?",
+        options: [
+          { id: "gift", label: "Gift wrap" },
+          { id: "card", label: "Card" },
+        ],
+        minSelections: 0,
+        maxSelections: 2,
+      },
+    ]);
+    for (const asked of [code, note, extras])
       expect(
         repeatedScriptAnswers(
           asked,

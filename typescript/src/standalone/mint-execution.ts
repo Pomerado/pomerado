@@ -246,7 +246,12 @@ const scriptQuestions = (
           );
           const repeated = unnamed
             ? undefined
-            : repeatedScriptAnswers(candidate, review.decision, context.answeredQuestions, () => false);
+            : repeatedScriptAnswers(
+                candidate,
+                review.decision,
+                context.answeredQuestions,
+                () => false,
+              );
           if (repeated !== undefined) {
             repeat = true;
             return repeated;
