@@ -1784,6 +1784,22 @@ it("keeps no last answer Guardian did not allow", async () => {
   expect(JSON.stringify(outcome)).not.toContain("555-0100");
 });
 
+it("keeps a last answer Guardian asked only to word differently", async () => {
+  const f = await fixture(() => prose("The check page came back after a new browser."), {
+    reviewQuestion: () =>
+      Effect.succeed({
+        outcome: "reword" as const,
+        rationale: "The new browser is not established.",
+        label: "misdescribed" as const,
+      }),
+  });
+  const outcome = await f.run();
+  expect(outcome).toMatchObject({
+    stopReason: "final_text_without_tool",
+    stopExplanation: "The check page came back after a new browser.",
+  });
+});
+
 // A last answer that says the host refused the build's steps is true only against the host's own
 // record. Its review reads the decision ledger a blocked report's review reads, with the host's
 // hold on a live step and its refusal of the blocked report beside the refused execution. The

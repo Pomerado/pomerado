@@ -4705,13 +4705,18 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         );
       /**
        * The minter's last final answer as its caller may read it, when it stopped without a tool
-       * call: kept only when Guardian allowed it. The model is gone, so nothing is offered back:
-       * any other outcome or failure keeps nothing.
+       * call: kept when Guardian allowed it, or asked only for other words (`unclear`,
+       * `misdescribed`), since the model is gone and can't reword it, and the caller should still
+       * hear why. Any other outcome, label or failure keeps nothing.
        */
       const reviewedStopExplanation = (text: string | undefined) =>
         reviewStopExplanation(text).pipe(
           Effect.map((review) =>
-            review?.decision.outcome === "allow_business" ? review.screened : undefined,
+            review?.decision.outcome === "allow_business" ||
+            (review?.decision.outcome === "reword" &&
+              (review.decision.label === "unclear" || review.decision.label === "misdescribed"))
+              ? review.screened
+              : undefined,
           ),
         );
       /**
@@ -9069,7 +9074,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       // A sign-in stop handed back to revise its explanation that the minter never sent again,
       // with nothing run since, still ends as sign-in unavailable with the reason it reported,
       // while the sign-in is still unconfirmed and the minter neither gave it up nor had the
-      // owner decline the login. Its last answer may say why, kept only once Guardian allows it.
+      // owner decline the login. Its last answer may say why, kept as `reviewedStopExplanation`
+      // keeps one.
       if (
         terminal === undefined &&
         signInStopReworded !== undefined &&
