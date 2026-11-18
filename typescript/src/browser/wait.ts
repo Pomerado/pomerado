@@ -922,10 +922,13 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
       if (shown !== undefined) {
         const observation = observations?.[shown.name];
         // A locator with more than one match decides only when it shows more than once, its visible
-        // matches all read the same, and none is left from before the action beside a new one.
+        // matches all read the same, and none is left from before the action beside a new one. After
+        // a commit's click, visible matches all new since the click decide however they read, while
+        // no other outcome shows.
         if (shown.kind === "locator" && observation.count > 1 && !(observation.visible > 1 &&
             !(observation.changed > 0 && observation.changed < observation.visible) &&
-            (await waitBounded(outcomeWaitSameText(shown.locator).catch(() => false), Math.max(250, Math.min(1000, beforeStop())), false)))) {
+            ((committing && observation.changed === observation.visible && !candidates.some((each) => each !== shown && shows(each))) ||
+              (await waitBounded(outcomeWaitSameText(shown.locator).catch(() => false), Math.max(250, Math.min(1000, beforeStop())), false))))) {
           const failure = outcomeWaitFailure("outcome_ambiguous", ": " + outcomeWaitSeen(observations), observations, {
             outcome: shown.name,
           });
@@ -1494,8 +1497,9 @@ const waitForChange = async (fields, options = {}) => {
  * `OutcomeWaitFailure` has `observations` (`OutcomeObservation` by key) and one of these reasons:
  *
  * - `outcome_ambiguous`, when the winning outcome's locator matches more than one element, unless
- *   more than one is visible and the visible ones all read the same text; its `outcome` is that
- *   key. Scope the locator, for example with `.filter({ visible: true })`.
+ *   more than one is visible and the visible ones all read the same text or, after a commit's click
+ *   (below), are all new since it while no other outcome shows; its `outcome` is that key. Scope
+ *   the locator, for example with `.filter({ visible: true })`.
  * - `outcome_unknown`, when no outcome shows and the page made no progress for `noProgressMs`: a
  *   challenge, the site's error or a layout the code does not handle, never slowness. Also, after a
  *   commit's click (below), when an outcome that is the site's message shows while a request that

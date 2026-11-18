@@ -472,6 +472,48 @@ test("after a commit's click, only a new message confirmCommit judges not done e
   }
 });
 
+test("a commit's wait takes several new matches of its winning outcome that read differently, unless another outcome shows or one is from before the click", async ({
+  page,
+}) => {
+  const placed = '<p class="placed">Order placed.</p>';
+  const sent = '<p class="placed">Receipt sent to your email.</p>';
+  const failed = '<p class="failed">Payment failed.</p>';
+  const cases = [
+    { name: "two new success messages", before: "", after: placed + sent, commit: "success", read: "outcome_ambiguous" },
+    { name: "two new success messages beside a new failure", before: "", after: placed + sent + failed, commit: "outcome_ambiguous" },
+    { name: "a success message from before the click beside a new failure", before: placed, after: failed, commit: "failed" },
+    { name: "a success message from before the click alone", before: placed, after: "", commit: "success" },
+    { name: "two success messages from before the click alone", before: placed + sent, after: "", commit: "outcome_ambiguous" },
+    { name: "a success message from before the click beside a new one", before: placed, after: sent, commit: "outcome_ambiguous" },
+  ];
+  for (const each of cases) {
+    for (const [prefix, expected] of [[`${commitCall}${waitCode}`, each.commit], [waitCode, each.read]] as const) {
+      if (expected === undefined) continue;
+      await page.setContent(`
+        <button type="button" id="buy">Buy now</button>
+        <section id="answer">${each.before}</section>
+        <script>
+          document.querySelector("#buy").onclick = () => setTimeout(() =>
+            document.querySelector("#answer").insertAdjacentHTML("beforeend", ${JSON.stringify(each.after)}), 50);
+        </script>`);
+      const answer = await call(
+        page,
+        `try {
+          return await waitForOutcome({
+            success: page.locator(".placed"),
+            checkpoint: page.locator(".checkpoint"),
+            failed: page.locator(".failed"),
+          }, { action: () => page.locator("#buy").click(), unchangedMs: 800, noProgressMs: 2000, timeout: 4000 });
+        } catch (error) {
+          return error.reason;
+        }`,
+        prefix,
+      );
+      expect(answer.result, `${each.name}, ${prefix === waitCode ? "a read" : "a commit"}`).toBe(expected);
+    }
+  }
+});
+
 test("after a commit's click, a native dialog no outcome names that says the order failed is the site's refusal", async ({
   page,
 }) => {
