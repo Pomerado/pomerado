@@ -672,10 +672,6 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
       get taskUpdates(): readonly ReviewedTaskUpdate[] {
         return taskUpdates;
       },
-      /** The owner's answers every later review trusts, the latest to each prompt. */
-      get answeredQuestions(): readonly AnsweredQuestion[] {
-        return [...answeredQuestions.values()];
-      },
       observations,
       review,
       reviewTaskUpdate,

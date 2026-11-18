@@ -192,13 +192,15 @@ const confirmedAnswer = ({ answer }: AnsweredQuestion) =>
 /**
  * The answers a script's question takes when Guardian's question review rewords it as a repeat of
  * the owner's earlier answers and names, for each of its questions, the answer they give
- * (`answers`) and which answered questions they are (`answeredBy`); undefined to ask the owner.
- * Every id named is the owner's latest answer to its prompt in `answered`, the answers the review
- * trusted. Each question gets exactly one answer of its own kind, a choice the one option its
- * label names, and no yes rests on a named no. A purchase confirm, which carries its order, takes
- * only a yes, or an option that doesn't decline, resting on a named yes that `orderYes` says may
- * still answer an order, as a kept yes may until a step may have placed it. Never a code, a
- * secret, a login, a hand-off, a text or a multiple choice.
+ * (`answers`) and which answered questions they are (`answeredBy`); undefined to go on as the
+ * review says. Each id named is exactly one of the owner's latest answers in `answered`, the
+ * answers the review trusted, one to each prompt. Each question gets exactly one answer of its
+ * own kind, a choice the one option its label names. A confirm's yes rests on a named yes, and
+ * nothing that goes on rests on a named no. A purchase, which carries its order, takes only a yes,
+ * or an option that doesn't decline, resting on a named yes that `orderYes` says may still answer
+ * this order: the host's record that the owner gave it since a step last may have placed one, and,
+ * for a yes to a script's own purchase, to the same order. Never a code, a secret, a login, a
+ * hand-off, a text or a multiple choice.
  */
 export const repeatedScriptAnswers = (
   asked: InputRequest,
@@ -215,15 +217,16 @@ export const repeatedScriptAnswers = (
     answers.length !== asked.questions.length
   )
     return undefined;
-  const named = answeredBy.map((id) => answered.find((entry) => entry.id === id));
-  const cited = named.filter((entry) => entry !== undefined);
-  if (
-    cited.length !== named.length ||
-    cited.some((entry) => answered.findLast((later) => later.question === entry.question) !== entry)
-  )
-    return undefined;
+  // An id two prompts share names neither: the review may mean either.
+  const latest = answered.filter(
+    (entry) => answered.findLast((later) => later.question === entry.question) === entry,
+  );
+  const named = answeredBy.map((id) => latest.filter((entry) => entry.id === id));
+  if (named.some((entries) => entries.length !== 1)) return undefined;
+  const cited = named.flat();
   const saidNo = cited.some((entry) => confirmedAnswer(entry) === false);
-  const saidYes = cited.some((entry) => confirmedAnswer(entry) === true && orderYes(entry));
+  const saidYes = cited.some((entry) => confirmedAnswer(entry) === true);
+  const orderSaidYes = cited.some((entry) => confirmedAnswer(entry) === true && orderYes(entry));
   const given: Record<string, unknown> = {};
   for (const question of asked.questions) {
     const matching = answers.filter((answer) => answer.question === question.id);
@@ -231,14 +234,15 @@ export const repeatedScriptAnswers = (
     if (answer === undefined) return undefined;
     if (question.type === "confirm" && answer.confirmed !== null) {
       const yes = answer.confirmed;
-      if ((yes && saidNo) || (asked.order !== undefined && (!yes || !saidYes))) return undefined;
+      if ((yes && (saidNo || !saidYes)) || (asked.order !== undefined && (!yes || !orderSaidYes)))
+        return undefined;
       given[question.id] = { confirmed: yes };
     } else if (question.type === "choice" && answer.option !== null) {
       const options = optionsRepeatedBy(question.options, answer.option);
       const option = options.length === 1 ? options[0] : undefined;
       if (option === undefined) return undefined;
       const proceeds = option.declines !== true;
-      if ((proceeds && saidNo) || (asked.order !== undefined && (!proceeds || !saidYes)))
+      if ((proceeds && saidNo) || (asked.order !== undefined && (!proceeds || !orderSaidYes)))
         return undefined;
       given[question.id] = option.id;
     } else return undefined;

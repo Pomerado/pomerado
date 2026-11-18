@@ -313,6 +313,26 @@ describe("a script question Guardian rewords as a repeat of the owner's earlier 
     expect(repeatedScriptAnswers(unpaid, card, [declined], live)).toBeUndefined();
   });
 
+  it("names no answer by an id two of the owner's latest answers share", () => {
+    // The owner said yes to a delivery window under the same id after approving the payment.
+    const window: AnsweredQuestion = { id: "approve_payment", question: "Keep the default delivery window?", answer: { confirmed: true } };
+    expect(repeatedScriptAnswers(pay, card, [approval, window], live)).toBeUndefined();
+    // An id whose earlier answer the owner replaced under another id names only the newer one.
+    const replaced = { ...approval, answer: "Replaced by a newer answer" };
+    const newer = { id: "approve_again", question: approval.question, answer: { confirmed: true } };
+    expect(repeatedScriptAnswers(pay, card, [replaced, newer], live)).toBeUndefined();
+    expect(repeatedScriptAnswers(pay, repeat(card.answers, ["approve_again"]), [replaced, newer], live)).toEqual(paid);
+  });
+
+  it("answers a confirm yes only from a named yes", () => {
+    const remove = request([{ id: "remove", type: "confirm", prompt: "Remove the saved address?" }]);
+    const chosen: AnsweredQuestion = { id: "card_choice", question: "Which card?", answer: "Saved card" };
+    const yes = repeat([{ question: "remove", option: null, confirmed: true }], ["card_choice"]);
+    expect(repeatedScriptAnswers(remove, yes, [chosen], live)).toBeUndefined();
+    const no = repeat([{ question: "remove", option: null, confirmed: false }], ["card_choice"]);
+    expect(repeatedScriptAnswers(remove, no, [chosen], live)).toEqual({ remove: { type: "confirm", value: { confirmed: false } } });
+  });
+
   it("never answers a code, a secret, a text or a multiple choice", () => {
     const code = request([
       { id: "code", type: "secret", secretKind: "one_time_code", prompt: "What code did the site send?" },

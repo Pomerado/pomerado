@@ -70,7 +70,6 @@ import type { MintState } from "./mint-state.js";
 import {
   forgetOrderAnswers,
   keptScriptAnswers,
-  repeatedScriptAnswers,
   reusedScriptAnswers,
   scriptQuestionKeys,
 } from "../mint/script-answer-reuse.js";
@@ -234,16 +233,6 @@ const scriptQuestions = (
             { entrypoint: `operation/${entrypoint}`, sources: sourceMap, input },
             question,
           );
-          // A repeat that names the owner's earlier answers answers it from them, a purchase
-          // only from a yes no step may have placed since, the asking one included.
-          const repeated = repeatedScriptAnswers(
-            candidate,
-            review.decision,
-            context.answeredQuestions,
-            (entry) =>
-              bounds?.commitsUnsent === true && scriptAnswers.unspent.includes(entry.question),
-          );
-          if (repeated !== undefined) return repeated;
           if (review.decision.outcome !== "allow_business") {
             scriptQuestion = {
               requestId: candidate.id,
@@ -255,10 +244,6 @@ const scriptQuestions = (
           }
           const fresh = yield* mintAsk(candidate, bounds);
           scriptAnswers.kept = keptScriptAnswers(scriptAnswers.kept, keys, fresh, candidate.order);
-          scriptAnswers.unspent = [
-            ...scriptAnswers.unspent,
-            ...keys.flatMap((key) => (key === undefined ? [] : [key.prompt])),
-          ];
           return fresh;
         }));
       yield* context.answered(candidate, answers);
@@ -782,10 +767,8 @@ const authoredExecution = (
           // Unless the step made no browser call or its own report shows every commit step it
           // declares unsent, it may have placed the order its owner said yes to, so that yes
           // answers no later purchase confirm.
-          if (act.marks.possiblySent && act.commit !== "not_entered") {
+          if (act.marks.possiblySent && act.commit !== "not_entered")
             state.scriptAnswers.kept = forgetOrderAnswers(state.scriptAnswers.kept);
-            state.scriptAnswers.unspent = [];
-          }
         }
         // The marks of the session's recorded path not yet settled: until none is left, a
         // confirmation does not close the session. A declared refusal that ends the session
