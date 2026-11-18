@@ -4458,8 +4458,15 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         // A challenge the host recorded and could not get past is read only for host_refused.
         const challengeRefused =
           reason === "host_refused" && dependencies.hostChallengeRefused?.() === true;
+        // So is the host's refusal to verify a sign-in that submitted no identifier with a secret.
+        const signInCheckRefused =
+          reason === "host_refused" && dependencies.signInCheckRefused?.() === true;
         const hostCheckRefusing =
-          hostRefused || refillRefused || signInDestinationRefused || challengeRefused;
+          hostRefused ||
+          refillRefused ||
+          signInDestinationRefused ||
+          challengeRefused ||
+          signInCheckRefused;
         const liveTestsSpent = liveTestsRefusal !== undefined && !liveTestsRefusal.reserveOpen;
         const hostRefusing = hostCheckRefusing || liveTestsSpent;
         if (reason === "owner_declined" && !ownerRefused && stopDeclined)
@@ -4548,7 +4555,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           !namedStepsOffered.has(namedStep) &&
           !refillRefused &&
           !signInDestinationRefused &&
-          !challengeRefused
+          !challengeRefused &&
+          !signInCheckRefused
         ) {
           namedStepsOffered.add(namedStep);
           const told = namedStepInstructions.get(namedStep);
@@ -4590,6 +4598,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         const others: HostRefusalBasis[] = [
           ...(refillRefused ? [{ source: "sign_in_refill" as const }] : []),
           ...(signInDestinationRefused ? [{ source: "sign_in_destination" as const }] : []),
+          ...(signInCheckRefused ? [{ source: "sign_in_check" as const }] : []),
           ...(liveTestsSpent ? [{ source: "live_tests_spent" as const }] : []),
           ...(challengeRefused ? [{ source: "challenge" as const }] : []),
         ];

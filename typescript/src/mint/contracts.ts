@@ -248,7 +248,10 @@ export type HostRefusalSource = typeof HostRefusalSource.Type;
  * What a `host_refused` ending stood on, in the blocked diagnostic: the source that set the
  * attempt's host refusal (`HostRefusalSource`), a sign-in screen the host refused because the
  * password's fills are spent (`sign_in_refill`), one it refused at its destination check
- * (`sign_in_destination`), live tests the host refuses with no batch left (`live_tests_spent`), a
+ * (`sign_in_destination`), a `signedIn` on a page showing the signed-in marker that the host
+ * would not verify because the sign-in, after sending a screen, submitted no identifier with a
+ * password or code (`sign_in_check`), live tests the host refuses with no batch left
+ * (`live_tests_spent`), a
  * challenge on the site the host recorded and could not get past (`challenge`), and a refusal an
  * older worker's checkpoint kept without its source (`unrecorded`).
  */
@@ -258,6 +261,7 @@ export type HostRefusalBasis =
       readonly source:
         | "sign_in_refill"
         | "sign_in_destination"
+        | "sign_in_check"
         | "live_tests_spent"
         | "challenge"
         | "unrecorded";
@@ -3263,6 +3267,18 @@ export interface MintDependencies {
    * it when the minter reports `host_refused`. Absent, the harness knows only its own refusals.
    */
   readonly hostChallengeRefused?: () => boolean;
+  /**
+   * Whether the host refused the sign-in's latest `signedIn` although the page showed the
+   * signed-in marker, because no screen of that sign-in submitted the login's identifier with a
+   * password or code (`credentials_not_submitted`), and that sign-in had sent at least one screen,
+   * as when the site went on signed in past screens it skipped; and no sign-in verified and no
+   * sign-in screen was sent since. A `signedIn` before any screen of the sign-in, or on a page that
+   * doesn't show the marker, never counts: the minter can still send the site's sign-in screens. A
+   * `host_refused` block stands on it, named as the source `sign_in_check`, as on any host refusal
+   * of a sign-in. The harness reads it when the minter reports `host_refused`. Absent, the harness
+   * knows only the refusals it was handed as failures.
+   */
+  readonly signInCheckRefused?: () => boolean;
   /** The host's own descriptions of its optional tools, in place of the generic ones. */
   readonly hostToolDescriptions?: HostToolDescriptions;
   /**
