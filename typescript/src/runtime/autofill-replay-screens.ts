@@ -49,14 +49,14 @@ export const exactScreens = (steps: readonly AutofillRecipeStep[]): ReplayScreen
 type RecordedPage = Pick<AutofillRecipeStep, "page" | "anySegments">;
 
 /** A later page or ready credential fields prove progression; a coincident same-page button cannot. */
-const inspectReplayProgression = <E>(
+export const inspectReplayProgression = <E>(
   hooks: Pick<AutofillHooks<E>, "inspect">,
   currentPage: RecordedPage,
   current: AutofillStep,
   alternatives: readonly AutofillStep[],
   later: readonly AutofillRecipeStep[],
   resolve: (request: AutofillStepRequest) => AutofillStep,
-  screens: ReplayScreens,
+  screens: Pick<ReplayScreens, "matches">,
 ) =>
   Effect.gen(function* () {
     for (const alternative of alternatives) {

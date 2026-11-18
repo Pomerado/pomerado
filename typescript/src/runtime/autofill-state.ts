@@ -648,9 +648,10 @@ export const noteRefill = (state: AutofillSignInState, slot: RefillSlot = "passw
  * Records what a fill did once it returns: a field it did not fill is not held as filled, nor a
  * saved security answer typed, a step that reached nothing leaves the recipe, a step the host
  * clicked records it, with `submitVia` when it pressed the submit from the keyboard or clicked
- * through the site's own control over it, and one whose
- * click another element caught is the open sign-in's `blocked` screen. Returns whether anything
- * reached the page.
+ * through the site's own control over it, a code screen that closed in place before the host
+ * clicked anything (`closedInPlace`) records no submit or submit key, as the page sends it, and one
+ * whose click another element caught is the open sign-in's `blocked` screen. Returns whether
+ * anything reached the page.
  */
 export const recordStep = (
   state: AutofillSignInState,
@@ -679,6 +680,10 @@ export const recordStep = (
         ? { submitVia: stepReport.via }
         : {}),
     };
+  else if (stepReport.outcome === "filled" && stepReport.closedInPlace === true && last) {
+    const { submit: _gone, submitKey: _key, ...sentByPage } = last;
+    state.steps[state.steps.length - 1] = sentByPage;
+  }
   return reached || submit === "clicked" || submit === "uncertain";
 };
 
