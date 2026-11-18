@@ -189,6 +189,21 @@ const atDeadline =
     });
 
 /**
+ * Whether a browser that started empty (`startedEmpty`) has yet to send the password or code its
+ * recipe records: a page it shows off the screens before then is the sign-in's own, such as a
+ * redirect page a sign-in opener passes through before the login form shows.
+ */
+const loginUnproved = <E extends YieldableError, V extends string>(
+  input: Pick<AutofillReplayInput<E, V>, "hooks" | "recipe">,
+  progress: ScreenWaitProgress<V>,
+) =>
+  input.hooks.startedEmpty === true &&
+  !progress.ran.some((step) => step.fields.some((field) => provesLogin(field.slot))) &&
+  input.recipe.steps.some((step) =>
+    step.fields.some((field) => "slot" in field && provesLogin(field.slot)),
+  );
+
+/**
  * A sign-in that may end on a page that can't tell went past the screens once the page left them
  * and the entry page, stayed put a moment (or until the screen's deadline) and can't tell, as a
  * site's login page sends a signed-in browser to its account picker. A page off the sign-in
@@ -198,9 +213,12 @@ const atDeadline =
  * code screen: the wait runs to its deadline, where the host's challenge look runs first
  * (`atDeadline`), and a code screen that never showed leaves the sign-in check to decide, which may
  * still end on such a page, as when a site skips its code screen this time (`codeScreenMissing`).
+ * A browser that started empty is past no sign-in before its login's password or code went in
+ * (`loginUnproved`), so its wait runs on to the screen's deadline.
  */
 const landedCantTell = <E extends YieldableError, V extends string>(
   input: Pick<AutofillReplayInput<E, V>, "hooks" | "recipe">,
+  progress: ScreenWaitProgress<V>,
   awaited: AutofillStep,
   off: OffScreens | undefined,
   now: number,
@@ -209,6 +227,7 @@ const landedCantTell = <E extends YieldableError, V extends string>(
   screens: ReplayScreens,
 ) =>
   input.hooks.confirmCantTell !== undefined &&
+  !loginUnproved(input, progress) &&
   !awaited.fields.some((field) => field.slot === "code") &&
   off !== undefined &&
   (now - off.since >= landingSettleMs || now >= until) &&
@@ -546,7 +565,8 @@ export const makeReplayScreenWait = <
         if (landedInPlace) progress.landedInPlace = true;
         const landed = landedReason(
           here.signedIn,
-          landedCantTell(input, step, left.off, at, waitUntil, here, screens) || landedInPlace,
+          landedCantTell(input, progress, step, left.off, at, waitUntil, here, screens) ||
+            landedInPlace,
           entryCantTell(
             progress,
             entry,

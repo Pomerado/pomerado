@@ -218,6 +218,123 @@ it("signs in when landing on a genuinely different route that cannot tell", asyn
   expect(outcome).toMatchObject({ outcome: "signed_in", cantTell: true });
 }, 20_000);
 
+/**
+ * A sign-in whose opener, clicked on the entry page, passes through a redirect page off the
+ * recorded screens before its login form shows `formAfterMs` later, or never when undefined.
+ */
+const replayOpener = async (startedEmpty: boolean, formAfterMs: number | undefined) => {
+  const home = `${origin}/home`;
+  let page: "home" | "redirect" | "login" | "account" = "home";
+  let clickedAt = 0;
+  const events: unknown[] = [];
+  const filled: string[] = [];
+  const current = () => {
+    if (page === "redirect" && formAfterMs !== undefined && Date.now() - clickedAt >= formAfterMs)
+      page = "login";
+    return page;
+  };
+  const here = () =>
+    current() === "account"
+      ? ({ signedIn: true, url: `${origin}/account` } as const)
+      : ({
+          signedIn: false,
+          failed: "indicator_not_visible",
+          url: page === "redirect" ? `${origin}/redirect` : page === "login" ? login : home,
+        } as const);
+  const shownOn = (url: string, step: AutofillStep) => ({
+    page: url,
+    siteOrigin: origin,
+    authenticationOrigins: [],
+    targets: {
+      fields: step.fields.map(() => target),
+      submit: { ...target, editable: false, control: "other" as const },
+    },
+    screen: { origin, fields: [], submit: null, buttons: ["Sign in"] },
+  });
+  const hooks: AutofillHooks<TestFailure> = {
+    open: () => Effect.void,
+    check: () => Effect.sync(here),
+    confirm: () => Effect.sync(here),
+    inspect: (step) =>
+      Effect.sync(() =>
+        current() === "home" && step.submit === "#open"
+          ? shownOn(home, step)
+          : page === "login" && step.fields.some((field) => field.selector === "#password")
+            ? shownOn(login, step)
+            : ({ outcome: "refused", reason: "not_found" } as const),
+      ),
+    fill: ({ step }) =>
+      Effect.sync(() => {
+        filled.push(step.submit ?? "");
+        const from = page === "home" ? home : login;
+        page = page === "home" ? "redirect" : "account";
+        clickedAt = Date.now();
+        return {
+          outcome: "filled" as const,
+          fields: step.fields.map((field) => ({ slot: field.slot, status: "filled" as const })),
+          submit: "clicked" as const,
+          url: from,
+        };
+      }),
+    confirmCantTell: () => Effect.void,
+    ...(startedEmpty ? { startedEmpty } : {}),
+  };
+  const outcome = await Effect.runPromise(
+    replayAutofillRecipe({
+      recipe: {
+        version: 2,
+        steps: [
+          { page: home, fields: [], submit: "#open" },
+          { page: login, fields: [{ selector: "#password", slot: "password" }], submit: "#go" },
+        ],
+        signedIn: { selector: "#identity", urlPath: "/account" },
+      },
+      hooks,
+      entryUrl: home,
+      credentials: { username: "synthetic-user", password: "synthetic-password" },
+      ask: () => Effect.dieMessage("Unexpected question"),
+      broker: {
+        register: () => Effect.void,
+        registeredSecretMatches: () => Effect.succeed([]),
+      },
+      site: "example.test",
+      correlation: { jobId: "job", attemptId: "attempt" },
+      emit: (event) => Effect.sync(() => events.push(event)),
+      failures: {
+        unanswered: () => new TestFailure({ code: "BrowserUnavailable" }),
+        unavailable: () => new TestFailure({ code: "BrowserUnavailable" }),
+      },
+      timing: { stepWaitMs: 4_000, pollMs: 20 },
+      sent: { current: false },
+    }).pipe(Effect.scoped),
+  );
+  return { outcome, events, filled };
+};
+
+const landing = { stage: "skipped", reason: "cant_tell_landing" };
+
+it("waits through an opener's redirect page for the login form on a browser that started empty", async () => {
+  const { outcome, events, filled } = await replayOpener(true, 2_000);
+  expect(events).not.toContainEqual(landing);
+  expect(filled).toEqual(["#open", "#go"]);
+  expect(outcome).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(outcome).not.toHaveProperty("cantTell");
+}, 20_000);
+
+it("ends a browser that started empty whose login form never shows past the redirect page", async () => {
+  const { outcome, events, filled } = await replayOpener(true, undefined);
+  expect(events).not.toContainEqual(landing);
+  expect(filled).toEqual(["#open"]);
+  expect(outcome).toMatchObject({ reason: "not_found" });
+}, 20_000);
+
+it("still reads a saved profile's page off the screens after the opener as its landing", async () => {
+  const { outcome, events, filled } = await replayOpener(false, undefined);
+  expect(events).toContainEqual(landing);
+  expect(filled).toEqual(["#open"]);
+  expect(outcome).toMatchObject({ outcome: "signed_in", cantTell: true });
+}, 20_000);
+
 describe("replay screen and landing trailing-slash helpers", () => {
   const other = "https://other.test";
   const screens = exactScreens([
