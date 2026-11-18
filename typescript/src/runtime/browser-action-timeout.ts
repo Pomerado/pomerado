@@ -14,8 +14,8 @@ export class BrowserActionTimeout extends Error {
 
 /**
  * Each reason the runtime's page waits and pager fail with, at the start of the failure's message,
- * and how a page wait that ended without its answer ran out: at its cap while the page kept
- * progressing (`cap`), or once the page stopped progressing (`quiet`). Any other failure is `false`.
+ * marked by which a page wait that ends without its answer gives: `cap` at its cap while the page
+ * keeps progressing, `quiet` once the page stopped progressing. Every other reason is `false`.
  */
 export const pageWaitReasons = {
   outcome_timeout: "cap",
@@ -55,9 +55,9 @@ export const settledTimeout = (answer: {
 }): { readonly ms: number; readonly reason?: keyof typeof pageWaitReasons } | undefined => {
   if (answer.success !== false || typeof answer.error !== "string") return undefined;
   const native = nativeTimeout.exec(answer.error);
-  if (native?.[1] !== undefined) return { ms: Number(native[1]) };
+  if (native !== null) return { ms: Number(native[1]) };
   const wait = pageWaitTimeout.exec(answer.error);
-  return wait?.[1] === undefined || wait[2] === undefined
+  return wait === null
     ? undefined
     : { ms: Number(wait[2]), reason: wait[1] as keyof typeof pageWaitReasons };
 };

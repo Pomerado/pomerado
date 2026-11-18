@@ -14,6 +14,7 @@ const rests = [
   " after 9105 ms, 8000 ms without progress: total missing",
   " after 30000 ms",
   " after 30000ms",
+  " after 30000 msx",
   ": results 2 visible of 2",
 ];
 
