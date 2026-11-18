@@ -78,7 +78,10 @@ open segment without acting, and `next(segment, count)` moves to the next segmen
 gives them. For `api`, `open` opens the results page, then calls the endpoint inside the page with
 the position's `token`, or, for a position with only a `page`, fetches the responses up to that
 page; keep the visible mechanism as the fallback when the endpoint refuses or changes.
-`references/pagination.ts` writes these functions by hand.
+`references/pagination.ts` writes these functions by hand. Send the page size and the offset or
+cursor the site's own client sends, read from a captured request or the client's own code, and let
+`readList` trim to `limit`. Never set the site's page size to the caller's `limit`: many endpoints
+count slots they don't return as rows, so a page of `limit` slots can hold fewer rows or none.
 
 `readList` asks for exactly the rows the window needs, so the call's `limit` and the site's page
 size need not match. With `limit` 20 and 30 rows per site page, call one returns site page one's
@@ -134,7 +137,11 @@ position hands back that same position, which a call with more time continues, a
 call in a row ends the list with `no_progress`. A later call whose site shows no results and a
 total of 0 after earlier calls returned rows is never the list's end either: `readList` hands back
 that same position once, with a `reason` that says the search likely did not load; prefer returning
-that `reason` as the result's own, and calling a list complete only when `has_more` is false.
+that `reason` as the result's own, and calling a list complete only when `has_more` is false. An
+empty page is not evidence the site has none when the same answer says more exist: a results count
+above zero, a has-more flag that is true or a next offset past the one asked means the request
+asked wrongly. Read the whole answer, not a projection of it, and compare it with what the site's
+own page shows for the same input before reporting that the site lacks the data.
 `next_cursor` is null, with `has_more` true and
 `next_cursor_unavailable` saying why, past the deepest position a tool can rebuild without the
 site's link or token (10 site pages or 20 steps, `depth_cap`), when the site's link or token is
