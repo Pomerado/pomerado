@@ -552,6 +552,48 @@ test("a later step asks the owner again once the owner answered its prompt anew"
   expect(scriptAsks).toHaveLength(2);
 });
 
+// The caller's no to a script's own confirm is the owner's no, as a no to the minter's own confirm
+// question is: a build that needs the step it declined ends as owner_declined.
+test("a build ends owner_declined on the caller's no to its script's confirm", async () => {
+  test.setTimeout(90_000);
+  const site = await startSite((_request, response) =>
+    html(response, "<title>Fixture</title><h1>Public fixture</h1>"),
+  );
+  const guardian = recordingGuardian();
+  try {
+    const { built, last } = await mint({
+      effect: "write",
+      url: site.url,
+      guardian,
+      answer: () => ({ approve: { confirmed: false } }),
+      turns: [
+        () =>
+          patch({
+            "src/tool.mjs": approvingStep(
+              "if (!(await ask('approve')).confirmed) throw new Error('Declined the terms.'); enteringCommit('submit');",
+            ),
+          }),
+        () => [call("execute", act("src/tool.mjs", undefined, writePath("submit")), "declined")],
+        () => [
+          call(
+            "report_blocked",
+            {
+              intent: "End the build: the caller declined the terms",
+              reason: "owner_declined",
+              explanation: "The caller declined the site terms, so the booking was not made.",
+            },
+            "blocked",
+          ),
+        ],
+      ],
+    });
+    expect(toolResult(last, "declined")).toMatchObject({ status: "failed" });
+    expect(built.blocked).toMatchObject({ reason: "owner_declined" });
+  } finally {
+    await site.close();
+  }
+});
+
 test("a script's question after a task update asks the owner again", async () => {
   test.setTimeout(90_000);
   const site = await startSite((_request, response) =>
