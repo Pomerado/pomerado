@@ -120,7 +120,8 @@ request the page depends on, is a failure: throw `OperationFailure` naming what 
 never an empty list or a success built from it. When such a reply is itself the site's
 no-results message, or the page answers it with its no-results message, as some store finders do
 for a 404, or with a refusal of the caller's value (caller-input skill), that answer stands. An
-empty answer that other evidence on the same page contradicts for the same inputs is a failure too: throw `OperationFailure` naming what that
+empty answer that other evidence on the same page
+contradicts for the same inputs is a failure too: throw `OperationFailure` naming what that
 evidence shows.
 
 Retail and grocery grids often interleave sponsored copies of their organic results and put
