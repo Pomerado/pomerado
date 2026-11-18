@@ -664,6 +664,16 @@ describe("matchAddressRows", () => {
     expect(await matchAddressRows(us, rowsOf("1 Example St, Dublin, CA 94568"), { country: "US" })).toMatchObject({ picked: true, index: 0 });
   });
 
+  test("takes the row that lists a postcode's area for a caller who gave only that postcode", async () => {
+    const rowsOf = (...texts: string[]) => ({ rows: texts.map((text) => ({ text, categorized: false })) });
+    // A house whose number equals the postcode, then the area row.
+    for (const area of ["62701 Exampleton, IL, USA", "62701, Example Grove, IL, USA", "62701, Exampleton, Example County, IL, USA"])
+      expect(await matchAddressRows("62701", rowsOf("62701, Example Trail, Sampleton, IL, USA", area), { country: "US" })).toMatchObject({ picked: true, index: 1, label: area });
+    // A street, then another town: a house, not the postcode's area.
+    for (const house of ["62701, Example Trail, Sampleton, IL, USA", "62701 Example, Sampleton, IL, USA"])
+      expect(await matchAddressRows("62701", rowsOf(house), { country: "US" })).toMatchObject({ picked: false });
+  });
+
   // PlaceMatch compares at most 100 rows at once. A longer list is asked about, never cut, so the
   // caller's place past the 100th row is never left out unseen.
   test("asks about a list with more rows than PlaceMatch compares, and leaves none out", async () => {
