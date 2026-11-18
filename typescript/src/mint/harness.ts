@@ -920,6 +920,10 @@ const siteAccessDiagnostic = (evidence: ExecutionEvidence): SiteAccessDiagnostic
   return undefined;
 };
 
+/** What the minter reads when the host takes the caller's no to the script's question as proof. */
+const declineProofInstruction =
+  "The caller declined at the tool's own confirm, so nothing was placed, and that decline is your change's proof: keep your edits and call finish_build.";
+
 /**
  * What the agent does after a write step whose confirmation the host withheld with its result:
  * the write went out, so it is never repeated; a step that only reads the confirmation back
@@ -961,6 +965,7 @@ const safeExecutionEvidence = (evidence: ExecutionEvidence): ExecutionEvidence =
       ? {}
       : { terminalFailure: evidence.terminalFailure }),
     ...(evidence.noResponse === undefined ? {} : { noResponse: evidence.noResponse }),
+    ...(evidence.ownerDeclined === undefined ? {} : { ownerDeclined: evidence.ownerDeclined }),
     ...(evidence.preflight === undefined ? {} : { preflight: evidence.preflight }),
     ...(evidence.resultRef === undefined ? {} : { resultRef: evidence.resultRef }),
     ...(evidence.confirmation === undefined ? {} : { confirmation: evidence.confirmation }),
@@ -2368,6 +2373,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           return JSON.stringify({
             ...receipt,
             ...(withheld === undefined ? {} : { instruction: withheldConfirmationInstruction }),
+            ...(evidence.ownerDeclined?.proof === true
+              ? { instruction: declineProofInstruction }
+              : {}),
             ...(fileCap === undefined
               ? {}
               : { fileCap: { ...fileCap, instruction: fileCapInstruction(fileCap) } }),
@@ -4429,7 +4437,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         // the latest host refusal names a step that fixes it, in core's instruction
         // (`namedStepReasons`) or a host's rationale (`rationaleStepReasons`), the first report on
         // its reason goes back with that step, and the next is taken. The owner's no to a
-        // confirm question, or to a login, is `owner_declined`; a question handed back unanswered
+        // confirm question, to a question a step's script asked (`ownerDeclined`), or to a login,
+        // is `owner_declined`; a question handed back unanswered
         // is `question_unanswered`: no answer is no consent, so the minter may end the build
         // safely instead of going on past what it asked. A policy report that stands only on
         // one of those takes its name, so neither ever ends as policy. `owner_ended` needs the
@@ -4446,7 +4455,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               "confirmed" in answer &&
               !answer.confirmed,
           );
-        const ownerRefused = loginDeclined !== undefined || declined(false);
+        const ownerRefused =
+          loginDeclined !== undefined ||
+          declined(false) ||
+          executions.some((entry) => entry.ownerDeclined !== undefined);
         const stopDeclined = declined(true);
         const keptGoing = (ending: "owner_declined" | "owner_ended") =>
           refused(

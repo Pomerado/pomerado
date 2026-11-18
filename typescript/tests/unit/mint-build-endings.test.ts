@@ -142,6 +142,48 @@ it.each([
   },
 );
 
+// The caller's no to a question the tool's own script asked during a step is the owner's no, as a
+// no to the minter's own confirm is, so owner_declined stands on it. When the host takes that no as
+// the proof of the build's change, the step's result tells the minter to keep its edits and finish.
+it.each([false, true])(
+  "ends owner_declined on the caller's no to the script's own question (proof %s)",
+  async (proof) => {
+    const explanation = "The caller declined the order at the tool's confirm, so this build stops.";
+    const f = await fixture(
+      (_request, index) =>
+        [
+          call("execute", { ...pureExample, target: "liveBrowser" }, "example"),
+          call("report_blocked", { reason: "owner_declined", explanation }, "report"),
+        ][index] ?? prose("Stopping."),
+      {
+        reviewAndExecute: (_submitted, beforeDispatch = () => Effect.void) =>
+          beforeDispatch(readAllow).pipe(
+            Effect.as({
+              executionId: "execution_declined",
+              status: "failed" as const,
+              effect: "not_sent" as const,
+              observations: { message: "The caller declined the order; nothing was placed." },
+              ownerDeclined: { proof },
+            }),
+          ),
+      },
+    );
+    const outcome = await f.run();
+    const result = resultOf(f.requests[1], "example");
+    if (proof)
+      expect(result).toMatchObject({
+        instruction:
+          "The caller declined at the tool's own confirm, so nothing was placed, and that decline is your change's proof: keep your edits and call finish_build.",
+      });
+    else expect(result).not.toHaveProperty("instruction");
+    expect(outcome).toMatchObject({
+      build: "incomplete",
+      blocked: { reason: "owner_declined", explanation },
+      stopReason: "owner_declined",
+    });
+  },
+);
+
 // A site that offers the task but declines the example's own facts ends under its own reason, with
 // the site's reason in the explanation its caller reads, not as a site that lacks the capability.
 it("ends a build the site declined for the example's own facts as site_declined", async () => {
