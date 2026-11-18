@@ -149,7 +149,7 @@ export const inspectReplayProgression = <E>(
           screens.matches(found.page, recorded) &&
           (yield* showsAnotherScreen(hooks, found.page, probe, currentPage, current, before))
         )
-          return { next: recorded } as const;
+          return { next: recorded, page: found.page } as const;
       }
     }
     return undefined;
@@ -504,9 +504,9 @@ export const makeReplayScreenWait = <
   const checkHere = markerHere(input);
   const now = Clock.currentTimeMillis;
   const deadline = atDeadline(hooks, progress, timing.stepWaitMs, resubmit);
-  // The screen a wait last passed over as gone, and how many steps had run then: while none ran
-  // since, it is a screen just before the next wait's, beside the step that last ran.
-  const passed = { step: undefined as AutofillStep | undefined, ran: 0 };
+  // The screens waits passed over as gone, and how many steps had run then: while none ran since,
+  // they are screens just before the next wait's, beside the step that last ran.
+  const passed: { steps: AutofillStep[]; ran: number } = { steps: [], ran: 0 };
   /** Inspect the current stage, rejection evidence and proved later stages before timing a wait. */
   const inspectStage = (
     step: AutofillStep,
@@ -514,6 +514,7 @@ export const makeReplayScreenWait = <
     later: readonly AutofillRecipeStep[],
     alternatives: readonly AutofillStep[],
     due: boolean,
+    look: { since?: number | undefined },
   ) =>
     Effect.gen(function* () {
       const inspected = yield* inspectSettled(input, step);
@@ -540,13 +541,21 @@ export const makeReplayScreenWait = <
         later,
         resolve,
         screens,
-        [progress.ran.at(-1), passed.ran === progress.ran.length ? passed.step : undefined].filter(
+        [progress.ran.at(-1), ...(passed.ran === progress.ran.length ? passed.steps : [])].filter(
           (before) => before !== undefined,
         ),
       );
       if (progressed !== undefined) {
         if (progressed.found !== undefined) return { found: progressed.found } as const;
-        passed.step = step;
+        // A button-only screen may draw after the fields beside it, so passing it over by the
+        // page's look waits until that look held `landingSettleMs`.
+        if (step.fields.length === 0 && pageMatches(progressed.page, currentPage)) {
+          const at = yield* now;
+          look.since ??= at;
+          if (at - look.since < landingSettleMs) return { waiting: inspected } as const;
+        }
+        if (passed.ran !== progress.ran.length) passed.steps = [];
+        passed.steps.push(step);
         passed.ran = progress.ran.length;
         yield* input.emit({
           stage: "skipped",
@@ -555,6 +564,7 @@ export const makeReplayScreenWait = <
         });
         return "skipped" as const;
       }
+      look.since = undefined;
       return { waiting: inspected } as const;
     });
   return (
@@ -571,9 +581,10 @@ export const makeReplayScreenWait = <
       let inPlace: OffScreens | undefined;
       let waitUntil = until;
       const held = holdShown(input, progress, timing);
+      const look: { since?: number | undefined } = {};
       while (true) {
         const due = (yield* now) >= waitUntil;
-        const stage = yield* inspectStage(step, current, later, alternatives, due);
+        const stage = yield* inspectStage(step, current, later, alternatives, due, look);
         if (stage === "extra_retried") continue;
         if (typeof stage === "string") return stage;
         if (yield* held(step, stage.found, waitUntil)) continue;

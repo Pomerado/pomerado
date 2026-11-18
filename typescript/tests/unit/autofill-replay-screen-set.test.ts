@@ -129,6 +129,7 @@ const replay = (
   options: {
     readonly password?: string;
     readonly method?: (methods: readonly SignInMethodOption[]) => SignInMethodOption | undefined;
+    readonly stepWaitMs?: number;
   } = {},
 ) => {
   const events: Readonly<Record<string, unknown>>[] = [];
@@ -166,7 +167,7 @@ const replay = (
         ...(options.method === undefined
           ? {}
           : { hosted: { method: (methods) => Effect.succeed(options.method?.(methods)) } }),
-        timing: { stepWaitMs: 60, pollMs: 2 },
+        timing: { stepWaitMs: options.stepWaitMs ?? 60, pollMs: 2 },
         sent: { current: false },
       }).pipe(Effect.scoped),
     ),
@@ -266,6 +267,33 @@ it("never takes a later screen the screen it waits for holds all of, as that scr
   );
   expect(outcome.reason).toBe("not_found");
   expect(site.clicks).toEqual([]);
+});
+
+it("waits for a required choice that draws after the fields beside it, after a screen ran", async () => {
+  let drawn = Infinity;
+  const site = scriptedSite(
+    {
+      "sign-in": { path: "/sign-in", controls: ["#email", "#next"] },
+      choice: {
+        path: "/sign-in",
+        get controls() {
+          return Date.now() < drawn ? ["#password", "#go"] : ["#plan", "#password", "#go"];
+        },
+      },
+      password: { path: "/sign-in", controls: ["#password", "#go"] },
+    },
+    (screen, clicked) => {
+      if (screen === "sign-in") drawn = Date.now() + 300;
+      return screen === "sign-in" ? "choice" : clicked === "#plan" ? "password" : "home";
+    },
+  );
+  const outcome = await replay(
+    recipeOf(email, { ...keepAt("/sign-in"), submit: "#plan" }, { ...password, page: `${origin}/sign-in` }),
+    site.hooks,
+    { password: "synthetic-password", stepWaitMs: 5_000 },
+  );
+  expect(outcome.reason).toBe("signed_in");
+  expect(site.clicks).toEqual(["#next", "#plan", "#go"]);
 });
 
 it("refuses a second code on a restart, as on any recorded code screen the recipe plans no refill for", async () => {
