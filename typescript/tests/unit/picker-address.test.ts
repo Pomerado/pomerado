@@ -642,6 +642,15 @@ describe("matchAddressRows", () => {
     expect(await matchAddressRows(`${"1 Example St ".repeat(50)}, Exampleton`, [place])).toMatchObject({ picked: false, reason: "option_missing", available: [place] });
   });
 
+  test("takes the plain address row for a street address typed alone, beside named places at that number", async () => {
+    const asked = "1 Sample Ridge Blvd, Exampleton, CA 90001";
+    const plain = "1 Sample Ridge Blvd, Exampleton, CA";
+    const named = ["Example Tower", "1 Sample Ridge Blvd Parking", "Sample Ridge Neighbors"].map((name) => `${name}, ${plain}`);
+    for (const [rows, index] of [[[plain, ...named], 0], [[...named, plain], 3]] as const)
+      for (const read of [false, true])
+        expect(await matchAddressRows(asked, { rows: rows.map((text) => ({ text, categorized: false })), read }, { country: "US" })).toEqual({ picked: true, index, label: plain, unit: "", wanted: asked });
+  });
+
   // PlaceMatch compares at most 100 rows at once. A longer list is asked about, never cut, so the
   // caller's place past the 100th row is never left out unseen.
   test("asks about a list with more rows than PlaceMatch compares, and leaves none out", async () => {
