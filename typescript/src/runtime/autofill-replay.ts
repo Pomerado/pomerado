@@ -19,6 +19,7 @@ import { isIdentifier, screenSubmit, submittedLoginProof } from "./autofill-stat
 import type { AutofillLogin } from "./autofill-values.js";
 import {
   type AutofillReplayInput,
+  type AutofillReplayOutcome,
   emptyRetryFields,
   askOne,
   isTwoFactorOption,
@@ -919,6 +920,41 @@ const walkScreens = <E extends YieldableError, V extends string, L extends Autof
   });
 
 /**
+ * A replay whose password screen came back after the password went out
+ * (`credential_screen_returned`), where the host read the site's answer to that submit as asking
+ * the owner to open a sign-in link it emailed (`hosted.replyAskedLink`): the owner pastes the link,
+ * which the replay opens in its own browser (`openPastedLink`), trusted as the returned screen's
+ * page trusts it, and the sign-in's check after the screens decides (`settle`). Any other ending
+ * stands, and so does this one when the host reads no such answer or the screen is gone.
+ */
+const linkAfterReply = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  input: AutofillReplayInput<E, V, L>,
+  replay: Replay<E, V, L>,
+  ended: AutofillReplayOutcome<V>,
+) =>
+  Effect.gen(function* () {
+    const read = input.hosted?.replyAskedLink;
+    const returned = replay.progress.ran.at(-1);
+    if (
+      ended.outcome === "signed_in" ||
+      ended.reason !== "credential_screen_returned" ||
+      read === undefined ||
+      returned === undefined ||
+      !(yield* read())
+    )
+      return ended;
+    const screen = yield* input.hooks.inspect({
+      fields: returned.fields,
+      ...(returned.popup === undefined ? {} : { popup: returned.popup }),
+    });
+    if ("outcome" in screen) return ended;
+    yield* input.emit({ stage: "approval", approval: "email_link", reason: "site_reply" });
+    const opened = yield* openPastedLink(input, screen);
+    if (opened !== "opened") return replay.outcome(opened);
+    return yield* settle(input, replay);
+  });
+
+/**
  * A sign-in by hand-off counts only once the recipe's marker shows: its replay takes no page that
  * can't tell as signed in, so a page that settles without the marker is its hand-off screen.
  */
@@ -952,7 +988,7 @@ export const replayAutofillRecipe = <E extends YieldableError, V extends string,
     const walk: Walk = { from: 0, at: 0, acted: new Set(), restarted: new Set() };
     for (;;) {
       const ended = yield* walkScreens(input, replay, walk);
-      if (!("failed" in ended)) return ended;
+      if (!("failed" in ended)) return yield* linkAfterReply(input, replay, ended);
       const next = yield* showingScreen(input, replay, walk);
       if (next === undefined) return yield* ended.failed;
       yield* input.emit({ stage: "skipped", reason: "recorded_screen_showing", nextStep: next });
