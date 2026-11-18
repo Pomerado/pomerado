@@ -646,6 +646,11 @@
       "import": "./dist/typescript/src/runtime/autofill-values.js",
       "default": "./dist/typescript/src/runtime/autofill-values.js"
     },
+    "./core/runtime/browser-action-timeout": {
+      "types": "./dist/typescript/src/runtime/browser-action-timeout.d.ts",
+      "import": "./dist/typescript/src/runtime/browser-action-timeout.js",
+      "default": "./dist/typescript/src/runtime/browser-action-timeout.js"
+    },
     "./core/runtime/capture-diagnostic": {
       "types": "./dist/typescript/src/runtime/capture-diagnostic.d.ts",
       "import": "./dist/typescript/src/runtime/capture-diagnostic.js",
