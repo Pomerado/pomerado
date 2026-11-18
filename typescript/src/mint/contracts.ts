@@ -11,7 +11,11 @@ import { outputChecks, type FieldFill, type OutputFinding } from "../runtime/out
 import type { DestinationPrivateCandidateReason } from "../destinations/private-candidate.js";
 import type { SignedInMarkerCheck } from "../destinations/signed-in-marker.js";
 import type { DestinationReason } from "./destination-reason.js";
-import { LiveTestRecord, type LiveTestBatchCase, type LiveTestCaseRun } from "./live-tests.js";
+import {
+  LiveTestRecord,
+  type LiveTestBatchCase,
+  type LiveTestCaseRun,
+} from "./live-tests.js";
 import type { AuthorityCheckReason, AuthorityCheckStage } from "../auth/authority-metadata.js";
 import type {
   OriginalPolicyFailureCode,
@@ -964,8 +968,7 @@ export const WritePath = Schema.Struct({
           "The commit mark this step's helper enters with enteringCommit, as the composed script declares it in write.commits",
       }),
       does: Schema.String.pipe(Schema.pattern(/\S/), Schema.maxLength(200)).annotations({
-        description:
-          "What the step saves or submits, in a few words, such as 'saves the applicant page'",
+        description: "What the step saves or submits, in a few words, such as 'saves the applicant page'",
       }),
       setup: Schema.optional(Schema.Literal(true)).annotations({
         description:
@@ -1488,10 +1491,12 @@ export const PublicationRequest = Schema.Struct({
    * finding asks for.
    */
   findingResponses: Schema.optional(
-    Schema.Array(FindingResponse).pipe(Schema.maxItems(findingResponsesLimit)).annotations({
-      description:
-        "Only to answer a finding of the last publication denial you hold wrong, or no longer applying, under the review's rules: its id, a short response and the evidence that shows it, a live test caseId or a file the review reads, such as a capture. Guardian rules on each in the next review. One answer per finding; never instead of evidence a finding asks for",
-    }),
+    Schema.Array(FindingResponse)
+      .pipe(Schema.maxItems(findingResponsesLimit))
+      .annotations({
+        description:
+          "Only to answer a finding of the last publication denial you hold wrong, or no longer applying, under the review's rules: its id, a short response and the evidence that shows it, a live test caseId or a file the review reads, such as a capture. Guardian rules on each in the next review. One answer per finding; never instead of evidence a finding asks for",
+      }),
   ),
   outputOverrides: Schema.optional(
     Schema.Array(

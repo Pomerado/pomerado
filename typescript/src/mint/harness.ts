@@ -844,7 +844,9 @@ const withHostNotices = (
     ...(actions.checkSignedInMarker === undefined
       ? {}
       : { checkSignedInMarker: wrap(actions.checkSignedInMarker) }),
-    ...(actions.abandonSignIn === undefined ? {} : { abandonSignIn: wrap(actions.abandonSignIn) }),
+    ...(actions.abandonSignIn === undefined
+      ? {}
+      : { abandonSignIn: wrap(actions.abandonSignIn) }),
   };
 };
 
@@ -1159,8 +1161,7 @@ const writePathUnfinishedInstruction = (
 ) => {
   const unreached = error.writePathUnreached ?? [];
   const lost =
-    unreached.length === 0 ||
-    (error.writePathMarks ?? []).some((mark) => !unreached.includes(mark));
+    unreached.length === 0 || (error.writePathMarks ?? []).some((mark) => !unreached.includes(mark));
   return [
     `Not published: the write session has not settled every commit mark of its recorded write path; writePathMarks names the ones not yet settled${unreached.length === 0 ? " (a step that lost its result may have entered them)" : ""}. The session stays open until they are.`,
     ...(lost
@@ -2403,9 +2404,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             "Private observations are available through the screened execution response.",
         };
         // An execution recorded again, as a resumed attempt's rejoined call is, replaces its entry.
-        const recorded = executions.findIndex(
-          (entry) => entry.executionId === evidence.executionId,
-        );
+        const recorded = executions.findIndex((entry) => entry.executionId === evidence.executionId);
         if (recorded === -1) executions.push(referenceOnly);
         else executions[recorded] = referenceOnly;
         purposes.set(evidence.executionId, purpose);
@@ -2767,7 +2766,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         )
           return {
             reason: "maintenance_setting",
-            instruction: `Maintenance repairs the published tool under its own task. Only a change to its contract may apply, as a requirement, purpose or output change; its ${confirmer === "owner_request" ? "" : "input, "}effect, site and login stay, and it never becomes a new build. Repair it as it is, or end the attempt and say in the summary what the caller now wants.`,
+            instruction:
+              `Maintenance repairs the published tool under its own task. Only a change to its contract may apply, as a requirement, purpose or output change; its ${confirmer === "owner_request" ? "" : "input, "}effect, site and login stay, and it never becomes a new build. Repair it as it is, or end the attempt and say in the summary what the caller now wants.`,
           };
         if (request.mode !== "maintenance" && settings.has("output"))
           return {
@@ -2778,9 +2778,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         // Removing a field callers receive has the higher bar: a stated reason Guardian judges.
         const unexplained = submitted.changes.find(
           (change) =>
-            change.setting === "output" &&
-            change.change === "remove" &&
-            change.reason === undefined,
+            change.setting === "output" && change.change === "remove" && change.reason === undefined,
         );
         if (unexplained !== undefined && unexplained.setting === "output")
           return {
@@ -2972,10 +2970,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        * The minter's question went unanswered and the build goes on. It stays unanswered: no
        * `mint_update` can cite it, and no review reads an answer from it.
        */
-      const noAnswer = (
-        requestId: string | undefined,
-        recommended: Readonly<Record<string, unknown>>,
-      ) =>
+      const noAnswer = (requestId: string | undefined, recommended: Readonly<Record<string, unknown>>) =>
         questionHandedBack(requestId).pipe(
           Effect.as(
             JSON.stringify({
@@ -3087,10 +3082,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         error: MintFailure,
         requestId: string | undefined,
         endsBuild: boolean,
-        asked: {
-          readonly consent: boolean;
-          readonly recommended: Readonly<Record<string, unknown>>;
-        },
+        asked: { readonly consent: boolean; readonly recommended: Readonly<Record<string, unknown>> },
       ) =>
         error.ownerCancelled !== true && handsBackNoAnswer(asked.consent)
           ? noAnswer(endsBuild ? undefined : requestId, asked.recommended)
@@ -3695,7 +3687,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             error.code,
             error.reason,
             {},
-            'Not published: the output schema has a `status` of `refused` that the host can\'t read as a declared refusal, so this refusal would end as an unknown outcome. Put each refusal shape in the output\'s top-level union. Make every other branch unambiguous in one of two ways: give it a `status` that lists only values other than `"refused"`, or leave `status` out, so the branch matches an output the write returns without one, and close the branch with `additionalProperties: false`, as a `Schema.Struct` with no record or index signature beside it does. Each refusal shape requires `status` `"refused"` and a `reason` from a listed set of stable lowercase codes. Then call finish_build again with the same executionId. The host reads the schema offline; never run the write again for this.',
+            "Not published: the output schema has a `status` of `refused` that the host can't read as a declared refusal, so this refusal would end as an unknown outcome. Put each refusal shape in the output's top-level union. Make every other branch unambiguous in one of two ways: give it a `status` that lists only values other than `\"refused\"`, or leave `status` out, so the branch matches an output the write returns without one, and close the branch with `additionalProperties: false`, as a `Schema.Struct` with no record or index signature beside it does. Each refusal shape requires `status` `\"refused\"` and a `reason` from a listed set of stable lowercase codes. Then call finish_build again with the same executionId. The host reads the schema offline; never run the write again for this.",
           );
         if (
           error.reason === "confirmation_undeclared" ||
@@ -4467,7 +4459,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           signInCheckRefused;
         const liveTestsSpent = liveTestsRefusal !== undefined && !liveTestsRefusal.reserveOpen;
         const hostRefusing = hostCheckRefusing || liveTestsSpent;
-        if (reason === "owner_declined" && !ownerRefused && stopDeclined) return keptGoing(reason);
+        if (reason === "owner_declined" && !ownerRefused && stopDeclined)
+          return keptGoing(reason);
         if (reason === "owner_declined" && !ownerRefused)
           return refused(
             "owner_not_declined",
@@ -4761,11 +4754,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        */
       const heldTaskUpdate = (
         status: "clarification_required" | "update_refused",
-        fields: {
-          readonly reason: string;
-          readonly instruction: string;
-          readonly notice?: string;
-        } & Readonly<Record<string, unknown>>,
+        fields: { readonly reason: string; readonly instruction: string; readonly notice?: string } &
+          Readonly<Record<string, unknown>>,
         fact = fields.notice ?? JSON.stringify({ status }),
       ) =>
         recordHostRefusal("mint_update", fields.reason, fact).pipe(
@@ -5062,10 +5052,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 instruction:
                   "Guardian allowed the update, but the host could not apply it, so nothing changed. failureDetail says which step failed. You may call mint_update again once; otherwise continue under the current task, or end the attempt and say in the summary that the caller confirmed a change the host could not apply.",
               },
-              JSON.stringify({
-                code: applied.left.code,
-                rootCause: failureRootCause(applied.left),
-              }),
+              JSON.stringify({ code: applied.left.code, rootCause: failureRootCause(applied.left) }),
             );
           }
           const result = applied.right;
@@ -5210,10 +5197,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             const held = holders.get(key);
             if (held === undefined || onCurrent(entry) || !onCurrent(held)) holders.set(key, entry);
           }
-        const shown = new Set([
-          ...batchHistory.slice(-reviewedLiveTestBatches),
-          ...holders.values(),
-        ]);
+        const shown = new Set([...batchHistory.slice(-reviewedLiveTestBatches), ...holders.values()]);
         return batchHistory.filter((entry) => shown.has(entry)).map((entry) => entry.batch);
       };
       /**
@@ -5248,19 +5232,20 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         Effect.suspend(() =>
           Effect.forEach(
             [...new Set(batchHistory.map(({ batch }) => batch.entrypoint))],
-            (entrypoint) =>
-              stepDigest(entrypoint).pipe(Effect.map((digest) => [entrypoint, digest] as const)),
+            (entrypoint) => stepDigest(entrypoint).pipe(Effect.map((digest) => [entrypoint, digest] as const)),
           ),
         ).pipe(
           Effect.map((digests) => {
             const current = new Map(digests);
-            return reviewedBatches(current).map((batch): ReviewedLiveTestBatch => ({
-              ...batch,
-              entrypoint: `operation/${batch.entrypoint}`,
-              sourceUnchanged:
-                current.get(batch.entrypoint) !== undefined &&
-                current.get(batch.entrypoint) === batch.sourceDigest,
-            }));
+            return reviewedBatches(current).map(
+              (batch): ReviewedLiveTestBatch => ({
+                ...batch,
+                entrypoint: `operation/${batch.entrypoint}`,
+                sourceUnchanged:
+                  current.get(batch.entrypoint) !== undefined &&
+                  current.get(batch.entrypoint) === batch.sourceDigest,
+              }),
+            );
           }),
         ),
       );
@@ -5366,11 +5351,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         string,
         { readonly sourceDigest: string; readonly fill: FieldFill }
       >();
-      const fillsOnSource = (
-        entrypoint: string,
-        sourceDigest: string | undefined,
-        except?: string,
-      ) =>
+      const fillsOnSource = (entrypoint: string, sourceDigest: string | undefined, except?: string) =>
         [...liveTestFills]
           .filter(
             ([key, entry]) =>
@@ -5428,10 +5409,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         }
       });
       /** Schemas the host read, by entrypoint and source digest, so one source is read once. */
-      const liveTestSchemas = new Map<
-        string,
-        { readonly input: unknown; readonly output: unknown }
-      >();
+      const liveTestSchemas = new Map<string, { readonly input: unknown; readonly output: unknown }>();
       /**
        * What judging and paging a batch read from `entrypoint`'s current schemas: the cursor pair
        * and where a list read's results sit, or why the host could not read them.
@@ -5443,9 +5421,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           const key = `${entrypoint}\n${(yield* stepDigest(entrypoint)) ?? ""}`;
           const known = liveTestSchemas.get(key);
           const schemas =
-            known === undefined
-              ? yield* Effect.either(host.schemas(entrypoint))
-              : Either.right(known);
+            known === undefined ? yield* Effect.either(host.schemas(entrypoint)) : Either.right(known);
           if (Either.isLeft(schemas))
             return {
               problem: `The host could not read ${entrypoint}'s input and output schemas offline, so it judged each result as a single record and can run no next page. Make the source import cleanly and declare both schemas, then run the cases again.`,
@@ -5494,9 +5470,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 if (saveResult === undefined || saveFailed) return false;
                 const saved = yield* Effect.either(
                   Effect.suspend(() => saveResult(path, file)).pipe(
-                    Effect.catchAllDefect(() =>
-                      Effect.fail(new MintFailure({ code: "Unavailable" })),
-                    ),
+                    Effect.catchAllDefect(() => Effect.fail(new MintFailure({ code: "Unavailable" }))),
                   ),
                 );
                 saveFailed = Either.isLeft(saved);
@@ -5590,9 +5564,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             entrypoint,
             ...(Either.isLeft(read) ? { casesFileProblem: read.left } : {}),
             cases: shown,
-            ...(options.ran === undefined
-              ? {}
-              : { otherCases: file.cases.length - options.ran.length }),
+            ...(options.ran === undefined ? {} : { otherCases: file.cases.length - options.ran.length }),
             ...(shown.some((testCase) => "outputChecks" in testCase)
               ? {
                   outputChecksInstruction:
@@ -5640,9 +5612,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        */
       const ownCaseMs = (host: LiveTestHost) => {
         const limit = host.caseTimeoutMs ?? defaultLiveTestCaseMs;
-        return Number.isFinite(limit)
-          ? limit
-          : (host.reservedCaseTimeoutMs ?? defaultLiveTestCaseMs);
+        return Number.isFinite(limit) ? limit : (host.reservedCaseTimeoutMs ?? defaultLiveTestCaseMs);
       };
       /**
        * How long each case of a batch ending at `deadlineAt` may run on `host` when the request
@@ -5829,30 +5799,26 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           const workers = signedInBatch
             ? 1
             : Math.max(1, Math.min(request.maxWorkers ?? host.maxWorkers, host.maxWorkers));
-          const result = yield* host
-            .run({
-              ...(signedInBatch ? { signedIn: true as const } : {}),
-              entrypoint: request.entrypoint,
-              sourceDigest: digest,
-              cases: selected.map((testCase) => ({
-                id: testCase.id,
-                input: testCase.input,
-                ...(testCase.next_page === true && cursor !== undefined
-                  ? { nextPage: cursor }
-                  : {}),
-              })),
-              workers,
-              deadlineAt,
-              ...(caseMs === undefined ? {} : { caseTimeoutMs: caseMs }),
-            })
-            .pipe(
-              // The host's gate refused the batch, such as a cap on live runs.
-              Effect.tapError((error) =>
-                error.recoveryGate === undefined
-                  ? Effect.void
-                  : recordHostRefusal("live_tests", error.code, error.recoveryGate.reason),
-              ),
-            );
+          const result = yield* host.run({
+            ...(signedInBatch ? { signedIn: true as const } : {}),
+            entrypoint: request.entrypoint,
+            sourceDigest: digest,
+            cases: selected.map((testCase) => ({
+              id: testCase.id,
+              input: testCase.input,
+              ...(testCase.next_page === true && cursor !== undefined ? { nextPage: cursor } : {}),
+            })),
+            workers,
+            deadlineAt,
+            ...(caseMs === undefined ? {} : { caseTimeoutMs: caseMs }),
+          }).pipe(
+            // The host's gate refused the batch, such as a cap on live runs.
+            Effect.tapError((error) =>
+              error.recoveryGate === undefined
+                ? Effect.void
+                : recordHostRefusal("live_tests", error.code, error.recoveryGate.reason),
+            ),
+          );
           if (result.status === "review_denied") {
             const rationale = yield* screenRationale(result.rationale);
             yield* recordDenial({
@@ -5940,7 +5906,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               findings.length === 0
                 ? undefined
                 : yield* dependencies.projection.json(findings).pipe(
-                    Effect.flatMap((value) => Schema.decodeUnknown(LiveTestOutputChecks)(value)),
+                    Effect.flatMap((value) =>
+                      Schema.decodeUnknown(LiveTestOutputChecks)(value),
+                    ),
                     Effect.orElseSucceed(() =>
                       findings.map(({ sample: _sample, ...finding }) => finding),
                     ),
@@ -5981,18 +5949,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   entry.sourceDigest === previous.sourceDigest,
               )
             ) {
-              liveTestReplaced.push({
-                ...previous,
-                retired: true,
-                ...(flaky ? { flaky: true } : {}),
-              });
+              liveTestReplaced.push({ ...previous, retired: true, ...(flaky ? { flaky: true } : {}) });
               const ofVersion = liveTestReplaced.filter(
                 (entry) => liveTestVersion(entry.entrypoint) === version,
               );
-              for (const dropped of ofVersion.slice(
-                0,
-                Math.max(0, ofVersion.length - maximumBatchCases),
-              ))
+              for (const dropped of ofVersion.slice(0, Math.max(0, ofVersion.length - maximumBatchCases)))
                 liveTestReplaced.splice(liveTestReplaced.indexOf(dropped), 1);
             }
             records.set(run.id, {
@@ -6243,9 +6204,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           return {
             reserveOpen: true,
             reservedFor,
-            failedOnSource: [...new Set(named.flatMap(({ afterEdit }) => afterEdit))].filter(
-              (id) => !reservedFor.includes(id),
-            ),
+            failedOnSource: [
+              ...new Set(named.flatMap(({ afterEdit }) => afterEdit)),
+            ].filter((id) => !reservedFor.includes(id)),
           };
         },
       );
@@ -7795,8 +7756,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   });
                 }
               }
-              for (const { questionId, reviewId } of confirms)
-                confirmAsks.set(questionId, reviewId);
+              for (const { questionId, reviewId } of confirms) confirmAsks.set(questionId, reviewId);
               askingId = requestId;
               askingEndsBuild = endsBuild.size > 0;
               askingConsent = asksConsent(decoded) || !reviewedNoConsent;
@@ -8230,7 +8190,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                         refusal,
                         JSON.stringify({
                           status: "update_refused",
-                          settings: [...new Set(submitted.changes.map((change) => change.setting))],
+                          settings: [
+                            ...new Set(submitted.changes.map((change) => change.setting)),
+                          ],
                         }),
                       );
                     let askedConfirmer: ReviewedConfirmer | undefined;
@@ -8276,14 +8238,15 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       dependencies.signedOutNarrows === true &&
                       change.setting === "login" &&
                       change.change === "signed_out";
-                    const widening = submitted.changes.flatMap((change): HostConfirmationChange[] =>
-                      change.setting === "site"
-                        ? [{ setting: "site", origin: change.origin }]
-                        : change.setting === "login" && !narrows(change)
-                          ? [{ setting: "login", change: change.change }]
-                          : change.setting === "effect" && change.effect === "write"
-                            ? [{ setting: "effect", effect: change.effect }]
-                            : [],
+                    const widening = submitted.changes.flatMap(
+                      (change): HostConfirmationChange[] =>
+                        change.setting === "site"
+                          ? [{ setting: "site", origin: change.origin }]
+                          : change.setting === "login" && !narrows(change)
+                            ? [{ setting: "login", change: change.change }]
+                            : change.setting === "effect" && change.effect === "write"
+                              ? [{ setting: "effect", effect: change.effect }]
+                              : [],
                     );
                     if (
                       submitted.recommend === "update" &&
@@ -8755,9 +8718,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             Effect.tap(() => (published() ? reviewer.finishing : Effect.void)),
           ),
       };
-      const hostIncidentsBeforeStart = yield* (
-        dependencies.drainStartIncidents?.() ?? Effect.succeed(undefined)
-      );
+      const hostIncidentsBeforeStart = yield* dependencies.drainStartIncidents?.() ??
+        Effect.succeed(undefined);
       const retainRuntimeRecord = dependencies.diagnostics?.retainRuntimeRecord;
       const observeModelTrace = dependencies.diagnostics?.observeModelTrace;
       /** The harness checkpoint, with `task` as its effective task. */
@@ -8872,9 +8834,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                                 result: yield* questionUnanswered(error, undefined, false, {
                                   consent: true,
                                   recommended:
-                                    started._tag === "Left"
-                                      ? {}
-                                      : recommendedAnswers(started.right),
+                                    started._tag === "Left" ? {} : recommendedAnswers(started.right),
                                 }),
                               };
                             }
@@ -8974,7 +8934,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           ...(dependencies.compactionSkillsNote === undefined
             ? {}
             : { compactionSkillsNote: dependencies.compactionSkillsNote }),
-          ...(dependencies.saveResult === undefined ? {} : { saveResult: dependencies.saveResult }),
+          ...(dependencies.saveResult === undefined
+            ? {}
+            : { saveResult: dependencies.saveResult }),
           actions: withHostNotices(
             dependencies.retainCapture === undefined
               ? (({ retainCapture: _capture, ...available }) => available)(reviewedActions)
@@ -9167,21 +9129,19 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       if (terminal === undefined && modelFailure?.modelOutage === "quota_exhausted")
         yield* endForSpentModelQuota(modelFailure, "model");
       // The outcome is already decided; its diagnostic copy never blocks returning it.
-      yield* (
-        dependencies.diagnostics
-          ?.emit("mint.model_finished", {
-            state: Exit.isSuccess(modelResult) ? "completed" : "failed",
-            diagnostics,
-            executions,
-            ...(dependencies.hostAnomalies === undefined
-              ? {}
-              : { anomalies: dependencies.hostAnomalies() }),
-          })
-          .pipe(
-            Effect.mapError(diagnosticUnavailable),
-            Effect.catchAll(recordDiagnosticGap("mint.model_finished")),
-          ) ?? Effect.void
-      );
+      yield* dependencies.diagnostics
+        ?.emit("mint.model_finished", {
+          state: Exit.isSuccess(modelResult) ? "completed" : "failed",
+          diagnostics,
+          executions,
+          ...(dependencies.hostAnomalies === undefined
+            ? {}
+            : { anomalies: dependencies.hostAnomalies() }),
+        })
+        .pipe(
+          Effect.mapError(diagnosticUnavailable),
+          Effect.catchAll(recordDiagnosticGap("mint.model_finished")),
+        ) ?? Effect.void;
       // The reviewer's final turn, when finish_build left a write unresolved, ends here; whatever
       // it decided stands, and an unresolved write is reported as possibly applied.
       const writes = yield* reviewer.close;
