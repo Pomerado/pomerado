@@ -421,6 +421,8 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   with each request's response status, and any autosave or draft save. That is the
   evidence for the `http` version; any other write is unintended and must not be in
   the script.
+- Confirm a write from the first proof the site gives that it took it, such as the new record's
+  id. Read other details if they show, and never wait for them.
 - Prefer confirming the write from its commit request. Keep the click on the final commit
   control, such as Save, Send, Submit, Book or Pay, in its own step, except a pay press after
   the host's card fill, which goes in the fill's step (caller-input skill). In the same call as
