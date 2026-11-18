@@ -69,20 +69,22 @@ describe("a script question's options", () => {
 
   // A masked label the script builds from the page, such as a saved payment profile's own wording,
   // could run past 64 characters only on the live page, after the script already ran part of its
-  // write, and the question then failed instead of being asked.
-  it("shortens a long masked label to 63 characters and an ellipsis, and asks the question", () => {
-    const maskedLabel = "Synthetic team profile, saved card ending 0000, default ".repeat(2);
+  // write, and the question then failed instead of being asked. It is now left out whole, never
+  // cut, so a host that screens masked labels reads none of it and masks the option itself.
+  it("asks the question without a masked label over 64 characters, and keeps one at 64", () => {
+    const long = "Synthetic team profile, receipts to someone@example.com, card ending 0000";
+    const atLimit = "m".repeat(64);
     const { result, offered } = ask([
-      { value: "place", label: "Place the order", accountSpecific: true, maskedLabel },
+      { value: "place", label: "Place the order", accountSpecific: true, maskedLabel: long },
+      { value: "keep", label: "Keep the card", accountSpecific: true, maskedLabel: atLimit },
       { value: "cancel", label: "Cancel" },
     ]);
-    expect(maskedLabel.length).toBeGreaterThan(64);
-    expect(offered?.[0]).toEqual({
-      id: "o1",
-      label: "Place the order",
-      accountSpecific: true,
-      maskedLabel: `${maskedLabel.slice(0, 63)}…`,
-    });
+    expect(long.length).toBeGreaterThan(64);
+    expect(offered).toEqual([
+      { id: "o1", label: "Place the order", accountSpecific: true },
+      { id: "o2", label: "Keep the card", accountSpecific: true, maskedLabel: atLimit },
+      { id: "o3", label: "Cancel" },
+    ]);
     expect(result).toEqual(Either.right({ pick: "place" }));
   });
 

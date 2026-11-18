@@ -119,9 +119,9 @@ export const ScriptOption = Schema.Struct({
    */
   accountSpecific: Schema.optional(Schema.Boolean),
   /**
-   * How an account-specific option reads where a host masks, like "Visa •••• 4242". A long one
-   * reaches the caller shortened (`cutTo`), as a long label does, so a page's longer wording never
-   * stops the question after the script already ran part of its write.
+   * How an account-specific option reads where a host masks, like "Visa •••• 4242". One over 64
+   * characters is left out, so the host masks the option itself, rather than stopping the question
+   * after the script already ran part of its write; it is never cut, since a host screens it whole.
    */
   maskedLabel: Schema.optional(Schema.String.pipe(Schema.minLength(1))),
   /** Picking it is the caller's no to the write, as a confirm's no is. */
@@ -482,9 +482,11 @@ const offeredOptions = (id: string, given: ReadonlyArray<ScriptOption> | undefin
       id: `o${index + 1}`,
       label: cutTo(option.label, longestLabel),
       ...(option.accountSpecific === undefined ? {} : { accountSpecific: option.accountSpecific }),
-      ...(option.maskedLabel === undefined
+      // A masked label over the host's limit is left out whole, never cut: a host screens a
+      // masked label as a whole text before it shows one, and masks the option itself without it.
+      ...(option.maskedLabel === undefined || option.maskedLabel.length > longestMaskedLabel
         ? {}
-        : { maskedLabel: cutTo(option.maskedLabel, longestMaskedLabel) }),
+        : { maskedLabel: option.maskedLabel }),
       ...(option.declines === undefined ? {} : { declines: option.declines }),
     })),
   });
