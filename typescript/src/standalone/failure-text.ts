@@ -58,7 +58,7 @@ const sentences: {
     const reason = detail(outcome, "reason");
     const available = outcome.details["available"];
     const choices = Array.isArray(available)
-      ? available.filter((choice): choice is string => typeof choice === "string")
+      ? available.filter((choice) => ["string", "number", "boolean"].includes(typeof choice))
       : [];
     const field = detail(outcome, "field");
     return {
