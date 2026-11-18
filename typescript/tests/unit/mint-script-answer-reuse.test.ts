@@ -317,11 +317,15 @@ describe("a script question Guardian rewords as a repeat of the owner's earlier 
     // The owner said yes to a delivery window under the same id after approving the payment.
     const window: AnsweredQuestion = { id: "approve_payment", question: "Keep the default delivery window?", answer: { confirmed: true } };
     expect(repeatedScriptAnswers(pay, card, [approval, window], live)).toBeUndefined();
-    // An id whose earlier answer the owner replaced under another id names only the newer one.
+    // An id whose earlier answer the owner replaced under another id names nothing; the newer one
+    // names its own, unless another answer shares its id.
     const replaced = { ...approval, answer: "Replaced by a newer answer" };
     const newer = { id: "approve_again", question: approval.question, answer: { confirmed: true } };
     expect(repeatedScriptAnswers(pay, card, [replaced, newer], live)).toBeUndefined();
-    expect(repeatedScriptAnswers(pay, repeat(card.answers, ["approve_again"]), [replaced, newer], live)).toEqual(paid);
+    const again = repeat(card.answers, ["approve_again"]);
+    expect(repeatedScriptAnswers(pay, again, [replaced, newer], live)).toEqual(paid);
+    const shared = { ...window, id: "approve_again", answer: "Replaced by a newer answer" };
+    expect(repeatedScriptAnswers(pay, again, [shared, replaced, newer], live)).toBeUndefined();
   });
 
   it("answers a confirm yes only from a named yes", () => {
@@ -329,8 +333,10 @@ describe("a script question Guardian rewords as a repeat of the owner's earlier 
     const chosen: AnsweredQuestion = { id: "card_choice", question: "Which card?", answer: "Saved card" };
     const yes = repeat([{ question: "remove", option: null, confirmed: true }], ["card_choice"]);
     expect(repeatedScriptAnswers(remove, yes, [chosen], live)).toBeUndefined();
-    const no = repeat([{ question: "remove", option: null, confirmed: false }], ["card_choice"]);
-    expect(repeatedScriptAnswers(remove, no, [chosen], live)).toEqual({ remove: { type: "confirm", value: { confirmed: false } } });
+    // A no needs no yes: here the owner chose to keep the address.
+    const kept: AnsweredQuestion = { id: "address_choice", question: "Keep or remove the saved address?", answer: "Keep it" };
+    const no = repeat([{ question: "remove", option: null, confirmed: false }], ["address_choice"]);
+    expect(repeatedScriptAnswers(remove, no, [kept], live)).toEqual({ remove: { type: "confirm", value: { confirmed: false } } });
   });
 
   it("never answers a code, a secret, a text or a multiple choice", () => {

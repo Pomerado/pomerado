@@ -193,8 +193,8 @@ const confirmedAnswer = ({ answer }: AnsweredQuestion) =>
  * The answers a script's question takes when Guardian's question review rewords it as a repeat of
  * the owner's earlier answers and names, for each of its questions, the answer they give
  * (`answers`) and which answered questions they are (`answeredBy`); undefined to go on as the
- * review says. Each id named is exactly one of the owner's latest answers in `answered`, the
- * answers the review trusted, one to each prompt. Each question gets exactly one answer of its
+ * review says. Each id named is exactly one answer in `answered`, the answers the review trusted,
+ * and the owner's latest to its prompt. Each question gets exactly one answer of its
  * own kind, a choice the one option its label names. A confirm's yes rests on a named yes, and
  * nothing that goes on rests on a named no. A purchase, which carries its order, takes only a yes,
  * or an option that doesn't decline, resting on a named yes that `orderYes` says may still answer
@@ -217,13 +217,15 @@ export const repeatedScriptAnswers = (
     answers.length !== asked.questions.length
   )
     return undefined;
-  // An id two prompts share names neither: the review may mean either.
-  const latest = answered.filter(
-    (entry) => answered.findLast((later) => later.question === entry.question) === entry,
-  );
-  const named = answeredBy.map((id) => latest.filter((entry) => entry.id === id));
-  if (named.some((entries) => entries.length !== 1)) return undefined;
-  const cited = named.flat();
+  // An id two answers share names neither: the review may mean either. A named answer the owner
+  // replaced since names nothing.
+  const named = answeredBy.map((id) => answered.filter((entry) => entry.id === id));
+  const cited = named.flatMap((entries) => (entries.length === 1 ? entries : []));
+  if (
+    cited.length !== named.length ||
+    cited.some((entry) => answered.findLast((later) => later.question === entry.question) !== entry)
+  )
+    return undefined;
   const saidNo = cited.some((entry) => confirmedAnswer(entry) === false);
   const saidYes = cited.some((entry) => confirmedAnswer(entry) === true);
   const orderSaidYes = cited.some((entry) => confirmedAnswer(entry) === true && orderYes(entry));
