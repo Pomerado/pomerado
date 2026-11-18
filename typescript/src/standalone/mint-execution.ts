@@ -70,6 +70,7 @@ import type { MintState } from "./mint-state.js";
 import {
   forgetOrderAnswers,
   keptScriptAnswers,
+  repeatedScriptAnswers,
   reusedScriptAnswers,
   scriptQuestionKeys,
 } from "../mint/script-answer-reuse.js";
@@ -216,6 +217,7 @@ const scriptQuestions = (
       // for the commit fence; Guardian's source review looks for one. The reused answer reaches
       // later reviews as a fresh one does. It is always the owner's latest answer to its prompt
       // (`forgetScriptAnswers`), so it never replaces a newer one in Guardian's list.
+      let repeat = false;
       const keys = yield* scriptQuestionKeys(candidate, (text) => projection.text(text));
       const kept =
         bounds?.commitsUnsent === true
@@ -233,6 +235,27 @@ const scriptQuestions = (
             { entrypoint: `operation/${entrypoint}`, sources: sourceMap, input },
             question,
           );
+          // A repeat that names the owner's earlier answers answers a question with no order from
+          // them, never over an answer to the same prompt it didn't name. This host records no
+          // order a yes was for, so a purchase goes as the review says.
+          const named = review.decision.answeredBy ?? [];
+          const unnamed = context.answeredQuestions.some(
+            (entry) =>
+              (entry.id === undefined || !named.includes(entry.id)) &&
+              keys.some((key) => key?.prompt === entry.question),
+          );
+          const repeated = unnamed
+            ? undefined
+            : repeatedScriptAnswers(
+                candidate,
+                review.decision,
+                context.answeredQuestions,
+                () => false,
+              );
+          if (repeated !== undefined) {
+            repeat = true;
+            return repeated;
+          }
           if (review.decision.outcome !== "allow_business") {
             scriptQuestion = {
               requestId: candidate.id,
@@ -246,7 +269,8 @@ const scriptQuestions = (
           scriptAnswers.kept = keptScriptAnswers(scriptAnswers.kept, keys, fresh, candidate.order);
           return fresh;
         }));
-      yield* context.answered(candidate, answers);
+      // A repeat's answers are no owner's own: the answers that settle it are trusted already.
+      if (!repeat) yield* context.answered(candidate, answers);
       return answers;
     }).pipe(
       Effect.mapError((cause) =>
