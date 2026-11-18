@@ -4,6 +4,7 @@ import {
   type RunOutcome,
   type RunOutcomeCode,
 } from "../runtime/run-outcome.js";
+import type { RefusalValue } from "../runtime/operation-failure.js";
 
 /*
  * The local failure renderer: one MCP and CLI sentence per run outcome code. A step that may
@@ -58,7 +59,9 @@ const sentences: {
     const reason = detail(outcome, "reason");
     const available = outcome.details["available"];
     const choices = Array.isArray(available)
-      ? available.filter((choice): choice is string => typeof choice === "string")
+      ? available.filter((choice): choice is RefusalValue =>
+          ["string", "number", "boolean"].includes(typeof choice),
+        )
       : [];
     const field = detail(outcome, "field");
     return {

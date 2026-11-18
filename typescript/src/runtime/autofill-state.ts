@@ -140,6 +140,13 @@ export interface AutofillHooks<E = unknown, V extends string = string> {
    */
   readonly startedEmpty?: boolean;
   /**
+   * Whether this host already signed in on this browser, as a library scope's later run on the
+   * browser it reuses: a page off the screens before its password or code went in may then be its
+   * landing (`loginUnproved` holds none). A host that reads no page state keeps `startedEmpty` set
+   * on such a browser, so its entry page still never ends a check without values.
+   */
+  readonly signedInBefore?: boolean;
+  /**
    * The primary tab as it is, read without moving it: whether its document parsed, a shape of
    * its DOM and its navigation's HTTP status, for a check's settling.
    */
