@@ -648,8 +648,9 @@ export type AutofillStepReport =
        * new document replaced it through the host's looks, as a code screen that sends itself on
        * its last digit and closes in place does. Every field is `filled`. The page may have sent
        * the code, which no new document proves, so only the sign-in's own check can tell: a run's
-       * replay counts the step as `page` once the recipe's marker shows, and keeps the refusal
-       * otherwise (`runReplayStep`).
+       * replay counts the step as `page` once the recipe's marker or its next recorded screen
+       * shows, and keeps the refusal otherwise (`runReplayStep`). A recording keeps the step with
+       * no submit or submit key, as the page sends it (`recordStep`).
        */
       readonly closedInPlace?: true;
       /** What caught a `blocked` click: tag, role and `controls`, whose names the host screens. */

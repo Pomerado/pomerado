@@ -130,8 +130,31 @@ const passwordRecipe = {
   ],
 } as const;
 
+/** The same recipe with the email and the password asked together after the code screen. */
+const emailPasswordRecipe = {
+  ...codeRecipe,
+  steps: [
+    ...codeRecipe.steps,
+    {
+      page: `${site}/next`,
+      fields: [
+        { selector: "#email", accepts: ["email"] },
+        { selector: "#password", slot: "password" },
+      ],
+      submit: "#sign-in",
+      submittedBy: "host",
+    },
+  ],
+} as const;
+
+/** The same recipe with the code screen's own box recorded again after it. */
+const codeAgainRecipe = {
+  ...codeRecipe,
+  steps: [...codeRecipe.steps, { page: `${site}/next`, fields: [{ selector: "#otc", slot: "code" }] }],
+} as const;
+
 /** One run's sign-in with `recipe`, answering the login ask and each code ask. */
-const run = async (page: Page, recipe: typeof codeRecipe | typeof passwordRecipe) => {
+const run = async (page: Page, recipe: Parameters<typeof signInForRun>[0]["recipe"]) => {
   const browser = await hostPage(page);
   const { keyboard } = await hostKeyboard(page);
   const secrets = makeRunSecrets();
@@ -210,11 +233,20 @@ test("a run goes on to the recorded password screen a code screen that sent itse
   await expect(page.locator("#account")).toBeVisible();
 });
 
-test("a run still refuses a code screen that took its Verify button away in place when the site leaves it there and the next screen never shows", async ({
-  page,
-}) => {
-  const sent = await serve(page, codeScreen());
-  const { ended } = await run(page, passwordRecipe);
-  expect(ended).toEqual({ code: "RecipeFailed", reason: "submit_refused" });
-  expect(sent).toEqual([`/api/code ${code}`]);
-});
+for (const [shown, next, recipe] of [
+  ["the next screen never shows", codeScreen(), passwordRecipe],
+  [
+    "the next screen shows only the email field the first screen took",
+    `<label>Email<input id="email" name="email"></label>${codeScreen()}`,
+    emailPasswordRecipe,
+  ],
+  ["the next screen is its own code box", codeScreen(), codeAgainRecipe],
+] as const)
+  test(`a run still refuses a code screen that took its Verify button away in place when the site leaves it there and ${shown}`, async ({
+    page,
+  }) => {
+    const sent = await serve(page, next);
+    const { ended } = await run(page, recipe);
+    expect(ended).toEqual({ code: "RecipeFailed", reason: "submit_refused" });
+    expect(sent).toEqual([`/api/code ${code}`]);
+  });

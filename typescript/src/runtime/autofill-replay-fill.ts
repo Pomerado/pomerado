@@ -23,6 +23,7 @@ import { Unanswered } from "./login-field-asks.js";
 import { credentialUnavailable } from "./autofill-fresh-values.js";
 import type { ReplaySession } from "./autofill-replay-session.js";
 import { codeScreenOf } from "./autofill-unrecorded-code.js";
+import { inspectReplayProgression } from "./autofill-replay-screens.js";
 import {
   type AutofillRecipeStep,
   isSecondFactor,
@@ -151,45 +152,21 @@ const screenReturned = <E extends YieldableError, V extends string, L extends Au
   });
 
 /**
- * Whether the recipe's next recorded screen (`next`) shows: its first field, on that screen's own
- * page, and not one of the code screen's (`asked`) own boxes, which that screen shown again keeps.
- */
-const nextShown = <E extends YieldableError, V extends string, L extends AutofillLogin>(
-  session: ReplaySession<E, V, L>,
-  asked: AutofillStep,
-  next: AutofillRecipeStep | undefined,
-) =>
-  Effect.gen(function* () {
-    const first = next?.fields[0];
-    if (
-      next === undefined ||
-      first === undefined ||
-      asked.fields.some((field) => field.selector === first.selector)
-    )
-      return false;
-    const shown = yield* session.hooks.inspect(
-      session.values.resolve(
-        { fields: [first], ...(next.popup === undefined ? {} : { popup: next.popup }) },
-        session.input.credentials,
-      ),
-    );
-    return !("outcome" in shown) && session.matchesRecorded(shown.page, next);
-  });
-
-/**
  * A code screen whose fill found it closed in place once every field was typed (`closedInPlace`),
  * as one that sends itself on its last digit and takes its submit away does, sent its code only
- * when the sign-in's own check says so, or the recipe's next recorded screen shows in its place
- * (`nextShown`): the replay reads the page for the recipe's marker (`checkHere`) and that screen
- * until either shows, for up to a screen's wait (`stepWaitMs`), as its marker wait after the
- * screens does. Once one shows, the step counts as sent by the page (`page`), as one whose page
- * loaded a new document does, and the replay goes on as after such a step. Otherwise, as when the
- * site shows a refused code on the same screen, the fill's refusal stands, as it did before the
- * host looked.
+ * when the sign-in's own check says so, or the recipe's next recorded screen (`next`) shows in its
+ * place, judged from the code screen's page (`page`) as a screen's wait judges a later screen
+ * (`inspectReplayProgression`): the replay reads the page for the recipe's marker (`checkHere`)
+ * and that screen until either shows, for up to a screen's wait (`stepWaitMs`), as its marker wait
+ * after the screens does. Once one shows, the step counts as sent by the page (`submit: "page"`),
+ * as one whose page loaded a new document does, and the replay goes on as after such a step.
+ * Otherwise, as when the site shows a refused code on the same screen, the fill's refusal stands,
+ * as it did before the host looked.
  */
 const closedInPlace = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   session: ReplaySession<E, V, L>,
   asked: AutofillStep,
+  page: string,
   stepReport: AutofillStepReport,
   next: AutofillRecipeStep | undefined,
 ) =>
@@ -205,7 +182,16 @@ const closedInPlace = <E extends YieldableError, V extends string, L extends Aut
     const until = (yield* Clock.currentTimeMillis) + session.timing.stepWaitMs;
     const look = Effect.gen(function* () {
       if ((yield* session.checkHere).signedIn) return "signed_in" as const;
-      return (yield* nextShown(session, asked, next)) ? ("next_screen" as const) : undefined;
+      const progressed = yield* inspectReplayProgression(
+        session.hooks,
+        { page },
+        asked,
+        [],
+        next === undefined ? [] : [next],
+        (request) => session.values.resolve(request, session.input.credentials),
+        { matches: session.matchesRecorded },
+      );
+      return progressed === undefined ? undefined : ("next_screen" as const);
     });
     let shown = yield* look;
     while (shown === undefined && (yield* Clock.currentTimeMillis) < until) {
@@ -339,6 +325,7 @@ export const runReplayStep = <E extends YieldableError, V extends string, L exte
     const stepReport = yield* closedInPlace(
       session,
       step,
+      inspection.page,
       yield* hooks.fill({ step, values: filled, inspection, typedBoxes: progress.typedBoxes }),
       next,
     );
