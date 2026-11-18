@@ -48,6 +48,36 @@ export const exactScreens = (steps: readonly AutofillRecipeStep[]): ReplayScreen
 /** The recorded screen a wait is on: its page as the replay knows it, and its listed segments. */
 type RecordedPage = Pick<AutofillRecipeStep, "page" | "anySegments">;
 
+/** The steps that find a recorded screen: its fields and submit, or each of its methods. */
+export const screenProbes = (
+  recorded: AutofillRecipeStep,
+  resolve: (request: AutofillStepRequest) => AutofillStep,
+): readonly AutofillStep[] =>
+  recorded.methods === undefined
+    ? [resolve(recorded)]
+    : recorded.methods.map((method) => ({
+        fields: [],
+        submit: method.selector,
+        ...(recorded.popup === undefined ? {} : { popup: recorded.popup }),
+      }));
+
+/**
+ * Whether a probe found on `page` is another recorded screen than the `current` one, on
+ * `currentPage`: another page, or a credential field the current screen lacks, proves it; a
+ * coincident same-page button cannot.
+ */
+export const showsAnotherScreen = (
+  page: string,
+  probe: AutofillStep,
+  currentPage: RecordedPage,
+  current: AutofillStep,
+) =>
+  !pageMatches(page, currentPage) ||
+  (current.fields.length > 0 &&
+    probe.fields.some(
+      (field) => !current.fields.some((previous) => previous.selector === field.selector),
+    ));
+
 /** A later page or ready credential fields prove progression; a coincident same-page button cannot. */
 export const inspectReplayProgression = <E>(
   hooks: Pick<AutofillHooks<E>, "inspect">,
@@ -64,24 +94,12 @@ export const inspectReplayProgression = <E>(
       if (!("outcome" in found)) return { found } as const;
     }
     for (const recorded of later) {
-      const probes =
-        recorded.methods === undefined
-          ? [resolve(recorded)]
-          : recorded.methods.map((method) => ({
-              fields: [],
-              submit: method.selector,
-              ...(recorded.popup === undefined ? {} : { popup: recorded.popup }),
-            }));
-      for (const probe of probes) {
+      for (const probe of screenProbes(recorded, resolve)) {
         const found = yield* hooks.inspect(probe);
         if (
           !("outcome" in found) &&
           screens.matches(found.page, recorded) &&
-          (!pageMatches(found.page, currentPage) ||
-            (current.fields.length > 0 &&
-              probe.fields.some(
-                (field) => !current.fields.some((previous) => previous.selector === field.selector),
-              )))
+          showsAnotherScreen(found.page, probe, currentPage, current)
         )
           return { next: recorded } as const;
       }
