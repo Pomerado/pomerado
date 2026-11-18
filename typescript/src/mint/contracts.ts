@@ -1938,7 +1938,8 @@ export type MintOutcome = {
    * its blocked report's explanation when the harness ended that report as sign-in unavailable
    * instead (`sign_in_failed` beside `recoveryReason: "sign_in_unavailable"`). Either is screened
    * for credentials and host-private values and kept only when Guardian's question review allowed
-   * its caller to read it, as a blocked explanation is. A blocked report's explanation Guardian
+   * its caller to read it, as a blocked explanation is, or, for the minter's last answer, asked
+   * only for other words (a reword labelled `unclear`). A blocked report's explanation Guardian
    * asked to reword goes back to the minter once, and the revision is kept when Guardian allows it.
    */
   readonly stopExplanation?: string;

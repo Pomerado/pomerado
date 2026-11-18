@@ -1770,18 +1770,38 @@ it("ends three tool-free answers as final_text_without_tool, with the reviewed l
   expect(reviewed).toEqual([expect.objectContaining({ blockedOutcome: true })]);
 });
 
-it("keeps no last answer Guardian did not allow", async () => {
-  const f = await fixture(() => prose("Call 555-0100 to finish this request."), {
+it.each(["unsafe", "misdescribed", undefined] as const)(
+  "keeps no last answer Guardian did not allow (reword labelled %s)",
+  async (label) => {
+    const f = await fixture(() => prose("Call 555-0100 to finish this request."), {
+      reviewQuestion: () =>
+        Effect.succeed({
+          outcome: "reword" as const,
+          rationale: "It passes on a phone number.",
+          ...(label === undefined ? {} : { label }),
+        }),
+    });
+    const outcome = await f.run();
+    expect(outcome.stopReason).toBe("final_text_without_tool");
+    expect(outcome).not.toHaveProperty("stopExplanation");
+    expect(JSON.stringify(outcome)).not.toContain("555-0100");
+  },
+);
+
+it("keeps a last answer Guardian asked only to word differently", async () => {
+  const f = await fixture(() => prose("The check page came back and the search never ran."), {
     reviewQuestion: () =>
       Effect.succeed({
         outcome: "reword" as const,
-        rationale: "It passes on a phone number.",
+        rationale: "Say it more plainly.",
+        label: "unclear" as const,
       }),
   });
   const outcome = await f.run();
-  expect(outcome.stopReason).toBe("final_text_without_tool");
-  expect(outcome).not.toHaveProperty("stopExplanation");
-  expect(JSON.stringify(outcome)).not.toContain("555-0100");
+  expect(outcome).toMatchObject({
+    stopReason: "final_text_without_tool",
+    stopExplanation: "The check page came back and the search never ran.",
+  });
 });
 
 // A last answer that says the host refused the build's steps is true only against the host's own
