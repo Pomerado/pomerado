@@ -5,8 +5,8 @@ import {
   OrderFacts,
   optionsRepeatedBy,
   orderNotice,
+  publicOptionLabel,
   validateAnswer,
-  type InputOption,
   type InputRequest,
   type ValidAnswers,
 } from "../runtime/input-request.js";
@@ -186,20 +186,8 @@ export const keptScriptAnswers = (
   ];
 };
 
-/** Text as a prompt and an option's label compare: lowercase, without accents or extra spaces. */
-const folded = (text: string) =>
-  text
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-
-/** Whether `prompt` names `option` by its label or masked label. */
-const namesOption = (prompt: string, option: InputOption) =>
-  [option.label, option.maskedLabel].some(
-    (shown) => shown !== undefined && folded(prompt).includes(folded(shown)),
-  );
+/** How the review shows an account's option that has no masked label: it names none. */
+const hiddenOption = publicOptionLabel({ id: "", label: "", accountSpecific: true });
 
 /** A confirm the owner answered, as Guardian's trusted answers show it. */
 const confirmedAnswer = ({ answer }: AnsweredQuestion) =>
@@ -212,9 +200,9 @@ const confirmedAnswer = ({ answer }: AnsweredQuestion) =>
  * review says. Each id named is exactly one answer in `answered`, the answers the review trusted,
  * and the owner's latest to its prompt. Each question gets exactly one answer of its own kind, a
  * choice the one option its label names. A confirm's yes rests on a named yes, never with a
- * follow-up text. An option that doesn't decline rests on a named pick of it without a note, or a named
- * yes when it is the question's only such option or the one option the yes's prompt names; no named
- * pick of another option stands against it; and nothing that goes on rests on a named no. A
+ * follow-up text. An option that doesn't decline rests on a named pick of it without a note, or a
+ * named yes when it is the question's only such option; no named pick of another option stands
+ * against it; and nothing that goes on rests on a named no. A
  * purchase, which carries its order, takes only a yes, or an option that doesn't decline, resting
  * on a named yes that `orderYes` says may still answer this order: the host's record that the owner
  * gave it since a step last may have placed one, and, for a yes to a script's own purchase, to the
@@ -264,24 +252,28 @@ export const repeatedScriptAnswers = (
       const options = optionsRepeatedBy(question.options, answer.option);
       const option = options.length === 1 ? options[0] : undefined;
       if (option === undefined) return undefined;
-      // The named picks of this question's options: none may differ from the option, or carry the
-      // owner's note, which the script would never get.
-      const picks = cited.flatMap((entry) => {
-        const matched =
-          typeof entry.answer === "string" ? optionsRepeatedBy(question.options, entry.answer) : [];
-        return matched.length === 1 ? [{ entry, id: matched[0]?.id }] : [];
-      });
-      if (picks.some(({ entry, id }) => id !== option.id || entry.note !== undefined))
+      // The named picks of this question's options: none may name another option, an account's
+      // hidden one, or carry the owner's note, which the script would never get.
+      const picks = cited.flatMap((entry) =>
+        typeof entry.answer === "string"
+          ? [{ entry, ids: optionsRepeatedBy(question.options, entry.answer).map(({ id }) => id) }]
+          : [],
+      );
+      if (
+        picks.some(
+          ({ entry, ids }) =>
+            ids.length > 0 &&
+            (ids.some((id) => id !== option.id) ||
+              entry.note !== undefined ||
+              entry.answer === hiddenOption),
+        )
+      )
         return undefined;
       const proceeds = option.declines !== true;
-      // A yes settles one option that goes on: the only one, or the one its prompt names alone.
+      // A yes settles an option that goes on only when it is the question's only such option.
       const going = question.options.filter((offered) => offered.declines !== true);
-      const yesNames = cited.some((entry) => {
-        if (confirmedAnswer(entry) !== true) return false;
-        const named = going.filter((offered) => namesOption(entry.question, offered));
-        return named.length === 1 && named[0]?.id === option.id;
-      });
-      const settled = picks.length > 0 || (saidYes && (going.length === 1 || yesNames));
+      const settled =
+        picks.some(({ ids }) => ids.length > 0) || (saidYes && going.length === 1);
       if (
         (proceeds && (saidNo || !settled)) ||
         (asked.order !== undefined && (!proceeds || !orderSaidYes))

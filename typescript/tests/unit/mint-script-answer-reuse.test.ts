@@ -357,7 +357,7 @@ describe("a script question Guardian rewords as a repeat of the owner's earlier 
     expect(repeatedScriptAnswers(size, named("Large"), [small], live)).toBeUndefined();
   });
 
-  it("never takes an option that goes on against a named pick of another, or from a yes that names none", () => {
+  it("never takes an option that goes on against a named pick of another, or from a yes among several", () => {
     const submit = request([
       {
         id: "submit",
@@ -387,16 +387,63 @@ describe("a script question Guardian rewords as a repeat of the owner's earlier 
     });
     // A pick that carries the owner's note settles nothing: the script would never get the note.
     expect(repeatedScriptAnswers(submit, chose("Submit"), [fill, pick("Submit", "Only after noon")], live)).toBeUndefined();
-    // A yes alone settles an option that goes on only when its prompt names that one option.
+    // A yes alone settles an option that goes on only when it is the question's only such option,
+    // whatever its prompt says.
     expect(repeatedScriptAnswers(submit, chose("Submit", ["fill"]), [fill], live)).toBeUndefined();
     const express: AnsweredQuestion = {
       id: "fill",
       question: "May the tool send the claim for express review?",
       answer: { confirmed: true },
     };
-    expect(repeatedScriptAnswers(submit, chose("Express review", ["fill"]), [express], live)).toEqual({
-      submit: { type: "choice", value: "express" },
-    });
+    expect(repeatedScriptAnswers(submit, chose("Express review", ["fill"]), [express], live)).toBeUndefined();
+    // A pick whose text two options share stands against either.
+    const twice = request([
+      {
+        id: "submit",
+        type: "choice",
+        prompt: "Add protection?",
+        options: [
+          { id: "add", label: "Add protection" },
+          { id: "no", label: "No thanks", declines: true },
+          { id: "no_again", label: "No thanks", declines: true },
+        ],
+      },
+    ]);
+    expect(repeatedScriptAnswers(twice, chose("Add protection"), [fill, pick("No thanks")], live)).toBeUndefined();
+    // An account's option shown with no masked label names no option.
+    const cards = request([
+      {
+        id: "submit",
+        type: "choice",
+        prompt: "Which card?",
+        options: [
+          { id: "a", label: "Visa ending 4242", accountSpecific: true, maskedLabel: "••••" },
+          { id: "stop", label: "Do not pay", declines: true },
+        ],
+      },
+    ]);
+    expect(repeatedScriptAnswers(cards, chose("••••"), [fill, pick("••••")], live)).toBeUndefined();
+  });
+
+  it("never answers a yes or an option that goes on when a named answer is a no", () => {
+    const declined: AnsweredQuestion = { id: "decline", question: "Keep the order open?", answer: { confirmed: false } };
+    const confirm = request([{ id: "approve", type: "confirm", prompt: "Accept the terms?" }]);
+    const yes = repeat([{ question: "approve", option: null, confirmed: true }], ["approve_payment", "decline"]);
+    expect(repeatedScriptAnswers(confirm, yes, [approval, declined], live)).toBeUndefined();
+    const size = request([
+      {
+        id: "size",
+        type: "choice",
+        prompt: "Which size?",
+        options: [
+          { id: "small", label: "Small" },
+          { id: "large", label: "Large" },
+        ],
+      },
+    ]);
+    const small: AnsweredQuestion = { id: "size_pick", question: "Which size should the tool order?", answer: "Small" };
+    const chose = repeat([{ question: "size", option: "Small", confirmed: null }], ["size_pick", "decline"]);
+    expect(repeatedScriptAnswers(size, chose, [small, declined], live)).toBeUndefined();
   });
 
   it("never answers yes to a confirm that takes a follow-up text", () => {
