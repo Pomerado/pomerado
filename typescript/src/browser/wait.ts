@@ -921,13 +921,19 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
       }
       if (shown !== undefined) {
         const observation = observations?.[shown.name];
+        // After a commit's click, whether a look shows the winner more than once, every visible match
+        // new since the click, and no other outcome, a pending one from before the click aside.
+        const allNew = (observed) => observed?.[shown.name]?.visible > 1 && observed[shown.name].changed === observed[shown.name].visible &&
+          !candidates.some((each) => each !== shown &&
+            outcomeWaitShows(each, observed[each.name], state, stale || pendingNames.has(each.name), now));
         // A locator with more than one match decides only when it shows more than once, its visible
         // matches all read the same, and none is left from before the action beside a new one. After
         // a commit's click, visible matches all new since the click decide however they read, while
-        // no other outcome shows.
+        // no other outcome shows at this look and the next, since a look reads the outcomes listed
+        // after the winner before it.
         if (shown.kind === "locator" && observation.count > 1 && !(observation.visible > 1 &&
             !(observation.changed > 0 && observation.changed < observation.visible) &&
-            ((committing && observation.changed === observation.visible && !candidates.some((each) => each !== shown && shows(each))) ||
+            ((committing && allNew(observations) && allNew(await look())) ||
               (await waitBounded(outcomeWaitSameText(shown.locator).catch(() => false), Math.max(250, Math.min(1000, beforeStop())), false))))) {
           const failure = outcomeWaitFailure("outcome_ambiguous", ": " + outcomeWaitSeen(observations), observations, {
             outcome: shown.name,
