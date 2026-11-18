@@ -387,6 +387,34 @@ it("counts a screen as sent once the minter goes on after the host's click faile
   expect(published?.recipe.steps[0]).toMatchObject({ submittedBy: "minter" });
 });
 
+// A code screen that sent itself on its last digit and took its submit away in place, so the host
+// clicked nothing: once the minter goes on, it is recorded as sent by the page, with no submit.
+it("records a code screen that closed in place with no submit once the minter goes on", async () => {
+  const host = harness({
+    held: account,
+    answers: { code: ["482913"] },
+    report: (step) => ({
+      outcome: "filled",
+      fields: step.fields.map((field) => ({ slot: field.slot, status: "filled" as const })),
+      ...(step.fields.some((field) => field.slot === "code")
+        ? { submit: "refused" as const, closedInPlace: true as const }
+        : { submit: "clicked" as const }),
+      url: `${origin}/login`,
+    }),
+  });
+  const code: SignInStep = { fields: [{ selector: "#code", slot: "code" }], submit: "#verify" };
+  const published = await host.run((recorder) =>
+    Effect.gen(function* () {
+      yield* recorder.step(identifierOnly, undefined, Effect.void);
+      yield* recorder.step(code, undefined, Effect.void);
+      yield* recorder.step(passwordOnly, undefined, Effect.void);
+      expect((yield* recorder.step(signedIn, undefined, Effect.void)).verified).toBe(true);
+      return recorder.published();
+    }),
+  );
+  expect(published?.recipe.steps[1]).toEqual({ page: `${origin}/login`, fields: code.fields });
+});
+
 // A refused step shows the minter went on from the screen before, as a method chooser shows
 // only once the login screen was sent, so that screen's password counts as sent before the
 // refusal. A corrected login then never fills the same password a third time.

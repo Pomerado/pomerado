@@ -662,6 +662,8 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
   const candidates = names.map((name) => outcomeWaitCandidate(name, outcomes[name]));
   const pendingNames = new Set(options.pending === undefined ? [] : [options.pending].flat());
   for (const name of pendingNames) {
+    if (typeof name !== "string")
+      throw new TypeError("waitForOutcome pending takes outcome keys, not locators: add the locator to the outcomes and name its key in pending");
     const kind = candidates.find((candidate) => candidate.name === name)?.kind;
     if (kind === undefined) throw new TypeError('waitForOutcome pending "' + name + '" names none of its outcomes');
     if (["response", "dialog", "popup"].includes(kind))

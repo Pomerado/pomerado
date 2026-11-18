@@ -494,6 +494,7 @@ const runScreen = <E extends YieldableError, V extends string, L extends Autofil
         false,
         undefined,
         recorded.refills,
+        later[0],
       );
       if (failed === undefined) break;
       const keyed = yield* submitGoneAfterTyping(input, replay, recorded, step, failed);

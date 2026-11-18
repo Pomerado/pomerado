@@ -33,7 +33,8 @@ several items, each added to that order before its one final submit, one action 
 over many targets, such as a send to a group picked in one form, and a read of many things are
 each fine as one tool.
 
-A read build may search, filter and query, but may not fill in or advance a form that
+A read build may search, filter and query, and open a checkout only to read what it offers,
+choosing, entering and saving nothing, but may not fill in or advance a form that
 saves data on the site, save or submit anything; a task that needs that is a write build.
 Opening pages that the site then marks as visited or as progress, without submitting an answer
 or a form, is part of a read, unless the request asks to change that progress.
@@ -70,8 +71,9 @@ says (a tool that fills a cart and returns its quote in one run may use the site
 with the auth skill: read-only `explore` to find the login, then
 `authenticate`. Before the first `act` step you may still explore
 read-only, for example to read the first page's options, and set the session's delivery or
-pickup location as a read (above), with `pickValue` and the site's own confirm control in one
-step. Never fill, select, add, save or submit anything else there, except one made-up key in
+pickup location as a read (above), with `pickValue`, or the core skill's address helpers for
+an address, pickup or drop-off value, and the site's own confirm control in one step. Never
+fill, select, add, save or submit anything else there, except one made-up key in
 the site's own format, with a
 serial past any the site lists, per input that takes a record's own key, looked up once in the
 site's own lookup to see what it shows for a key it has no record of (core skill), and the
@@ -236,7 +238,8 @@ During the session:
   the option.
 - Read each typed value back once its field settles, before the step's commit. When the site
   rewrote it as it was typed or on leaving the field, such as an address it standardized, or
-  offered exactly one suggestion for it that matches it cleanly or that the address matcher accepted,
+  offered exactly one suggestion for it that matches it cleanly (for an address, pickup or
+  drop-off value, one the address matcher accepted),
   take the site's version, as you would a picked
   option: later read-backs, such as a review page, summary or confirmation, compare against
   it, and the output returns it for that field. Ask about any other lone suggestion as about a
@@ -360,8 +363,8 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   only what a change since the checks would make wrong and its page shows, such as the total
   and items they read, and when one moved it returns before clicking and the script throws
   `OperationFailure` naming the change, such as `total_changed`; otherwise it clicks once
-  and waits for the confirmation. That guard is expected. Name the in-between state the site
-  can show after the click, beside its final answers, in that wait's `pending`: it holds up to
+  and waits for the confirmation. That guard is expected. Add the in-between state the site
+  can show after the click as an outcome beside its final answers, and name its key in that wait's `pending`: it holds up to
   60 s from when that state shows, and `confirmCommit` reports one still showing then as
   `pending`. An entered mark counts as possibly sent even when its call stopped before the
   click, so a check that can refuse placed there

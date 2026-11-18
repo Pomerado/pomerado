@@ -223,7 +223,7 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   ["core", "- The code works for every value the schema accepts."],
   [
     "core",
-    "- Match the caller's proper nouns, such as places, venues and company names, with a fuzzy match that accepts the usual forms of the same name, such as a name with or without its accents (Abaca for Abacá), or a city alone or with its state and country after a comma. Never require an exact match. A name with words added or dropped is a looser match, which a read picks and a write asks about, as above. `sameText` from `pomerado/runtime` matches a name that differs only in case, accents, spacing, apostrophes, periods, commas or hyphens, or in a word the site writes short, such as St-Jean for Saint-Jean, but not one with a word added or dropped. Prefer it for confirming the pick, so the read-back agrees with the choice, but not for choosing from a list, where a short label can match a longer name it isn't, such as UK for Ukraine. When more than one option matches equally, decide per tool: take the first in the site's order and return the one it used, as the site labels it, or list them for the caller to choose one, each selecting exactly one.",
+    "- Match the caller's proper nouns, such as places, venues and company names, with a fuzzy match that accepts the usual forms of the same name, such as a name with or without its accents (Abaca for Abacá), or a city alone or with its state and country after a comma. Never require an exact match. A name with words added or dropped is a looser match, which a read picks and a write asks about, as above. `sameText` from `pomerado/runtime` matches a name that differs only in case, accents, spacing, apostrophes, periods, commas or hyphens, or in a word the site writes short, such as St-Jean for Saint-Jean, but not one with a word added or dropped. Prefer it for confirming the pick, so the read-back agrees with the choice, but not for choosing from a list, where a short label can match a longer name it isn't, such as UK for Ukraine. When more than one option matches equally, decide per tool, except for an address, pickup or drop-off value (above): take the first in the site's order and return the one it used, as the site labels it, or list them for the caller to choose one, each selecting exactly one.",
   ],
   // A value the caller names goes through the site's own search, not only a menu the page shows.
   [
@@ -881,6 +881,33 @@ it("keeps opening pages the site marks as visited or as progress part of a read"
   );
 });
 
+// A read that lists what a site's checkout offers was switched to a write when it opened the
+// checkout, though it chose, entered and saved nothing there. Every rule on what a read may do says
+// opening a checkout only to read it stays a read, and the requests its page sends with it.
+it("keeps opening a checkout only to read what it offers part of a read", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
+  const opening = "open a checkout only to read what it offers, choosing, entering and saving nothing";
+  expect(text("workspace/AGENTS.md")).toContain(
+    `A read build may fill in and submit a search, filter or query form to read results, and ${opening}, but may not fill in or advance a form that saves data on the site`,
+  );
+  expect(text("writes")).toContain(
+    `A read build may search, filter and query, and ${opening}, but may not fill in or advance a form that saves data on the site, save or submit anything;`,
+  );
+  expect(text("forms")).toContain(
+    "(core skill). So does opening a checkout only to read what it offers, choosing, entering and saving nothing. A signed-out quote",
+  );
+  expect(text("cart")).toContain(
+    `checks out a cart. A read tool may ${opening}. For a write,`,
+  );
+  expect(text("core")).toContain(
+    "such as adding an item to a cart, submitting a form or saving a preference. If you find one,",
+  );
+  expect(text("core")).toContain(
+    "not a saved preference (the input schema above). So is opening a checkout only to read what it offers, choosing, entering and saving nothing, with the requests its page sends.",
+  );
+});
+
 /*
  * A site rewrote an address as it was typed, writing Parkway as PKWY, and the read-back refused a
  * correct save. A write takes the site's version of a typed value, as it would a picked option,
@@ -892,7 +919,7 @@ it("has a write take the site's rewrite of a typed value and note whether it cha
   const text = (name: string) =>
     (contents(skills)[skills.findIndex((skill) => skill.name === name)] ?? "").replace(/\s+/g, " ");
   expect(text("writes")).toContain(
-    "- Read each typed value back once its field settles, before the step's commit. When the site rewrote it as it was typed or on leaving the field, such as an address it standardized, or offered exactly one suggestion for it that matches it cleanly or that the address matcher accepted, take the site's version, as you would a picked option: later read-backs, such as a review page, summary or confirmation, compare against it, and the output returns it for that field. Ask about any other lone suggestion as about a looser match (core skill). The one suggestion counts only for a free-text value the caller typed, such as an address or a name in a text box the site completes, never for a picker that selects a record, such as a person, assignee, customer, linked record, store or account, which keeps the reference rules in \"Check the read-back\" and the caller-input skill's. Add an optional output field `<input>_note`, such as `address_note`, that reports the rewrite with what the caller sent and what the site kept. Check it once with `sameText(shown, typed, { rewrite: true })`, which only decides what the note says: when it holds, the site only reformatted the value, and the note says so; when it fails, the site dropped or changed part of what the caller gave, and the note says it changed. The write goes on either way: never throw `InputNotApplied` for such a rewrite. A value cut short by the field's length limit, digits an input mask dropped, or a field that cleared is a failed fill, not a rewrite: fill it again in the field's format, or refuse as today. A value the site replaces only when a step saves follows the read-back before committing, above.",
+    "- Read each typed value back once its field settles, before the step's commit. When the site rewrote it as it was typed or on leaving the field, such as an address it standardized, or offered exactly one suggestion for it that matches it cleanly (for an address, pickup or drop-off value, one the address matcher accepted), take the site's version, as you would a picked option: later read-backs, such as a review page, summary or confirmation, compare against it, and the output returns it for that field. Ask about any other lone suggestion as about a looser match (core skill). The one suggestion counts only for a free-text value the caller typed, such as an address or a name in a text box the site completes, never for a picker that selects a record, such as a person, assignee, customer, linked record, store or account, which keeps the reference rules in \"Check the read-back\" and the caller-input skill's. Add an optional output field `<input>_note`, such as `address_note`, that reports the rewrite with what the caller sent and what the site kept. Check it once with `sameText(shown, typed, { rewrite: true })`, which only decides what the note says: when it holds, the site only reformatted the value, and the note says so; when it fails, the site dropped or changed part of what the caller gave, and the note says it changed. The write goes on either way: never throw `InputNotApplied` for such a rewrite. A value cut short by the field's length limit, digits an input mask dropped, or a field that cleared is a failed fill, not a rewrite: fill it again in the field's format, or refuse as today. A value the site replaces only when a step saves follows the read-back before committing, above.",
   );
   expect(text("core")).toContain(
     "With no match, throw its `pickRefusal`, an `InvalidInput` with `field` and `available`, the entries the site showed, even when the site offered only one.",
@@ -908,6 +935,51 @@ it("has a write take the site's rewrite of a typed value and note whether it cha
     "A write's `<input>_note` reporting a value the site rewrote as it was typed, on leaving the field, or through its one suggestion is not unapplied input; the tool read the site's version back and returns it.";
   expect(publicationOutputPolicy).toContain(note);
   expect(text("publication")).toContain(note);
+});
+
+/*
+ * A tool took the site's first suggestion for a pickup place the caller gave, as the equal-match
+ * rules let each tool decide. Those rules, a read's looser match and a write's lone suggestion
+ * leave out an address, pickup or drop-off value, which only the core skill's address helpers
+ * choose, and the picker and session-location rules send it to them.
+ */
+it("never takes the first or a looser match for an address, pickup or drop-off value", async () => {
+  const skills = await Effect.runPromise(loadAuthoringSkills("typescript/authoring"));
+  const text = (name: string) =>
+    (contents(skills)[skills.findIndex((skill) => skill.name === name)] ?? "").replace(/\s+/g, " ");
+  expect(text("core")).toContain(
+    "or the site's first result that shares a word with the value, is picked with `loose: true`, except for an address, pickup or drop-off value (below): return the option it used",
+  );
+  expect(text("core")).toContain(
+    "follow `pickValue`'s rule, except for an address, pickup or drop-off value (below): a read takes the best match at any rank",
+  );
+  expect(text("core")).toContain(
+    "Resolve a typed address, pickup or drop-off value through the site's suggestions in two calls",
+  );
+  expect(text("core")).toContain(
+    "With several, decide per tool, except for an address, pickup or drop-off value, which only the address helpers below choose: take the first in the site's own order",
+  );
+  expect(text("caller-input")).toContain(
+    "or a read's looser match, returning the option it used, but never for an address, pickup or drop-off value (core skill)",
+  );
+  expect(text("caller-input")).toContain(
+    "each tool decides which, but never takes the first for an address, pickup or drop-off value (core skill).",
+  );
+  expect(text("publication")).toContain(
+    "a free-text place, name or venue, other than an address, pickup or drop-off value, that matches several of the site's options equally",
+  );
+  expect(text("publication")).toContain(
+    "goes through `pickValue` or `pickValues`, an address, pickup or drop-off value through the core skill's address helpers (\"Own address match\"),",
+  );
+  expect(text("forms")).toContain(
+    "In a tool that takes the first of options that tie instead (each tool decides, but never for an address, pickup or drop-off value, core skill), pass `tie: \"first\"`",
+  );
+  expect(text("writes")).toContain(
+    "with `pickValue`, or the core skill's address helpers for an address, pickup or drop-off value, and the site's own confirm control in one step.",
+  );
+  expect(text("writes")).toContain(
+    "offered exactly one suggestion for it that matches it cleanly (for an address, pickup or drop-off value, one the address matcher accepted),",
+  );
 });
 
 /*
@@ -1644,17 +1716,17 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["44fd9d8f89417abe4ba11f85f57ee7a87875e62be7e3f0b4412b92defb8bade9", "core"],
+    ["633ffd15bb19d5c93cf72c6a28e0f4597fbb39d5eaab2cd02db8e20337789a0f", "core"],
     ["7c3be765ee7c1c62b13a4876cc5453bbeb8acc7948b51511574f36f2aed09c4a", "search"],
     ["5918d38595593c4dfbf5028322c5b678c3082d6c473573f454f53f511b2f5f53", "auth"],
     ["539abe36b602c8e2eff8745dd0462aea41837a20cc0b90cbef7a01cbad6fb89a", "testing"],
     ["d524204c6ed2dc0fa773d6e5cf0aef993e2b48ee9db3fcbf291e40ebe8c9913d", "pagination"],
-    ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
-    ["b59b77c1b0c506873a90e6cb989173f05be2c152716730aabd5bde80b804eefd", "writes"],
-    ["ab2cacdaf78da396c1ed4217b66c514cf595ea6c0c2827ea5dd87ab0276a7a63", "cart"],
-    ["9139df065d6db3d0dcaa476fa076f8c22b4108f592ed38e888eda90455c61356", "caller-input"],
-    ["5e831bd1ba21d5ec4b1da3a96152f9d905144cbef58b9bd26381933f27faa97c", "publication"],
-    ["0abdab6a68ce07ced766e367583c6259ab49dbfb525602c7755cb6420b2df6a0", "workspace/AGENTS.md"],
+    ["900781cc6ee191709070976f8595694757c9dd0fa0eeac7152817bd42da37fae", "forms"],
+    ["a155a41f4b3f359946b2d9917a97587d255d79b01ae226a5a5a0194da34f587a", "writes"],
+    ["a1dff3822c5ab9823e003168d484aff0411e6be9e3eae398cc80f1ea9b3dfc8d", "cart"],
+    ["c405a6acd56bd9c0b813443e7ee6b1c01dddb9226a63524aac860331d9ef5435", "caller-input"],
+    ["d47486fdd08e7a7ff6ab8f38ee03e6a3e8e2287eb67f2412f1fe996543ea1857", "publication"],
+    ["092d416c498b1398b744a83aa92a8193ed4cba8fb2223534ae27c7e47e629eaa", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);
 });
@@ -1775,7 +1847,7 @@ it("renders the search URL fast path only when a host turns it on", async () => 
     [sha256(on.agents), "workspace/AGENTS.md"],
   ]).toStrictEqual([
     ["e3c82530af60da937a450bd94be81e1fefea6ef2324d9cd54379a52fc1d7c930", "search"],
-    ["0f53c7bb09d94526ee427a261b86467c7f33418742740004a9c0f81af1c83e1d", "workspace/AGENTS.md"],
+    ["fdba47c3b8ac22b356e74212ff901c626141d118b7fd62f1ac494741a91201cd", "workspace/AGENTS.md"],
   ]);
   expect(on.digests.filter(([, name]) => name !== "search")).toStrictEqual(
     off.digests.filter(([, name]) => name !== "search"),

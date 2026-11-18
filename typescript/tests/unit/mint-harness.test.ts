@@ -3327,6 +3327,14 @@ it("asks only one read-or-write effect question, refusing every other shape and 
     (turn) =>
       Effect.gen(function* () {
         expect(turn.effectQuestion).toBe(true);
+        // Opening a checkout only to read it is no change, as every rule on what a read may do says.
+        expect(JSON.parse(turn.input)).toMatchObject({
+          effectQuestion: {
+            instruction: expect.stringContaining(
+              "counts as a change, while searching, filtering or opening a checkout only to read it does not.",
+            ),
+          },
+        });
         expect(yield* Effect.either(turn.actions.execute(execution))).toMatchObject({
           _tag: "Left",
           left: { code: "ScopeDenied" },

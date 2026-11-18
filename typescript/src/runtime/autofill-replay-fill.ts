@@ -23,7 +23,12 @@ import { Unanswered } from "./login-field-asks.js";
 import { credentialUnavailable } from "./autofill-fresh-values.js";
 import type { ReplaySession } from "./autofill-replay-session.js";
 import { codeScreenOf } from "./autofill-unrecorded-code.js";
-import { isSecondFactor, type RejectedMarker } from "../destinations/autofill-recipe.js";
+import { inspectReplayProgression } from "./autofill-replay-screens.js";
+import {
+  type AutofillRecipeStep,
+  isSecondFactor,
+  type RejectedMarker,
+} from "../destinations/autofill-recipe.js";
 import type { AutofillLogin } from "./autofill-values.js";
 import {
   emptyReplayFields,
@@ -149,15 +154,21 @@ const screenReturned = <E extends YieldableError, V extends string, L extends Au
 /**
  * A code screen whose fill found it closed in place once every field was typed (`closedInPlace`),
  * as one that sends itself on its last digit and takes its submit away does, sent its code only
- * when the sign-in's own check says so: the replay reads the recipe's marker on the page
- * (`checkHere`) until it shows, for up to a screen's wait (`stepWaitMs`), as its marker wait after
- * the screens does. Once it shows, the step counts as sent by the page (`page`), as one whose page
- * loaded a new document does, and the replay's checks go on as after such a step. Otherwise the
- * fill's refusal stands, as it did before the host looked.
+ * when the sign-in's own check says so, or the recipe's next recorded screen (`next`) shows in its
+ * place, judged from the code screen's page (`page`) as a screen's wait judges a later screen
+ * (`inspectReplayProgression`): the replay reads the page for the recipe's marker (`checkHere`)
+ * and that screen until either shows, for up to a screen's wait (`stepWaitMs`), as its marker wait
+ * after the screens does. Once one shows, the step counts as sent by the page (`submit: "page"`),
+ * as one whose page loaded a new document does, and the replay goes on as after such a step.
+ * Otherwise, as when the site shows a refused code on the same screen, the fill's refusal stands,
+ * as it did before the host looked.
  */
 const closedInPlace = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   session: ReplaySession<E, V, L>,
+  asked: AutofillStep,
+  page: string,
   stepReport: AutofillStepReport,
+  next: AutofillRecipeStep | undefined,
 ) =>
   Effect.gen(function* () {
     if (
@@ -169,21 +180,39 @@ const closedInPlace = <E extends YieldableError, V extends string, L extends Aut
     )
       return stepReport;
     const until = (yield* Clock.currentTimeMillis) + session.timing.stepWaitMs;
-    let signedIn = (yield* session.checkHere).signedIn;
-    while (!signedIn && (yield* Clock.currentTimeMillis) < until) {
+    const look = Effect.gen(function* () {
+      if ((yield* session.checkHere).signedIn) return "signed_in" as const;
+      const progressed = yield* inspectReplayProgression(
+        session.hooks,
+        { page },
+        asked,
+        [],
+        next === undefined ? [] : [next],
+        (request) => session.values.resolve(request, session.input.credentials),
+        { matches: session.matchesRecorded },
+      );
+      return progressed === undefined ? undefined : ("next_screen" as const);
+    });
+    let shown = yield* look;
+    while (shown === undefined && (yield* Clock.currentTimeMillis) < until) {
       yield* Effect.sleep(Duration.millis(session.timing.pollMs));
-      signedIn = (yield* session.checkHere).signedIn;
+      shown = yield* look;
     }
-    yield* session.input.emit({ stage: "closed_in_place", signedIn });
-    if (!signedIn) return stepReport;
+    yield* session.input.emit({
+      stage: "closed_in_place",
+      signedIn: shown === "signed_in",
+      nextScreen: shown === "next_screen",
+    });
+    if (shown === undefined) return stepReport;
     const { closedInPlace: _closed, failureDetail: _refused, ...sent } = stepReport;
     return { ...sent, submit: "page" } satisfies AutofillStepReport;
   });
 
 /**
  * One observed screen: admitted by the host, filled and submitted. Why it did not complete, or
- * undefined. `planned` is the recorded screen's `refills`. A code screen that closed in place
- * counts as sent only once the marker shows (`closedInPlace`).
+ * undefined. `planned` is the recorded screen's `refills`, and `next` the recorded screen after it.
+ * A code screen that closed in place counts as sent only once the marker or `next` shows
+ * (`closedInPlace`).
  */
 export const runReplayStep = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   session: ReplaySession<E, V, L>,
@@ -193,6 +222,7 @@ export const runReplayStep = <E extends YieldableError, V extends string, L exte
   explicitCodeRejection = false,
   corrected: ReadonlySet<AutofillSlot> = new Set(),
   planned: readonly AutofillSecret[] = [],
+  next?: AutofillRecipeStep,
 ) =>
   Effect.gen(function* () {
     const {
@@ -294,7 +324,10 @@ export const runReplayStep = <E extends YieldableError, V extends string, L exte
     session.firstCause.submitted();
     const stepReport = yield* closedInPlace(
       session,
+      step,
+      inspection.page,
       yield* hooks.fill({ step, values: filled, inspection, typedBoxes: progress.typedBoxes }),
+      next,
     );
     yield* timeExecutionStage(
       input.latency,

@@ -250,9 +250,9 @@ exception: it is optional unless the task can't run without it (below).
   them with `rankChoices` and `spellingsOf` too, never with matching of its own: it returns the
   best matches, and with none, the site's rows in the site's order as candidates, saying so.
   With `rankChoices` on options or rows read as data, as in an HTTP version, take the clean
-  ranks from `cleanRanks` in `pomerado/runtime` and follow `pickValue`'s rule: a read takes the
-  best match at any rank and returns the option it used, and a write asks the caller about a
-  looser one.
+  ranks from `cleanRanks` in `pomerado/runtime` and follow `pickValue`'s rule, except for an
+  address, pickup or drop-off value (below): a read takes the best match at any rank and returns
+  the option it used, and a write asks the caller about a looser one.
   `pickValue` types the caller's value into the site's own search,
   reads every suggestion, tries the usual other forms of the value's words, such as 5th
   and Fifth, St and Street or Saint, or a state's code and name, and picks the best match. A
@@ -265,7 +265,8 @@ exception: it is optional unless the task can't run without it (below).
   holds the value's text before its first comma, as whole words, in its first line, and the
   value's later comma parts in its text. In a read, a looser best match, such as a name with
   words the value lacks, or the site's first result that shares a word with the value, is
-  picked with `loose: true`: return the option it used, as the site labels it. In a write,
+  picked with `loose: true`, except for an address, pickup or drop-off value (below): return the
+  option it used, as the site labels it. In a write,
   `pickValue` returns it as `option_unclear`, with the site's options, each by its full text:
   before the first commit mark, ask the caller with a declared choice question with
   `allowOther`, offering `pickChoices(outcome)`, then pick the answer with `query` set to the
@@ -273,11 +274,14 @@ exception: it is optional unless the task can't run without it (below).
   `pickRefusal`. A value it lacks lists the site's closest options first. With no match, throw
   its `pickRefusal`, an
   `InvalidInput` with `field` and `available`, the entries the site showed, even when the site
-  offered only one. With one, use it. With several, decide per tool: take the first in the site's own
-  order and return the one it used, as the site labels it, or list those matches as the site
-  labels them for the caller to choose one, each selecting exactly one, with a declared choice
-  question (.agents/caller-input/SKILL.md) or `pickRefusal`, which lists them as `available`.
-  Resolve a typed address through the site's suggestions in two calls: in one, `pickerTypeAddress`,
+  offered only one. With one, use it. With several, decide per tool, except for an address,
+  pickup or drop-off value, which only the address helpers below choose: take the first in
+  the site's own order and return the one it used, as the site labels it, or list those
+  matches as the site labels them for the caller to choose one, each selecting exactly one,
+  with a declared choice question (.agents/caller-input/SKILL.md) or `pickRefusal`, which lists
+  them as `available`.
+  Resolve a typed address, pickup or drop-off value through the site's suggestions in two calls:
+  in one, `pickerTypeAddress`,
   then, once the list shows every suggestion the site offers for it, `pickerAddressRows` from
   `pickerCode`, returning its answer; in the script, `matchAddressRows(address, answer)` from
   `pomerado/runtime`; in the next call, `pickerMatchAddress` with that match and the same options,
@@ -312,9 +316,9 @@ exception: it is optional unless the task can't run without it (below).
   with a word added or dropped. Prefer it for confirming the pick, so the read-back agrees with
   the choice, but not for choosing from a list, where a short label can match a longer name it
   isn't, such as UK for Ukraine.
-  When more than one option matches equally, decide per tool: take the first in the site's
-  order and return the one it used, as the site labels it, or list them for the caller to
-  choose one, each selecting exactly one.
+  When more than one option matches equally, decide per tool, except for an address, pickup or
+  drop-off value (above): take the first in the site's order and return the one it used, as
+  the site labels it, or list them for the caller to choose one, each selecting exactly one.
 - In a product or catalog search, a result whose name has every word of the caller's value
   among words the value lacks is a looser match, which a read picks and a write asks about, as
   above: with no match, throw
@@ -1221,11 +1225,12 @@ So is an anonymous recent-search, prefill or search-state save the site fires wh
 you submit a search.
 
 For a read tool, look for a write your own action caused, such as adding an item to
-a cart, submitting a form, saving a preference or starting a checkout. If you find
+a cart, submitting a form or saving a preference. If you find
 one, change the code so it reads without causing it, for example by reading the
 value from the page instead of clicking the control that changes it, and run it
 again. Setting a read's location, filter, sort or option through the site's control is part of
-the read, not a saved preference (the input schema above). For a write session, the list shows the commit your step caused and any
+the read, not a saved preference (the input schema above). So is opening a checkout only to read
+what it offers, choosing, entering and saving nothing, with the requests its page sends. For a write session, the list shows the commit your step caused and any
 autosave, with the status the site answered: a 2xx or 3xx on the commit's route, with no
 error after it, is what the writes skill confirms from. A 200 whose body reports an error, as
 GraphQL can, did not go through. The list is the evidence for the `http` version, and any

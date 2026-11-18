@@ -5,7 +5,8 @@ description: Read before building any tool that reads, adds to, changes or check
 
 # Carts and checkout
 
-Read this for any tool that reads, adds to, changes or checks out a cart. For a write, the
+Read this for any tool that reads, adds to, changes or checks out a cart. A read tool may open a
+checkout only to read what it offers, choosing, entering and saving nothing. For a write, the
 writes skill's session, commit and publication rules still apply; this adds what a cart needs.
 When the site has other cart tools (the core skill, `reference/site-tools.json`), prefer carrying
 over their handling of the page states this tool shares with them.
@@ -221,8 +222,8 @@ earliest and latest times the caller accepts, and choose the first offered time 
 In the step that places the order, name the site's reply to that order request and the order's
 ID shown on the page as that wait's answers, beside the site's refusal and error messages, as the
 writes skill says for a commit, and read the ID from the reply or the page it leaves. Prefer
-passing a sign of progress that can show before them as that wait's `loading`, or naming it in
-`pending` as the writes skill says, over an answer that ends the wait.
+passing a sign of progress that can show before them as that wait's `loading`, or as an outcome
+whose key you name in `pending` as the writes skill says, over an answer that ends the wait.
 
 ## A checkout's inputs and output
 

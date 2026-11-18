@@ -119,7 +119,8 @@ lacks, one a write matches only loosely (`option_unclear`), or several options t
 comes back as `{ picked: false, reason, available, matches }`: decode it with `PickOutcome` and
 throw `pickRefusal(outcome, field)`, which lists options that tie as `available`, or ask the
 caller to choose among `matches`, as the core skill says for `option_unclear`. In a tool that takes the first of options that tie instead (each tool decides,
-core skill), pass `tie: "first"`, so the picker takes the first of them in the site's order and
+but never for an address, pickup or drop-off value, core skill), pass `tie: "first"`, so the
+picker takes the first of them in the site's order and
 returns the one it used, and return that option's label in the tool's output. In a read whose
 typed field is the site's own search, when `pickValue` returns `option_missing` with an empty
 `available`, prefer a person's fallback: type the caller's own text into the field again, then
@@ -258,7 +259,8 @@ form (it asks the caller and changes its task to a write with `mint_update` firs
 writes skill says); a write build does the whole form as its one task. A search, filter or query form
 whose read semantics are established stays a read, and so does a signed-out store or location
 form, or a signed-in session's per-visit location control that saves nothing to the account (core
-skill). A signed-out quote or price form that only fetches is a read too, but a
+skill). So does opening a checkout only to read what it offers, choosing, entering and saving
+nothing. A signed-out quote or price form that only fetches is a read too, but a
 quote, contact or inquiry form that sends a name, email, phone number or similar personal detail
 creates a lead or other lasting record on the site, so it is a write: ask the caller first, as
 the writes skill says. A step that only sets an input that tailors the answer with details the
