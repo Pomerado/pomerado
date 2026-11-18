@@ -118,8 +118,12 @@ export const ScriptOption = Schema.Struct({
    * that masks shows `maskedLabel` in place of its full label.
    */
   accountSpecific: Schema.optional(Schema.Boolean),
-  /** How an account-specific option reads where a host masks, like "Visa •••• 4242". */
-  maskedLabel: Schema.optional(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(64))),
+  /**
+   * How an account-specific option reads where a host masks, like "Visa •••• 4242". A long one
+   * reaches the caller shortened (`cutTo`), as a long label does, so a page's longer wording never
+   * stops the question after the script already ran part of its write.
+   */
+  maskedLabel: Schema.optional(Schema.String.pipe(Schema.minLength(1))),
   /** Picking it is the caller's no to the write, as a confirm's no is. */
   declines: Schema.optional(Schema.Boolean),
 });
@@ -425,6 +429,8 @@ const isOptionList = (spec: GivenSpec): spec is ReadonlyArray<ScriptOption> => A
 
 /** The longest label the host takes (`InputOption`), in UTF-16 code units as it counts them. */
 export const longestLabel = 256;
+/** The longest masked label the host takes (`InputOption`), counted as `longestLabel` is. */
+const longestMaskedLabel = 64;
 /**
  * Text the host can show within `limit`: longer text keeps its start and ends in "…". The cut
  * never splits a surrogate pair, so the start may be one code unit shorter. Options that read
@@ -476,7 +482,9 @@ const offeredOptions = (id: string, given: ReadonlyArray<ScriptOption> | undefin
       id: `o${index + 1}`,
       label: cutTo(option.label, longestLabel),
       ...(option.accountSpecific === undefined ? {} : { accountSpecific: option.accountSpecific }),
-      ...(option.maskedLabel === undefined ? {} : { maskedLabel: option.maskedLabel }),
+      ...(option.maskedLabel === undefined
+        ? {}
+        : { maskedLabel: cutTo(option.maskedLabel, longestMaskedLabel) }),
       ...(option.declines === undefined ? {} : { declines: option.declines }),
     })),
   });
