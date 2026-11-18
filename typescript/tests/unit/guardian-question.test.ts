@@ -175,6 +175,42 @@ it("reviews a question with the execution context and the bounded capture reader
   expect(JSON.stringify(requests[1]?.input)).toContain("Team $10");
 });
 
+// A step's script asked again what the owner had already answered the agent's own question, and
+// the review rewording it as a repeat could only say so in its rationale, so nothing handed the
+// script the answer. The review now names it, for the host to check against the owner's answers.
+it("returns the answer a repeat names, and none when the review names none", async () => {
+  const empty = {
+    reason: null,
+    findings: null,
+    responseRulings: null,
+    publicReason: null,
+    action: null,
+    refusal: null,
+    refusalGround: null,
+    advice: null,
+  };
+  const repeat = {
+    outcome: "reword",
+    rationale: "The owner already chose this plan.",
+    label: "repeat",
+    answers: [{ question: "plan", option: "Team", confirmed: null }],
+    answeredBy: ["plan_choice"],
+  };
+  scripted([
+    [message({ ...empty, ...repeat })],
+    [message({ ...empty, ...repeat, answers: null, answeredBy: null })],
+  ]);
+  const guardian = makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native));
+  const named = await Effect.runPromise(guardian.reviewQuestion(pending, question, unreadable));
+  expect(named.decision).toEqual(repeat);
+  const none = await Effect.runPromise(guardian.reviewQuestion(pending, question, unreadable));
+  expect(none.decision).toEqual({
+    outcome: "reword",
+    rationale: "The owner already chose this plan.",
+    label: "repeat",
+  });
+});
+
 const decisions = (outcomes: readonly string[]) => {
   const seen: boolean[] = [];
   const reviewer: Reviewer = {

@@ -101,6 +101,7 @@ const mintDependencies = (state: MintState, publicationDecisions: PublicationDec
           Effect.forEach(candidate.questions, (question) => projection.text(question.prompt)).pipe(
             Effect.map((prompts) => {
               state.scriptAnswers.kept = forgetScriptAnswers(state.scriptAnswers.kept, prompts);
+              state.scriptAnswers.unspent = [...state.scriptAnswers.unspent, ...prompts];
             }),
           ),
         ),
@@ -121,6 +122,7 @@ const mintDependencies = (state: MintState, publicationDecisions: PublicationDec
         Effect.tap(() =>
           Effect.sync(() => {
             state.scriptAnswers.kept = [];
+            state.scriptAnswers.unspent = [];
           }),
         ),
         Effect.mapError(mintError),

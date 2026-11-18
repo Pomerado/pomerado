@@ -1,7 +1,9 @@
 import { Effect, Either, Schema } from "effect";
+import type { AnsweredQuestion, QuestionDecision } from "../guardian/question.js";
 import {
   InvalidAnswer,
   OrderFacts,
+  optionsRepeatedBy,
   orderNotice,
   validateAnswer,
   type InputRequest,
@@ -181,4 +183,65 @@ export const keptScriptAnswers = (
     ),
     ...latest,
   ];
+};
+
+/** A confirm the owner answered, as Guardian's trusted answers show it. */
+const confirmedAnswer = ({ answer }: AnsweredQuestion) =>
+  typeof answer === "object" && "confirmed" in answer ? answer.confirmed : undefined;
+
+/**
+ * The answers a script's question takes when Guardian's question review rewords it as a repeat of
+ * the owner's earlier answers and names, for each of its questions, the answer they give
+ * (`answers`) and which answered questions they are (`answeredBy`); undefined to ask the owner.
+ * Every id named is the owner's latest answer to its prompt in `answered`, the answers the review
+ * trusted. Each question gets exactly one answer of its own kind, a choice the one option its
+ * label names, and no yes rests on a named no. A purchase confirm, which carries its order, takes
+ * only a yes, or an option that doesn't decline, resting on a named yes that `orderYes` says may
+ * still answer an order, as a kept yes may until a step may have placed it. Never a code, a
+ * secret, a login, a hand-off, a text or a multiple choice.
+ */
+export const repeatedScriptAnswers = (
+  asked: InputRequest,
+  decision: Pick<QuestionDecision, "outcome" | "label" | "answers" | "answeredBy">,
+  answered: readonly AnsweredQuestion[],
+  orderYes: (entry: AnsweredQuestion) => boolean,
+): ValidAnswers | undefined => {
+  const { answers = [], answeredBy = [] } = decision;
+  if (
+    asked.source !== "script" ||
+    decision.outcome !== "reword" ||
+    decision.label !== "repeat" ||
+    answeredBy.length === 0 ||
+    answers.length !== asked.questions.length
+  )
+    return undefined;
+  const named = answeredBy.map((id) => answered.find((entry) => entry.id === id));
+  const cited = named.filter((entry) => entry !== undefined);
+  if (
+    cited.length !== named.length ||
+    cited.some((entry) => answered.findLast((later) => later.question === entry.question) !== entry)
+  )
+    return undefined;
+  const saidNo = cited.some((entry) => confirmedAnswer(entry) === false);
+  const saidYes = cited.some((entry) => confirmedAnswer(entry) === true && orderYes(entry));
+  const given: Record<string, unknown> = {};
+  for (const question of asked.questions) {
+    const matching = answers.filter((answer) => answer.question === question.id);
+    const answer = matching.length === 1 ? matching[0] : undefined;
+    if (answer === undefined) return undefined;
+    if (question.type === "confirm" && answer.confirmed !== null) {
+      const yes = answer.confirmed;
+      if ((yes && saidNo) || (asked.order !== undefined && (!yes || !saidYes))) return undefined;
+      given[question.id] = { confirmed: yes };
+    } else if (question.type === "choice" && answer.option !== null) {
+      const options = optionsRepeatedBy(question.options, answer.option);
+      const option = options.length === 1 ? options[0] : undefined;
+      if (option === undefined) return undefined;
+      const proceeds = option.declines !== true;
+      if ((proceeds && saidNo) || (asked.order !== undefined && (!proceeds || !saidYes)))
+        return undefined;
+      given[question.id] = option.id;
+    } else return undefined;
+  }
+  return Either.getOrUndefined(validateAnswer(asked, given));
 };

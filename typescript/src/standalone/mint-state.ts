@@ -225,8 +225,15 @@ export const mintState = (
       acceptedConfirms: [],
       confirmSteps: new Set(),
     };
-    /** The owner's answers to scripts' questions that the same question asked again reuses. */
-    const scriptAnswers: { kept: readonly KeptScriptAnswer[] } = { kept: [] };
+    /**
+     * The owner's answers to scripts' questions that the same question asked again reuses, and the
+     * screened prompts the owner answered since a step last may have placed an order: a yes among
+     * them may answer a purchase confirm Guardian calls its repeat (`repeatedScriptAnswers`).
+     */
+    const scriptAnswers: { kept: readonly KeptScriptAnswer[]; unspent: readonly string[] } = {
+      kept: [],
+      unspent: [],
+    };
     /**
      * The caller's own inputs a read's example ran that the tool refused with `InvalidInput`: a
      * read whose caller's input is one of them may run a substitute example in its place.
