@@ -860,7 +860,7 @@ const showingScreen = <E extends YieldableError, V extends string, L extends Aut
     const last = steps[walk.at];
     if (last === undefined) return undefined;
     const lastStep = replay.resolve({ fields: last.fields, ...screenSubmit(last) });
-    const ran = replay.progress.ran.at(-1);
+    const before = replay.progress.ran.slice(-1);
     for (const [index, recorded] of steps.entries()) {
       if (walk.acted.has(index) || walk.restarted.has(index) || recorded.approval === "handoff")
         continue;
@@ -877,7 +877,7 @@ const showingScreen = <E extends YieldableError, V extends string, L extends Aut
             probe,
             pageOf(replay, last),
             lastStep,
-            ran,
+            before,
           ))
         )
           best = { index, controls };

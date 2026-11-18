@@ -85,8 +85,9 @@ const controlsOf = (step: AutofillStep) => {
 /**
  * Whether a probe found on `page` is another recorded screen than the `current` one, on
  * `currentPage`: another page, or a field the current screen lacks, proves it. On the same page
- * the probe's own look proves it too: the current screen or the step that last ran (`ran`) has a
- * field the probe lacks, and each control the probe lacks of either is gone. A button gone alone
+ * the probe's own look proves it too: the current screen or a screen just before it (`before`,
+ * such as the step that last ran) has a field the probe lacks, and each control the probe lacks
+ * of any of them is gone. A button gone alone
  * proves nothing, as a required choice may draw after the fields beside it, or a code screen take
  * its own button away. A probe with no field needs a button of its own besides, so a
  * coincident same-page button, such as a shared Continue, never proves a screen, nor does any
@@ -98,7 +99,7 @@ export const showsAnotherScreen = <E>(
   probe: AutofillStep,
   currentPage: RecordedPage,
   current: AutofillStep,
-  ran?: AutofillStep,
+  before: readonly AutofillStep[] = [],
 ) =>
   Effect.gen(function* () {
     if (
@@ -110,9 +111,9 @@ export const showsAnotherScreen = <E>(
     )
       return true;
     const own = controlsOf(probe);
-    const fields = [...current.fields, ...(ran?.fields ?? [])];
+    const fields = [current, ...before].flatMap((step) => step.fields);
     if (fields.every((field) => own.has(field.selector))) return false;
-    const others = new Map([...(ran === undefined ? [] : controlsOf(ran)), ...controlsOf(current)]);
+    const others = new Map([...before, current].flatMap((step) => [...controlsOf(step)]));
     if (probe.fields.length === 0 && [...own.keys()].every((selector) => others.has(selector)))
       return false;
     for (const [selector, control] of others)
@@ -122,7 +123,8 @@ export const showsAnotherScreen = <E>(
 
 /**
  * A later recorded screen that shows another screen than the current one (`showsAnotherScreen`,
- * with the screen that last ran, `ran`) proves progression; a coincident same-page button cannot.
+ * with the screens just before it, `before`) proves progression; a coincident same-page button
+ * cannot.
  */
 export const inspectReplayProgression = <E>(
   hooks: Pick<AutofillHooks<E>, "inspect">,
@@ -132,7 +134,7 @@ export const inspectReplayProgression = <E>(
   later: readonly AutofillRecipeStep[],
   resolve: (request: AutofillStepRequest) => AutofillStep,
   screens: Pick<ReplayScreens, "matches">,
-  ran?: AutofillStep,
+  before: readonly AutofillStep[] = [],
 ) =>
   Effect.gen(function* () {
     for (const alternative of alternatives) {
@@ -145,7 +147,7 @@ export const inspectReplayProgression = <E>(
         if (
           !("outcome" in found) &&
           screens.matches(found.page, recorded) &&
-          (yield* showsAnotherScreen(hooks, found.page, probe, currentPage, current, ran))
+          (yield* showsAnotherScreen(hooks, found.page, probe, currentPage, current, before))
         )
           return { next: recorded } as const;
       }
@@ -502,6 +504,9 @@ export const makeReplayScreenWait = <
   const checkHere = markerHere(input);
   const now = Clock.currentTimeMillis;
   const deadline = atDeadline(hooks, progress, timing.stepWaitMs, resubmit);
+  // The screen a wait last passed over as gone, and how many steps had run then: while none ran
+  // since, it is a screen just before the next wait's, beside the step that last ran.
+  const passed = { step: undefined as AutofillStep | undefined, ran: 0 };
   /** Inspect the current stage, rejection evidence and proved later stages before timing a wait. */
   const inspectStage = (
     step: AutofillStep,
@@ -535,10 +540,14 @@ export const makeReplayScreenWait = <
         later,
         resolve,
         screens,
-        progress.ran.at(-1),
+        [progress.ran.at(-1), passed.ran === progress.ran.length ? passed.step : undefined].filter(
+          (before) => before !== undefined,
+        ),
       );
       if (progressed !== undefined) {
         if (progressed.found !== undefined) return { found: progressed.found } as const;
+        passed.step = step;
+        passed.ran = progress.ran.length;
         yield* input.emit({
           stage: "skipped",
           reason: "later_recorded_screen",
