@@ -686,7 +686,9 @@ to add them.
 Every option the session met on its path is an input of the script, add-ons and
 pre-selected defaults included: required only when the site requires a choice that neither
 the request nor an answer settled, optional otherwise. The script sets each option from its
-input. An unset optional input leaves the page's default, as in a read. An option the request
+input. An unset optional input leaves the page's default, as in a read. When the site offers
+choices for a write, such as delivery speed or a time window, make each an optional input with
+the site's default. An option the request
 or the owner's answer states for every call, such as which kind of record it
 creates, which line type a free-text line takes or whether a save runs the site's automation,
 is the tool's default: an optional input declared with `defaultedInput` and the answered value,
