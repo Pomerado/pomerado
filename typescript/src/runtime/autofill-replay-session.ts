@@ -448,8 +448,18 @@ export const makeReplay = <E extends YieldableError, V extends string, L extends
     explicitCodeRejection = false,
     corrected: ReadonlySet<AutofillSlot> = new Set(),
     planned: readonly AutofillSecret[] = [],
+    next?: AutofillRecipeStep,
   ) =>
-    runReplayStep(session, asked, inspection, codeAgain, explicitCodeRejection, corrected, planned);
+    runReplayStep(
+      session,
+      asked,
+      inspection,
+      codeAgain,
+      explicitCodeRejection,
+      corrected,
+      planned,
+      next,
+    );
   const extras = (observed: readonly RejectedMarker["slot"][]) =>
     correctReplayExtras(session, run, observed);
   return {

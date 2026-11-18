@@ -9,7 +9,8 @@ import { expectNotCarried, hostKeyboard, hostPage } from "./autofill-host-page.j
 // A run's sign-in whose recorded code screen has a Verify button, but whose own script sends the
 // code as the field takes its last digit and takes the button away in place, with no new
 // document. The host never clicks anything there, so the recorded Verify is gone when it looks
-// for it. The sign-in's own marker check decides whether the page sent the code.
+// for it. The sign-in's own marker check, or the recipe's next screen in its place, decides whether
+// the page sent the code.
 
 const site = "https://site.example.test";
 const host = "site.example.test";
@@ -23,8 +24,8 @@ const signedIn = '<p id="account">Signed in</p>';
 
 /**
  * A screen in a dialog whose own script, as `field` takes its last input, takes the dialog's
- * button away, sends what was typed to `endpoint`, and on a good answer puts the account in place
- * of the dialog when `marker`, else leaves the dialog as it is. Nothing loads a new document.
+ * button away, sends what was typed to `endpoint`, and on a good answer puts `then` in place of the
+ * dialog, else leaves the dialog as it is, as a refused code does. Nothing loads a new document.
  * `ready` says when the field holds all it takes. Each click of the button is counted.
  */
 const closingDialog = (options: {
@@ -32,7 +33,7 @@ const closingDialog = (options: {
   readonly button: string;
   readonly ready: string;
   readonly endpoint: string;
-  readonly marker: boolean;
+  readonly then?: string;
 }) => `<div id="dialog">${options.field}${options.button}</div>
 <script>
 const dialog = document.getElementById("dialog");
@@ -44,26 +45,30 @@ field.addEventListener("input", () => {
   dialog.querySelector("button")?.remove();
   fetch(${JSON.stringify(options.endpoint)}, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ value: field.value }) })
     .then((response) => {
-      if (response.ok && ${JSON.stringify(options.marker)}) dialog.outerHTML = ${JSON.stringify(signedIn)};
+      if (response.ok && ${JSON.stringify(options.then ?? "")}) dialog.outerHTML = ${JSON.stringify(options.then ?? "")};
     });
 });
 </script>`;
 
 /** The code screen: one code field and a Verify button, closed in place on the sixth digit. */
-const codeScreen = (marker: boolean) =>
+const codeScreen = (then?: string) =>
   closingDialog({
     field: '<label>Code<input id="otc" name="otc" autocomplete="one-time-code" inputmode="numeric" maxlength="6"></label>',
     button: '<button id="verify" type="button">Verify</button>',
     ready: "/^[0-9]{6}$/.test(field.value)",
     endpoint: "/api/code",
-    marker,
+    ...(then === undefined ? {} : { then }),
   });
+
+/** A password screen whose form posts to /account. */
+const passwordScreen =
+  '<form method="post" action="/account"><label>Password<input id="password" name="password" type="password"></label><button id="sign-in">Sign in</button></form>';
 
 /**
  * The site: an email form at /login that posts to /session, whose page sends the browser on to
- * `next` at /next. It keeps each value the next screen's script sends, by its path, and answers
- * it a second later, so the host's first look after typing finds the field still there and the
- * button gone.
+ * `next` at /next, and the account at /account. It keeps each value the next screen's script
+ * sends, by its path, and answers it a second later, so the host's first look after typing finds
+ * the field still there and the button gone.
  */
 const serve = async (page: Page, next: string) => {
   const sent: string[] = [];
@@ -79,6 +84,7 @@ const serve = async (page: Page, next: string) => {
     } else if (request.method() === "POST" && path === "/session")
       await route.fulfill({ contentType: "text/html", body: '<script>location.replace("/next")</script>' });
     else if (path === "/next") await route.fulfill({ contentType: "text/html", body: next });
+    else if (path === "/account") await route.fulfill({ contentType: "text/html", body: signedIn });
     else
       await route.fulfill({
         contentType: "text/html",
@@ -110,8 +116,22 @@ const codeRecipe = {
   signedIn: { selector: "#account" },
 } as const;
 
+/** The same recipe with a password screen recorded after the code screen. */
+const passwordRecipe = {
+  ...codeRecipe,
+  steps: [
+    ...codeRecipe.steps,
+    {
+      page: `${site}/next`,
+      fields: [{ selector: "#password", slot: "password" }],
+      submit: "#sign-in",
+      submittedBy: "host",
+    },
+  ],
+} as const;
+
 /** One run's sign-in with `recipe`, answering the login ask and each code ask. */
-const run = async (page: Page, recipe: typeof codeRecipe) => {
+const run = async (page: Page, recipe: typeof codeRecipe | typeof passwordRecipe) => {
   const browser = await hostPage(page);
   const { keyboard } = await hostKeyboard(page);
   const secrets = makeRunSecrets();
@@ -159,7 +179,7 @@ const codePrompt = `Enter the sign-in code ${host} sent you.`;
 test("a run signs in through a code screen that sends itself on its last digit and takes its Verify button away in place", async ({
   page,
 }) => {
-  const sent = await serve(page, codeScreen(true));
+  const sent = await serve(page, codeScreen(signedIn));
   const { ended, prompts } = await run(page, codeRecipe);
   expect(ended).toEqual({ signedIn: true, alreadySignedIn: false });
   expect(prompts).toEqual(["login", codePrompt]);
@@ -171,10 +191,30 @@ test("a run signs in through a code screen that sends itself on its last digit a
 test("a run still refuses a code screen that took its Verify button away in place when the marker never shows", async ({
   page,
 }) => {
-  const sent = await serve(page, codeScreen(false));
+  const sent = await serve(page, codeScreen());
   const { ended, prompts } = await run(page, codeRecipe);
   expect(ended).toEqual({ code: "RecipeFailed", reason: "submit_refused" });
   expect(prompts).toEqual(["login", codePrompt]);
   expect(sent).toEqual([`/api/code ${code}`]);
   expect(await page.evaluate(() => Reflect.get(window, "clicks"))).toBe(0);
+});
+
+test("a run goes on to the recorded password screen a code screen that sent itself puts in its place, and signs in", async ({
+  page,
+}) => {
+  const sent = await serve(page, codeScreen(passwordScreen));
+  const { ended, prompts } = await run(page, passwordRecipe);
+  expect(ended).toEqual({ signedIn: true, alreadySignedIn: false });
+  expect(prompts).toEqual(["login", codePrompt]);
+  expect(sent).toEqual([`/api/code ${code}`]);
+  await expect(page.locator("#account")).toBeVisible();
+});
+
+test("a run still refuses a code screen that took its Verify button away in place when the site leaves it there and the next screen never shows", async ({
+  page,
+}) => {
+  const sent = await serve(page, codeScreen());
+  const { ended } = await run(page, passwordRecipe);
+  expect(ended).toEqual({ code: "RecipeFailed", reason: "submit_refused" });
+  expect(sent).toEqual([`/api/code ${code}`]);
 });
