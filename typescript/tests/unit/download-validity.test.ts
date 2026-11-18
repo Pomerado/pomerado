@@ -7,7 +7,16 @@ import type { KernelExecuteClient } from "../../src/runtime/kernel-operation.js"
 import { executeKernelOperation } from "../../src/runtime/kernel-operation-run.js";
 import { defineOperation } from "../../src/runtime/operation.js";
 
-const bytes = (text: string) => new TextEncoder().encode(text);
+const bytes = (body: string | Uint8Array) =>
+  typeof body === "string" ? new TextEncoder().encode(body) : body;
+/** Synthetic bytes: a file type's signature followed by filler. */
+const binary = (...start: readonly (number | string)[]) =>
+  new Uint8Array([
+    ...start.flatMap((part) =>
+      typeof part === "string" ? [...part].map((character) => character.charCodeAt(0)) : [part],
+    ),
+    ...new Array<number>(32).fill(7),
+  ]);
 
 /** A synthetic one-page PDF: its header, a body and its end marker. */
 const pdf = "%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n";
@@ -19,7 +28,7 @@ const signInPage = "<!doctype html><title>Sign in</title><form><input name=user>
  */
 const collect = async (download: {
   readonly name: string;
-  readonly body: string;
+  readonly body: string | Uint8Array;
   readonly media_type?: string;
 }) => {
   const kept: string[] = [];
@@ -105,22 +114,26 @@ describe("a collected download whose bytes contradict what it claims", () => {
     {
       case: "a PDF cut short before its end marker",
       download: { name: "report.pdf", body: pdf.slice(0, 40), media_type: "application/pdf" },
-      says: "The server sent it as application/pdf, but its 40 bytes have no %%EOF end marker, so the PDF is cut short or damaged.",
+      says: "The server sent it as application/pdf, but its 40 bytes do not end with a %%EOF end marker, so the PDF is cut short or damaged.",
     },
     {
-      case: "an empty download",
-      download: { name: "report.pdf", body: "", media_type: "application/pdf" },
-      says: "The download is empty.",
+      case: "a linearized PDF cut short after its first page's end marker",
+      download: {
+        name: "report.pdf",
+        body: `${pdf}${"2 0 obj << /Type /Page >> endobj\n".repeat(64)}`,
+        media_type: "application/pdf",
+      },
+      says: "The server sent it as application/pdf, but its 2189 bytes do not end with a %%EOF end marker, so the PDF is cut short or damaged.",
     },
     {
-      case: "an empty download that claims no type",
-      download: { name: "export", body: "" },
-      says: "The download is empty.",
+      case: "an empty download the server sent as a PDF",
+      download: { name: "report", body: "", media_type: "application/pdf" },
+      says: "The server sent it as application/pdf, but the download is empty.",
     },
     {
-      case: "a PDF named as an image",
-      download: { name: "card.png", body: pdf },
-      says: "Its name ends in .png, but its 77 bytes are not image/png: they are application/pdf.",
+      case: "an empty download named as a PDF",
+      download: { name: "report.pdf", body: "" },
+      says: "Its name ends in .pdf, but the download is empty.",
     },
   ])("refuses $case as the tool's failure, keeping nothing", async ({ download, says }) => {
     const { output, kept } = await collect(download);
@@ -162,6 +175,51 @@ describe("a collected download whose bytes contradict what it claims", () => {
       case: "a web page the server sent as one",
       download: { name: "receipt.html", body: signInPage, media_type: "text/html" },
       media_type: "text/html",
+    },
+    {
+      case: "a PDF padded with NUL bytes past its end marker",
+      download: { name: "report.pdf", body: `${pdf}${"\0".repeat(4096)}`, media_type: "application/pdf" },
+      media_type: "application/pdf",
+    },
+    {
+      case: "a PDF named as an image, under the type its bytes prove",
+      download: { name: "card.png", body: pdf },
+      media_type: "application/pdf",
+    },
+    {
+      case: "a PNG named .jpg",
+      download: { name: "photo.jpg", body: binary(0x89, "PNG", 0x0d, 0x0a, 0x1a, 0x0a) },
+      media_type: "image/png",
+    },
+    {
+      case: "a WebP named .jpg",
+      download: { name: "photo.jpg", body: binary("RIFF", 0, 0, 0, 0, "WEBP") },
+      media_type: "image/webp",
+    },
+    {
+      case: "an AVIF named .jpg",
+      download: { name: "photo.jpg", body: binary(0, 0, 0, 0x1c, "ftypavif") },
+      media_type: "application/octet-stream",
+    },
+    {
+      case: "a JPEG the server sent as a PNG",
+      download: { name: "photo", body: binary(0xff, 0xd8, 0xff, 0xe0), media_type: "image/png" },
+      media_type: "image/jpeg",
+    },
+    {
+      case: "a zip the server sent as gzip",
+      download: { name: "export.zip", body: binary("PK", 3, 4), media_type: "application/gzip" },
+      media_type: "application/zip",
+    },
+    {
+      case: "an empty CSV export",
+      download: { name: "export.csv", body: "", media_type: "text/csv" },
+      media_type: "text/csv",
+    },
+    {
+      case: "an empty download that claims no type",
+      download: { name: "export", body: "" },
+      media_type: "application/octet-stream",
     },
   ])("keeps $case", async ({ download, media_type }) => {
     const { output, kept } = await collect(download);

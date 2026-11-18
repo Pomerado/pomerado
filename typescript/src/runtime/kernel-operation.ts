@@ -520,7 +520,8 @@ const collectFailure = (error: unknown) => {
 };
 
 /**
- * Runs in the page: fetches `url` with the page's own session and, when the site answers a file,
+ * Runs in the page: fetches `url` with the page's own session, under the page's own CORS rules
+ * (another site's address without cookies once, if it refused them), and, when the site answers a file,
  * hands its bytes to the browser as a download named for the file, which the armed capture takes
  * as it takes any other. A non-2xx answer, or a web page sent without `attachment`, is no file.
  * Pasted into the page, so it refers to nothing outside its own body.
@@ -534,14 +535,19 @@ async function fetchFileInPage(request: {
   | { readonly failed: "unreachable" | "page" }
   | { readonly failed: "status"; readonly status: number }
 > {
+  const signal = AbortSignal.timeout(request.timeoutMs);
   let response: Response;
   try {
-    response = await fetch(request.url, {
-      credentials: "include",
-      signal: AbortSignal.timeout(request.timeoutMs),
-    });
+    response = await fetch(request.url, { credentials: "include", signal });
   } catch {
-    return { failed: "unreachable" };
+    // Another site's public link that allows any page (`*`) refuses a request with cookies, so
+    // it is asked once more without them.
+    if (new URL(request.url).origin === location.origin) return { failed: "unreachable" };
+    try {
+      response = await fetch(request.url, { credentials: "same-origin", signal });
+    } catch {
+      return { failed: "unreachable" };
+    }
   }
   if (!response.ok) return { failed: "status", status: response.status };
   const type = (response.headers.get("content-type") ?? "").split(";")[0]?.trim().toLowerCase() ?? "";

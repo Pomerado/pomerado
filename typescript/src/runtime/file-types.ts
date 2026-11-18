@@ -208,21 +208,29 @@ const looselyClaimedTypes = new Set([
 const pdfMarkerWindow = 1024;
 
 /**
- * A PDF's shape: `whole` with its `%PDF-` header near the start and its `%%EOF` marker near the
- * end, `cut` with the header but no end marker, else `none`.
+ * A PDF's shape: `whole` with its `%PDF-` header near the start and its last `%%EOF` marker near
+ * the end or followed only by whitespace or NUL padding, `cut` with the header but no such end
+ * marker, else `none`. A linearized PDF cut short keeps its first page's `%%EOF` with content
+ * after it, so it is `cut`.
  */
 const pdfShape = (bytes: Uint8Array) => {
   const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const header = buffer.subarray(0, pdfMarkerWindow).indexOf("%PDF-");
   if (header === -1) return "none";
-  const end = buffer.indexOf("%%EOF", Math.max(header, bytes.byteLength - pdfMarkerWindow));
-  return end === -1 ? "cut" : "whole";
+  const end = buffer.lastIndexOf("%%EOF");
+  if (end <= header) return "cut";
+  if (end >= bytes.byteLength - pdfMarkerWindow) return "whole";
+  return buffer.subarray(end + 5).every((byte) => byte === 0 || /\s/u.test(String.fromCharCode(byte)))
+    ? "whole"
+    : "cut";
 };
 
-/** What the bytes look like, for a refusal that says so: a proven type, a page, JSON or nothing. */
+/** Whether the bytes prove a binary type: a known signature, or an ISO media `ftyp` box. */
+const provenBinary = (bytes: Uint8Array) =>
+  sniffedType(bytes) !== undefined || matches(bytes, [4, ascii("ftyp")]);
+
+/** What the bytes look like, for a refusal that says so: a page, JSON or nothing known. */
 const lookOf = (bytes: Uint8Array) => {
-  const sniffed = sniffedType(bytes);
-  if (sniffed !== undefined) return `they are ${sniffed}`;
   const start = new TextDecoder().decode(bytes.subarray(0, 512)).replace(/^[\s\uFEFF]+/u, "");
   if (start.startsWith("<")) return "they look like an HTML or XML page";
   if (start.startsWith("{") || start.startsWith("[")) return "they look like JSON";
@@ -230,34 +238,33 @@ const lookOf = (bytes: Uint8Array) => {
 };
 
 /**
- * Why a download's bytes contradict what it claims, else undefined: it is empty, or the type its
- * server sent or its name's extension claims has a signature its bytes lack, such as an HTML
- * sign-in page sent as `application/pdf` or named `.pdf`. A PDF must also end with its `%%EOF`
- * marker, so one cut short is refused too. A claim without a signature, such as text or CSV,
- * contradicts nothing. The answer names the claim, the size and what the bytes look like, never
- * their contents.
+ * Why a download's bytes contradict what it claims, else undefined. A claim is the type its server
+ * sent or its name's extension implies, and only a type with a signature claims anything. Under
+ * such a claim a download is refused when it is empty, or when its bytes prove no binary type,
+ * such as an HTML sign-in page sent as `application/pdf` or named `.pdf`; bytes that prove another
+ * type are a real file, kept under their own type. A PDF must also end with its `%%EOF` marker,
+ * so one cut short is refused. The answer names the claim, the size and what the bytes look like,
+ * never their contents.
  */
 export const downloadContradiction = (
   bytes: Uint8Array,
   claims: { readonly name: string; readonly contentType?: string | undefined },
 ): string | undefined => {
-  if (bytes.byteLength === 0) return "The download is empty.";
   const extension = extensionOf(claims.name);
-  const claimed: readonly (readonly [type: string, by: string])[] = [
+  const claimed = [
     ...(claims.contentType === undefined
       ? []
       : [[essence(claims.contentType), `The server sent it as ${essence(claims.contentType)}`] as const]),
     ...(extension === "" ? [] : [[typeOfName(claims.name), `Its name ends in .${extension}`] as const]),
-  ];
+  ].filter(([type]) => hasSignature(type) && !looselyClaimedTypes.has(type));
   for (const [type, by] of claimed) {
-    if (!hasSignature(type) || looselyClaimedTypes.has(type)) continue;
+    if (bytes.byteLength === 0) return `${by}, but the download is empty.`;
     const size = `its ${bytes.byteLength} bytes`;
     const pdf = type === "application/pdf" ? pdfShape(bytes) : undefined;
     if (pdf === "cut")
-      return `${by}, but ${size} have no %%EOF end marker, so the PDF is cut short or damaged.`;
-    if (pdf === "none") return `${by}, but ${size} are not a PDF: ${lookOf(bytes)}.`;
-    if (pdf === undefined && !bytesMatchType(bytes, type))
-      return `${by}, but ${size} are not ${type}: ${lookOf(bytes)}.`;
+      return `${by}, but ${size} do not end with a %%EOF end marker, so the PDF is cut short or damaged.`;
+    if (pdf === "whole" || provenBinary(bytes)) continue;
+    return `${by}, but ${size} are not ${pdf === "none" ? "a PDF" : type}: ${lookOf(bytes)}.`;
   }
   return undefined;
 };

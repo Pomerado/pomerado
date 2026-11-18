@@ -236,10 +236,12 @@ it is, and a new tool takes a `FileInput` and uses `files.place`.
 
 A document the browser shows in its own viewer, often a PDF, starts no download, so
 `files.collect` around its link finds none. Return it with `files.fetch(url)` and the document's
-own address, which the host fetches with the page's session. Never return a screenshot of the
-viewer as the document. The host refuses an empty download, or one whose bytes are not the type
-its server or name claims; the site then sent another page, usually a sign-in or error page, so
-fix what made it send that.
+own address. The run's page fetches it with its own session, so the address must be on the page's
+site or on a site that lets the page read it; when it is not, call `files.fetch` while the page
+shows the document's own site. Never return a screenshot of the viewer as the document. The host
+refuses a document whose bytes show no file of the type its server or name claims, an empty one
+included; the site then sent another page, usually a sign-in or error page, so fix what made it
+send that.
 
 When a form asks for more than one upload, prefer one `FileInput` per upload, named for the site's
 label, each placed by its own `files.place` call. Prefer making an input required only when every

@@ -571,12 +571,13 @@ return true;`,
   }
 });
 
-test("files.fetch returns a PDF the site shows inline, and fails on a sign-in page, an error or a mislabelled page in its place", async () => {
+test("files.fetch returns a PDF the site shows inline or another site shares, and fails on a sign-in page, an error, a mislabelled page or another site's private one", async () => {
   test.info().annotations.push({
     type: "slow",
-    description: "One native run that fetches four addresses through Chromium",
+    description: "One native run that fetches six addresses through Chromium",
   });
   const site = await startFileSite();
+  const other = await startFileSite();
   const directory = await mkdtemp(join(tmpdir(), "pomerado-files-qa-"));
   const served = await serve(
     site.url,
@@ -586,9 +587,11 @@ test("files.fetch returns a PDF the site shows inline, and fails on a sign-in pa
 import { defineOperation } from "../runtime/index.js";
 export default defineOperation({name:"send_receipt",input:Schema.Struct({}),output:Schema.Unknown},
 async ({files}) => {
-  const fetched = (path) => files.fetch(new URL(path, ${JSON.stringify(site.url)}).href, { timeoutMs: 5000 }).then((file) => file, (error) => error.message);
+  const fetched = (path, from = ${JSON.stringify(site.url)}) => files.fetch(new URL(path, from).href, { timeoutMs: 5000 }).then((file) => file, (error) => error.message);
   return {
     report: await fetched("/report.pdf"),
+    shared: await fetched("/public.pdf", ${JSON.stringify(other.url)}),
+    private: await fetched("/report.pdf", ${JSON.stringify(other.url)}),
     expired: await fetched("/expired.pdf"),
     missing: await fetched("/missing.pdf"),
     mislabelled: await fetched("/mislabelled.pdf"),
@@ -614,6 +617,12 @@ async ({files}) => {
     expect(await readFile(fileURLToPath(String(file.$file["download_url"])), "utf8")).toBe(
       report,
     );
+    expect(output["shared"], JSON.stringify(result)).toMatchObject({
+      $file: { name: "public.pdf", media_type: "application/pdf", size: report.length },
+    });
+    expect(output["private"]).toBe(
+      "files.fetch could not read the address from the page: it did not answer in time, or it is on another site that does not share it with this page",
+    );
     expect(output["expired"]).toBe(
       "files.fetch got a web page, not a file, from the address, such as a sign-in or error page",
     );
@@ -624,6 +633,7 @@ async ({files}) => {
   } finally {
     await served.close();
     await site.close();
+    await other.close();
     await rm(directory, { recursive: true, force: true });
   }
 });
