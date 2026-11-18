@@ -539,7 +539,7 @@ test("a step reuses the owner's answer each time its script asks the same questi
  * script asks `asked`; the question review rewords that script's question as a repeat of the
  * agent's confirm, naming the answer it gives.
  */
-const repeatOfAgentYes = async (asked: string) => {
+const repeatOfAgentYes = async (asked: string, agentNo?: string) => {
   const site = await startSite((_request, response) =>
     html(response, "<title>Fixture</title><h1>Public fixture</h1>"),
   );
@@ -561,12 +561,17 @@ const repeatOfAgentYes = async (asked: string) => {
       url: site.url,
       guardian,
       answer: (request) =>
-        Object.fromEntries(request.questions.map((question) => [question.id, { confirmed: true }])),
+        Object.fromEntries(
+          request.questions.map((question) => [question.id, { confirmed: question.id !== "declined" }]),
+        ),
       turns: [
         () => [
           call("request_input", {
             intent: "Ask the caller to approve the terms before the step",
-            questions: [{ id: "agree", type: "confirm", prompt: "May the tool accept the site terms?" }],
+            questions: [
+              { id: "agree", type: "confirm", prompt: "May the tool accept the site terms?" },
+              ...(agentNo === undefined ? [] : [{ id: "declined", type: "confirm", prompt: agentNo }]),
+            ],
           }),
         ],
         () => patch({ "src/tool.mjs": approvingStep(asked), "explore/look.mjs": probe() }),
@@ -574,7 +579,11 @@ const repeatOfAgentYes = async (asked: string) => {
         () => [call("execute", execution("explore", "explore/look.mjs"), "look")],
       ],
     });
-    return { ...minted, scriptAsks: minted.asked.filter((request) => request.source === "script") };
+    return {
+      ...minted,
+      guardian,
+      scriptAsks: minted.asked.filter((request) => request.source === "script"),
+    };
   } finally {
     await site.close();
   }
@@ -582,15 +591,33 @@ const repeatOfAgentYes = async (asked: string) => {
 
 test("a script's question the review calls a repeat of the owner's yes takes that yes, but a purchase does not", async () => {
   test.setTimeout(180_000);
-  const answered = await repeatOfAgentYes("return { approve: await ask('approve') };");
+  const answered = await repeatOfAgentYes(
+    "return { first: await ask('approve'), second: await ask('approve') };",
+  );
   expect(answered.scriptAsks).toHaveLength(0);
   expect(toolResult(answered.last, "step")).toMatchObject({ status: "completed" });
   const observed: unknown = JSON.parse(String(toolResult(answered.last, "step")?.["observations"]));
-  expect(observed).toMatchObject({ output: { approve: { confirmed: true } } });
+  expect(observed).toMatchObject({
+    output: { first: { confirmed: true }, second: { confirmed: true } },
+  });
+  // Later reviews trust only the owner's own answer, not the one the repeat gave the script.
+  expect(authorityOf(executions(answered.guardian.reviews).at(-1)!)["answeredQuestions"]).toEqual([
+    { id: "agree", question: "May the tool accept the site terms?", answer: { confirmed: true } },
+  ]);
   // This host records no order a yes was for, so a purchase's repeat stays refused.
   const purchase = await repeatOfAgentYes(`return { approve: ${orderAsk} };`);
   expect(purchase.scriptAsks).toHaveLength(0);
-  expect(toolResult(purchase.last, "step")).toMatchObject({ status: "failed" });
+  expect(toolResult(purchase.last, "step")).toMatchObject({
+    status: "failed",
+    scriptQuestion: { outcome: "reword" },
+  });
+  // Nor over the owner's own no to the script's prompt, which the review didn't name.
+  const overNo = await repeatOfAgentYes("return { approve: await ask('approve') };", approvalPrompt);
+  expect(overNo.scriptAsks).toHaveLength(0);
+  expect(toolResult(overNo.last, "step")).toMatchObject({
+    status: "failed",
+    scriptQuestion: { outcome: "reword" },
+  });
 });
 
 test("a later step asks the owner again once the owner answered its prompt anew", async () => {

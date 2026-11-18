@@ -339,6 +339,32 @@ describe("a script question Guardian rewords as a repeat of the owner's earlier 
     expect(repeatedScriptAnswers(remove, no, [kept], live)).toEqual({ remove: { type: "confirm", value: { confirmed: false } } });
   });
 
+  it("takes an option that goes on only from a named yes or a named pick of that option", () => {
+    const size = request([
+      {
+        id: "size",
+        type: "choice",
+        prompt: "Which size?",
+        options: [
+          { id: "small", label: "Small" },
+          { id: "large", label: "Large" },
+        ],
+      },
+    ]);
+    const small: AnsweredQuestion = { id: "size_pick", question: "Which size should the tool order?", answer: "Small" };
+    const named = (option: string) => repeat([{ question: "size", option, confirmed: null }], ["size_pick"]);
+    expect(repeatedScriptAnswers(size, named("Small"), [small], live)).toEqual({ size: { type: "choice", value: "small" } });
+    expect(repeatedScriptAnswers(size, named("Large"), [small], live)).toBeUndefined();
+  });
+
+  it("never answers yes to a confirm that takes a follow-up text", () => {
+    const dialog = request([
+      { id: "accept", type: "confirm", prompt: "Accept the dialog?", followUp: { prompt: "What should it say?" } },
+    ]);
+    const yes = repeat([{ question: "accept", option: null, confirmed: true }]);
+    expect(repeatedScriptAnswers(dialog, yes, [approval], live)).toBeUndefined();
+  });
+
   it("never answers a code, a secret, a text or a multiple choice", () => {
     const code = request([
       { id: "code", type: "secret", secretKind: "one_time_code", prompt: "What code did the site send?" },
