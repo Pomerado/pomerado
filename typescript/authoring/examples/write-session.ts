@@ -148,7 +148,7 @@ const declineOffer = `
   const offer = page.getByRole("dialog", { name: "Membership offer", exact: true });
   if (await offer.isVisible()) {
     await offer.getByRole("button", { name: "No thanks", exact: true }).click({ timeout: 5000 });
-    await offer.waitFor({ state: "hidden", timeout: 5000 });
+    await offer.waitFor({ state: "hidden", timeout: 30000 });
   }
 `;
 
@@ -182,15 +182,15 @@ const fillCheckout = async (context: FillContext) => {
   if (!(await askAndFill(context, "Checkout", filled.fields)))
     throw new errors.OperationFailure("checkout_changed", { dispatch: "not_sent" });
   const continued = await kernel.browsers.playwright.execute(sessionId, {
-    timeout_sec: 60,
+    timeout_sec: 120,
     code: `
       const form = page.getByRole("form", { name: "Checkout", exact: true });
       if ((await form.count()) !== 1) return { failure: "checkout_changed" };
       await form.getByRole("button", { name: "Continue", exact: true }).click({ timeout: 5000 });
       const place = page.getByRole("button", { name: "Place order", exact: true });
-      await place.or(page.getByRole("dialog", { name: "Membership offer", exact: true })).first().waitFor({ timeout: 10000 });
+      await place.or(page.getByRole("dialog", { name: "Membership offer", exact: true })).first().waitFor({ timeout: 30000 });
       ${declineOffer}
-      await place.waitFor({ timeout: 10000 });
+      await place.waitFor({ timeout: 30000 });
       return { review_shown: true };
     `,
   });
@@ -219,7 +219,7 @@ const readTotal = `
  */
 export const checkReview = async ({ kernel, sessionId, input, errors }: Context) => {
   const answer = await kernel.browsers.playwright.execute(sessionId, {
-    timeout_sec: 30,
+    timeout_sec: 60,
     code: `
       ${declineOffer}
       if ((await page.getByRole("button", { name: "Place order", exact: true }).count()) !== 1)

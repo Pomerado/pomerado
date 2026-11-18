@@ -71,7 +71,7 @@ export default defineOperation(
         // The seat map names its flight once that flight's seats are shown.
         await seatMap
           .and(page.locator("[data-flight=" + JSON.stringify(flight) + "]"))
-          .waitFor({ state: "attached", timeout: 10000 });
+          .waitFor({ state: "attached", timeout: 30000 });
         const seats = await seatMap.getByRole("radio").evaluateAll((inputs) =>
           inputs.flatMap((input) =>
             input.disabled ? [] : [{ value: input.value, label: input.labels[0]?.textContent.trim() || input.value }],
