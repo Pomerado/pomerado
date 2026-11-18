@@ -62,23 +62,67 @@ export const screenProbes = (
       }));
 
 /**
- * Whether a probe found on `page` is another recorded screen than the `current` one, on
- * `currentPage`: another page, or a credential field the current screen lacks, proves it; a
- * coincident same-page button cannot.
+ * Whether a step's controls show: anything but their absence (`not_found`, or `popup_missing` for
+ * a popup that closed) counts, as a control the host cannot read or tell apart may still be one.
  */
-export const showsAnotherScreen = (
+const shows = <E>(hooks: Pick<AutofillHooks<E>, "inspect">, step: AutofillStep) =>
+  Effect.map(
+    hooks.inspect(step),
+    (found) =>
+      !("outcome" in found) || (found.reason !== "not_found" && found.reason !== "popup_missing"),
+  );
+
+/** Each of a step's controls as a step of its own, by its selector: its fields, then its submit. */
+const controlsOf = (step: AutofillStep) => {
+  const popup = step.popup === undefined ? {} : { popup: step.popup };
+  const controls = new Map<string, AutofillStep>();
+  for (const field of step.fields) controls.set(field.selector, { fields: [field], ...popup });
+  if (step.submit !== undefined)
+    controls.set(step.submit, { fields: [], submit: step.submit, ...popup });
+  return controls;
+};
+
+/**
+ * Whether a probe found on `page` is another recorded screen than the `current` one, on
+ * `currentPage`: another page, or a field the current screen lacks, proves it. On the same page
+ * the probe's own look proves it too: the current screen has a control the probe lacks, and each
+ * control the probe lacks of the current screen and of the screen that last ran (`ran`) is gone.
+ * A probe with no field needs a button of its own besides, so a coincident same-page button,
+ * such as a shared Continue, never proves a screen, nor does any button while the current
+ * screen's other controls still show.
+ */
+export const showsAnotherScreen = <E>(
+  hooks: Pick<AutofillHooks<E>, "inspect">,
   page: string,
   probe: AutofillStep,
   currentPage: RecordedPage,
   current: AutofillStep,
+  ran?: AutofillStep,
 ) =>
-  !pageMatches(page, currentPage) ||
-  (current.fields.length > 0 &&
-    probe.fields.some(
-      (field) => !current.fields.some((previous) => previous.selector === field.selector),
-    ));
+  Effect.gen(function* () {
+    if (
+      !pageMatches(page, currentPage) ||
+      (current.fields.length > 0 &&
+        probe.fields.some(
+          (field) => !current.fields.some((previous) => previous.selector === field.selector),
+        ))
+    )
+      return true;
+    const own = controlsOf(probe);
+    const currentControls = controlsOf(current);
+    if ([...currentControls.keys()].every((selector) => own.has(selector))) return false;
+    const others = new Map([...(ran === undefined ? [] : controlsOf(ran)), ...currentControls]);
+    if (probe.fields.length === 0 && [...own.keys()].every((selector) => others.has(selector)))
+      return false;
+    for (const [selector, control] of others)
+      if (!own.has(selector) && (yield* shows(hooks, control))) return false;
+    return true;
+  });
 
-/** A later page or ready credential fields prove progression; a coincident same-page button cannot. */
+/**
+ * A later recorded screen that shows another screen than the current one (`showsAnotherScreen`,
+ * with the screen that last ran, `ran`) proves progression; a coincident same-page button cannot.
+ */
 export const inspectReplayProgression = <E>(
   hooks: Pick<AutofillHooks<E>, "inspect">,
   currentPage: RecordedPage,
@@ -87,6 +131,7 @@ export const inspectReplayProgression = <E>(
   later: readonly AutofillRecipeStep[],
   resolve: (request: AutofillStepRequest) => AutofillStep,
   screens: Pick<ReplayScreens, "matches">,
+  ran?: AutofillStep,
 ) =>
   Effect.gen(function* () {
     for (const alternative of alternatives) {
@@ -99,7 +144,7 @@ export const inspectReplayProgression = <E>(
         if (
           !("outcome" in found) &&
           screens.matches(found.page, recorded) &&
-          showsAnotherScreen(found.page, probe, currentPage, current)
+          (yield* showsAnotherScreen(hooks, found.page, probe, currentPage, current, ran))
         )
           return { next: recorded } as const;
       }
@@ -313,17 +358,6 @@ type ScreenWaitProgress<V extends string> = {
 const passwordBox = { selector: 'input[type="password" i]', slot: "password" } as const;
 
 /**
- * Whether a step's controls show: anything but their absence (`not_found`, or `popup_missing` for
- * a popup that closed) counts, as a control the host cannot read or tell apart may still be one.
- */
-const shows = <E>(hooks: Pick<AutofillHooks<E>, "inspect">, step: AutofillStep) =>
-  Effect.map(
-    hooks.inspect(step),
-    (found) =>
-      !("outcome" in found) || (found.reason !== "not_found" && found.reason !== "popup_missing"),
-  );
-
-/**
  * A sign-in whose screens all sit on the page it opened, as one in a dialog, never leaves that
  * address, so no page off the screens can show it went past them (`landedCantTell`). Once the
  * login's password or code went in, a wait for a screen that asks for nothing secret, such as a
@@ -500,6 +534,7 @@ export const makeReplayScreenWait = <
         later,
         resolve,
         screens,
+        progress.ran.at(-1),
       );
       if (progressed !== undefined) {
         if (progressed.found !== undefined) return { found: progressed.found } as const;

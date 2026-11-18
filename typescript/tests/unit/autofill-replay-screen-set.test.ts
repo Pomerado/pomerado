@@ -210,25 +210,29 @@ it("goes on from an earlier recorded screen the page shows once the next never s
   ]);
 });
 
-it("never takes a lone button on the page of the screen it waited for as another recorded screen", async () => {
-  // The password screen never shows: the page keeps a Continue button a later recorded screen
-  // on the same page also has.
-  const site = scriptedSite(
-    {
-      "sign-in": { path: "/sign-in", controls: ["#email", "#next"] },
-      unknown: { path: "/sign-in", controls: ["#keep"] },
-    },
-    (screen) => (screen === "sign-in" ? "unknown" : undefined),
-  );
-  const outcome = await replay(
-    recipeOf(email, { ...password, page: `${origin}/sign-in` }, keepAt("/sign-in")),
-    site.hooks,
-    { password: "synthetic-password" },
-  );
-  expect(outcome.reason).toBe("not_found");
-  expect(site.clicks).toEqual(["#next"]);
-  expect(outcome.restarts).toEqual([]);
-});
+for (const [name, controls, keep] of [
+  // The password box still shows beside a later recorded screen's button.
+  ["while the screen it waited for still shows", ["#password", "#keep"], keepAt("/sign-in")],
+  // The later recorded screen's button is the password screen's own.
+  ["that the screen it waited for has too", ["#go"], { ...keepAt("/sign-in"), submit: "#go" }],
+] as const)
+  it(`never takes a lone button on the page of the screen it waited for ${name}`, async () => {
+    const site = scriptedSite(
+      {
+        "sign-in": { path: "/sign-in", controls: ["#email", "#next"] },
+        unknown: { path: "/sign-in", controls },
+      },
+      (screen) => (screen === "sign-in" ? "unknown" : undefined),
+    );
+    const outcome = await replay(
+      recipeOf(email, { ...password, page: `${origin}/sign-in` }, keep),
+      site.hooks,
+      { password: "synthetic-password" },
+    );
+    expect(outcome.reason).toBe("not_found");
+    expect(site.clicks).toEqual(["#next"]);
+    expect(outcome.restarts).toEqual([]);
+  });
 
 it("refuses a second code on a restart, as on any recorded code screen the recipe plans no refill for", async () => {
   const site = scriptedSite(
