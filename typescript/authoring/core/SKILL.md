@@ -817,8 +817,8 @@ page gets 8 s without progress to show one of the answers you named, and up to 3
 keeps progressing: a loading sign showing, the part of the page you named changing, the site's own
 request in flight, the URL changing, or the values you read filling in. Values the site fills in
 after its answer get up to 15 s. The runtime's waits (`waitCode`, below) apply these budgets. Give
-every other Playwright call in the code an explicit `timeout`, and keep `timeout_sec` within
-`remainingMs()`.
+every other Playwright call in the code an explicit `timeout`, at least 30 s on a wait for something
+to draw or load, and keep `timeout_sec` within `remainingMs()`.
 Child waits cannot extend the outer deadline. Explicitly name observation conditions.
 `domcontentloaded` is document readiness, not readiness of the requested page or
 control. Initial navigation can land on a temporary verification page before the

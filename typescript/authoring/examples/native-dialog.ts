@@ -20,7 +20,7 @@ export default defineOperation(
   },
   async ({ kernel, sessionId, input, decideDialog, errors }) => {
     const raised = await kernel.browsers.playwright.execute(sessionId, {
-      timeout_sec: 30,
+      timeout_sec: 60,
       code: `
         const row = page.getByRole("row").filter({ has: page.getByText(${JSON.stringify(input.invoice_id)}, { exact: true }) });
         if ((await row.count()) !== 1) return { failure: "invoice_missing" };
@@ -28,12 +28,12 @@ export default defineOperation(
           globalThis.dialog = dialog;
           resolve({ type: dialog.type(), message: dialog.message(), url: page.url() });
         }));
-        // This click and absence decision share one short window so no late click can
+        // The click's own timeout ends inside the absence window, so no late click can
         // continue after the operation has reported no dialog.
         void row.getByRole("button", { name: "Delete", exact: true }).click({ timeout: 5000 }).catch(() => {});
         return await Promise.race([
           shown,
-          new Promise((resolve) => setTimeout(() => resolve({ failure: "no_dialog" }), 5000)),
+          new Promise((resolve) => setTimeout(() => resolve({ failure: "no_dialog" }), 30000)),
         ]);
       `,
     });
@@ -56,7 +56,7 @@ export default defineOperation(
     // The step name is the same on every run, so the host can match this dialog next time.
     const decision = await decideDialog({ step: "delete-invoice", ...shown });
     const answered = await kernel.browsers.playwright.execute(sessionId, {
-      timeout_sec: 30,
+      timeout_sec: 60,
       code: `
         ${
           decision.choice === "accept"
@@ -66,7 +66,7 @@ export default defineOperation(
         delete globalThis.dialog;
         const row = page.getByRole("row").filter({ has: page.getByText(${JSON.stringify(input.invoice_id)}, { exact: true }) });
         // Read the result back: the row is gone only if the site deleted it.
-        await row.waitFor({ state: ${JSON.stringify(decision.choice === "accept" ? "detached" : "visible")}, timeout: 10000 });
+        await row.waitFor({ state: ${JSON.stringify(decision.choice === "accept" ? "detached" : "visible")}, timeout: 30000 });
         return { deleted: (await row.count()) === 0 };
       `,
     });
