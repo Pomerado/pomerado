@@ -40,7 +40,7 @@ import {
   findCodeScreen,
   onSignInOrigin,
 } from "./autofill-unrecorded-code.js";
-import { screenProbes } from "./autofill-replay-screens.js";
+import { screenProbes, showsAnotherScreen } from "./autofill-replay-screens.js";
 import {
   cantTell,
   cantTellInPlace,
@@ -545,12 +545,13 @@ const runScreen = <E extends YieldableError, V extends string, L extends Autofil
   });
 
 /**
- * Where a sign-in's walk of the recorded screens starts (`from`), the screens that acted in it
- * (`acted`), each of which acts at most once per sign-in, and the screens it restarted at
- * (`restarted`), each at most once.
+ * Where a sign-in's walk of the recorded screens starts (`from`), the screen it last ran (`at`),
+ * the screens that acted in it (`acted`), each of which acts at most once per sign-in, and the
+ * screens it restarted at (`restarted`), each at most once.
  */
 interface Walk {
   from: number;
+  at: number;
   readonly acted: Set<number>;
   readonly restarted: Set<number>;
 }
@@ -568,6 +569,7 @@ const runScreens = <E extends YieldableError, V extends string, L extends Autofi
     const { steps } = input.recipe;
     for (const [index, recorded] of steps.entries()) {
       if (index < walk.from || walk.acted.has(index)) continue;
+      walk.at = index;
       const now = yield* Clock.currentTimeMillis;
       const ran = yield* runScreen(
         input,
@@ -835,8 +837,9 @@ const settle = <E extends YieldableError, V extends string, L extends AutofillLo
 /**
  * The recorded screen the page shows now among those that have neither acted in this sign-in nor
  * had the walk restart at them: its controls as the progression check finds them
- * (`screenProbes`), on its own recorded page. Of several, the one with the most controls found,
- * then the first recorded. A hand-off screen, or one with no control to find, never shows here.
+ * (`screenProbes`), on its own recorded page, and not only a button on the page of the screen the
+ * walk last ran (`showsAnotherScreen`). Of several, the one with the most controls found, then the
+ * first recorded. A hand-off screen, or one with no control to find, never shows here.
  */
 const showingScreen = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   input: AutofillReplayInput<E, V, L>,
@@ -846,6 +849,9 @@ const showingScreen = <E extends YieldableError, V extends string, L extends Aut
   Effect.gen(function* () {
     let best: { readonly index: number; readonly controls: number } | undefined;
     const steps: readonly SignInRecipeStep[] = input.recipe.steps;
+    const last = steps[walk.at];
+    if (last === undefined) return undefined;
+    const lastStep = replay.resolve({ fields: last.fields, ...screenSubmit(last) });
     for (const [index, recorded] of steps.entries()) {
       if (walk.acted.has(index) || walk.restarted.has(index) || recorded.approval === "handoff")
         continue;
@@ -853,7 +859,11 @@ const showingScreen = <E extends YieldableError, V extends string, L extends Aut
         const controls = probe.fields.length + (probe.submit === undefined ? 0 : 1);
         if (controls <= (best?.controls ?? 0)) continue;
         const found = yield* input.hooks.inspect(probe);
-        if (!("outcome" in found) && replay.matchesRecorded(found.page, recorded))
+        if (
+          !("outcome" in found) &&
+          replay.matchesRecorded(found.page, recorded) &&
+          showsAnotherScreen(found.page, probe, pageOf(replay, last), lastStep)
+        )
           best = { index, controls };
       }
     }
@@ -919,7 +929,7 @@ export const replayAutofillRecipe = <E extends YieldableError, V extends string,
     if (removeFailureListener) yield* Effect.addFinalizer(() => Effect.sync(removeFailureListener));
     yield* input.hooks.open(input.entryUrl);
     // Each restart is at a screen not restarted at before, so the walk ends.
-    const walk: Walk = { from: 0, acted: new Set(), restarted: new Set() };
+    const walk: Walk = { from: 0, at: 0, acted: new Set(), restarted: new Set() };
     for (;;) {
       const ended = yield* walkScreens(input, replay, walk);
       if (!("failed" in ended)) return ended;

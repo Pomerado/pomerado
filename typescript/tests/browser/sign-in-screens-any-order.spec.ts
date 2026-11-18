@@ -171,6 +171,13 @@ test("a run signs in when the site shows a screen recorded after the others betw
   await expect(page.locator("#account")).toBeVisible();
 });
 
+/** What each screen sends. */
+const sends: Readonly<Record<string, string>> = {
+  "/password": `/password ${login.password}`,
+  "/verify": `/verify ${code}`,
+  "/confirm": "/confirm kept",
+};
+
 for (const [order, recipe, flow] of [
   ["password then code", recipeOf("email", "password", "code"), ["/password", "/verify"]],
   ["code then password", recipeOf("email", "code", "password"), ["/verify", "/password"]],
@@ -179,16 +186,12 @@ for (const [order, recipe, flow] of [
   test(`a run whose site shows its recorded screens in order (${order}) walks them as recorded`, async ({
     page,
   }) => {
-    const sent = await serve(page, flow);
+    const shown: readonly string[] = flow;
+    const sent = await serve(page, shown);
     const { ended, prompts } = await run(page, recipe);
     expect(ended).toEqual(signedIn);
-    expect(prompts).toEqual(flow.includes("/verify") ? ["login", codePrompt] : ["login"]);
-    expect(sent).toEqual([
-      `/login ${login.username}`,
-      ...flow.map((path) =>
-        path === "/verify" ? `/verify ${code}` : path === "/password" ? `/password ${login.password}` : "/confirm kept",
-      ),
-    ]);
+    expect(prompts).toEqual(shown.includes("/verify") ? ["login", codePrompt] : ["login"]);
+    expect(sent).toEqual([`/login ${login.username}`, ...shown.map((path) => sends[path])]);
   });
 
 test("a login with no password picks the code at a choice recorded with the password, and signs in on the recorded code screen", async ({
