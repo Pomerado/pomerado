@@ -11,11 +11,7 @@ import { outputChecks, type FieldFill, type OutputFinding } from "../runtime/out
 import type { DestinationPrivateCandidateReason } from "../destinations/private-candidate.js";
 import type { SignedInMarkerCheck } from "../destinations/signed-in-marker.js";
 import type { DestinationReason } from "./destination-reason.js";
-import {
-  LiveTestRecord,
-  type LiveTestBatchCase,
-  type LiveTestCaseRun,
-} from "./live-tests.js";
+import { LiveTestRecord, type LiveTestBatchCase, type LiveTestCaseRun } from "./live-tests.js";
 import type { AuthorityCheckReason, AuthorityCheckStage } from "../auth/authority-metadata.js";
 import type {
   OriginalPolicyFailureCode,
@@ -247,7 +243,9 @@ export type HostRefusalSource = typeof HostRefusalSource.Type;
  * What a `host_refused` ending stood on, in the blocked diagnostic: the source that set the
  * attempt's host refusal (`HostRefusalSource`), a sign-in screen the host refused because the
  * password's fills are spent (`sign_in_refill`), one it refused at its destination check
- * (`sign_in_destination`), live tests the host refuses with no batch left (`live_tests_spent`), a
+ * (`sign_in_destination`), a `signedIn` the host would not verify because the sign-in submitted no
+ * identifier with a password or code (`sign_in_check`), live tests the host refuses with no batch
+ * left (`live_tests_spent`), a
  * challenge on the site the host recorded and could not get past (`challenge`), and a refusal an
  * older worker's checkpoint kept without its source (`unrecorded`).
  */
@@ -257,6 +255,7 @@ export type HostRefusalBasis =
       readonly source:
         | "sign_in_refill"
         | "sign_in_destination"
+        | "sign_in_check"
         | "live_tests_spent"
         | "challenge"
         | "unrecorded";
@@ -965,7 +964,8 @@ export const WritePath = Schema.Struct({
           "The commit mark this step's helper enters with enteringCommit, as the composed script declares it in write.commits",
       }),
       does: Schema.String.pipe(Schema.pattern(/\S/), Schema.maxLength(200)).annotations({
-        description: "What the step saves or submits, in a few words, such as 'saves the applicant page'",
+        description:
+          "What the step saves or submits, in a few words, such as 'saves the applicant page'",
       }),
       setup: Schema.optional(Schema.Literal(true)).annotations({
         description:
@@ -1488,12 +1488,10 @@ export const PublicationRequest = Schema.Struct({
    * finding asks for.
    */
   findingResponses: Schema.optional(
-    Schema.Array(FindingResponse)
-      .pipe(Schema.maxItems(findingResponsesLimit))
-      .annotations({
-        description:
-          "Only to answer a finding of the last publication denial you hold wrong, or no longer applying, under the review's rules: its id, a short response and the evidence that shows it, a live test caseId or a file the review reads, such as a capture. Guardian rules on each in the next review. One answer per finding; never instead of evidence a finding asks for",
-      }),
+    Schema.Array(FindingResponse).pipe(Schema.maxItems(findingResponsesLimit)).annotations({
+      description:
+        "Only to answer a finding of the last publication denial you hold wrong, or no longer applying, under the review's rules: its id, a short response and the evidence that shows it, a live test caseId or a file the review reads, such as a capture. Guardian rules on each in the next review. One answer per finding; never instead of evidence a finding asks for",
+    }),
   ),
   outputOverrides: Schema.optional(
     Schema.Array(
@@ -3260,6 +3258,16 @@ export interface MintDependencies {
    * it when the minter reports `host_refused`. Absent, the harness knows only its own refusals.
    */
   readonly hostChallengeRefused?: () => boolean;
+  /**
+   * Whether the host refused to take the page as signed in at the sign-in's latest `signedIn`
+   * because no screen of that sign-in submitted the login's identifier with a password or code
+   * (`credentials_not_submitted`), as when the site skipped screens because the browser was already
+   * signed in, and no sign-in verified and no sign-in screen was sent since. A `host_refused` block
+   * stands on it, named as the source `sign_in_check`, as on any host refusal of a sign-in. The
+   * harness reads it when the minter reports `host_refused`. Absent, the harness knows only the
+   * refusals it was handed as failures.
+   */
+  readonly signInCheckRefused?: () => boolean;
   /** The host's own descriptions of its optional tools, in place of the generic ones. */
   readonly hostToolDescriptions?: HostToolDescriptions;
   /**

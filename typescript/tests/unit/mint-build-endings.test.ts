@@ -864,6 +864,38 @@ it.each([
   }
 });
 
+// The host would not take the page as signed in because the sign-in under way had submitted no
+// identifier with a password or code, although the site showed the account signed in, and no step
+// the minter had left could submit it again on that browser. Its host_refused report was refused as
+// host_not_refused, so it could only stop without a tool and the build ended unexplained. The
+// report now stands on the host's record of that refusal (`signInCheckRefused`), naming it as its
+// basis; with none on record it is refused.
+it.each([
+  { recorded: true, ends: true },
+  { recorded: false, ends: false },
+])("ends as host_refused on a sign-in check the host refused: $ends", async ({ recorded, ends }) => {
+  const explanation = "The host would not verify the sign-in the site already shows.";
+  const f = await fixture(
+    (_request, index) =>
+      [call("report_blocked", { reason: "host_refused", explanation }, "report")][index] ??
+      prose("Stopping."),
+    { signInCheckRefused: () => recorded },
+  );
+  const outcome = await f.run();
+  if (ends) {
+    expect(f.requests).toHaveLength(1);
+    expect(outcome).toMatchObject({
+      build: "incomplete",
+      blocked: { reason: "host_refused", explanation },
+      stopReason: "host_refused",
+    });
+    expect(blockedRecord(outcome)).toMatchObject({ hostRefusals: [{ source: "sign_in_check" }] });
+  } else {
+    expect(outcome).not.toHaveProperty("blocked");
+    expect(lastResult(f.requests[1])).toContain("host_not_refused");
+  }
+});
+
 // A download over the host's own file caps is the host's limit, which no change to the source gets
 // past. A repair's host_refused report was refused as host_not_refused, so its minter could stop
 // only by asking the owner to narrow the request. The failed example now names the cap, and the
