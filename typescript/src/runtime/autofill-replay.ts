@@ -845,7 +845,8 @@ const settle = <E extends YieldableError, V extends string, L extends AutofillLo
  * The recorded screen the page shows now among those that have neither acted in this sign-in nor
  * had the walk restart at them: its controls as the progression check finds them
  * (`screenProbes`), on its own recorded page, and another screen than the one the walk waited for
- * or last ran by the progression check's rule (`showsAnotherScreen`). Of several, the one with the
+ * or last ran, and than the step that last ran, by the progression check's rule
+ * (`showsAnotherScreen`). Of several, the one with the
  * most controls found, then the first recorded. A hand-off screen, or one with no control to find,
  * never shows here.
  */
@@ -860,6 +861,7 @@ const showingScreen = <E extends YieldableError, V extends string, L extends Aut
     const last = steps[walk.at];
     if (last === undefined) return undefined;
     const lastStep = replay.resolve({ fields: last.fields, ...screenSubmit(last) });
+    const before = replay.progress.ran.slice(-1);
     for (const [index, recorded] of steps.entries()) {
       if (walk.acted.has(index) || walk.restarted.has(index) || recorded.approval === "handoff")
         continue;
@@ -870,7 +872,14 @@ const showingScreen = <E extends YieldableError, V extends string, L extends Aut
         if (
           !("outcome" in found) &&
           replay.matchesRecorded(found.page, recorded) &&
-          showsAnotherScreen(found.page, probe, pageOf(replay, last), lastStep)
+          (yield* showsAnotherScreen(
+            input.hooks,
+            found.page,
+            probe,
+            pageOf(replay, last),
+            lastStep,
+            before,
+          ))
         )
           best = { index, controls };
       }

@@ -129,6 +129,7 @@ const replay = (
   options: {
     readonly password?: string;
     readonly method?: (methods: readonly SignInMethodOption[]) => SignInMethodOption | undefined;
+    readonly stepWaitMs?: number;
   } = {},
 ) => {
   const events: Readonly<Record<string, unknown>>[] = [];
@@ -166,7 +167,7 @@ const replay = (
         ...(options.method === undefined
           ? {}
           : { hosted: { method: (methods) => Effect.succeed(options.method?.(methods)) } }),
-        timing: { stepWaitMs: 60, pollMs: 2 },
+        timing: { stepWaitMs: options.stepWaitMs ?? 60, pollMs: 2 },
         sent: { current: false },
       }).pipe(Effect.scoped),
     ),
@@ -210,24 +211,89 @@ it("goes on from an earlier recorded screen the page shows once the next never s
   ]);
 });
 
-it("never takes a lone button on the page of the screen it waited for as another recorded screen", async () => {
-  // The password screen never shows: the page keeps a Continue button a later recorded screen
-  // on the same page also has.
+for (const [name, controls, keep] of [
+  // The password box still shows beside a later recorded screen's button.
+  ["while the screen it waited for still shows", ["#password", "#keep"], keepAt("/sign-in")],
+  // The later recorded screen's button is the password screen's own.
+  ["that the screen it waited for has too", ["#go"], { ...keepAt("/sign-in"), submit: "#go" }],
+] as const)
+  it(`never takes a lone button on the page of the screen it waited for ${name}`, async () => {
+    const site = scriptedSite(
+      {
+        "sign-in": { path: "/sign-in", controls: ["#email", "#next"] },
+        unknown: { path: "/sign-in", controls },
+      },
+      (screen) => (screen === "sign-in" ? "unknown" : undefined),
+    );
+    const outcome = await replay(
+      recipeOf(email, { ...password, page: `${origin}/sign-in` }, keep),
+      site.hooks,
+      { password: "synthetic-password" },
+    );
+    expect(outcome.reason).toBe("not_found");
+    expect(site.clicks).toEqual(["#next"]);
+    expect(outcome.restarts).toEqual([]);
+  });
+
+it("reads a password screen that comes back whole as returned, not as a later screen with its look", async () => {
   const site = scriptedSite(
     {
       "sign-in": { path: "/sign-in", controls: ["#email", "#next"] },
-      unknown: { path: "/sign-in", controls: ["#keep"] },
+      password: { path: "/sign-in", controls: ["#password", "#go"] },
     },
-    (screen) => (screen === "sign-in" ? "unknown" : undefined),
+    (screen) => (screen === "sign-in" ? "password" : undefined),
   );
+  const onPage = { ...password, page: `${origin}/sign-in` };
   const outcome = await replay(
-    recipeOf(email, { ...password, page: `${origin}/sign-in` }, keepAt("/sign-in")),
+    recipeOf(email, onPage, keepAt("/sign-in"), { ...onPage, refills: ["password"] }),
+    site.hooks,
+    { password: "synthetic-password" },
+  );
+  expect(outcome.reason).toBe("credential_screen_returned");
+  expect(site.clicks).toEqual(["#next", "#go"]);
+});
+
+it("never takes a later screen the screen it waits for holds all of, as that screen still drawing", async () => {
+  const site = scriptedSite({ "sign-in": { path: "/sign-in", controls: ["#password", "#go"] } }, () => undefined);
+  const onPage = { ...password, page: `${origin}/sign-in` };
+  const outcome = await replay(
+    recipeOf(
+      { ...onPage, fields: [...email.fields, ...password.fields] },
+      codeAt("/sign-in", "#code"),
+      { ...onPage, refills: ["password"] },
+    ),
     site.hooks,
     { password: "synthetic-password" },
   );
   expect(outcome.reason).toBe("not_found");
-  expect(site.clicks).toEqual(["#next"]);
-  expect(outcome.restarts).toEqual([]);
+  expect(site.clicks).toEqual([]);
+});
+
+it("waits for a required choice that draws after the fields beside it, after a screen ran", async () => {
+  let drawn = Infinity;
+  const site = scriptedSite(
+    {
+      "sign-in": { path: "/sign-in", controls: ["#email", "#next"] },
+      choice: {
+        path: "/sign-in",
+        get controls() {
+          return Date.now() < drawn ? ["#password", "#go"] : ["#plan", "#password", "#go"];
+        },
+      },
+      password: { path: "/sign-in", controls: ["#password", "#go"] },
+    },
+    (screen, clicked) => {
+      if (screen === "sign-in") drawn = Date.now() + 300;
+      return screen === "sign-in" ? "choice" : clicked === "#plan" ? "password" : "home";
+    },
+  );
+  const outcome = await replay(
+    recipeOf(email, { ...keepAt("/sign-in"), submit: "#plan" }, { ...password, page: `${origin}/sign-in` }),
+    site.hooks,
+    { password: "synthetic-password", stepWaitMs: 5_000 },
+  );
+  expect(outcome.reason).toBe("signed_in");
+  expect(site.clicks).toEqual(["#next", "#plan", "#go"]);
 });
 
 it("refuses a second code on a restart, as on any recorded code screen the recipe plans no refill for", async () => {
