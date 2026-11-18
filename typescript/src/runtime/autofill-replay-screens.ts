@@ -85,11 +85,12 @@ const controlsOf = (step: AutofillStep) => {
 /**
  * Whether a probe found on `page` is another recorded screen than the `current` one, on
  * `currentPage`: another page, or a field the current screen lacks, proves it. On the same page
- * the probe's own look proves it too: the current screen has a control the probe lacks, and each
- * control the probe lacks of the current screen and of the screen that last ran (`ran`) is gone.
- * A probe with no field needs a button of its own besides, so a coincident same-page button,
- * such as a shared Continue, never proves a screen, nor does any button while the current
- * screen's other controls still show.
+ * the probe's own look proves it too: the current screen or the step that last ran (`ran`) has a
+ * field the probe lacks, and each control the probe lacks of either is gone. A button gone alone
+ * proves nothing, as a required choice may draw after the fields beside it, or a code screen take
+ * its own button away. A probe with no field needs a button of its own besides, so a
+ * coincident same-page button, such as a shared Continue, never proves a screen, nor does any
+ * button while the current screen's other controls still show.
  */
 export const showsAnotherScreen = <E>(
   hooks: Pick<AutofillHooks<E>, "inspect">,
@@ -109,9 +110,9 @@ export const showsAnotherScreen = <E>(
     )
       return true;
     const own = controlsOf(probe);
-    const currentControls = controlsOf(current);
-    if ([...currentControls.keys()].every((selector) => own.has(selector))) return false;
-    const others = new Map([...(ran === undefined ? [] : controlsOf(ran)), ...currentControls]);
+    const fields = [...current.fields, ...(ran?.fields ?? [])];
+    if (fields.every((field) => own.has(field.selector))) return false;
+    const others = new Map([...(ran === undefined ? [] : controlsOf(ran)), ...controlsOf(current)]);
     if (probe.fields.length === 0 && [...own.keys()].every((selector) => others.has(selector)))
       return false;
     for (const [selector, control] of others)
