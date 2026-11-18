@@ -864,12 +864,12 @@ it.each([
   }
 });
 
-// The host would not take the page as signed in because the sign-in under way had submitted no
-// identifier with a password or code, although the site showed the account signed in, and no step
-// the minter had left could submit it again on that browser. Its host_refused report was refused as
-// host_not_refused, so it could only stop without a tool and the build ended unexplained. The
-// report now stands on the host's record of that refusal (`signInCheckRefused`), naming it as its
-// basis; with none on record it is refused.
+// The host would not take the page as signed in, although it showed the signed-in marker, because
+// the sign-in under way had sent screens but none submitted the identifier with a password or code.
+// The minter's host_refused report was refused as host_not_refused, so it could only stop without
+// a tool and the build ended unexplained. The report now stands on the host's record of that
+// refusal (`signInCheckRefused`), naming it as its basis. With none on record, as for a signedIn
+// sent before any screen, which the host never records, it is refused.
 it.each([
   { recorded: true, ends: true },
   { recorded: false, ends: false },
