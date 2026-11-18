@@ -81,8 +81,7 @@ page; keep the visible mechanism as the fallback when the endpoint refuses or ch
 `references/pagination.ts` writes these functions by hand. Send the page size and the offset or
 cursor the site's own client sends, read from a captured request or the client's own code, and let
 `readList` trim to `limit`. Never set the site's page size to the caller's `limit`: many endpoints
-count slots they don't return as rows, such as ads or carousels, so a page of `limit` slots can hold
-fewer rows or none.
+count slots they don't return as rows, so a page of `limit` slots can hold fewer rows or none.
 
 `readList` asks for exactly the rows the window needs, so the call's `limit` and the site's page
 size need not match. With `limit` 20 and 30 rows per site page, call one returns site page one's

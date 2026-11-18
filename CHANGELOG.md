@@ -362,7 +362,6 @@
 - A script's refusal keeps a true/false or finite number choice as the value itself, such as `available: [1, 2]` for a quantity. Before, it kept the choice's text (`["1", "2"]`), as earlier builds of this release did, so a caller who sent a listed choice back as it is had it refused by a number or true/false input.
   - `pomerado/core/runtime/operation-failure` exports the type `RefusalValue`, a choice's text, true/false or finite number. `RefusalChoice`, `InputRefusalDetail`'s `available`, `RunEvidence`'s `refusal_available`, `ExecutionEvidence`'s `refusal` with `ExecutionRefusal`, and `LiveTestOutcome`'s, `JudgedCase`'s and `LiveTestRecord`'s refusal now take it. An `input_rejected` outcome's `available` detail carries the values, and its message lists them as before. `pomerado.hostProtocol` stays 1. A tool keeps its behavior until it is published again on this release.
   - Migrate a host that reads a refusal's `available` as text, or `errors.InvalidInput`'s own, by taking a true/false or number choice too, so it neither drops the choice nor turns it back into text.
-
 ### Other changes
 
 - The pagination skill says to send the page size and offset or cursor the site's own client sends and let `readList` trim to `limit`, never the caller's `limit` as the site's page size, and that an empty page whose answer gives a results count above zero, a has-more flag or a moved offset is not evidence the site has none. A recorded minter response keyed on the exact skill text needs recording again.
