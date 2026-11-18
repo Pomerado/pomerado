@@ -335,6 +335,92 @@ it("still reads a saved profile's page off the screens after the opener as its l
   expect(outcome).toMatchObject({ outcome: "signed_in", cantTell: true });
 }, 20_000);
 
+/**
+ * A check without values on a browser that started empty, whose screen never shows: the entry
+ * lands on the site's home page (`home`), or the opener clicked there passes to a redirect page
+ * (`redirect`).
+ */
+const replayValueFreeLanding = async (shape: "home" | "redirect") => {
+  const home = `${origin}/home`;
+  let page: "entry" | "home" | "redirect" = shape === "home" ? "entry" : "home";
+  const events: unknown[] = [];
+  const url = () =>
+    page === "redirect" ? `${origin}/redirect` : page === "entry" ? login : home;
+  const here = () => ({ signedIn: false, failed: "indicator_not_visible", url: url() }) as const;
+  const opener = { page: home, fields: [], submit: "#open" };
+  const password = {
+    page: login,
+    fields: [{ selector: "#password", slot: "password" as const }],
+    submit: "#go",
+  };
+  const hooks: AutofillHooks<TestFailure> = {
+    open: () =>
+      Effect.sync(() => {
+        if (shape === "home") page = "home";
+      }),
+    check: () => Effect.sync(here),
+    confirm: () => Effect.sync(here),
+    inspect: (step) =>
+      Effect.sync(() =>
+        shape === "redirect" && page === "home" && step.submit === "#open"
+          ? {
+              page: home,
+              siteOrigin: origin,
+              authenticationOrigins: [],
+              targets: { fields: [], submit: { ...target, editable: false, control: "other" as const } },
+              screen: { origin, fields: [], submit: null, buttons: ["Sign in"] },
+            }
+          : ({ outcome: "refused", reason: "not_found" } as const),
+      ),
+    fill: () =>
+      Effect.sync(() => {
+        page = "redirect";
+        return { outcome: "filled" as const, fields: [], submit: "clicked" as const, url: home };
+      }),
+    confirmCantTell: () => Effect.void,
+    startedEmpty: true,
+  };
+  const outcome = await Effect.runPromise(
+    replayAutofillRecipe({
+      recipe: {
+        version: 2,
+        steps: shape === "home" ? [password] : [opener, password],
+        signedIn: { selector: "#identity", urlPath: "/account" },
+      },
+      hooks,
+      entryUrl: shape === "home" ? login : home,
+      credentials: undefined,
+      ask: () => Effect.dieMessage("Unexpected question"),
+      broker: {
+        register: () => Effect.void,
+        registeredSecretMatches: () => Effect.succeed([]),
+      },
+      site: "example.test",
+      correlation: { jobId: "job", attemptId: "attempt" },
+      emit: (event) => Effect.sync(() => events.push(event)),
+      failures: {
+        unanswered: () => new TestFailure({ code: "BrowserUnavailable" }),
+        unavailable: () => new TestFailure({ code: "BrowserUnavailable" }),
+      },
+      timing: { stepWaitMs: 2_000, pollMs: 20 },
+      sent: { current: false },
+    }).pipe(Effect.scoped),
+  );
+  return { outcome, events };
+};
+
+// A check without values on a browser that started empty waits for its screen to its deadline;
+// when the screen never shows, it reads the page it is on as its landing, as before that wait.
+it.each(["home", "redirect"] as const)(
+  "reads a check without values' %s page as its landing once its screen never showed on a browser that started empty",
+  async (shape) => {
+    const { outcome, events } = await replayValueFreeLanding(shape);
+    expect(events).toContainEqual(landing);
+    expect(outcome).toMatchObject({ outcome: "signed_in", cantTell: true });
+  },
+  20_000,
+);
+
 describe("replay screen and landing trailing-slash helpers", () => {
   const other = "https://other.test";
   const screens = exactScreens([
