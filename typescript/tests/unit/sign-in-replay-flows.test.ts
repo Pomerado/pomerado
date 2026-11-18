@@ -465,9 +465,9 @@ it("waits out a write's skipped code screen when its landing shows no marker, th
   ]);
 });
 
-// The local host sets `startedEmpty` on every sign-in, so a read's check without values never takes
+// The local host sets `startedEmpty` on a new browser's sign-in, so a read's check without values never takes
 // a blank login page for a signed-in one: it waits for the form the page draws late, then asks.
-it("asks a read's login when its entry page draws the form late, since every local sign-in sets startedEmpty", { timeout: 20_000 }, async () => {
+it("asks a read's login when its entry page draws the form late, since a local sign-in on a new browser sets startedEmpty", { timeout: 20_000 }, async () => {
   const fake = scriptedSite({
     entry: "login",
     screens: { login: loginScreen, account: [] },
@@ -510,13 +510,17 @@ const signInBefore = (
   browser: SignInReplayBrowser<never>,
   typed: boolean,
   allowCantTell: boolean,
+  accountPage = true,
 ) => {
   const secrets = makeRunSecrets();
   const { ask } = owner(fake);
   return Effect.runPromise(
     Effect.either(
       runSignInBefore(() => typed, {
-        recipe: { ...recipe(loginStep), signedIn: { selector: "#account", openPath: "/account" } },
+        recipe: {
+          ...recipe(loginStep),
+          signedIn: { selector: "#account", ...(accountPage ? { openPath: "/account" } : {}) },
+        },
         entryUrl: `${origin}/login`,
         browser,
         login: localSignInLogin({ ask, register: secrets.register, siteOrigin: origin }),
@@ -574,6 +578,16 @@ it.each([
     expect(fake.trace).toEqual(["open:/account"]);
   },
 );
+
+// A library scope's later run reuses the browser this host already signed in (`typed`), which is no
+// browser that started empty: a read whose login address sends the signed-in browser on to a page
+// of its own signs in on that page that can't tell, as any browser with a session may.
+it("signs a read in where its login address sends a browser this host already signed in, which started no empty browser", { timeout: 20_000 }, async () => {
+  const { fake, browser } = signedInSite("redirect");
+  const result = await signInBefore(fake, browser, true, true, false);
+  expect(result).toEqual(Either.right({ alreadySignedIn: true }));
+  expect(fake.trace).toEqual(["open:/login"]);
+});
 
 it("replays after the account page on a browser this host typed into whose session ended", { timeout: 20_000 }, async () => {
   const fake = scriptedSite({
