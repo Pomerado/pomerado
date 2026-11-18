@@ -115,9 +115,11 @@ compares, except a query the site says it corrected or
 rewrote (below). A search
 that applied every input and got the site's no-results message returns an empty list, never an
 error, unless other evidence on the same page contradicts it. The site's own error page or error
-banner, or an error status or error body from the data
+banner, or an error status or error body from any data
 request the page depends on, is a failure: throw `OperationFailure` naming what the site showed,
-never an empty list or a success built from it. When the page answers such a reply with its
+never an empty list or a success built from it. When such a reply, on any of those requests, is
+itself the site's own message that it has nothing for these inputs, return it as a declared
+refusal with `site_message` (caller-input skill). When the page answers such a reply with its
 no-results message, as some store finders do for a 404, or with a refusal of the caller's value
 (caller-input skill), that answer stands. An empty answer that other evidence on the same page
 contradicts for the same inputs is a failure too: throw `OperationFailure` naming what that
