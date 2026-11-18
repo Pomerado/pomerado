@@ -29,6 +29,7 @@ import { Context, Data, Schema, type Effect } from "effect";
 import { commitMarkMaxLength, commitMarkPattern } from "../runtime/operation.js";
 import { cardFillFields } from "../runtime/script-card-fill.js";
 import { DownloadCap } from "../runtime/files.js";
+import type { RefusalValue } from "../runtime/operation-failure.js";
 import type { SiteAccessDiagnostic } from "./site-access-contracts.js";
 import type { SignInVersionFinding } from "./sign-in-version.js";
 import {
@@ -1240,7 +1241,9 @@ export type ScriptQuestionOutcome =
 export const ExecutionRefusal: Schema.Schema<NonNullable<ExecutionEvidence["refusal"]>> =
   Schema.Struct({
     field: Schema.optionalWith(Schema.String, { exact: true }),
-    available: Schema.Array(Schema.String),
+    available: Schema.Array(
+      Schema.Union(Schema.String, Schema.Number.pipe(Schema.finite()), Schema.Boolean),
+    ),
   });
 
 export interface ExecutionEvidence {
@@ -1293,7 +1296,7 @@ export interface ExecutionEvidence {
    * input and listing every choice the page offers for it. A read repair's example that ends
    * this way is its publication receipt, since maintenance cannot change the caller's input.
    */
-  readonly refusal?: { readonly field?: string; readonly available: readonly string[] };
+  readonly refusal?: { readonly field?: string; readonly available: readonly RefusalValue[] };
   /**
    * Trusted host marker on a failed execution whose failure is the host's refusal of a download
    * over its own file caps, with the cap (`RunFiles.overCap`). No change to the source makes that
