@@ -920,39 +920,33 @@ const walkScreens = <E extends YieldableError, V extends string, L extends Autof
   });
 
 /**
- * A replay whose password screen came back after the password went out
- * (`credential_screen_returned`), where the host read the site's answer to that submit as asking
- * the owner to open a sign-in link it emailed (`hosted.replyAskedLink`): the owner pastes the link,
- * which the replay opens in its own browser (`openPastedLink`), trusted as the returned screen's
- * page trusts it, and the sign-in's check after the screens decides (`settle`). Any other ending
- * stands, and so does this one when no password went out, the password field no longer shows, an
- * emailed link already went in this sign-in, or the host reads no such answer.
+ * A replay that would end with no verdict on the login (`credential_screen_returned`, or a failed
+ * check, `sign_in_check_failed`) because the credential screen it submitted last came back, password
+ * or identifier alike (`returnedScreen`), reads the site's own answer to that submit, as the host
+ * reads it (`hosted.siteAnswer`), once that screen shows. A `link` answer has the owner paste the
+ * sign-in link the site emailed, which the replay opens in its own browser (`openPastedLink`),
+ * trusted as the returned screen's page trusts it, and the sign-in's check after the screens decides
+ * (`settle`), at most once per sign-in. Any other ending stands, and so does this one when no
+ * screen came back, an emailed link already went in, or the host reads no such answer.
  */
-const linkAfterReply = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+const answeredScreen = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   input: AutofillReplayInput<E, V, L>,
   replay: Replay<E, V, L>,
   ended: AutofillReplayOutcome<V>,
 ) =>
   Effect.gen(function* () {
-    const read = input.hosted?.replyAskedLink;
+    const read = input.hosted?.siteAnswer;
     if (
       ended.outcome === "signed_in" ||
-      ended.reason !== "credential_screen_returned" ||
+      (ended.reason !== "credential_screen_returned" && ended.reason !== "sign_in_check_failed") ||
       read === undefined ||
-      !replay.sent.seenSent("password") ||
       replay.state.steps.some((step) => step.approval === "email_link")
     )
       return ended;
-    const returned = yield* replay.shownAgain("password");
-    const field = returned?.fields.find((one) => one.slot === "password");
-    if (returned === undefined || field === undefined) return ended;
-    const screen = yield* input.hooks.inspect({
-      fields: [field],
-      ...(returned.popup === undefined ? {} : { popup: returned.popup }),
-    });
-    if ("outcome" in screen || !(yield* read())) return ended;
-    yield* input.emit({ stage: "approval", approval: "email_link", reason: "site_reply" });
-    const opened = yield* openPastedLink(input, screen);
+    const returned = yield* replay.returnedScreen;
+    if (returned === undefined || (yield* read()) !== "link") return ended;
+    yield* input.emit({ stage: "approval", approval: "email_link", reason: "site_answer" });
+    const opened = yield* openPastedLink(input, returned.inspection);
     if (opened !== "opened") return replay.outcome(opened);
     return yield* settle(input, replay);
   });
@@ -991,9 +985,9 @@ export const replayAutofillRecipe = <E extends YieldableError, V extends string,
     const walk: Walk = { from: 0, at: 0, acted: new Set(), restarted: new Set() };
     for (;;) {
       const ended = yield* walkScreens(input, replay, walk);
-      if (!("failed" in ended)) return yield* linkAfterReply(input, replay, ended);
+      if (!("failed" in ended)) return yield* answeredScreen(input, replay, ended);
       const next = yield* showingScreen(input, replay, walk);
-      if (next === undefined) return yield* ended.failed;
+      if (next === undefined) return yield* answeredScreen(input, replay, yield* ended.failed);
       yield* input.emit({ stage: "skipped", reason: "recorded_screen_showing", nextStep: next });
       walk.restarted.add(next);
       walk.from = next;

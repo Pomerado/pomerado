@@ -173,11 +173,17 @@ export const isTwoFactorOption = (
  * - `resubmit`: the challenge look at a screen's deadline, which may send the last screen again;
  * - `allowedChoices`: the recorded screens' choices this run's caller allowed, whose submits the
  *   replay presses. None when absent, so the replay stops before any screen that names a choice;
- * - `replyAskedLink`: whether the site's own answer to the submit that sent the password asked the
- *   owner to open a sign-in link it emailed, as the host reads that answer, for a replay whose
- *   password screen came back after the password went out. None when absent, so that replay ends
- *   there.
+ * - `siteAnswer`: what the site's own answer to the credential screen the replay submitted last
+ *   says, as the host reads it, for a replay whose submitted screen came back (`SiteAnswer`). None
+ *   when absent, so that replay ends there.
  */
+/**
+ * What a site's own answer to a submitted credential screen that came back says, as a host reads
+ * it: `link`, that it emailed a sign-in link the owner opens. The replay then asks the owner to
+ * paste it, opens it in its own browser and goes on.
+ */
+export type SiteAnswer = "link";
+
 export interface HostedSignIn<
   E extends YieldableError,
   V extends string = string,
@@ -204,7 +210,7 @@ export interface HostedSignIn<
     | undefined;
   readonly resubmit?: ((session: ReplaySession<E, V, L>) => ClearThenResubmit<E, V>) | undefined;
   readonly allowedChoices?: readonly SignInChoice[] | undefined;
-  readonly replyAskedLink?: (() => Effect.Effect<boolean>) | undefined;
+  readonly siteAnswer?: (() => Effect.Effect<SiteAnswer | undefined>) | undefined;
 }
 
 export interface AutofillReplayInput<
