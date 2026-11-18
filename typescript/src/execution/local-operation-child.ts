@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { Cause, Effect, Exit, Schema } from "effect";
 import type { Deadline as RunDeadline } from "../runtime/deadline.js";
 import type { Operation } from "../runtime/operation.js";
+import type { InputRefusalDetail } from "../runtime/operation-failure.js";
 import type { ScriptInput as ScriptInputTag } from "../runtime/script-input.js";
 import type { SiteHttp as SiteHttpTag } from "../runtime/site-http.js";
 
@@ -56,11 +57,7 @@ const { SessionSignInAnswer } = await import("../runtime/session-sign-in.js");
 const { ScriptCardFillAnswer } = await import("../runtime/script-card-fill.js");
 const { CollectedDownload, FileOutput, FileRefusalReason, FileRefused, PlacedFile } =
   await import("../runtime/files.js");
-const refusalOf = (detail: {
-  readonly field?: string;
-  readonly available?: readonly string[];
-  readonly kind?: string;
-}) =>
+const refusalOf = (detail: InputRefusalDetail) =>
   detail.field === undefined && detail.available === undefined && detail.kind === undefined
     ? {}
     : { refusal: detail };

@@ -374,6 +374,16 @@ it("hands a contradicted site-fault report back only once in an attempt", async 
         call("report_blocked", { reason: "site_unavailable", explanation }, "third"),
       ][index] ?? prose("Stopping."),
     {
+      // The new run failed, so no passed example holds the report back.
+      reviewAndExecute: (_submitted, beforeDispatch = () => Effect.void) =>
+        beforeDispatch(readAllow).pipe(
+          Effect.as({
+            executionId: "execution_one",
+            status: "failed" as const,
+            effect: "possible" as const,
+            observations: { message: "The list stayed empty." },
+          }),
+        ),
       reviewQuestion: () =>
         Effect.sync(() =>
           ++reviews <= 2 ? contradicted : { outcome: "allow_business" as const, rationale: "Plain." },
@@ -383,6 +393,29 @@ it("hands a contradicted site-fault report back only once in an attempt", async 
   const outcome = await f.run();
   expect(lastResult(f.requests[1])).toContain("report_contradicted");
   expect(lastResult(f.requests[3])).toContain("blocked_explanation_rejected");
+  expect(outcome).toMatchObject({
+    build: "incomplete",
+    blocked: { reason: "site_unavailable", explanation },
+    stopReason: "site_unavailable",
+  });
+});
+
+// A read build whose example passed and whose site then stopped it published nothing when its
+// minter reported the block instead of calling finish_build. The report goes back once, naming the
+// run that passed, so the host can publish what it ran; a second report ends the build.
+it("hands a site-blocked report back once while a passed example can still publish", async () => {
+  const explanation = "The site's bot check now refuses every request.";
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", pureExample),
+        call("report_blocked", { reason: "site_unavailable", explanation }, "first"),
+        call("report_blocked", { reason: "site_unavailable", explanation }, "second"),
+      ][index] ?? prose("Stopping."),
+  );
+  const outcome = await f.run();
+  expect(lastResult(f.requests[2])).toContain("example_publishable");
+  expect(lastResult(f.requests[2])).toContain("execution_one");
   expect(outcome).toMatchObject({
     build: "incomplete",
     blocked: { reason: "site_unavailable", explanation },
