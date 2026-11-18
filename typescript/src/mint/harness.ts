@@ -4705,16 +4705,15 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         );
       /**
        * The minter's last final answer as its caller may read it, when it stopped without a tool
-       * call: kept when Guardian allowed it, or asked only for other words (`unclear`,
-       * `misdescribed`), since the model is gone and can't reword it, and the caller should still
-       * hear why. Any other outcome, label or failure keeps nothing.
+       * call: kept when Guardian allowed it, or asked only for other words (`unclear`), since the
+       * model is gone and can't reword it, and the caller should still hear why. Any other
+       * outcome, label or failure keeps nothing.
        */
       const reviewedStopExplanation = (text: string | undefined) =>
         reviewStopExplanation(text).pipe(
           Effect.map((review) =>
             review?.decision.outcome === "allow_business" ||
-            (review?.decision.outcome === "reword" &&
-              (review.decision.label === "unclear" || review.decision.label === "misdescribed"))
+            (review?.decision.outcome === "reword" && review.decision.label === "unclear")
               ? review.screened
               : undefined,
           ),
@@ -7962,8 +7961,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       loginDeclined === undefined &&
                       !signInAbandoned
                     ) {
-                      // The minter's explanation still says why, kept only as a last answer is:
-                      // once Guardian's review of a blocked outcome allows its caller to read it.
+                      // The minter's explanation still says why, kept only once Guardian's review
+                      // of a blocked outcome allows its caller to read it: any reword drops it.
                       const stopReview =
                         terminal === undefined
                           ? yield* reviewStopExplanation(explanation)
