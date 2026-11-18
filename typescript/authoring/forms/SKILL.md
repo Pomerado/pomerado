@@ -1,6 +1,6 @@
 ---
 name: forms
-description: Guarded native/custom selection, dynamic choices and consequential form completion.
+description: Guarded native/custom selection, dynamic choices, consequential form completion, and files a tool uploads, downloads or returns.
 ---
 
 # Author the site's behavior
@@ -233,6 +233,13 @@ yourself, route the page's requests or read a file's contents back (`.files` ite
 sets a file input from base64 input with `setInputFiles` uses a deprecated pattern the host
 still allows while the build has no file handle and no `FileInput`: a repair keeps its input as
 it is, and a new tool takes a `FileInput` and uses `files.place`.
+
+A document the browser shows in its own viewer, often a PDF, starts no download, so
+`files.collect` around its link finds none. Return it with `files.fetch(url)` and the document's
+own address, which the host fetches with the page's session. Never return a screenshot of the
+viewer as the document. The host refuses an empty download, or one whose bytes are not the type
+its server or name claims; the site then sent another page, usually a sign-in or error page, so
+fix what made it send that.
 
 When a form asks for more than one upload, prefer one `FileInput` per upload, named for the site's
 label, each placed by its own `files.place` call. Prefer making an input required only when every

@@ -3212,7 +3212,7 @@ test("download example returns the statement as a file object the host keeps", a
   }
 });
 
-test("a download's type comes from its bytes, else the server's type, never its name", async ({
+test("a download's type comes from its bytes, else the server's type, never its name, and a name its bytes contradict fails the run", async ({
   page,
 }) => {
   test.info().annotations.push({ type: "slow", description: "Two downloads Chromium must save" });
@@ -3243,13 +3243,18 @@ test("a download's type comes from its bytes, else the server's type, never its 
       downloads: join(site.directory, "downloads"),
       scope: site.scope,
     });
-    const typeOf = async () => {
-      const { result } = await runExample(page, downloadStatement, {}, { files });
-      return (Either.getOrUndefined(result) as { statement: { $file: Record<string, unknown> } })
-        .statement.$file;
-    };
-    expect(await typeOf()).toMatchObject({ name: "statement.csv", media_type: "image/png" });
-    expect(await typeOf()).toMatchObject({ name: "statement.pdf", media_type: "text/csv" });
+    const first = await runExample(page, downloadStatement, {}, { files });
+    expect(
+      (Either.getOrUndefined(first.result) as { statement: { $file: Record<string, unknown> } })
+        .statement.$file,
+    ).toMatchObject({ name: "statement.csv", media_type: "image/png" });
+    // A name that claims a PDF over text is not a PDF, so the run fails rather than return it.
+    const second = await runExample(page, downloadStatement, {}, { files });
+    expect(failure(second.result)).toMatchObject({
+      _tag: "OperationFailure",
+      message:
+        "The host refused the file: invalid_download. Its name ends in .pdf, but its 4 bytes are not a PDF: they carry no sign of that type.",
+    });
   } finally {
     await site.close();
   }

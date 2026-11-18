@@ -159,6 +159,8 @@ export type DownloadCap = typeof DownloadCap.Type;
  * - `not_file_input`: the field is not a file input.
  * - `other_site`: the field's page is not on the tool's site.
  * - `no_download`: no download finished within the wait.
+ * - `invalid_download`: the download is empty, or its bytes are not the type its server or its
+ *   name claims, such as an HTML page sent as a PDF.
  * - `not_collected`: an output names a file this run did not collect.
  */
 export const FileRefusalReason = Schema.Literal(
@@ -173,6 +175,7 @@ export const FileRefusalReason = Schema.Literal(
   "not_file_input",
   "other_site",
   "no_download",
+  "invalid_download",
   "not_collected",
 );
 export type FileRefusalReason = typeof FileRefusalReason.Type;
@@ -180,16 +183,19 @@ export type FileRefusalReason = typeof FileRefusalReason.Type;
 /**
  * The host refused a file. `dispatched` is set when the refusal came after the host set the file
  * input, or may have, so an upload may have started; every other refusal reached no page.
+ * `detail` says what the host found, such as the type a download claimed and what its bytes are,
+ * never the file's contents.
  */
 export class FileRefused extends Data.TaggedError("FileRefused")<{
   readonly reason: FileRefusalReason;
   readonly dispatched?: true;
+  readonly detail?: string;
 }> {
   override get message() {
     const refused = `The host refused the file: ${this.reason}`;
-    return this.reason === "unknown_reference"
-      ? `${refused}. Only files sent with the request can be used, so another file needs a new request that includes it.`
-      : refused;
+    if (this.reason === "unknown_reference")
+      return `${refused}. Only files sent with the request can be used, so another file needs a new request that includes it.`;
+    return this.detail === undefined ? refused : `${refused}. ${this.detail}`;
   }
 }
 
@@ -337,7 +343,9 @@ export interface ScriptFiles {
    * carries only the file's metadata and sha256, and is returned as an output `FileOutput`. A
    * download over the host's per-file cap, or over what the run's caps leave, throws an
    * `OperationFailure` that names the cap, never `InvalidInput`: the page made the file, so the
-   * limit is the host's and the caller has no other file to send.
+   * limit is the host's and the caller has no other file to send. An empty download, or one whose
+   * bytes are not the type its server or name claims, such as an HTML sign-in page sent as a PDF,
+   * throws an `OperationFailure` (`invalid_download`) that says what came back.
    */
   readonly collect: (
     trigger: () => Promise<unknown>,
@@ -356,13 +364,23 @@ export interface ScriptFiles {
    * it in the output as the file. `max` bounds how many downloads it takes, by default what the
    * run's caps leave; each one past it is `over_max`. A download over the host's per-file cap,
    * or over what the run's caps leave, throws the same `OperationFailure` naming the cap that
-   * `collect` throws. No download at all throws as `collect` does. A host that cannot take every download throws an `OperationFailure` before
+   * `collect` throws. No download at all, or an invalid one, throws as `collect` does. A host that cannot take every download throws an `OperationFailure` before
    * the trigger runs.
    */
   readonly collectAll: (
     trigger: () => Promise<unknown>,
     options?: { readonly timeoutMs?: number; readonly max?: number },
   ) => Promise<readonly CollectedDownload[]>;
+  /**
+   * Fetches the file at `url`, an `http:` or `https:` address, from the run's page with the page's
+   * own session, and returns it for the output as `collect` returns a download. Use it for a
+   * document the browser shows in its own viewer, such as a PDF, which starts no download for
+   * `collect` to take. It waits up to `timeoutMs` (30 s by default). An answer other than 2xx, a
+   * web page sent without `attachment`, or an address the page cannot read, such as another site's
+   * that does not allow it, throws an `OperationFailure` that says which; so does a file
+   * `collect` would refuse.
+   */
+  readonly fetch: (url: string, options?: { readonly timeoutMs?: number }) => Promise<FileObject>;
   /**
    * Has the host take a PNG screenshot of the page and returns it for the output, as `collect`
    * returns a download: of the viewport, of the whole page with `fullPage`, or of the one element

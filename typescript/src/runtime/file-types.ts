@@ -141,6 +141,13 @@ const extensionTypes: Readonly<Record<string, string>> = {
   vcf: "text/vcard",
 };
 
+/** Each media type's usual extension, the first `extensionTypes` names for it. */
+export const typeExtensions: Readonly<Record<string, string>> = Object.fromEntries(
+  Object.entries(extensionTypes)
+    .reverse()
+    .map(([extension, type]) => [type, extension]),
+);
+
 const matches = (bytes: Uint8Array, [offset, expected]: Signature) =>
   bytes.length >= offset + expected.length &&
   expected.every((byte, index) => byte === undefined || bytes[offset + index] === byte);
@@ -181,6 +188,78 @@ export const bytesMatchType = (bytes: Uint8Array, declared: string) => {
   );
   if (sniffed !== undefined) return sniffed.type === type || sniffed.carries.includes(type);
   return !knownTypes.some((known) => known.type === type || known.carries.includes(type));
+};
+
+/** Whether a type has a signature its bytes must carry, as a PDF's `%PDF-` or a PNG's. */
+const hasSignature = (type: string) =>
+  knownTypes.some((known) => known.type === type || known.carries.includes(type));
+
+/**
+ * Legacy Office types that sites commonly send for HTML or text tables, such as an export a
+ * spreadsheet still opens, so a download claiming one is never refused for its bytes.
+ */
+const looselyClaimedTypes = new Set([
+  "application/msword",
+  "application/vnd.ms-excel",
+  "application/vnd.ms-powerpoint",
+]);
+
+/** How far from each end a PDF's header and end marker may sit, as PDF readers accept them. */
+const pdfMarkerWindow = 1024;
+
+/**
+ * A PDF's shape: `whole` with its `%PDF-` header near the start and its `%%EOF` marker near the
+ * end, `cut` with the header but no end marker, else `none`.
+ */
+const pdfShape = (bytes: Uint8Array) => {
+  const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const header = buffer.subarray(0, pdfMarkerWindow).indexOf("%PDF-");
+  if (header === -1) return "none";
+  const end = buffer.indexOf("%%EOF", Math.max(header, bytes.byteLength - pdfMarkerWindow));
+  return end === -1 ? "cut" : "whole";
+};
+
+/** What the bytes look like, for a refusal that says so: a proven type, a page, JSON or nothing. */
+const lookOf = (bytes: Uint8Array) => {
+  const sniffed = sniffedType(bytes);
+  if (sniffed !== undefined) return `they are ${sniffed}`;
+  const start = new TextDecoder().decode(bytes.subarray(0, 512)).replace(/^[\s\uFEFF]+/u, "");
+  if (start.startsWith("<")) return "they look like an HTML or XML page";
+  if (start.startsWith("{") || start.startsWith("[")) return "they look like JSON";
+  return "they carry no sign of that type";
+};
+
+/**
+ * Why a download's bytes contradict what it claims, else undefined: it is empty, or the type its
+ * server sent or its name's extension claims has a signature its bytes lack, such as an HTML
+ * sign-in page sent as `application/pdf` or named `.pdf`. A PDF must also end with its `%%EOF`
+ * marker, so one cut short is refused too. A claim without a signature, such as text or CSV,
+ * contradicts nothing. The answer names the claim, the size and what the bytes look like, never
+ * their contents.
+ */
+export const downloadContradiction = (
+  bytes: Uint8Array,
+  claims: { readonly name: string; readonly contentType?: string | undefined },
+): string | undefined => {
+  if (bytes.byteLength === 0) return "The download is empty.";
+  const extension = extensionOf(claims.name);
+  const claimed: readonly (readonly [type: string, by: string])[] = [
+    ...(claims.contentType === undefined
+      ? []
+      : [[essence(claims.contentType), `The server sent it as ${essence(claims.contentType)}`] as const]),
+    ...(extension === "" ? [] : [[typeOfName(claims.name), `Its name ends in .${extension}`] as const]),
+  ];
+  for (const [type, by] of claimed) {
+    if (!hasSignature(type) || looselyClaimedTypes.has(type)) continue;
+    const size = `its ${bytes.byteLength} bytes`;
+    const pdf = type === "application/pdf" ? pdfShape(bytes) : undefined;
+    if (pdf === "cut")
+      return `${by}, but ${size} have no %%EOF end marker, so the PDF is cut short or damaged.`;
+    if (pdf === "none") return `${by}, but ${size} are not a PDF: ${lookOf(bytes)}.`;
+    if (pdf === undefined && !bytesMatchType(bytes, type))
+      return `${by}, but ${size} are not ${type}: ${lookOf(bytes)}.`;
+  }
+  return undefined;
 };
 
 /**

@@ -2,7 +2,13 @@ import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { Effect, Either, Ref, Schema } from "effect";
 import type { BrowserExecute } from "./browser-execution.js";
-import { acceptsSource, bytesMatchType, isProgram, sniffedType } from "./file-types.js";
+import {
+  acceptsSource,
+  bytesMatchType,
+  downloadContradiction,
+  isProgram,
+  sniffedType,
+} from "./file-types.js";
 import {
   defaultFileLimits,
   downloadUrlMaxLength,
@@ -452,7 +458,7 @@ return ${typeof sink === "string" ? "{ saved: true }" : `image.length > ${sink} 
  * the hook's reference for each one the run may use, such as the references in its input. A file
  * goes only into one `<input type="file">` on the tool's site, after its size, type, the input's
  * `accept` and the run's caps allow it; a program never moves. A download is kept only within
- * the caps and when it is no program. `execute` runs the host's own page code on the run's browser.
+ * the caps, when it is no program and when its bytes are the type it claims. `execute` runs the host's own page code on the run's browser.
  */
 export const makeRunFiles = (options: {
   readonly hook: FileHostHook;
@@ -564,9 +570,18 @@ export const makeRunFiles = (options: {
         Effect.tap((slot) => Effect.sync(() => slots.add(slot))),
         Effect.mapError(() => new FileRefused({ reason: "unavailable" })),
       );
-    /** Keeps a file within the run's caps for its caller, as one the run collected. */
+    /**
+     * Keeps a file within the run's caps for its caller, as one the run collected. An empty file,
+     * or one whose bytes contradict the type its server or name claims, is refused
+     * `invalid_download` before it counts, so the run fails rather than return it.
+     */
     const keepCollected = (name: string, bytes: Uint8Array, contentType?: string) =>
       Effect.gen(function* () {
+        const contradiction = downloadContradiction(bytes, { name, contentType });
+        if (contradiction !== undefined)
+          return yield* Effect.fail(
+            new FileRefused({ reason: "invalid_download", detail: contradiction }),
+          );
         if (!(yield* fits(bytes.byteLength))) return yield* refuseOverCap("run_limit");
         yield* count(bytes.byteLength);
         // The bytes decide the type when they prove one, else the server's; never the name.

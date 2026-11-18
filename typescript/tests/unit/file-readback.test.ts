@@ -67,3 +67,10 @@ it("counts files.collectAll as the file API, never as reading an input's files",
     ),
   ).toBe("sets a file input itself (use files.place)");
 });
+
+it("counts files.fetch as the file API, never as reading an input's files", () => {
+  expect(scan("const pdf = await context.files.fetch(address);", true)).toBeUndefined();
+  expect(
+    scan("await files.fetch(address);\nawait page.getByLabel('Receipt').setInputFiles(path);", false),
+  ).toBe("sets a file input itself (use files.place)");
+});
