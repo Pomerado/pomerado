@@ -16,7 +16,11 @@ const widget = "https://chat.widget.example.net";
 test.use({ launchOptions: { args: ["--site-per-process"] } });
 
 /** Serves each origin's page, opens the site, and gives the host's scan of the tab as it is then. */
-const open = async (page: Page, bodies: Readonly<Record<string, string>>) => {
+const open = async (
+  page: Page,
+  bodies: Readonly<Record<string, string>>,
+  identifiers?: readonly string[],
+) => {
   await page.route(/^https:\/\//u, (route) =>
     route.fulfill({
       contentType: "text/html",
@@ -27,7 +31,7 @@ const open = async (page: Page, bodies: Readonly<Record<string, string>>) => {
   const host = await hostPage(page);
   return () =>
     Effect.runPromise(
-      observeSignInState({ page: host, siteOrigin: site, authenticationOrigins: [provider] }),
+      observeSignInState({ page: host, siteOrigin: site, authenticationOrigins: [provider], identifiers }),
     ).then((state) => {
       if (state === undefined) throw new Error("The scan read nothing");
       return state;
@@ -111,10 +115,11 @@ test("a page with no box reads as its heading and buttons, with no address, numb
       <h1>Sam, we sent a link to j***@example.test. Check your inbox</h1>
       <p>Not <b>Sam</b>? Start over</p>
       <p>Signed in as sam_smith or j.doe</p>
+      <p>not jdoe? or (owner)</p>
       <p>&#x5c71;&#x7530;&#x592a;&#x90ce;&#x69d8;&#x3001;&#x3088;&#x3046;&#x3053;&#x305d;</p>
       <button>Resend in 30 seconds</button>
       <button aria-label="Use another email"><svg width="12" height="12"></svg></button>`,
-  });
+  }, ["jdoe@example.test", "Owner"]);
   const state = await scan();
   expect(state.fingerprint).toEqual({
     top: site,
@@ -128,8 +133,9 @@ test("a page with no box reads as its heading and buttons, with no address, numb
     "~, we sent a link to @. ~ your inbox",
     "~ ~? ~ over",
     "~ in as ~ or ~",
+    "not ~? or ~)",
   ]);
-  expect(JSON.stringify(state)).not.toMatch(/sam|smith|doe|555|\u5c71/iu);
+  expect(JSON.stringify(state)).not.toMatch(/sam|smith|doe|owner|555|\u5c71/iu);
 });
 
 test("two logins' account pickers that differ only in the names on their chips read alike", async ({

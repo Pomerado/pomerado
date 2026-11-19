@@ -21,10 +21,10 @@ export { type ObservedBox, type ObservedState, stateAfter } from "./sign-in-stat
  * A text as a state holds it, normalized here, never in the page, whose own code may change what
  * its string functions return: an address or a starred one becomes "@", a run of digits "#", of
  * stars or dots "*", and each word a name or a login may be "~": one with a capital, with "_" or
- * "." or a digit between its letters, or in a script with no capitals. Lowercase, at most `limit`
- * characters.
+ * "." or a digit between its letters, in a script with no capitals, or one of the sign-in's own
+ * `logins`, in any case. Lowercase, at most `limit` characters.
  */
-const normalized = (text: string, limit: number) =>
+const normalized = (text: string, limit: number, logins: ReadonlySet<string>) =>
   text
     .slice(0, 4_000)
     .normalize("NFKC")
@@ -35,7 +35,8 @@ const normalized = (text: string, limit: number) =>
     .replace(/\p{Nd}+/gu, "#")
     .split(" ")
     .map((word) =>
-      /[\p{Lu}\p{Lt}\p{Lo}]|[\p{L}#][._][\p{L}#]|\p{L}#|#\p{L}/u.test(word)
+      /[\p{Lu}\p{Lt}\p{Lo}]|[\p{L}#][._][\p{L}#]|\p{L}#|#\p{L}/u.test(word) ||
+      logins.has(word.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "").toLowerCase())
         ? `~${/[.,;:!?)]*$/u.exec(word)?.[0] ?? ""}`
         : word,
     )
@@ -210,14 +211,16 @@ const Scan = Schema.Struct({
 
 /**
  * Reads the page as a sign-in state (see `scanFrame`). A frame or the top page on a workspace host
- * of the tool's relation, other than the site's own origin, reads as `workspace`. Undefined when
- * the page could not be read, or its top page is no web page.
+ * of the tool's relation, other than the site's own origin, reads as `workspace`. A word of any
+ * text that is one of the sign-in's own `identifiers`, or an address's part before "@", is masked
+ * as a name is. Undefined when the page could not be read, or its top page is no web page.
  */
 export const observeSignInState = (input: {
   readonly page: AutofillPage;
   readonly siteOrigin: string;
   readonly authenticationOrigins: readonly string[];
   readonly workspace?: { readonly parent: string } | undefined;
+  readonly identifiers?: readonly string[] | undefined;
 }): Effect.Effect<ObservedState | undefined> =>
   input.page
     .execute(
@@ -234,6 +237,12 @@ export const observeSignInState = (input: {
         const top = URL.parse(scan.url)?.origin;
         if (top === undefined || top === "null") return undefined;
         const { workspace, siteOrigin } = input;
+        const logins = new Set(
+          (input.identifiers ?? []).flatMap((identifier) => {
+            const login = identifier.trim().toLowerCase();
+            return login === "" ? [] : [login, login.split("@")[0] ?? login].filter((part) => part !== "");
+          }),
+        );
         const named = (origin: string) =>
           workspace !== undefined && origin !== siteOrigin && workspaceHost(siteOrigin, workspace.parent, origin)
             ? "workspace"
@@ -250,19 +259,19 @@ export const observeSignInState = (input: {
         // page's, still reads as a state a library can keep.
         const empty = boxes.filter((box) => box.empty).slice(0, 24);
         const told = empty.length > 0 ? undefined : scan.frames.find((frame) => frame.message !== undefined || (frame.buttons ?? []).length > 0);
-        const buttons = (told?.buttons ?? []).slice(0, 8).map((label) => normalized(label, 120));
+        const buttons = (told?.buttons ?? []).slice(0, 8).map((label) => normalized(label, 120, logins));
         return {
           fingerprint: fingerprintOf({
             top: named(top),
             boxes: empty.map(written),
             submit: empty.some((box) => box.submit),
-            ...(told?.message === undefined ? {} : { message: normalized(told.message, 200) }),
+            ...(told?.message === undefined ? {} : { message: normalized(told.message, 200, logins) }),
             ...(told === undefined ? {} : { buttons: buttons.filter((label) => label !== "") }),
           }),
           boxes: boxes.map((box) => ({ ...written(box), empty: box.empty, submit: box.submit })),
           texts: [
             ...new Set(
-              scan.frames.flatMap((frame) => frame.texts.slice(0, 40).map((text) => normalized(text, 200))),
+              scan.frames.flatMap((frame) => frame.texts.slice(0, 40).map((text) => normalized(text, 200, logins))),
             ),
           ]
             .filter((text) => text.length >= 2)

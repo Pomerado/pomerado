@@ -420,6 +420,14 @@ it("opens the link the site's own answer says it emailed when the password state
   expect(ended).toMatchObject({ outcome: "signed_in" });
   expect(site.site.opened).toEqual([link]);
   expect(site.fills).toEqual(["password"]);
+  // The site's answer is a new page: the same box, empty again, under a notice of its own.
+  const told = scriptedSite(
+    { start: passwordScreen, notice: { ...passwordScreen, texts: ["check your email for a link that signs you in."] } },
+    () => "notice",
+  );
+  expect(await replay(told, library, { siteAnswer: "link" })).toMatchObject({ outcome: "signed_in" });
+  expect(told.site.opened).toEqual([link]);
+  expect(told.fills).toEqual(["password"]);
 });
 
 const notice = "check your email for a sign-in link";
