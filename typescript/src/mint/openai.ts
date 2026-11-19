@@ -178,9 +178,22 @@ const continuationInstruction = `The host has neither published this build nor r
 const continuationMessage = (finalsWithoutTool: number) =>
   `${continuationInstruction} This was final text without a tool call ${finalsWithoutTool} of ${finalsWithoutToolLimit} times in a row.`;
 
-/** Told once the attempt's model calls are within one segment of the capacity. */
-const modelCallNotice = (used: number, capacity: number) =>
-  `Host notice: this attempt has made ${used} of the ${capacity} model calls it may make, and it ends without publication when it reaches the limit. Finish with the evidence you have: publish from a retained receipt, or end the attempt and say what is missing. This notice grants no new authority.`;
+/**
+ * Told once the attempt's model calls are within one segment of the capacity, which an attempt
+ * that wraps up reaches at its wrap-up point.
+ */
+const modelCallNotice = (used: number, capacity: number, wrapUp: boolean) =>
+  `Host notice: this attempt has made ${used} of the ${capacity} model calls it may make, and it ends without publication when it reaches the limit. ${wrapUp ? "Stop exploring and finish" : "Finish"} with the evidence you have: publish from a retained receipt, or end the attempt and say what is missing. This notice grants no new authority.`;
+
+/** A live explore step from an attempt's wrap-up point until its next finish_build. Nothing ran. */
+const exploringOver = (used: number, capacity: number) =>
+  JSON.stringify({
+    status: "tool_failed",
+    code: "ScopeDenied",
+    reason: "exploring_over",
+    effect: "not_sent",
+    instruction: modelCallNotice(used, capacity, true),
+  });
 
 /**
  * A provider failure that the same request can get past later: a lost connection, a timeout,
@@ -603,6 +616,13 @@ const openAIMinter = (
     readonly modelCallCapacity?: number;
     readonly segmentTurns?: number;
     readonly modelRetry?: ModelCallRetry;
+    /**
+     * Whether the attempt wraps up once one segment's worth of model calls is left (384 of 512
+     * by default): from that exact call it hears the notice, and live explore steps are refused
+     * until its next finish_build, so the rest goes to publishing and what publication asks for.
+     * False for a host with its own wrap-up: the notice then comes at a segment boundary only.
+     */
+    readonly wrapUp?: boolean;
   } = {},
   ports: {
     readonly observerFactory?: ModelObserverFactory;
@@ -617,6 +637,10 @@ const openAIMinter = (
       const causeMetadata = ports.causeMetadata ?? modelCauseMetadata;
       const modelCallCapacity = limits.modelCallCapacity ?? mintModelCallCapacity;
       const turnsPerSegment = limits.segmentTurns ?? segmentTurns;
+      const wrapUp = limits.wrapUp ?? true;
+      const wrapUpAt = modelCallCapacity - turnsPerSegment;
+      /** The model calls made when the attempt last called finish_build. */
+      let finishedAt = -1;
       const retry = limits.modelRetry ?? modelCallRetry;
       const deadline = turn.deadline ?? Deadline.after();
       // Whether the provider rejected OpenAI's prompt-cache settings, for this run's requests.
@@ -1175,12 +1199,24 @@ const openAIMinter = (
                 // The host gets the request without its patch, and reviews the files it left.
                 const { patch, ...request }: { readonly patch?: unknown } = restored;
                 // Only an autofill site takes a signInStep; the harness decodes the request itself.
+                const exploringClosed =
+                  wrapUp &&
+                  modelCalls >= wrapUpAt &&
+                  finishedAt < wrapUpAt &&
+                  "purpose" in request &&
+                  request.purpose === "explore" &&
+                  "target" in request &&
+                  request.target === "liveBrowser";
                 const run = () =>
                   !turn.autofillSignIn && "signInStep" in request
                     ? dispatch("execute", input, details, undefined, () =>
                         Promise.resolve(managedSignInStep),
                       )
-                    : executeTool.execute(request, context, details);
+                    : exploringClosed
+                      ? dispatch("execute", input, details, undefined, () =>
+                          Promise.resolve(exploringOver(modelCalls, modelCallCapacity)),
+                        )
+                      : executeTool.execute(request, context, details);
                 if (patch === undefined) return run();
                 return applyPatch(patch, details?.toolCall?.callId).then(
                   (refused) => refused ?? run(),
@@ -1201,7 +1237,10 @@ const openAIMinter = (
                 "finish_build",
                 "Request current-source review and publication against a completed read example or the write session step that confirmed the write. Coverage describes checks actually run and gaps. outputOverrides names each output check finding whose value is correct as returned, such as intended code or page text that only resembles code, with why; the reviewer checks them. findingResponses answers a finding of the last publication denial you hold wrong, by its id, with the evidence that shows it; the next review rules on each. A not_published response may allow source correction and another finish_build request. A new example read requires explicit host repeatableRead:true; nonrepeatable examples remain fenced. intent states why this source and execution satisfy the request.",
                 "Publication did not succeed. Correct supported source or metadata errors and submit finish_build again when justified. Existing execution results remain valid independently. A new example read requires explicit host repeatableRead:true; never replay a nonrepeatable example, a write that may have committed or an uncertain authentication action.",
-                (request) => turn.actions.finish(request),
+                (request) => {
+                  finishedAt = modelCalls;
+                  return turn.actions.finish(request);
+                },
               ),
               parameters: parameters(withIntent(PublicationRequest)),
             });
@@ -1772,12 +1811,16 @@ const openAIMinter = (
               );
               return [...history, { role: "user", content }];
             };
-            const runSegment = (
-              input: string | AgentInputItem[] | RunState<unknown, typeof agent>,
-            ) =>
+            const runSegment = (input: RunState<unknown, typeof agent>) =>
               runner.run(agent, input, {
                 signal,
-                maxTurns: replayTurnLimit ?? turnsPerSegment,
+                // An attempt that wraps up ends its segment at the wrap-up point, where the
+                // notice goes.
+                maxTurns:
+                  replayTurnLimit ??
+                  (wrapUp && modelCalls < wrapUpAt
+                    ? Math.min(turnsPerSegment, input._currentTurn + wrapUpAt - modelCalls)
+                    : turnsPerSegment),
                 sandbox: { session: turn.session },
               });
             type SegmentResult = Awaited<ReturnType<typeof runSegment>>;
@@ -1852,7 +1895,7 @@ const openAIMinter = (
                           ...history,
                           {
                             role: "user",
-                            content: modelCallNotice(modelCalls, modelCallCapacity),
+                            content: modelCallNotice(modelCalls, modelCallCapacity, wrapUp),
                           },
                         ]
                       : history;
@@ -2047,6 +2090,13 @@ export const makeOpenAIMinter = (
     readonly modelCallCapacity?: number;
     readonly segmentTurns?: number;
     readonly modelRetry?: ModelCallRetry;
+    /**
+     * Whether the attempt wraps up once one segment's worth of model calls is left (384 of 512
+     * by default): from that exact call it hears the notice, and live explore steps are refused
+     * until its next finish_build, so the rest goes to publishing and what publication asks for.
+     * False for a host with its own wrap-up: the notice then comes at a segment boundary only.
+     */
+    readonly wrapUp?: boolean;
   } = {},
   ports: {
     readonly observerFactory?: ModelObserverFactory;

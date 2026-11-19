@@ -3136,3 +3136,71 @@ it("holds a response's later calls after a step whose failed result a takeover r
   expect(resultOf(requests[1], "explore_page")).toContain("not_run");
   expect(ran).toEqual(["example"]);
 });
+
+const exploreLive = (id: string) =>
+  call("execute", { ...execution, purpose: "explore", target: "liveBrowser" }, id);
+const readSource = (index: number) =>
+  call("read_source", { path: "src/tool.ts", offset: null, limit: null }, `read_${index}`);
+
+// The last segment's worth of model calls is for publishing: from exactly that call (9 of 16 here,
+// 384 of 512 by default) the notice says to stop exploring, and the host refuses a live explore
+// step until the next finish_build. What publication review then asks for still runs, with calls
+// to spare. A host with its own wrap-up (wrapUp false) explores on and hears no notice before a
+// segment boundary.
+it.each([true, false])(
+  "wraps an attempt up at its last segment's model calls (wrapUp %s)",
+  async (wrapUp) => {
+    const review = denyPublicationOnce({
+      outcome: "escalate",
+      reason: "evidence",
+      reviewId: "review_capture",
+      rationale: "Capture the site's own search request, or say why the HTTP version cannot work.",
+      findings: [],
+    });
+    const f = await fixture(
+      (_request, index) =>
+        index < 9
+          ? readSource(index)
+          : ([
+              exploreLive("explore"),
+              call("execute", execution, "example"),
+              call("finish_build", publication, "finish"),
+              exploreLive("asked_capture"),
+              together(stepPatch("correction"), call("finish_build", publication, "finish_again")),
+            ][index - 9] ?? prose()),
+      { publish: review.publish },
+      {},
+      { modelCallCapacity: 16, segmentTurns: 7, wrapUp },
+    );
+    expect(await f.run()).toMatchObject({
+      build: "published",
+      publicationRef: "corrected_revision",
+    });
+    expect(f.requests).toHaveLength(14);
+    const told = (index: number) => JSON.stringify(f.requests[index]?.input);
+    expect(told(8)).not.toContain("model calls it may make");
+    expect(told(9).includes("9 of the 16 model calls")).toBe(wrapUp);
+    expect(told(9).includes("Stop exploring and finish")).toBe(wrapUp);
+    expect(told(10).includes("exploring_over")).toBe(wrapUp);
+    // The capture the review asked for ran after the wrap-up point either way.
+    expect(f.counts().executed).toBe(wrapUp ? 2 : 3);
+    expect(review.publications()).toBe(2);
+  },
+);
+
+it("ends a wrapped-up attempt with no passing receipt by saying what is missing", async () => {
+  const missing = "No example passed: the results page never loaded.";
+  const f = await fixture(
+    (_request, index) =>
+      index < 9 ? readSource(index) : index === 9 ? exploreLive("explore") : prose(missing),
+    {},
+    {},
+    { modelCallCapacity: 16, segmentTurns: 7 },
+  );
+  expect(await f.run()).toMatchObject({
+    build: "incomplete",
+    stopReason: "final_text_without_tool",
+    stopExplanation: missing,
+  });
+  expect(f.counts()).toEqual({ executed: 0, published: 0, asked: 0 });
+});
