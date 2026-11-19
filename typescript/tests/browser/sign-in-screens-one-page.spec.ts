@@ -36,6 +36,13 @@ const screens: Readonly<Record<string, string>> = {
     "password",
     '<label>Password<input id="password" name="password" type="password"></label><button id="login-submit">Sign in</button>',
   ),
+  // The email alone, sent with the email and password screen's own button.
+  email: form("email", '<label>Email<input id="email" name="email"></label><button id="guided-submit">Sign in</button>'),
+  // Email and password, the password box drawn a moment after the email box.
+  late: form(
+    "both",
+    '<label>Email<input id="email" name="email"></label><button id="guided-submit">Sign in</button><script>setTimeout(() => document.querySelector("label").insertAdjacentHTML("afterend", \'<label>Password<input id="password" name="password" type="password"></label>\'), 400)</script>',
+  ),
 };
 
 /**
@@ -89,6 +96,9 @@ const recorded = {
     submittedBy: "host",
     refills: ["password"],
   },
+  email: { page, fields: [{ selector: "#email", accepts: ["email"] }], submit: "#guided-submit", submittedBy: "host" },
+  // A button-only screen whose button is the email and password screen's own.
+  shared: { page, fields: [], submit: "#guided-submit", submittedBy: "host" },
 } as const;
 
 type Recipe = Parameters<typeof signInForRun>[0]["recipe"];
@@ -144,6 +154,8 @@ const sends: Readonly<Record<string, string>> = {
   continue: "continue",
   code: `code ${code}`,
   password: `password ${login.password}`,
+  email: `email ${login.username}`,
+  late: `both ${login.username} ${login.password}`,
 };
 
 // One set that holds two logins' screens after the same button-only screen: a code for one, the
@@ -179,4 +191,37 @@ test("a run whose password screen comes back whole after its submit ends as that
   const { ended } = await run(browserPage, both);
   expect(ended).toMatchObject({ reason: "credential_screen_returned" });
   expect(sent).toEqual([sends["both"], "continue", sends["password"]]);
+});
+
+// Two logins on one page and one button: one sees email and password together, the other the
+// email alone, then a code. The email screen holds no control the other lacks, so the replay
+// tells them apart by the password box: gone and staying gone, or shown, drawn late or not.
+const emailFirst = recipeOf("email", "code", "both", "continue");
+const emailLast = recipeOf("both", "continue", "code", "email");
+
+for (const [name, recipe, flow] of [
+  ["a login the site asks for its email alone, the email screen recorded last", emailLast, ["email", "code"]],
+  ["a login the site asks for its email alone, the email screen recorded first", emailFirst, ["email", "code"]],
+  ["a password login whose set holds the email screen first", emailFirst, ["both", "continue", "code"]],
+  ["a password login whose password box draws late, the email screen recorded last", emailLast, ["late", "continue", "code"]],
+  ["a password login whose password box draws late, the email screen recorded first", emailFirst, ["late", "continue", "code"]],
+] as const)
+  test(`a run whose email screen shares the email and password screen's button: ${name}`, async ({
+    page: browserPage,
+  }) => {
+    const shown: readonly string[] = flow;
+    const sent = await serve(browserPage, shown);
+    const { ended, prompts } = await run(browserPage, recipe);
+    expect(ended).toEqual(signedIn);
+    expect(prompts).toEqual(["login", "code"]);
+    expect(sent).toEqual(shown.map((screen) => sends[screen]));
+  });
+
+test("a run never takes a recorded button-only screen whose button is the screen it waits for's own", async ({
+  page: browserPage,
+}) => {
+  const sent = await serve(browserPage, ["email", "code"]);
+  const { ended } = await run(browserPage, recipeOf("both", "shared", "code"));
+  expect(ended).toMatchObject({ reason: "not_found" });
+  expect(sent).toEqual([]);
 });
