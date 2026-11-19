@@ -59,6 +59,8 @@ interface SiteOptions {
   readonly questions?: string[];
   /** The login screen sits on another origin of the site than the recipe recorded. */
   readonly loginOrigin?: string;
+  /** The login screen's form sits in a frame from this origin on the site's page. */
+  readonly loginFrame?: string;
   /** The login screen shows `#username-error` after a wrong username. */
   readonly usernameMarker?: boolean;
   /** The entry page fails to load. */
@@ -179,10 +181,11 @@ const fakeSite = (options: SiteOptions = {}) => {
         const selectors = [...step.fields.map((field) => field.selector), ...(step.submit === undefined ? [] : [step.submit])];
         if (selectors.length === 0 || !selectors.every(shows)) return { outcome: "refused", reason: "not_found" };
         const at = pageOrigin(state.page);
+        const frame = state.page === "login" ? (options.loginFrame ?? at) : at;
         const target = {
-          ownerUrl: `${at}/${state.page}`,
-          documentOrigin: at,
-          actions: [`${at}/${state.page}`],
+          ownerUrl: `${frame}/${state.page}`,
+          documentOrigin: frame,
+          actions: [`${frame}/${state.page}`],
           methods: ["post"],
           editable: true,
           control: "text" as const,
@@ -195,7 +198,7 @@ const fakeSite = (options: SiteOptions = {}) => {
           siteOrigin: origin,
           authenticationOrigins: [],
           screen: {
-            origin: at,
+            origin: frame,
             fields: step.fields.map((field) => ({
               tag: "input",
               role: null,
@@ -720,6 +723,28 @@ it("fails RecipeFailed when a recorded screen shows on another origin than the r
   );
   expect(fake.fills).toEqual([]);
   expect(kinds(asked)).toEqual(["credential:missing_credentials"]);
+});
+
+it("runs a screen recorded on the site's sign-in host where the site's page shows it in a frame from there", async () => {
+  // The screen was recorded with the sign-in host's page on top. The run opens the site's page,
+  // which shows the same form in a frame from that host.
+  const identity = `https://identity.${site}`;
+  const fake = fakeSite({ loginFrame: identity });
+  const recipe = { ...recipeOf(), steps: [{ ...loginStep, page: `${identity}/login` }] };
+  const { ask } = owner();
+  expect(await signIn(recipe, fake, ask)).toEqual(Either.right({ alreadySignedIn: false }));
+  expect(fake.fills).toEqual([{ page: "login", values: [account.username, account.password] }]);
+});
+
+it("refuses a screen recorded off the site that the site's page shows in a frame from there", async () => {
+  const provider = "https://id.example-sign-in.test";
+  const fake = fakeSite({ loginFrame: provider });
+  const recipe = { ...recipeOf(), steps: [{ ...loginStep, page: `${provider}/login` }] };
+  const { ask } = owner();
+  expect(await signIn(recipe, fake, ask)).toEqual(
+    Either.left(new SignInRunFailed({ code: "RecipeFailed", reason: "screen_origin_changed" })),
+  );
+  expect(fake.fills).toEqual([]);
 });
 
 it.each([

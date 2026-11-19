@@ -134,20 +134,27 @@ export type ScreenOriginAdmission =
 const identifierAnchorAdmits = (context: ScreenOriginContext) =>
   context.identifierSent && context.candidate === undefined;
 
+/** Whether `origin` is on the site's registrable domain. */
+const onSite = (siteOrigin: string, origin: string) => {
+  const url = URL.parse(origin);
+  return url !== null && sameSite(siteOrigin, url);
+};
+
 const refused = (
   context: ScreenOriginContext,
   live: string,
   reason: ScreenOriginRefusal,
-): ScreenOriginAdmission => {
-  const url = URL.parse(live);
-  return { admitted: false, reason, sibling: url !== null && sameSite(context.siteOrigin, url) };
-};
+): ScreenOriginAdmission => ({ admitted: false, reason, sibling: onSite(context.siteOrigin, live) });
 
 /**
- * Whether a live screen on `live` (an origin) may run the recorded screen `step`.
+ * Whether a live screen on `live` (an origin), its controls in a frame on `frame` when known, may
+ * run the recorded screen `step`.
  *
  * An exact recorded screen runs on its own origin, or on the login's pinned workspace when the
- * recipe has a relation (the shared sign-in sent this login to its own workspace). A workspace
+ * recipe has a relation (the shared sign-in sent this login to its own workspace). For a recipe
+ * with no relation, it also runs in a frame on its own origin on another page of the site, as a
+ * site shows its sign-in host's form on its home page, when that origin is the site's too: the
+ * controls are still the recorded origin's, never a third party's. A workspace
  * host seen there without a pinned one, or another than the pinned one before this replay sent
  * the login's identifier, is `workspace_unverified`: this login sent nothing that explains it, so
  * it may be leftover cookies, a link or another workspace the site remembers.
@@ -161,6 +168,7 @@ export const admitScreenOrigin = (
   context: ScreenOriginContext,
   step: RecordedScreen,
   live: string,
+  frame?: string,
 ): ScreenOriginAdmission => {
   const { relation, siteOrigin } = context;
   const sibling = relation !== undefined && workspaceHost(siteOrigin, relation.parent, live);
@@ -168,18 +176,31 @@ export const admitScreenOrigin = (
     return relation === undefined
       ? refused(context, live, "screen_origin_changed")
       : admitWorkspaceScreen(context, live, sibling);
-  return admitExactScreen(context, step, live, sibling);
+  return admitExactScreen(context, step, live, sibling, frame);
 };
 
-/** An exact recorded screen: its own origin, or the login's pinned workspace under a relation. */
+/**
+ * An exact recorded screen: its own origin, a frame on it on the site's page with no relation, or
+ * the login's pinned workspace under a relation.
+ */
 const admitExactScreen = (
   context: ScreenOriginContext,
   step: RecordedScreen,
   live: string,
   sibling: boolean,
+  frame: string | undefined,
 ): ScreenOriginAdmission => {
-  const { relation, pinned } = context;
-  if (live === recordedScreenOrigin(step, undefined)) return { admitted: true };
+  const { relation, pinned, siteOrigin } = context;
+  const recorded = recordedScreenOrigin(step, undefined);
+  if (live === recorded) return { admitted: true };
+  if (
+    relation === undefined &&
+    frame !== undefined &&
+    frame === recorded &&
+    onSite(siteOrigin, frame) &&
+    onSite(siteOrigin, live)
+  )
+    return { admitted: true };
   if (relation !== undefined && pinned !== undefined && live === pinned) return { admitted: true };
   if (sibling && (pinned === undefined || !context.identifierSent))
     return refused(context, live, "workspace_unverified");

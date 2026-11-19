@@ -234,7 +234,7 @@ const awaitRecordedScreen = <E extends YieldableError, V extends string, L exten
           : yield* refusedScreen(input, replay, shown.found);
     // The screen must sit on its recorded origin or the login's own workspace, not only on the
     // same site: another tenant's login on a shared domain would pass the site check.
-    const refused = yield* admitScreen(input, replay, recorded, shown.found.page);
+    const refused = yield* admitScreen(input, replay, recorded, shown.found.page, shown.found);
     if (refused !== undefined) return replay.outcome(refused);
     return shownScreen(step, shown.found);
   });
@@ -315,7 +315,7 @@ const submitGoneAfterTyping = <E extends YieldableError, V extends string, L ext
     const keyed: AutofillStep = { ...rest, submitKey: "Enter" };
     const inspection = yield* input.hooks.inspect(keyed);
     if ("outcome" in inspection) return undefined;
-    if ((yield* admitScreen(input, replay, recorded, inspection.page)) !== undefined)
+    if ((yield* admitScreen(input, replay, recorded, inspection.page, inspection)) !== undefined)
       return undefined;
     replay.progress.screenGone = true;
     yield* input.emit({ stage: "retried", reason: "submit_gone_after_typing" });

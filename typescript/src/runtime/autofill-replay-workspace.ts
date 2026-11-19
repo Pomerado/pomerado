@@ -44,11 +44,12 @@ export interface ReplayWorkspace<E = unknown> {
 const admissionContext = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   input: AutofillReplayInput<E, V, L>,
   replay: Replay<E, V, L>,
+  siteOrigin: string,
 ) => {
   const workspace = input.workspace;
   const known = replay.progress.workspace;
   return {
-    siteOrigin: workspace?.siteOrigin ?? "",
+    siteOrigin: workspace?.siteOrigin ?? siteOrigin,
     relation: workspace === undefined ? undefined : { parent: workspace.parent },
     pinned: workspace?.pinned,
     candidate: known !== workspace?.pinned ? known : undefined,
@@ -58,8 +59,9 @@ const admissionContext = <E extends YieldableError, V extends string, L extends 
 
 /**
  * Whether a shown screen may be filled where it shows (workspace origins).
- * A screen recorded on an exact origin (the site or a shared sign-in host) must show there, or,
- * for a tool with a workspace relation, on the login's own workspace origin: the shared sign-in
+ * A screen recorded on an exact origin (the site or a shared sign-in host) must show there, in a
+ * frame on it on the site's page when that origin is the site's and the tool has no workspace
+ * relation, or, for a tool with one, on the login's own workspace origin: the shared sign-in
  * may send a remembered workspace to its own sign-in page. A workspace screen
  * must show on the login's workspace origin, or on a host that passes the gates that the site
  * navigated to after this replay sent the login's identifier on a recorded screen on its exact
@@ -75,13 +77,20 @@ export const admitScreen = <E extends YieldableError, V extends string, L extend
   replay: Replay<E, V, L>,
   recorded: SignInRecipeStep,
   page: string,
+  /** The shown screen as inspected, whose controls' frame an exact screen may also run in. */
+  shown?: Pick<AutofillInspection, "siteOrigin" | "screen">,
 ) =>
   Effect.gen(function* () {
     const live = originOf(page);
     if (live === undefined) return "screen_origin_changed" as const;
     const workspace = input.workspace;
     const known = replay.progress.workspace;
-    const admitted = admitScreenOrigin(admissionContext(input, replay), recorded, live);
+    const admitted = admitScreenOrigin(
+      admissionContext(input, replay, shown?.siteOrigin ?? ""),
+      recorded,
+      live,
+      shown?.screen.origin,
+    );
     if (admitted.admitted) {
       if (admitted.learned !== undefined) {
         yield* (
