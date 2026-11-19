@@ -248,6 +248,42 @@ test("a separator hidden from assistive technology still splits the capture, so 
   }
 });
 
+test("text the page holds out of view and shows nowhere reads as hidden in the capture, and a shown copy does not", async () => {
+  test.setTimeout(90_000);
+  // A countdown with an announcement kept off screen, a shown error with an off-screen copy, and
+  // a price whose off-screen copy sits beside the aria-hidden one it shows.
+  const offScreen = "position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden";
+  const site = await startSite((_request, response) =>
+    html(
+      response,
+      `<title>Order</title><main><h1>Add to your order</h1><div role="status">3 hours left</div>` +
+        `<span style="${offScreen}" aria-live="assertive">Time is up. You can no longer add items.</span>` +
+        `<div role="alert">Card declined</div><div style="${offScreen}">Card declined</div>` +
+        `<p>Total <span><span style="${offScreen}">$9.99</span><span aria-hidden="true">$9<sup>99</sup></span></span></p>` +
+        `<button type="button">Continue</button></main>`,
+    ),
+  );
+  const guardian = recordingGuardian({ readPage: true });
+  try {
+    const { last } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      turns: [
+        () => patch({ "explore/look.mjs": probe() }),
+        () => [call("execute", execution("explore", "explore/look.mjs"), "first")],
+        () => [call("execute", execution("explore", "explore/look.mjs"), "second")],
+      ],
+    });
+    expect(toolResult(last, "second")).toMatchObject({ status: "completed" });
+    expect(captureOf(executions(guardian.reviews)[1])).toContain(
+      '  - status: 3 hours left\n  - text: [hidden: Time is up. You can no longer add items.]\n  - alert: Card declined\n  - text: Card declined\n  - paragraph: Total $9.99',
+    );
+  } finally {
+    await site.close();
+  }
+});
+
 test("a page over the element limit is not captured, and the browser keeps working", async () => {
   test.setTimeout(90_000);
   const items = Array.from(

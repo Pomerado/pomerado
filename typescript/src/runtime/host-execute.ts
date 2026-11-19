@@ -1,4 +1,5 @@
 import type { Effect } from "effect";
+import { visibleTextPageCode } from "../browser/visible-text.js";
 import { timeoutDefaults } from "./deadline.js";
 
 /** One browser's host calls: plain Playwright code with `page`, `context` and `browser`. */
@@ -28,8 +29,11 @@ const ${name} = await (async () => {
  * accessibility snapshot, with a `- separator [aria-hidden]` line where a rendered `hr` or
  * `role="separator"` hidden from assistive technology splits rendered content. The snapshot drops
  * such a separator, and an unnamed form or group's edge with it, so a notice after one reads as
- * part of the controls before it. The page is only read; when that read fails, the snapshot is
- * unmarked. Pass no `mode: "ai"`: that snapshot already lists a visible aria-hidden separator.
+ * part of the controls before it. Text the snapshot keeps that the page holds out of view and
+ * shows nowhere, by `visibleTextPageCode`'s rule, reads `[hidden: <text>]` where a line's value
+ * holds it; a copy beside an aria-hidden sibling, which shows it, is not marked. The page is only
+ * read; when a read fails, the snapshot is unmarked by it. Pass no `mode: "ai"`: that snapshot
+ * already lists a visible aria-hidden separator.
  *
  * One pass in document order, past aria-hidden subtrees, finds the anchors around each run of
  * such separators: rendered text, or a control's own label. The line goes before the first line,
@@ -39,7 +43,7 @@ const ${name} = await (async () => {
  */
 export const markedAriaSnapshotCode = `
 const markedAriaSnapshot = async (locator, options) => {
-  const [aria, splits] = await Promise.all([
+  const [aria, splits, hidden] = await Promise.all([
     locator.ariaSnapshot(options),
     locator
       .evaluate((root) => {
@@ -157,8 +161,26 @@ const markedAriaSnapshot = async (locator, options) => {
       }, undefined, { timeout: options?.timeout })
       .then(JSON.parse)
       .catch(() => []),
+    locator
+      .evaluate((root) => {
+        ${visibleTextPageCode}
+        // The text of each element out of view that the page shows nowhere, by the visible reader.
+        const elements = [];
+        const shown = visibleTextPage([root], { as: "visible", lines: false, hidden: elements })[0] ?? "";
+        const texts = new Set();
+        for (const element of elements) {
+          const text = element.textContent.replace(/\\s+/g, " ").trim();
+          // A screen-reader copy of what an aria-hidden sibling shows, such as a price's, is shown.
+          const twin = [...(element.parentElement?.children ?? [])].some((sibling) =>
+            sibling.matches('[aria-hidden="true" i]'));
+          if (text !== "" && !twin && !shown.includes(text)) texts.add(text);
+        }
+        return JSON.stringify([...texts]);
+      }, undefined, { timeout: options?.timeout })
+      .then(JSON.parse)
+      .catch(() => []),
   ]);
-  if (splits.length === 0) return aria;
+  if (splits.length === 0 && hidden.length === 0) return aria;
   const lines = aria.split("\\n");
   // The first line from \`from\`, and before \`to\`, that holds \`text\`, or -1.
   const find = (text, from, to = lines.length) => {
@@ -186,11 +208,23 @@ const markedAriaSnapshot = async (locator, options) => {
     marked.add(at);
     from = next;
   }
+  // Each such text in a line's value, never in a name or a text control's value, as written
+  // plain or quoted, longest first.
+  const pattern = (form) =>
+    new RegExp(hidden.sort((a, b) => b.length - a.length)
+      .map((text) => form(text).replace(/[^\\w\\s]/g, "\\\\$&")).join("|"), "g");
+  const [plain, quoted] = hidden.length === 0 ? []
+    : [pattern((text) => text), pattern((text) => JSON.stringify(text).slice(1, -1))];
+  const hide = (line) => {
+    const value = plain && /^(\\s*- (?!(?:textbox|searchbox|spinbutton|combobox)\\b)[a-z]+(?: "(?:[^"\\\\]|\\\\.)*")?(?: \\[[^\\]]*\\])*: )(.+)$/.exec(line);
+    return value ? value[1] + value[2].replace(value[2].startsWith('"') ? quoted : plain, "[hidden: $&]") : line;
+  };
   return lines
     .flatMap((line, index) =>
       marked.has(index)
         ? [line.slice(0, line.length - line.trimStart().length) + "- separator [aria-hidden]", line]
         : [line])
+    .map(hide)
     .join("\\n");
 };
 `;
