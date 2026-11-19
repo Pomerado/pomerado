@@ -689,13 +689,45 @@ describe("OpenAI reviewer policy and trusted authority", () => {
         "";
       expect(writeRule).toContain(`${anchor} ${sentence} `);
       expect(writeRule).toContain(
-        `${sentence} Opening pages that the site then marks as visited or as progress, without submitting an answer or a form, is part of a read, unless the request asks to change that progress. In a signed-out session,`,
+        `${sentence} Opening pages that the site then marks as visited or as progress, without submitting an answer or a form, is part of a read, unless the request asks to change that progress. `,
       );
     }
     // The action label agrees, beside its pointer to the signed-out session state.
     const input = modelInput(requests) as { trusted_review: { policy: string } };
     expect(input.trusted_review.policy).toContain(
       "Changing a signed-out session's own state, as the execution policy lists it, is a read. So is a public site's own record of a view, as the execution policy says. So is opening pages the site marks as visited or as progress, as the execution policy says.",
+    );
+  });
+
+  // A read that lists what a site's checkout offers had to open the checkout to see it, and the
+  // checkout's page sent its own requests as it opened. Nothing was chosen, entered or saved, so
+  // opening the checkout only to read it is a read, and the action label agrees.
+  it("tells Guardian opening a checkout only to read what it offers is a read", async () => {
+    const requests = readThenDecide({
+      outcome: "allow",
+      rationale: "Controlled source was read.",
+      action: "read",
+    });
+    await Effect.runPromise(
+      makeGuardian(reviewer(markedUpstreamPolicy)).review(pending, readEntrypoint),
+    );
+    const sentence =
+      "So is opening a checkout only to read what it offers, choosing, entering and saving nothing, with the requests its page sends.";
+    for (const policy of [
+      instructionsOf(requests[0]),
+      guardianExecutionPolicy(otherHost),
+      guardianExecutionPolicy(nativeExecutionEnvironment),
+    ]) {
+      const writeRule =
+        policy.split("\n").find((line) => line.startsWith("Classify actual website effects")) ??
+        "";
+      expect(writeRule).toContain(
+        `unless the request asks to change that progress. ${sentence} In a signed-out session,`,
+      );
+    }
+    const input = modelInput(requests) as { trusted_review: { policy: string } };
+    expect(input.trusted_review.policy).toContain(
+      "So is opening pages the site marks as visited or as progress, as the execution policy says. So is opening a checkout only to read what it offers, as the execution policy says.",
     );
   });
 

@@ -1,6 +1,6 @@
 ---
 name: forms
-description: Guarded native/custom selection, dynamic choices and consequential form completion.
+description: Guarded native/custom selection, dynamic choices, consequential form completion, and files a tool uploads, downloads or returns.
 ---
 
 # Author the site's behavior
@@ -119,7 +119,8 @@ lacks, one a write matches only loosely (`option_unclear`), or several options t
 comes back as `{ picked: false, reason, available, matches }`: decode it with `PickOutcome` and
 throw `pickRefusal(outcome, field)`, which lists options that tie as `available`, or ask the
 caller to choose among `matches`, as the core skill says for `option_unclear`. In a tool that takes the first of options that tie instead (each tool decides,
-core skill), pass `tie: "first"`, so the picker takes the first of them in the site's order and
+but never for an address, pickup or drop-off value, core skill), pass `tie: "first"`, so the
+picker takes the first of them in the site's order and
 returns the one it used, and return that option's label in the tool's output. In a read whose
 typed field is the site's own search, when `pickValue` returns `option_missing` with an empty
 `available`, prefer a person's fallback: type the caller's own text into the field again, then
@@ -184,9 +185,9 @@ skill.
 
 Before acting on a notice, find its container in the page's structure (its form or group), not
 its place in the accessibility snapshot, which can hide dividers. A notice applies only to the
-controls in its own container, or a control its text names. Before you end a build because the
-site requires something, name its exact text and the control it belongs to; when that control
-is not on the request's path, keep going.
+controls in its own container. Before you end a build because the site requires something, name
+its exact text and the control it belongs to; when that control is not on the request's path,
+keep going.
 
 Type each date-only input and output as the runtime's `CalendarDate`, imported beside
 `formControlsCode`, never a bare `YYYY-MM-DD` pattern, which accepts `2026-02-30`. It checks
@@ -233,6 +234,15 @@ sets a file input from base64 input with `setInputFiles` uses a deprecated patte
 still allows while the build has no file handle and no `FileInput`: a repair keeps its input as
 it is, and a new tool takes a `FileInput` and uses `files.place`.
 
+A document the browser shows in its own viewer, often a PDF, starts no download, so
+`files.collect` around its link finds none. Return it with `files.fetch(url)` and the document's
+own address. The run's page fetches it with its own session, so the address must be on the page's
+site or on a site that lets the page read it; when it is not, call `files.fetch` while the page
+shows the document's own site. Never return a screenshot of the viewer as the document. The host
+refuses a document whose bytes show no file of the type its server or name claims, an empty one
+included; the site then sent another page, usually a sign-in or error page, so fix what made it
+send that.
+
 When a form asks for more than one upload, prefer one `FileInput` per upload, named for the site's
 label, each placed by its own `files.place` call. Prefer making an input required only when every
 form the tool fills requires its upload; one a repair adds stays optional, so existing callers keep
@@ -258,7 +268,8 @@ form (it asks the caller and changes its task to a write with `mint_update` firs
 writes skill says); a write build does the whole form as its one task. A search, filter or query form
 whose read semantics are established stays a read, and so does a signed-out store or location
 form, or a signed-in session's per-visit location control that saves nothing to the account (core
-skill). A signed-out quote or price form that only fetches is a read too, but a
+skill). So does opening a checkout only to read what it offers, choosing, entering and saving
+nothing. A signed-out quote or price form that only fetches is a read too, but a
 quote, contact or inquiry form that sends a name, email, phone number or similar personal detail
 creates a lead or other lasting record on the site, so it is a write: ask the caller first, as
 the writes skill says. A step that only sets an input that tailors the answer with details the

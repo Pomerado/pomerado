@@ -10,6 +10,7 @@ import { makeIntegrationMcp } from "../../src/standalone/mcp-server.js";
 import { contractJsonSchema } from "../../src/runtime/operation.js";
 import { FileInput, FileOutput, type FileLimits } from "../../src/runtime/files.js";
 import {
+  report,
   monthStatement,
   receiptTool,
   startFileSite,
@@ -566,6 +567,77 @@ return true;`,
   } finally {
     await served.close();
     await site.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("files.fetch returns a PDF the site shows inline or another site shares, directly or through a redirect, and fails on a sign-in page, an error, a mislabelled page or another site's private one", async () => {
+  test.info().annotations.push({
+    type: "slow",
+    description: "One native run that fetches seven addresses through Chromium",
+  });
+  const site = await startFileSite();
+  const other = await startFileSite();
+  const directory = await mkdtemp(join(tmpdir(), "pomerado-files-qa-"));
+  const served = await serve(
+    site.url,
+    join(directory, "downloads"),
+    {
+      source: `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"send_receipt",input:Schema.Struct({}),output:Schema.Unknown},
+async ({files}) => {
+  const fetched = (path, from = ${JSON.stringify(site.url)}) => files.fetch(new URL(path, from).href, { timeoutMs: 5000 }).then((file) => file, (error) => error.message);
+  return {
+    report: await fetched("/report.pdf"),
+    shared: await fetched("/public.pdf", ${JSON.stringify(other.url)}),
+    moved: await fetched(${JSON.stringify(`/moved?to=${encodeURIComponent(new URL("/public.pdf", other.url).href)}`)}),
+    private: await fetched("/report.pdf", ${JSON.stringify(other.url)}),
+    expired: await fetched("/expired.pdf"),
+    missing: await fetched("/missing.pdf"),
+    mislabelled: await fetched("/mislabelled.pdf"),
+  };
+});`,
+    },
+    contractJsonSchema(Schema.Struct({})),
+  );
+  try {
+    const result = await settled(
+      served.client,
+      served.client.callTool({ name: "send_receipt", arguments: { input: {} } }),
+    );
+    expect(result.isError, JSON.stringify(result)).toBeFalsy();
+    const output = result.structuredContent as Record<string, unknown>;
+    const file = output["report"] as { $file: Record<string, unknown> };
+    expect(file.$file, JSON.stringify(result)).toMatchObject({
+      name: "report.pdf",
+      media_type: "application/pdf",
+      size: report.length,
+      sha256: createHash("sha256").update(report).digest("hex"),
+    });
+    expect(await readFile(fileURLToPath(String(file.$file["download_url"])), "utf8")).toBe(
+      report,
+    );
+    expect(output["shared"], JSON.stringify(result)).toMatchObject({
+      $file: { name: "public.pdf", media_type: "application/pdf", size: report.length },
+    });
+    expect(output["moved"], JSON.stringify(result)).toMatchObject({
+      $file: { name: "public.pdf", media_type: "application/pdf", size: report.length },
+    });
+    expect(output["private"]).toBe(
+      "files.fetch could not read the address from the page: it did not answer in time, or it is on another site that does not share it with this page",
+    );
+    expect(output["expired"]).toBe(
+      "files.fetch got a web page, not a file, from the address; it is usually a sign-in or error page",
+    );
+    expect(output["missing"]).toBe("files.fetch got HTTP 404 from the address, not a file");
+    expect(output["mislabelled"]).toBe(
+      "The host refused the file: invalid_download. Its name ends in .pdf, but its 67 bytes are not a PDF: they look like an HTML or XML page.",
+    );
+  } finally {
+    await served.close();
+    await site.close();
+    await other.close();
     await rm(directory, { recursive: true, force: true });
   }
 });

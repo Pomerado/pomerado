@@ -223,7 +223,7 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   ["core", "- The code works for every value the schema accepts."],
   [
     "core",
-    "- Match the caller's proper nouns, such as places, venues and company names, with a fuzzy match that accepts the usual forms of the same name, such as a name with or without its accents (Abaca for Abacá), or a city alone or with its state and country after a comma. Never require an exact match. A name with words added or dropped is a looser match, which a read picks and a write asks about, as above. `sameText` from `pomerado/runtime` matches a name that differs only in case, accents, spacing, apostrophes, periods, commas or hyphens, or in a word the site writes short, such as St-Jean for Saint-Jean, but not one with a word added or dropped. Prefer it for confirming the pick, so the read-back agrees with the choice, but not for choosing from a list, where a short label can match a longer name it isn't, such as UK for Ukraine. When more than one option matches equally, decide per tool: take the first in the site's order and return the one it used, as the site labels it, or list them for the caller to choose one, each selecting exactly one.",
+    "- Match the caller's proper nouns, such as places, venues and company names, with a fuzzy match that accepts the usual forms of the same name, such as a name with or without its accents (Abaca for Abacá), or a city alone or with its state and country after a comma. Never require an exact match. A name with words added or dropped is a looser match, which a read picks and a write asks about, as above. `sameText` from `pomerado/runtime` matches a name that differs only in case, accents, spacing, apostrophes, periods, commas or hyphens, or in a word the site writes short, such as St-Jean for Saint-Jean, but not one with a word added or dropped. Prefer it for confirming the pick, so the read-back agrees with the choice, but not for choosing from a list, where a short label can match a longer name it isn't, such as UK for Ukraine. When more than one option matches equally, decide per tool, except for an address, pickup or drop-off value (above): take the first in the site's order and return the one it used, as the site labels it, or list them for the caller to choose one, each selecting exactly one.",
   ],
   // A value the caller names goes through the site's own search, not only a menu the page shows.
   [
@@ -374,15 +374,16 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
     "workspace/AGENTS.md",
     "ending, and the build goes on. Before ending blocked because a value the request gave is unavailable or invalid on the site, such as a time slot the site does not offer that day, a date outside its calendar or a name it does not list, ask the owner with `request_input` to revise it or stop, as the key rules say. End blocked only when they stop or their answer cannot be met either. A read whose bad value is its example's record proves the tool on another record first (\"Reads, writes and examples\"). In maintenance, follow the intake screen instead. Give the evidence in `intent`",
   ],
-  // Only what the caller asked for decides whether a tool books or refuses, each check guards the
-  // caller's request or the tool's own change and passes where the task went right, every listed
-  // option gets read, a repair fixes a broken input but keeps a caller's documented design
-  // decision, a fix covers every required control the input has no value for rather than the one
-  // that failed, and a format read from one sample breaks on the next value, so the minter reads
-  // it off the page.
+  // A form can open filled in from an earlier search, so the code first sets or clears every field
+  // it fills. Only what the caller asked for decides whether a tool books or refuses, each check
+  // guards the caller's request or the tool's own change and passes where the task went right,
+  // every listed option gets read, a repair fixes a broken input but keeps a caller's documented
+  // design decision, a fix covers every required control the input has no value for rather than
+  // the one that failed, and a format read from one sample breaks on the next value, so the
+  // minter reads it off the page.
   [
     "core",
-    "never just the example's value. The example's values are one case, never limits. - Prefer keying only on what the caller asked for. A detail that changes from one listing to the next, such as a seating label or a room name, shouldn't decide whether the tool books or refuses unless the caller chose it. A tool's check guards what the caller asked for or what the tool itself changes: it proves the caller's request before the step it guards and the tool's own change after it, stops on anything else only for a problem the page shows, not for something it can't find, and passes on every page where the task went right. A repair narrows a check that stopped a run where the task went right, or removes it when it guards neither. - Read results for every option the schema lists. When an option leads to a page with a different structure (other fields or sections), handle that layout too, and on a read signed out run it live as a test case (testing skill); an option that only reorders or filters the same rows needs no case of its own. Never return results for another option in its place. - A repair that finds a declared input broken, never applied or always reported unsupported fixes it in the same repair, whether or not a caller is waiting. Keeping a tool's contract means every input and output it declares works, not leaving a broken one as it was. An input whose description starts \"By design:\" is applied in the use it records, a caller's decision: keep that use and its description word for word, and change them only after asking the same design question again (the input schema, \"Inputs that tailor the answer\"). - Prefer fixing the whole class of a failure over its one instance: when the page requires a control the input has no value for, prefer making every such control a declared caller question with the page's live options over throwing for it. - Never derive a format from one sample: not an input format, an element key, a selector, a URL path or a label. A key the page showed for the example's value says nothing about the next value, as when a calendar keyed December 3 as `12-3-2026` where the tool expected `12-03-2026`. Read the format off the page for the value you need, such as the day cell whose visible label or accessible name is the caller's date, or a key the page itself lists, never a key rebuilt from the one you saw. - Inputs are values a caller knows",
+    "never just the example's value. The example's values are one case, never limits. A form can open filled in from an earlier search: first set or clear every field the code fills, and don't rely on what a field showed before. - Prefer keying only on what the caller asked for. A detail that changes from one listing to the next, such as a seating label or a room name, shouldn't decide whether the tool books or refuses unless the caller chose it. A tool's check guards what the caller asked for or what the tool itself changes: it proves the caller's request before the step it guards and the tool's own change after it, stops on anything else only for a problem the page shows, not for something it can't find, and passes on every page where the task went right. A repair narrows a check that stopped a run where the task went right, or removes it when it guards neither. - Read results for every option the schema lists. When an option leads to a page with a different structure (other fields or sections), handle that layout too, and on a read signed out run it live as a test case (testing skill); an option that only reorders or filters the same rows needs no case of its own. Never return results for another option in its place. - A repair that finds a declared input broken, never applied or always reported unsupported fixes it in the same repair, whether or not a caller is waiting. Keeping a tool's contract means every input and output it declares works, not leaving a broken one as it was. An input whose description starts \"By design:\" is applied in the use it records, a caller's decision: keep that use and its description word for word, and change them only after asking the same design question again (the input schema, \"Inputs that tailor the answer\"). - Prefer fixing the whole class of a failure over its one instance: when the page requires a control the input has no value for, prefer making every such control a declared caller question with the page's live options over throwing for it. - Never derive a format from one sample: not an input format, an element key, a selector, a URL path or a label. A key the page showed for the example's value says nothing about the next value, as when a calendar keyed December 3 as `12-3-2026` where the tool expected `12-03-2026`. Read the format off the page for the value you need, such as the day cell whose visible label or accessible name is the caller's date, or a key the page itself lists, never a key rebuilt from the one you saw. - Inputs are values a caller knows",
   ],
   // The minter reads the never-loosened needed values, the facts a caller could use, typed output
   // and kept rows before it writes the schema and the parser, so a fact the code could not read
@@ -399,7 +400,7 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   // Every field is read from the page on every run and typed as the page states it.
   [
     "core",
-    "Then, for every field: - Prefer parsing what the page shows into typed fields over returning a result row, card or itinerary as one text blob or summary, and keep every result row of the main list the page shows, up to the call's `limit` (pagination skill). - A new tool's build sees only some of a list's rows, so type each row field that is neither the row's key nor a needed value as `Schema.NullOr(...)` and pass it to `waitForRows` as `optional`; a row that lacks one stays in the list with that field null. - Read every output from the page or response on every run, so every returned field has observable support: never a literal, a default you invented, or a constant `null`, `[]`, `false`, `0` or fixed label where the page can show the value. - Return `null` for a field that is not a needed value only when this record's page lacks it, and an empty list only when the page shows none; never throw for either. When the code cannot read a value the request needs, throw `OperationFailure` naming it; never return a placeholder, a label or another record's value in its place. - One field per fact, as the page states it, and variants as the dimensions and values the page lists. - Prefer numbers for amounts and counts, ISO 8601 for dates and times and minutes for durations; type a date-only value as the runtime's `CalendarDate` (forms skill) and name its zone in its description. A value that does not parse cleanly may be the site's own text; return each time it holds as a timestamp too. Compare a site's date or time with today or now only in the site's or the place's zone, never UTC's: `todayIn` and `zonedTime` from `pomerado/runtime` give both. - Never return a clock time with no zone, such as \"7:45 PM\" or \"12:38-12:59 AM\" alone: a caller cannot tell which moment it is. Return each time as a timestamp with its offset, with `zonedClock` from `pomerado/runtime` for a clock time the page shows, and name the IANA zone the site's text is in,",
+    "Then, for every field: - Prefer parsing what the page shows into typed fields over returning a result row, card or itinerary as one text blob or summary, and keep every result row of the main list the page shows, up to the call's `limit` (pagination skill). - A new tool's build sees only some of a list's rows, so type each row field that is neither the row's key nor a needed value as `Schema.NullOr(...)` and pass it to `waitForRows` as `optional`; a row that lacks one stays in the list with that field null. - Read every output from the page or response on every run, so every returned field has observable support: never a literal, a default you invented, or a constant `null`, `[]`, `false`, `0` or fixed label where the page can show the value. - Return `null` for a field that is not a needed value only when this record's page lacks it, and an empty list only when the page shows none; never throw for either. When the code cannot read a value the request needs, throw `OperationFailure` naming it; never return a placeholder, a label or another record's value in its place. - One field per fact, as the page states it, and variants as the dimensions and values the page lists. - Prefer numbers for amounts and counts, ISO 8601 for dates and times and minutes for durations; type a date-only value as the runtime's `CalendarDate` (forms skill) and name its zone in its description. A value that does not parse cleanly may be the site's own text; return each time it holds as a timestamp too. Compare a site's date or time with today or now only in the site's or the place's zone, never UTC's: `todayIn` and `zonedTime` from `pomerado/runtime` give both. - Give each time its zone when you can: with a clock time alone, such as \"7:45 PM\" or \"12:38-12:59 AM\", a caller cannot tell which moment it is. Return it as a timestamp with its offset, with `zonedClock` from `pomerado/runtime` for a clock time the page shows, and name the IANA zone the site's text is in,",
   ],
   // Output a caller can filter and compare on is parsed into typed fields.
   [
@@ -881,6 +882,33 @@ it("keeps opening pages the site marks as visited or as progress part of a read"
   );
 });
 
+// A read that lists what a site's checkout offers was switched to a write when it opened the
+// checkout, though it chose, entered and saved nothing there. Every rule on what a read may do says
+// opening a checkout only to read it stays a read, and the requests its page sends with it.
+it("keeps opening a checkout only to read what it offers part of a read", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
+  const opening = "open a checkout only to read what it offers, choosing, entering and saving nothing";
+  expect(text("workspace/AGENTS.md")).toContain(
+    `A read build may fill in and submit a search, filter or query form to read results, and ${opening}, but may not fill in or advance a form that saves data on the site`,
+  );
+  expect(text("writes")).toContain(
+    `A read build may search, filter and query, and ${opening}, but may not fill in or advance a form that saves data on the site, save or submit anything;`,
+  );
+  expect(text("forms")).toContain(
+    "(core skill). So does opening a checkout only to read what it offers, choosing, entering and saving nothing. A signed-out quote",
+  );
+  expect(text("cart")).toContain(
+    `checks out a cart. A read tool may ${opening}. For a write,`,
+  );
+  expect(text("core")).toContain(
+    "such as adding an item to a cart, submitting a form or saving a preference. If you find one,",
+  );
+  expect(text("core")).toContain(
+    "not a saved preference (the input schema above). So is opening a checkout only to read what it offers, choosing, entering and saving nothing, with the requests its page sends.",
+  );
+});
+
 /*
  * A site rewrote an address as it was typed, writing Parkway as PKWY, and the read-back refused a
  * correct save. A write takes the site's version of a typed value, as it would a picked option,
@@ -892,7 +920,7 @@ it("has a write take the site's rewrite of a typed value and note whether it cha
   const text = (name: string) =>
     (contents(skills)[skills.findIndex((skill) => skill.name === name)] ?? "").replace(/\s+/g, " ");
   expect(text("writes")).toContain(
-    "- Read each typed value back once its field settles, before the step's commit. When the site rewrote it as it was typed or on leaving the field, such as an address it standardized, or offered exactly one suggestion for it that matches it cleanly or that the address matcher accepted, take the site's version, as you would a picked option: later read-backs, such as a review page, summary or confirmation, compare against it, and the output returns it for that field. Ask about any other lone suggestion as about a looser match (core skill). The one suggestion counts only for a free-text value the caller typed, such as an address or a name in a text box the site completes, never for a picker that selects a record, such as a person, assignee, customer, linked record, store or account, which keeps the reference rules in \"Check the read-back\" and the caller-input skill's. Add an optional output field `<input>_note`, such as `address_note`, that reports the rewrite with what the caller sent and what the site kept. Check it once with `sameText(shown, typed, { rewrite: true })`, which only decides what the note says: when it holds, the site only reformatted the value, and the note says so; when it fails, the site dropped or changed part of what the caller gave, and the note says it changed. The write goes on either way: never throw `InputNotApplied` for such a rewrite. A value cut short by the field's length limit, digits an input mask dropped, or a field that cleared is a failed fill, not a rewrite: fill it again in the field's format, or refuse as today. A value the site replaces only when a step saves follows the read-back before committing, above.",
+    "- Read each typed value back once its field settles, before the step's commit. When the site rewrote it as it was typed or on leaving the field, such as an address it standardized, or offered exactly one suggestion for it that matches it cleanly (for an address, pickup or drop-off value, one the address matcher accepted), take the site's version, as you would a picked option: later read-backs, such as a review page, summary or confirmation, compare against it, and the output returns it for that field. Ask about any other lone suggestion as about a looser match (core skill). The one suggestion counts only for a free-text value the caller typed, such as an address or a name in a text box the site completes, never for a picker that selects a record, such as a person, assignee, customer, linked record, store or account, which keeps the reference rules in \"Check the read-back\" and the caller-input skill's. Add an optional output field `<input>_note`, such as `address_note`, that reports the rewrite with what the caller sent and what the site kept. Check it once with `sameText(shown, typed, { rewrite: true })`, which only decides what the note says: when it holds, the site only reformatted the value, and the note says so; when it fails, the site dropped or changed part of what the caller gave, and the note says it changed. The write goes on either way: never throw `InputNotApplied` for such a rewrite. A value cut short by the field's length limit, digits an input mask dropped, or a field that cleared is a failed fill, not a rewrite: fill it again in the field's format, or refuse as today. A value the site replaces only when a step saves follows the read-back before committing, above.",
   );
   expect(text("core")).toContain(
     "With no match, throw its `pickRefusal`, an `InvalidInput` with `field` and `available`, the entries the site showed, even when the site offered only one.",
@@ -908,6 +936,51 @@ it("has a write take the site's rewrite of a typed value and note whether it cha
     "A write's `<input>_note` reporting a value the site rewrote as it was typed, on leaving the field, or through its one suggestion is not unapplied input; the tool read the site's version back and returns it.";
   expect(publicationOutputPolicy).toContain(note);
   expect(text("publication")).toContain(note);
+});
+
+/*
+ * A tool took the site's first suggestion for a pickup place the caller gave, as the equal-match
+ * rules let each tool decide. Those rules, a read's looser match and a write's lone suggestion
+ * leave out an address, pickup or drop-off value, which only the core skill's address helpers
+ * choose, and the picker and session-location rules send it to them.
+ */
+it("never takes the first or a looser match for an address, pickup or drop-off value", async () => {
+  const skills = await Effect.runPromise(loadAuthoringSkills("typescript/authoring"));
+  const text = (name: string) =>
+    (contents(skills)[skills.findIndex((skill) => skill.name === name)] ?? "").replace(/\s+/g, " ");
+  expect(text("core")).toContain(
+    "or the site's first result that shares a word with the value, is picked with `loose: true`, except for an address, pickup or drop-off value (below): return the option it used",
+  );
+  expect(text("core")).toContain(
+    "follow `pickValue`'s rule, except for an address, pickup or drop-off value (below): a read takes the best match at any rank",
+  );
+  expect(text("core")).toContain(
+    "Resolve a typed address, pickup or drop-off value through the site's suggestions in two calls",
+  );
+  expect(text("core")).toContain(
+    "With several, decide per tool, except for an address, pickup or drop-off value, which only the address helpers below choose: take the first in the site's own order",
+  );
+  expect(text("caller-input")).toContain(
+    "or a read's looser match, returning the option it used, but never for an address, pickup or drop-off value (core skill)",
+  );
+  expect(text("caller-input")).toContain(
+    "each tool decides which, but never takes the first for an address, pickup or drop-off value (core skill).",
+  );
+  expect(text("publication")).toContain(
+    "a free-text place, name or venue, other than an address, pickup or drop-off value, that matches several of the site's options equally",
+  );
+  expect(text("publication")).toContain(
+    "goes through `pickValue` or `pickValues`, an address, pickup or drop-off value through the core skill's address helpers (\"Own address match\"),",
+  );
+  expect(text("forms")).toContain(
+    "In a tool that takes the first of options that tie instead (each tool decides, but never for an address, pickup or drop-off value, core skill), pass `tie: \"first\"`",
+  );
+  expect(text("writes")).toContain(
+    "with `pickValue`, or the core skill's address helpers for an address, pickup or drop-off value, and the site's own confirm control in one step.",
+  );
+  expect(text("writes")).toContain(
+    "offered exactly one suggestion for it that matches it cleanly (for an address, pickup or drop-off value, one the address matcher accepted),",
+  );
 });
 
 /*
@@ -969,13 +1042,15 @@ it("has a write's last question before a commit that pays pass order, in any cha
  * A checkout's final confirm folded each line's quantity into its name, passed the line total as
  * the price each, and listed its fees and tip as items. The writes and caller-input skills name
  * the order's own fields for those, and the cart skill suggests the same parts for a checkout's
- * output, apart from the confirm's fixed fields.
+ * output, apart from the confirm's fixed fields. A confirm also left out a credit the checkout
+ * applied, so its lines added up to more than its total: the writes skill lists every line, credits
+ * in the discount, and makes the total what the caller will be charged.
  */
 it("has a purchase confirm's order and a checkout's output give lines, fees and tip their own fields", async () => {
   const texts = await renderedTexts("typescript/authoring");
   const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
   expect(text("writes")).toContain(
-    "Fill `order` as the checkout shows it: each item's real quantity, its `unit` when sold by weight or measure, and its price each, its line total or both; fees, a tip and a discount go in their own fields. When an item's measure is in a unit `unit` does not list, give it quantity 1 and its line total, with the measure as the checkout shows it in its name.",
+    "Fill `order` as the checkout shows it, every charge and credit line included: each item's real quantity, its `unit` when sold by weight or measure, and its price each, its line total or both; fees and a tip go in their own fields, and every discount, credit and promotion, summed, in `discount`. When an item's measure is in a unit `unit` does not list, give it quantity 1 and its line total, with the measure as the checkout shows it in its name. `total` is what the commit will charge the caller, and the lines add up to it.",
   );
   expect(text("caller-input")).toContain(
     "its `items` (each `name`, `quantity`, `unit` for an item sold by weight or measure, and `price` each, `lineTotal` or both), `fees` (each `name` and `amount`), `discount`, `shipping`, `tax`, `tip` and `total`",
@@ -1406,7 +1481,7 @@ it("has a paying step fill the card and press through to pay in one reviewed ste
     "then fill the card and press pay in that one step, with no question between them unless the checkout itself requires one.",
   );
   expect(flat("caller-input")).toContain(
-    "such as a pickup time that moved from 12:15 to 12:30, don't go back to change it, and don't press again in a later step after a press failed. Report it instead: a build ends with `report_blocked` naming it, and a run fails saying so, before the order's commit mark when it can.",
+    "such as a pickup time that moved from 12:15 to 12:30, don't go back to change it, and don't press again in a later step after a press failed, unless the host says the press never reached the site. Report it instead: a build ends with `report_blocked` naming it, and a run fails saying so, before the order's commit mark when it can.",
   );
   expect(flat("writes")).toContain(
     "Keep the click on the final commit control, such as Save, Send, Submit, Book or Pay, in its own step, except a pay press after the host's card fill, which goes in the fill's step (caller-input skill).",
@@ -1644,17 +1719,17 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["4d0ab1a268ea66de1c20cbc87ff260d2e3f824d19e5f4dc5af8d68445ffb128b", "core"],
-    ["7c3be765ee7c1c62b13a4876cc5453bbeb8acc7948b51511574f36f2aed09c4a", "search"],
+    ["498164f7d0e3dd83a2ecb1c49f83163916c1e76b573ef60a8bb0e88dd3e8b853", "core"],
+    ["97e3b5ebdbe8d5fca43790729084de4eef4fbcf5fdf71ad645e679fd72f4e804", "search"],
     ["5918d38595593c4dfbf5028322c5b678c3082d6c473573f454f53f511b2f5f53", "auth"],
     ["539abe36b602c8e2eff8745dd0462aea41837a20cc0b90cbef7a01cbad6fb89a", "testing"],
-    ["d524204c6ed2dc0fa773d6e5cf0aef993e2b48ee9db3fcbf291e40ebe8c9913d", "pagination"],
-    ["f3b66b463e9042252359073744353cb3594685df09b56cf0ac1123bce13c891f", "forms"],
-    ["b59b77c1b0c506873a90e6cb989173f05be2c152716730aabd5bde80b804eefd", "writes"],
-    ["ab2cacdaf78da396c1ed4217b66c514cf595ea6c0c2827ea5dd87ab0276a7a63", "cart"],
-    ["88044110409fabba1277fd66fe5bdc40f0e15f56edd97be23d0678abeb109442", "caller-input"],
-    ["5e831bd1ba21d5ec4b1da3a96152f9d905144cbef58b9bd26381933f27faa97c", "publication"],
-    ["0abdab6a68ce07ced766e367583c6259ab49dbfb525602c7755cb6420b2df6a0", "workspace/AGENTS.md"],
+    ["ca80679c4488dec4ee85052fb39f1493b6d5f8ca4a5df9b56d10a2e96078e848", "pagination"],
+    ["b0220727e7f21e1c5d10101e74996ddb3d2d4e18061ac85c807203ed4ab0f695", "forms"],
+    ["3cd1434cdea838aee3b06589f685812620c48d2aba277f86622d6bb45282cb40", "writes"],
+    ["8287515976be8d5dbebd929d0550822c15fe2f4e8b8fe59a47ebed7d40b996fa", "cart"],
+    ["4955925c3dabff643ba8ae5cc2c4bab79ed075947ce8760cf916b5f9e7d9c878", "caller-input"],
+    ["d47486fdd08e7a7ff6ab8f38ee03e6a3e8e2287eb67f2412f1fe996543ea1857", "publication"],
+    ["6745f230da3802f1f0dbe8990098de01895e5ca42e2c58efbb83b0c423a282ea", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);
 });
@@ -1774,8 +1849,8 @@ it("renders the search URL fast path only when a host turns it on", async () => 
     ...on.digests.filter(([, name]) => name === "search"),
     [sha256(on.agents), "workspace/AGENTS.md"],
   ]).toStrictEqual([
-    ["e3c82530af60da937a450bd94be81e1fefea6ef2324d9cd54379a52fc1d7c930", "search"],
-    ["0f53c7bb09d94526ee427a261b86467c7f33418742740004a9c0f81af1c83e1d", "workspace/AGENTS.md"],
+    ["de172ebf03d92a8782f5abbdd8444d90104634da28f4e21ad444dcbde0734e1f", "search"],
+    ["542fcf56e25db343d985026424e7d263c139508da6ac6b1715f6c55b67ba9c6d", "workspace/AGENTS.md"],
   ]);
   expect(on.digests.filter(([, name]) => name !== "search")).toStrictEqual(
     off.digests.filter(([, name]) => name !== "search"),

@@ -206,6 +206,16 @@
       "import": "./dist/typescript/src/destinations/sign-in-provider-codes.js",
       "default": "./dist/typescript/src/destinations/sign-in-provider-codes.js"
     },
+    "./core/destinations/sign-in-state-scan": {
+      "types": "./dist/typescript/src/destinations/sign-in-state-scan.d.ts",
+      "import": "./dist/typescript/src/destinations/sign-in-state-scan.js",
+      "default": "./dist/typescript/src/destinations/sign-in-state-scan.js"
+    },
+    "./core/destinations/sign-in-states": {
+      "types": "./dist/typescript/src/destinations/sign-in-states.d.ts",
+      "import": "./dist/typescript/src/destinations/sign-in-states.js",
+      "default": "./dist/typescript/src/destinations/sign-in-states.js"
+    },
     "./core/execution/boundary": {
       "types": "./dist/typescript/src/execution/boundary.d.ts",
       "import": "./dist/typescript/src/execution/boundary.js",
@@ -646,6 +656,11 @@
       "import": "./dist/typescript/src/runtime/autofill-values.js",
       "default": "./dist/typescript/src/runtime/autofill-values.js"
     },
+    "./core/runtime/browser-action-timeout": {
+      "types": "./dist/typescript/src/runtime/browser-action-timeout.d.ts",
+      "import": "./dist/typescript/src/runtime/browser-action-timeout.js",
+      "default": "./dist/typescript/src/runtime/browser-action-timeout.js"
+    },
     "./core/runtime/capture-diagnostic": {
       "types": "./dist/typescript/src/runtime/capture-diagnostic.d.ts",
       "import": "./dist/typescript/src/runtime/capture-diagnostic.js",
@@ -855,6 +870,11 @@
       "types": "./dist/typescript/src/runtime/script-input.d.ts",
       "import": "./dist/typescript/src/runtime/script-input.js",
       "default": "./dist/typescript/src/runtime/script-input.js"
+    },
+    "./core/runtime/sign-in-states-replay": {
+      "types": "./dist/typescript/src/runtime/sign-in-states-replay.d.ts",
+      "import": "./dist/typescript/src/runtime/sign-in-states-replay.js",
+      "default": "./dist/typescript/src/runtime/sign-in-states-replay.js"
     },
     "./core/runtime/sign-in-telemetry": {
       "types": "./dist/typescript/src/runtime/sign-in-telemetry.d.ts",

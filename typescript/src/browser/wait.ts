@@ -662,6 +662,8 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
   const candidates = names.map((name) => outcomeWaitCandidate(name, outcomes[name]));
   const pendingNames = new Set(options.pending === undefined ? [] : [options.pending].flat());
   for (const name of pendingNames) {
+    if (typeof name !== "string")
+      throw new TypeError("waitForOutcome pending takes outcome keys, not locators: add the locator to the outcomes and name its key in pending");
     const kind = candidates.find((candidate) => candidate.name === name)?.kind;
     if (kind === undefined) throw new TypeError('waitForOutcome pending "' + name + '" names none of its outcomes');
     if (["response", "dialog", "popup"].includes(kind))
@@ -919,11 +921,20 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
       }
       if (shown !== undefined) {
         const observation = observations?.[shown.name];
+        // After a commit's click, whether a look shows the winner more than once, every visible match
+        // new since the click, and no other outcome, a pending one from before the click aside.
+        const allNew = (observed) => observed?.[shown.name]?.visible > 1 && observed[shown.name].changed === observed[shown.name].visible &&
+          !candidates.some((each) => each !== shown &&
+            outcomeWaitShows(each, observed[each.name], state, stale || pendingNames.has(each.name), now));
         // A locator with more than one match decides only when it shows more than once, its visible
-        // matches all read the same, and none is left from before the action beside a new one.
+        // matches all read the same, and none is left from before the action beside a new one. After
+        // a commit's click, visible matches all new since the click decide however they read, while
+        // no other outcome shows at this look and the next, since a look reads the outcomes listed
+        // after the winner before it.
         if (shown.kind === "locator" && observation.count > 1 && !(observation.visible > 1 &&
             !(observation.changed > 0 && observation.changed < observation.visible) &&
-            (await waitBounded(outcomeWaitSameText(shown.locator).catch(() => false), Math.max(250, Math.min(1000, beforeStop())), false)))) {
+            ((committing && allNew(observations) && allNew(await look())) ||
+              (await waitBounded(outcomeWaitSameText(shown.locator).catch(() => false), Math.max(250, Math.min(1000, beforeStop())), false))))) {
           const failure = outcomeWaitFailure("outcome_ambiguous", ": " + outcomeWaitSeen(observations), observations, {
             outcome: shown.name,
           });
@@ -1492,8 +1503,9 @@ const waitForChange = async (fields, options = {}) => {
  * `OutcomeWaitFailure` has `observations` (`OutcomeObservation` by key) and one of these reasons:
  *
  * - `outcome_ambiguous`, when the winning outcome's locator matches more than one element, unless
- *   more than one is visible and the visible ones all read the same text; its `outcome` is that
- *   key. Scope the locator, for example with `.filter({ visible: true })`.
+ *   more than one is visible and the visible ones all read the same text or, after a commit's click
+ *   (below), are all new since it while no other outcome shows; its `outcome` is that key. Scope
+ *   the locator, for example with `.filter({ visible: true })`.
  * - `outcome_unknown`, when no outcome shows and the page made no progress for `noProgressMs`: a
  *   challenge, the site's error or a layout the code does not handle, never slowness. Also, after a
  *   commit's click (below), when an outcome that is the site's message shows while a request that

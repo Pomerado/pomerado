@@ -130,9 +130,10 @@ separately are both applied as given, even when they're far apart.
    Never pick another value for the caller, such as a near match, the page's default or the
    first option, except a value that matches several site entries equally, where the tool may
    take the first and return the one it used, or a read's looser match, returning the option it
-   used (core skill), and never report a refused or
-   unapplied value in the output instead of throwing, such as a `sort_applied: false` flag or a
-   "best-effort" or "lookup-only" description. The cases above that return results with what
+   used, but never for an address, pickup or drop-off value (core skill), and never report a
+   refused or unapplied value in the output instead of throwing, such as a `sort_applied: false`
+   flag or a "best-effort" or "lookup-only" description. The cases above that return results
+   with what
    applied, and a declared refusal, are the only exceptions.
 
 ## Ask the caller during a run
@@ -148,7 +149,8 @@ Try first. Ask only for what the page or the caller uniquely knows at that point
 - which of several site entries the caller's value matches equally, such as a restaurant with
   several locations or a city with several airports, with those entries as the options, each
   selecting exactly one, when the tool asks instead of taking the first in the site's order;
-  each tool decides which (core skill). That is ambiguous, as is a near-miss name the site
+  each tool decides which, but never takes the first for an address, pickup or drop-off value
+  (core skill). That is ambiguous, as is a near-miss name the site
   offers alternatives for: prefer not starting a refusal of either with "Caller input error:"
   (above). A day or option the page greys out, with or without a reason, is not ambiguous and
   never a question (core skill, "Configure, then read");
@@ -235,9 +237,10 @@ already asked for, or to solve a CAPTCHA.
      it, and a host may refuse to fill it again once a request that may have charged went
      out. So never leave the checkout once the card is in: when something must change
      after that, such as a pickup time that moved from 12:15 to 12:30, don't go back to
-     change it, and don't press again in a later step after a press failed. Report it
-     instead: a build ends with `report_blocked` naming it, and a run fails saying so,
-     before the order's commit mark when it can. A tool that pays never reads a field's
+     change it, and don't press again in a later step after a press failed, unless the
+     host says the press never reached the site. Report it instead: a build ends with
+     `report_blocked` naming it, and a run fails saying so, before the order's commit
+     mark when it can. A tool that pays never reads a field's
      value or the page's markup, runs or plants code in the page, opens a DevTools
      session, takes an accessibility snapshot, screenshot or PDF of the page, records the
      page, or reads a request body, in any step: write every act step that way from the

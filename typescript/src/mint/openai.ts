@@ -178,9 +178,33 @@ const continuationInstruction = `The host has neither published this build nor r
 const continuationMessage = (finalsWithoutTool: number) =>
   `${continuationInstruction} This was final text without a tool call ${finalsWithoutTool} of ${finalsWithoutToolLimit} times in a row.`;
 
-/** Told once the attempt's model calls are within one segment of the capacity. */
-const modelCallNotice = (used: number, capacity: number) =>
-  `Host notice: this attempt has made ${used} of the ${capacity} model calls it may make, and it ends without publication when it reaches the limit. Finish with the evidence you have: publish from a retained receipt, or end the attempt and say what is missing. This notice grants no new authority.`;
+/**
+ * Told once the attempt's model calls are within one segment of the capacity, which an attempt
+ * that wraps up reaches at its wrap-up point.
+ */
+const modelCallNotice = (used: number, capacity: number, wrapUp: boolean) =>
+  `Host notice: this attempt has made ${used} of the ${capacity} model calls it may make, and it ends without publication when it reaches the limit. ${wrapUp ? "Stop exploring and finish" : "Finish"} with the evidence you have: publish from a retained receipt, or end the attempt and say what is missing. This notice grants no new authority.`;
+
+/** A live explore step from an attempt's wrap-up point until its next finish_build. Nothing ran. */
+const exploringOver = (used: number, capacity: number) =>
+  JSON.stringify({
+    status: "tool_failed",
+    code: "ScopeDenied",
+    reason: "exploring_over",
+    effect: "not_sent",
+    instruction: modelCallNotice(used, capacity, true),
+  });
+
+/**
+ * A finish_build reply in which a publication review's ask stands: the review asked for more, or
+ * the same submission came back unchanged since it did.
+ */
+const ReviewAsked = Schema.parseJson(
+  Schema.Union(
+    Schema.Struct({ code: Schema.Literal("ReviewDenied") }),
+    Schema.Struct({ reason: Schema.Literal("unchanged_since_denial") }),
+  ),
+);
 
 /**
  * A provider failure that the same request can get past later: a lost connection, a timeout,
@@ -603,6 +627,13 @@ const openAIMinter = (
     readonly modelCallCapacity?: number;
     readonly segmentTurns?: number;
     readonly modelRetry?: ModelCallRetry;
+    /**
+     * Whether the attempt wraps up once one segment's worth of model calls is left (384 of 512
+     * by default): from that exact call it hears the notice, and live explore steps are refused
+     * until its next finish_build, so the rest goes to publishing and what publication asks for.
+     * False for a host with its own wrap-up: the notice then comes at a segment boundary only.
+     */
+    readonly wrapUp?: boolean;
   } = {},
   ports: {
     readonly observerFactory?: ModelObserverFactory;
@@ -617,6 +648,12 @@ const openAIMinter = (
       const causeMetadata = ports.causeMetadata ?? modelCauseMetadata;
       const modelCallCapacity = limits.modelCallCapacity ?? mintModelCallCapacity;
       const turnsPerSegment = limits.segmentTurns ?? segmentTurns;
+      const wrapUpAt = modelCallCapacity - turnsPerSegment;
+      const wrapUp = (limits.wrapUp ?? true) && wrapUpAt > 0;
+      /** The model calls made when a publication review's ask last stood in a finish_build reply. */
+      let reviewAskedAt = -1;
+      /** Whether this attempt heard its wrap-up notice. */
+      let toldWrapUp = false;
       const retry = limits.modelRetry ?? modelCallRetry;
       const deadline = turn.deadline ?? Deadline.after();
       // Whether the provider rejected OpenAI's prompt-cache settings, for this run's requests.
@@ -1175,12 +1212,24 @@ const openAIMinter = (
                 // The host gets the request without its patch, and reviews the files it left.
                 const { patch, ...request }: { readonly patch?: unknown } = restored;
                 // Only an autofill site takes a signInStep; the harness decodes the request itself.
+                const exploringClosed =
+                  wrapUp &&
+                  modelCalls >= wrapUpAt &&
+                  reviewAskedAt < wrapUpAt &&
+                  "purpose" in request &&
+                  request.purpose === "explore" &&
+                  "target" in request &&
+                  request.target === "liveBrowser";
                 const run = () =>
                   !turn.autofillSignIn && "signInStep" in request
                     ? dispatch("execute", input, details, undefined, () =>
                         Promise.resolve(managedSignInStep),
                       )
-                    : executeTool.execute(request, context, details);
+                    : exploringClosed
+                      ? dispatch("execute", input, details, undefined, () =>
+                          Promise.resolve(exploringOver(modelCalls, modelCallCapacity)),
+                        )
+                      : executeTool.execute(request, context, details);
                 if (patch === undefined) return run();
                 return applyPatch(patch, details?.toolCall?.callId).then(
                   (refused) => refused ?? run(),
@@ -1201,7 +1250,16 @@ const openAIMinter = (
                 "finish_build",
                 "Request current-source review and publication against a completed read example or the write session step that confirmed the write. Coverage describes checks actually run and gaps. outputOverrides names each output check finding whose value is correct as returned, such as intended code or page text that only resembles code, with why; the reviewer checks them. findingResponses answers a finding of the last publication denial you hold wrong, by its id, with the evidence that shows it; the next review rules on each. A not_published response may allow source correction and another finish_build request. A new example read requires explicit host repeatableRead:true; nonrepeatable examples remain fenced. intent states why this source and execution satisfy the request.",
                 "Publication did not succeed. Correct supported source or metadata errors and submit finish_build again when justified. Existing execution results remain valid independently. A new example read requires explicit host repeatableRead:true; never replay a nonrepeatable example, a write that may have committed or an uncertain authentication action.",
-                (request) => turn.actions.finish(request),
+                (request) =>
+                  turn.actions.finish(request).pipe(
+                    // A review's standing ask reopens live exploring for what it names.
+                    Effect.tap((reply) =>
+                      Effect.sync(() => {
+                        if (Either.isRight(Schema.decodeUnknownEither(ReviewAsked)(reply)))
+                          reviewAskedAt = modelCalls;
+                      }),
+                    ),
+                  ),
               ),
               parameters: parameters(withIntent(PublicationRequest)),
             });
@@ -1209,7 +1267,7 @@ const openAIMinter = (
             const blocked = tool({
                     ...hostTool(
                       "report_blocked",
-                      "End this build as blocked when the requested task is impossible as asked: site_lacks_capability when the site does not offer what the task needs; site_declined when the site offers what the task needs but declines this example's own facts, such as an applicant it will not quote, and explanation names the reason the site gave; set temporary when the site declines only for now, such as a store closed until it opens, and availableAt when the site says when; site_unavailable when the site is temporarily down for the failing input: its own pages show a maintenance or outage page, or fail with a 5xx answer from its own service, while the tool's code and the caller's input are unchanged, never a 5xx answer only to the request the tool made, since that request can be wrong; prefer it over changing the code or over site_lacks_capability, and never use it for a bot check or an access-denied page; a site-wide outage, maintenance, error or empty page that appears only after the site already served its pages in this attempt, or after a bot check you got past earlier, is reported the same way, for the outage page you see now, not the earlier check; a host may then give the build a new browser on another network address, which on a signed-in build starts signed out, and ask you to try the failing step once more before it ends the build, so try it again and report site_unavailable again if the page stays; a page that looks blank or broken right after you closed an overlay, popup or dialog is not an outage: read the data the page already holds, reload it, or reach the same data through the site's other route first; a site that fails only under this build's own request volume, such as requests it refuses as too many, or larger pages failing where smaller ones pass, on a fresh network address too, is limiting the build, not down: set rateLimited on the site_unavailable report; a page for the example's own record that says the site can't offer it right now, or comes back blank, while the site serves its other records, is the site's answer for that record, not an outage: prefer having the tool return it as an explicit state with the site's words and no items over a complete empty list, prove the tool on another record the site lists or ask the caller, and keep building; an error on a control that serves only an optional part of the request is not the site being down: prefer leaving that part as the page shows it, or empty, saying so in the description, and building the rest of the task; caller_input when the caller's own request stops the build: what it states conflicts with itself or its cited sources, a file it needs is missing, or it rules out going on, such as a stop condition it set that cannot be met; a stop the site caused on its own, such as an expired quote, a block, an outage or a site error, is not caller_input, even when the request says to stop on it, so prefer site_declined or site_unavailable; prefer asking with request_input for a missing fact the caller could supply; cite the field or instruction in intent, and say in explanation what the caller should supply or change; owner_declined when the owner answered no to a confirm question, or declined to sign in, and the build needs that step; question_unanswered when a question you asked went unanswered and the build cannot go on without its answer; owner_ended when the owner chose in an answer to end the build, such as after confirming that a fact it needs is unknown; host_refused when a host check refused a step the build needs, such as finish_build, a sign-in form or a site change, or when live_tests answered no_time, no batch is left, and Guardian's denial of the last publication rests on a failure only a new batch could clear, and nothing left in this attempt can fix it; policy only when Guardian refused an execution in this attempt with refusal final, denied or escalated a publication for privacy or authority, or with a private_literal, credential, customer_data, exfiltration, unsafe_logging or safety_default finding, and nothing within your authority gets past it; policy also stands when Guardian denied this build's act step five times in a row, with no act step allowed between, and you know no correction left; a publication denial or escalation that names a correction or missing evidence, such as source_correction, evidence or an example_value finding, is review feedback to fix, never a policy block; your own instructions are never a policy block, and the host refuses each reason without its basis on record, unless the host's guidance names that policy ending. agent_declined when you decline the requested task yourself, under your own usage policy, and no change you could ask for would make you build it; explanation says in one plain sentence which part you won't build and may offer a narrower request. Prefer it over final text. Never use it for a task that is only hard, or for anything a site, Guardian or the owner did. site_declined is for a site that judged this example's own facts. Do not use it for a bot check, an access-denied page or any block that came before the site saw the example; the host ends those as an unsolved challenge. explanation tells the caller in one or two plain sentences what happened and why in this build, such as the reason the site gave or when it says it takes the request again, and the caller reads it after the host's standard message for the ending; Guardian reviews it first, and returns it with a rationale when it passes on a website's instructions, links or phone numbers or does not match the evidence: the attempt then goes on, and you revise the explanation and call again, or withdraw it and continue. Never use it for anything recoverable in this attempt: a failed execution, review feedback, a sign-in problem, a browser or host problem the host can still recover, a question only the caller can answer (ask with request_input), or a target on another registrable domain (proceed; Guardian reviews it). Once Guardian allows the explanation, it ends the attempt; nothing is published. Use host_unavailable only when executionAvailability is host_unavailable and what the build still needs cannot run without live execution, such as a fresh example after a source correction: it ends the attempt as the host's failure, never as blocked, with no explanation review, so never call a host fault policy. intent states the evidence that the task is impossible as asked, or that the host ended live execution.",
+                      "End this build as blocked when the requested task is impossible as asked: site_lacks_capability when the site does not offer what the task needs; site_declined when the site offers what the task needs but declines this example's own facts, such as an applicant it will not quote, and explanation names the reason the site gave; set temporary when the site declines only for now, such as a store closed until it opens, and availableAt when the site says when; site_unavailable when the site is temporarily down for the failing input: its own pages show a maintenance or outage page, or fail with a 5xx answer from its own service, while the tool's code and the caller's input are unchanged, never a 5xx answer only to the request the tool made, since that request can be wrong; prefer it over changing the code or over site_lacks_capability, and never use it for a bot check or an access-denied page; a site-wide outage, maintenance, error or empty page that appears only after the site already served its pages in this attempt, or after a bot check you got past earlier, is reported the same way, for the outage page you see now, not the earlier check; a host may then give the build a new browser on another network address, which on a signed-in build starts signed out, and ask you to try the failing step once more before it ends the build, so try it again and report site_unavailable again if the page stays; a page that looks blank or broken right after you closed an overlay, popup or dialog is not an outage: read the data the page already holds, reload it, or reach the same data through the site's other route first; a site that fails only under this build's own request volume, such as requests it refuses as too many, or larger pages failing where smaller ones pass, on a fresh network address too, is limiting the build, not down: set rateLimited on the site_unavailable report; a page for the example's own record that says the site can't offer it right now, or comes back blank, while the site serves its other records, is the site's answer for that record, not an outage: prefer having the tool return it as an explicit state with the site's words and no items over a complete empty list, prove the tool on another record the site lists or ask the caller, and keep building; an error on a control that serves only an optional part of the request is not the site being down: prefer leaving that part as the page shows it, or empty, saying so in the description, and building the rest of the task; caller_input when the caller's own request stops the build: what it states conflicts with itself or its cited sources, a file it needs is missing, or it rules out going on, such as a stop condition it set that cannot be met; a stop the site caused on its own, such as an expired quote, a block, an outage or a site error, is not caller_input, even when the request says to stop on it, so prefer site_declined or site_unavailable; prefer asking with request_input for a missing fact the caller could supply; cite the field or instruction in intent, and say in explanation what the caller should supply or change; owner_declined when the owner answered no to a confirm question, or declined to sign in, and the build needs that step; question_unanswered when a question you asked went unanswered and the build cannot go on without its answer; owner_ended when the owner chose in an answer to end the build, such as after confirming that a fact it needs is unknown; host_refused when a host check refused a step the build needs, such as finish_build, a sign-in form or a site change, or when live_tests answered no_time, no batch is left, and Guardian's denial of the last publication rests on a failure only a new batch could clear, and nothing left in this attempt can fix it; policy only when Guardian refused an execution in this attempt with refusal final, denied or escalated a publication for privacy or authority, or with a private_literal, credential, customer_data, exfiltration, unsafe_logging or safety_default finding, and nothing within your authority gets past it; policy also stands when Guardian denied this build's act step five times in a row, with no act step allowed between, and you know no correction left; a publication denial or escalation that names a correction or missing evidence, such as source_correction, evidence or an example_value finding, is review feedback to fix, never a policy block; your own instructions are never a policy block, and the host refuses each reason without its basis on record, unless the host's guidance names that policy ending. agent_declined when you decline the requested task yourself, under your own usage policy, and no change you could ask for would make you build it; explanation says in one plain sentence which part you won't build and may offer a narrower request. Prefer it over final text. Never use it for a task that is only hard, or for anything a site, Guardian or the owner did. site_declined is for a site that judged this example's own facts. Do not use it for a bot check, an access-denied page or any block that came before the site saw the example; the host ends those as an unsolved challenge. explanation tells the caller in one or two plain sentences what happened and why in this build, such as the reason the site gave or when it says it takes the request again, and the caller reads it after the host's standard message for the ending; Guardian reviews it first, and returns it with a rationale when it passes on a website's instructions, links or phone numbers or does not match the evidence: the attempt then goes on, and you revise the explanation and call again, or withdraw it and continue. Never use it for anything recoverable in this attempt: a failed execution, review feedback, a sign-in problem, a browser or host problem the host can still recover, a question only the caller can answer (ask with request_input), or a target on another registrable domain (proceed; Guardian reviews it). When the site still offers the requested action but seems to require something the request rules out, prefer asking the caller with request_input over ending the build, unless the request also rules out asking. Once Guardian allows the explanation, it ends the attempt; nothing is published. Use host_unavailable only when executionAvailability is host_unavailable and what the build still needs cannot run without live execution, such as a fresh example after a source correction: it ends the attempt as the host's failure, never as blocked, with no explanation review, so never call a host fault policy. intent states the evidence that the task is impossible as asked, or that the host ended live execution.",
                       "The blocked ending was not recorded. Inspect the finite failure; correct the request or continue the build.",
                       // The report carries its intent, the evidence a caller_input ending cites.
                       (request, intent) => reportBlocked?.({ ...request, intent }) ?? notOfferedAction(),
@@ -1772,14 +1830,29 @@ const openAIMinter = (
               );
               return [...history, { role: "user", content }];
             };
-            const runSegment = (
-              input: string | AgentInputItem[] | RunState<unknown, typeof agent>,
-            ) =>
-              runner.run(agent, input, {
+            /** `history`, then the wrap-up notice once the attempt reached its wrap-up point. */
+            const withWrapUpNotice = (history: AgentInputItem[]): AgentInputItem[] => {
+              if (!wrapUp || toldWrapUp || modelCalls < wrapUpAt) return history;
+              toldWrapUp = true;
+              return [
+                ...history,
+                { role: "user", content: modelCallNotice(modelCalls, modelCallCapacity, true) },
+              ];
+            };
+            const runSegment = (input: RunState<unknown, typeof agent>) => {
+              // An attempt that wraps up ends its segment at the wrap-up point, where the notice
+              // goes. A state resuming held calls makes its next model call in the same turn.
+              const rerun = input.getInterruptions().length > 0 ? 1 : 0;
+              return runner.run(agent, input, {
                 signal,
-                maxTurns: replayTurnLimit ?? turnsPerSegment,
+                maxTurns:
+                  replayTurnLimit ??
+                  (wrapUp && modelCalls - rerun < wrapUpAt
+                    ? Math.min(turnsPerSegment, input._currentTurn - rerun + wrapUpAt - modelCalls)
+                    : turnsPerSegment),
                 sandbox: { session: turn.session },
               });
+            };
             type SegmentResult = Awaited<ReturnType<typeof runSegment>>;
             try {
               let input: string | AgentInputItem[] | RunState<unknown, typeof agent> =
@@ -1791,7 +1864,7 @@ const openAIMinter = (
                   // Restored before a model call: the message follows the restored history.
                   await archiveBeforeSegment(input);
                   totalUsage.add(input.usage);
-                  input = await withResumeMessage(input.history);
+                  input = withWrapUpNotice(await withResumeMessage(input.history));
                 } else {
                   // The saved response replays first and its calls return. The segment then ends
                   // before the next model call, which carries the message after their results.
@@ -1836,7 +1909,7 @@ const openAIMinter = (
                   if (replayTurnLimit !== undefined) {
                     // The restored response's calls returned: the resume message follows them.
                     totalUsage.add(error.state.usage);
-                    input = await withResumeMessage(history);
+                    input = withWrapUpNotice(await withResumeMessage(history));
                     continue;
                   }
                   if (modelCalls >= modelCallCapacity || diagnostics?.durabilityFailure())
@@ -1846,13 +1919,14 @@ const openAIMinter = (
                   totalUsage.add(error.state.usage);
                   diagnostics?.segment({ reason: "sdk_turn_ceiling", modelCalls });
                   finalsWithoutTool = 0;
-                  input =
-                    modelCallCapacity - modelCalls <= turnsPerSegment
+                  input = wrapUp
+                    ? withWrapUpNotice(history)
+                    : modelCallCapacity - modelCalls <= turnsPerSegment
                       ? [
                           ...history,
                           {
                             role: "user",
-                            content: modelCallNotice(modelCalls, modelCallCapacity),
+                            content: modelCallNotice(modelCalls, modelCallCapacity, false),
                           },
                         ]
                       : history;
@@ -1927,7 +2001,7 @@ const openAIMinter = (
                 );
                 await archiveBeforeSegment(result.state);
                 input = [
-                  ...(await withResumeMessage(result.history)),
+                  ...withWrapUpNotice(await withResumeMessage(result.history)),
                   {
                     role: "user",
                     content:
@@ -2047,6 +2121,13 @@ export const makeOpenAIMinter = (
     readonly modelCallCapacity?: number;
     readonly segmentTurns?: number;
     readonly modelRetry?: ModelCallRetry;
+    /**
+     * Whether the attempt wraps up once one segment's worth of model calls is left (384 of 512
+     * by default): from that exact call it hears the notice, and live explore steps are refused
+     * until its next finish_build, so the rest goes to publishing and what publication asks for.
+     * False for a host with its own wrap-up: the notice then comes at a segment boundary only.
+     */
+    readonly wrapUp?: boolean;
   } = {},
   ports: {
     readonly observerFactory?: ModelObserverFactory;

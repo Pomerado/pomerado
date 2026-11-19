@@ -33,7 +33,8 @@ several items, each added to that order before its one final submit, one action 
 over many targets, such as a send to a group picked in one form, and a read of many things are
 each fine as one tool.
 
-A read build may search, filter and query, but may not fill in or advance a form that
+A read build may search, filter and query, and open a checkout only to read what it offers,
+choosing, entering and saving nothing, but may not fill in or advance a form that
 saves data on the site, save or submit anything; a task that needs that is a write build.
 Opening pages that the site then marks as visited or as progress, without submitting an answer
 or a form, is part of a read, unless the request asks to change that progress.
@@ -70,8 +71,9 @@ says (a tool that fills a cart and returns its quote in one run may use the site
 with the auth skill: read-only `explore` to find the login, then
 `authenticate`. Before the first `act` step you may still explore
 read-only, for example to read the first page's options, and set the session's delivery or
-pickup location as a read (above), with `pickValue` and the site's own confirm control in one
-step. Never fill, select, add, save or submit anything else there, except one made-up key in
+pickup location as a read (above), with `pickValue`, or the core skill's address helpers for
+an address, pickup or drop-off value, and the site's own confirm control in one step. Never
+fill, select, add, save or submit anything else there, except one made-up key in
 the site's own format, with a
 serial past any the site lists, per input that takes a record's own key, looked up once in the
 site's own lookup to see what it shows for a key it has no record of (core skill), and the
@@ -236,7 +238,8 @@ During the session:
   the option.
 - Read each typed value back once its field settles, before the step's commit. When the site
   rewrote it as it was typed or on leaving the field, such as an address it standardized, or
-  offered exactly one suggestion for it that matches it cleanly or that the address matcher accepted,
+  offered exactly one suggestion for it that matches it cleanly (for an address, pickup or
+  drop-off value, one the address matcher accepted),
   take the site's version, as you would a picked
   option: later read-backs, such as a review page, summary or confirmation, compare against
   it, and the output returns it for that field. Ask about any other lone suggestion as about a
@@ -360,8 +363,8 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   only what a change since the checks would make wrong and its page shows, such as the total
   and items they read, and when one moved it returns before clicking and the script throws
   `OperationFailure` naming the change, such as `total_changed`; otherwise it clicks once
-  and waits for the confirmation. That guard is expected. Name the in-between state the site
-  can show after the click, beside its final answers, in that wait's `pending`: it holds up to
+  and waits for the confirmation. That guard is expected. Add the in-between state the site
+  can show after the click as an outcome beside its final answers, and name its key in that wait's `pending`: it holds up to
   60 s from when that state shows, and `confirmCommit` reports one still showing then as
   `pending`. An entered mark counts as possibly sent even when its call stopped before the
   click, so a check that can refuse placed there
@@ -418,6 +421,8 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   with each request's response status, and any autosave or draft save. That is the
   evidence for the `http` version; any other write is unintended and must not be in
   the script.
+- Confirm a write from the first proof the site gives that it took it, such as the new record's
+  id. Read other details if they show, and never wait for them.
 - Prefer confirming the write from its commit request. Keep the click on the final commit
   control, such as Save, Send, Submit, Book or Pay, in its own step, except a pay press after
   the host's card fill, which goes in the fill's step (caller-input skill). In the same call as
@@ -680,7 +685,9 @@ to add them.
 
 Every option the session met on its path is an input of the script, add-ons and
 pre-selected defaults included: required only when the site requires a choice that neither
-the request nor an answer settled, optional otherwise. The script sets each option from its
+the request nor an answer settled, optional otherwise. When the site offers choices for a write,
+such as delivery speed or a time window, make each an optional input; the rules below set its
+default. The script sets each option from its
 input. An unset optional input leaves the page's default, as in a read. An option the request
 or the owner's answer states for every call, such as which kind of record it
 creates, which line type a free-text line takes or whether a save runs the site's automation,
@@ -714,10 +721,12 @@ skill). When you change a script whose last such question passes none, add it, w
 is for. When a step between that question and the commit can change the total, prefer naming the
 total after that step in `order`; when you can't, re-read the total after that step and ask again
 before the commit when it rose above what the caller approved.
-Fill `order` as the checkout shows it: each item's real quantity, its `unit` when sold by
-weight or measure, and its price each, its line total or both; fees, a tip and a discount go in
-their own fields. When an item's measure is in a unit `unit` does not list, give
+Fill `order` as the checkout shows it, every charge and credit line included: each item's real
+quantity, its `unit` when sold by weight or measure, and its price each, its line total or both;
+fees and a tip go in their own fields, and every discount, credit and promotion, summed, in
+`discount`. When an item's measure is in a unit `unit` does not list, give
 it quantity 1 and its line total, with the measure as the checkout shows it in its name.
+`total` is what the commit will charge the caller, and the lines add up to it.
 
 The composed script publishes without ever running end to end, so it ends with a check that
 tells whether its action succeeded: its commit response checked as above, the site's

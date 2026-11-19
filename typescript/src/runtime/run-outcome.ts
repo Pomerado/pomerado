@@ -1,6 +1,7 @@
 import { Option, Schema } from "effect";
 import type { CommitMark } from "./context.js";
 import { commitMarkMaxLength, commitMarkPattern } from "./operation.js";
+import type { RefusalValue } from "./operation-failure.js";
 import {
   inlineLocalRefs,
   inlineLocalRefsAlong,
@@ -452,7 +453,7 @@ export interface RunEvidence {
   /** The setting steps a refused write entered, all it entered (`settingsOnlyWrite`). */
   readonly settings_changed?: readonly string[] | undefined;
   /** Every choice the page offers for the refused input, when the tool read them. */
-  readonly refusal_available?: readonly string[] | undefined;
+  readonly refusal_available?: readonly RefusalValue[] | undefined;
   /** The refusal's kind as a short token, such as a refused cursor's `expired`. */
   readonly refusal_kind?: string | undefined;
   /** The login field the website rejected. */

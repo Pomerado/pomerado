@@ -212,7 +212,9 @@ exception: it is optional unless the task can't run without it (below).
   site offers no control for it, and say so in the description.
 - Every value the code types, selects or fills on the site comes from the input and
   accepts what the site's field accepts. An enum lists the site's full set of options,
-  never just the example's value. The example's values are one case, never limits.
+  never just the example's value. The example's values are one case, never limits. A form can
+  open filled in from an earlier search: first set or clear every field the code fills, and don't
+  rely on what a field showed before.
 - Prefer keying only on what the caller asked for. A detail that changes from one listing to
   the next, such as a seating label or a room name, shouldn't decide whether the tool books or
   refuses unless the caller chose it. A tool's check guards what the caller asked for or what the
@@ -250,9 +252,9 @@ exception: it is optional unless the task can't run without it (below).
   them with `rankChoices` and `spellingsOf` too, never with matching of its own: it returns the
   best matches, and with none, the site's rows in the site's order as candidates, saying so.
   With `rankChoices` on options or rows read as data, as in an HTTP version, take the clean
-  ranks from `cleanRanks` in `pomerado/runtime` and follow `pickValue`'s rule: a read takes the
-  best match at any rank and returns the option it used, and a write asks the caller about a
-  looser one.
+  ranks from `cleanRanks` in `pomerado/runtime` and follow `pickValue`'s rule, except for an
+  address, pickup or drop-off value (below): a read takes the best match at any rank and returns
+  the option it used, and a write asks the caller about a looser one.
   `pickValue` types the caller's value into the site's own search,
   reads every suggestion, tries the usual other forms of the value's words, such as 5th
   and Fifth, St and Street or Saint, or a state's code and name, and picks the best match. A
@@ -265,7 +267,8 @@ exception: it is optional unless the task can't run without it (below).
   holds the value's text before its first comma, as whole words, in its first line, and the
   value's later comma parts in its text. In a read, a looser best match, such as a name with
   words the value lacks, or the site's first result that shares a word with the value, is
-  picked with `loose: true`: return the option it used, as the site labels it. In a write,
+  picked with `loose: true`, except for an address, pickup or drop-off value (below): return the
+  option it used, as the site labels it. In a write,
   `pickValue` returns it as `option_unclear`, with the site's options, each by its full text:
   before the first commit mark, ask the caller with a declared choice question with
   `allowOther`, offering `pickChoices(outcome)`, then pick the answer with `query` set to the
@@ -273,11 +276,14 @@ exception: it is optional unless the task can't run without it (below).
   `pickRefusal`. A value it lacks lists the site's closest options first. With no match, throw
   its `pickRefusal`, an
   `InvalidInput` with `field` and `available`, the entries the site showed, even when the site
-  offered only one. With one, use it. With several, decide per tool: take the first in the site's own
-  order and return the one it used, as the site labels it, or list those matches as the site
-  labels them for the caller to choose one, each selecting exactly one, with a declared choice
-  question (.agents/caller-input/SKILL.md) or `pickRefusal`, which lists them as `available`.
-  Resolve a typed address through the site's suggestions in two calls: in one, `pickerTypeAddress`,
+  offered only one. With one, use it. With several, decide per tool, except for an address,
+  pickup or drop-off value, which only the address helpers below choose: take the first in
+  the site's own order and return the one it used, as the site labels it, or list those
+  matches as the site labels them for the caller to choose one, each selecting exactly one,
+  with a declared choice question (.agents/caller-input/SKILL.md) or `pickRefusal`, which lists
+  them as `available`.
+  Resolve a typed address, pickup or drop-off value through the site's suggestions in two calls:
+  in one, `pickerTypeAddress`,
   then, once the list shows every suggestion the site offers for it, `pickerAddressRows` from
   `pickerCode`, returning its answer; in the script, `matchAddressRows(address, answer)` from
   `pomerado/runtime`; in the next call, `pickerMatchAddress` with that match and the same options,
@@ -312,9 +318,9 @@ exception: it is optional unless the task can't run without it (below).
   with a word added or dropped. Prefer it for confirming the pick, so the read-back agrees with
   the choice, but not for choosing from a list, where a short label can match a longer name it
   isn't, such as UK for Ukraine.
-  When more than one option matches equally, decide per tool: take the first in the site's
-  order and return the one it used, as the site labels it, or list them for the caller to
-  choose one, each selecting exactly one.
+  When more than one option matches equally, decide per tool, except for an address, pickup or
+  drop-off value (above): take the first in the site's order and return the one it used, as
+  the site labels it, or list them for the caller to choose one, each selecting exactly one.
 - In a product or catalog search, a result whose name has every word of the caller's value
   among words the value lacks is a looser match, which a read picks and a write asks about, as
   above: with no match, throw
@@ -440,9 +446,9 @@ exception: it is optional unless the task can't run without it (below).
   for an optional one. Callers see each beside its name.
 - Shape inputs and outputs like Pomerado's own API, so every tool reads alike. A notation the
   request states, such as amounts as decimal strings or signed amounts, always wins, but a time
-  always keeps its zone; follow it and say so in the field's description. Otherwise: field names
+  keeps its zone when known; follow it and say so in the field's description. Otherwise: field names
   in snake_case; dates as `YYYY-MM-DD` and every time as an ISO 8601 timestamp with its zone's
-  offset; money as an integer in minor units
+  offset when the zone is known (below); money as an integer in minor units
   with the ISO 4217 `currency` the page shows beside it, such as `total_minor` 12999 and
   `currency` `"EUR"` read from "€129.99", and an amount that can go either way, such as a
   ledger entry, unsigned with a field that says its direction, such as `direction` `"debit"`
@@ -454,7 +460,7 @@ exception: it is optional unless the task can't run without it (below).
   between these and the site's own formats in code. The output check flags a date or timestamp
   not in the form its field declares, a value in another notation than its description names,
   a currency that is not an ISO 4217 code and a bare clock time in a record that names no
-  `time_zone` (`format_mismatch`), a field whose description
+  `time_zone`, unless its field says it is local time (`format_mismatch`), a field whose description
   promises such a notation that no `pattern` holds (`unheld_format`), and one value in two
   letter cases across a list (`case_variant`).
 - When `reference/site-tools.json` exists, you can view the site's other tools. Read
@@ -630,8 +636,8 @@ Then, for every field:
   it holds as a timestamp too. Compare a site's date or time with today or now only in the
   site's or the place's zone, never UTC's: `todayIn` and `zonedTime` from `pomerado/runtime`
   give both.
-- Never return a clock time with no zone, such as "7:45 PM" or "12:38-12:59 AM" alone: a caller
-  cannot tell which moment it is. Return each time as a timestamp with its offset, with
+- Give each time its zone when you can: with a clock time alone, such as "7:45 PM" or
+  "12:38-12:59 AM", a caller cannot tell which moment it is. Return it as a timestamp with its offset, with
   `zonedClock` from `pomerado/runtime` for a clock time the page shows, and name the IANA zone
   the site's text is in, such as `"America/New_York"`, in a `time_zone` field of the record or
   of the whole output, beside any `*_label` field that keeps the site's wording:
@@ -642,7 +648,9 @@ Then, for every field:
   from the script's own clock, the caller's place or an address,
   since the browser's clock can be in another zone than the caller's. Use the zone the page
   names instead when it names one, such as a store's hours or a flight's local times, and a
-  timestamp in the page's own data, such as its embedded JSON, over its text.
+  timestamp in the page's own data, such as its embedded JSON, over its text. When the zone is
+  unknown, return the site's local time in a field whose name or description says it is local
+  time; a missing zone never stops a build, repair or change.
 
 **Configure, then read.** Many pages show values that depend on choices made on the page: a
 record's options or variants, a plan or tier, dates, a party size or quantity, units, a
@@ -813,8 +821,8 @@ page gets 8 s without progress to show one of the answers you named, and up to 3
 keeps progressing: a loading sign showing, the part of the page you named changing, the site's own
 request in flight, the URL changing, or the values you read filling in. Values the site fills in
 after its answer get up to 15 s. The runtime's waits (`waitCode`, below) apply these budgets. Give
-every other Playwright call in the code an explicit `timeout`, and keep `timeout_sec` within
-`remainingMs()`.
+every other Playwright call in the code an explicit `timeout`, at least 30 s on a wait for something
+to draw or load, and keep `timeout_sec` within `remainingMs()`.
 Child waits cannot extend the outer deadline. Explicitly name observation conditions.
 `domcontentloaded` is document readiness, not readiness of the requested page or
 control. Initial navigation can land on a temporary verification page before the
@@ -922,7 +930,8 @@ choice the input asked for as "Configure, then read" says; ask the caller about 
 (.agents/caller-input/SKILL.md). It throws an
 `Error` named `OutcomeWaitFailure` whose message says what each outcome matched, which progress
 signs it saw and when progress stopped: `outcome_ambiguous` when the winning locator matches more
-than one element, unless more than one is visible and the visible ones all read the same text (read
+than one element, unless more than one is visible and the visible ones all read the same text or,
+in the wait whose `action` is a commit's click, are all new since it while no other outcome shows (read
 such an answer's text from `waitForOutcomeResult`'s `evidence`, or scope the locator to one element before acting on it or reading inside it);
 `outcome_unknown` when the page stops progressing for `noProgressMs` (8 s)
 while showing none of the answers; and `outcome_timeout` when it is still progressing at
@@ -989,7 +998,7 @@ click it or to wait for readiness: collapsed menus often hold an earlier hidden
 match. Scope a role locator to its evidenced container and to visible elements,
 for example `nav.getByRole("link", { name: /log in/i }).filter({ visible: true })`,
 then check that exactly one element matches; `waitForOutcome` checks it for the outcome it
-returns unless its visible matches all read the same text. When several candidates remain, inspect them and choose by evidence such as
+returns unless its visible matches all read the same text, or all came after a commit's click while no other outcome shows. When several candidates remain, inspect them and choose by evidence such as
 section, accessible name and destination before clicking or waiting. A readiness wait targets one specific
 evidenced element or page state.
 
@@ -1221,11 +1230,12 @@ So is an anonymous recent-search, prefill or search-state save the site fires wh
 you submit a search.
 
 For a read tool, look for a write your own action caused, such as adding an item to
-a cart, submitting a form, saving a preference or starting a checkout. If you find
+a cart, submitting a form or saving a preference. If you find
 one, change the code so it reads without causing it, for example by reading the
 value from the page instead of clicking the control that changes it, and run it
 again. Setting a read's location, filter, sort or option through the site's control is part of
-the read, not a saved preference (the input schema above). For a write session, the list shows the commit your step caused and any
+the read, not a saved preference (the input schema above). So is opening a checkout only to read
+what it offers, choosing, entering and saving nothing, with the requests its page sends. For a write session, the list shows the commit your step caused and any
 autosave, with the status the site answered: a 2xx or 3xx on the commit's route, with no
 error after it, is what the writes skill confirms from. A 200 whose body reports an error, as
 GraphQL can, did not go through. The list is the evidence for the `http` version, and any

@@ -48,15 +48,143 @@ export const exactScreens = (steps: readonly AutofillRecipeStep[]): ReplayScreen
 /** The recorded screen a wait is on: its page as the replay knows it, and its listed segments. */
 type RecordedPage = Pick<AutofillRecipeStep, "page" | "anySegments">;
 
-/** A later page or ready credential fields prove progression; a coincident same-page button cannot. */
-const inspectReplayProgression = <E>(
+/** The steps that find a recorded screen: its fields and submit, or each of its methods. */
+export const screenProbes = (
+  recorded: AutofillRecipeStep,
+  resolve: (request: AutofillStepRequest) => AutofillStep,
+): readonly AutofillStep[] =>
+  recorded.methods === undefined
+    ? [resolve(recorded)]
+    : recorded.methods.map((method) => ({
+        fields: [],
+        submit: method.selector,
+        ...(recorded.popup === undefined ? {} : { popup: recorded.popup }),
+      }));
+
+/**
+ * Whether a step's controls show: anything but their absence (`not_found`, or `popup_missing` for
+ * a popup that closed) counts, as a control the host cannot read or tell apart may still be one.
+ */
+const shows = <E>(hooks: Pick<AutofillHooks<E>, "inspect">, step: AutofillStep) =>
+  Effect.map(
+    hooks.inspect(step),
+    (found) =>
+      !("outcome" in found) || (found.reason !== "not_found" && found.reason !== "popup_missing"),
+  );
+
+/** Each of a step's controls as a step of its own, by its selector: its fields, then its submit. */
+const controlsOf = (step: AutofillStep) => {
+  const popup = step.popup === undefined ? {} : { popup: step.popup };
+  const controls = new Map<string, AutofillStep>();
+  for (const field of step.fields) controls.set(field.selector, { fields: [field], ...popup });
+  if (step.submit !== undefined)
+    controls.set(step.submit, { fields: [], submit: step.submit, ...popup });
+  return controls;
+};
+
+/**
+ * Whether every control of `probe` is one of the current screen's or a screen's just before it: a
+ * screen with fewer controls than they show together, such as an email box alone with the button
+ * of the email and password screen, recognized only by what is gone (`showsAnotherScreen`).
+ */
+const holdsNoControlOfItsOwn = (
+  probe: AutofillStep,
+  current: AutofillStep,
+  before: readonly AutofillStep[] = [],
+) => {
+  const others = new Set([...before, current].flatMap((step) => [...controlsOf(step).keys()]));
+  return [...controlsOf(probe).keys()].every((selector) => others.has(selector));
+};
+
+/**
+ * Whether a probe found on `page` is another recorded screen than the `current` one, on
+ * `currentPage`: another page, or a field the current screen lacks, proves it. On the same page
+ * the probe's own look proves it too: the current screen or a screen just before it (`before`,
+ * such as the step that last ran) has a field the probe lacks, and each control the probe lacks
+ * of any of them is gone. A button gone alone
+ * proves nothing, as a required choice may draw after the fields beside it, or a code screen take
+ * its own button away. A probe with no control of its own besides (`holdsNoControlOfItsOwn`)
+ * proves a screen only with a field, the fields the page still shows, and never when the step that
+ * last ran (`ran`) holds all its controls, as that screen come back does: so a coincident same-page
+ * button, such as a shared Continue, never proves a screen, nor does a screen they hold all of, as
+ * one still drawing or come back shows, nor any button while the current screen's other controls
+ * still show. A screen still drawing a field shows its fewer-field look only a moment, which the
+ * wait holds before it passes over (`landingSettleMs`).
+ */
+export const showsAnotherScreen = <E>(
+  hooks: Pick<AutofillHooks<E>, "inspect">,
+  page: string,
+  probe: AutofillStep,
+  currentPage: RecordedPage,
+  current: AutofillStep,
+  before: readonly AutofillStep[] = [],
+  ran?: AutofillStep,
+) =>
+  Effect.gen(function* () {
+    if (!pageMatches(page, currentPage) || fieldOfItsOwn(probe, current)) return true;
+    const own = controlsOf(probe);
+    const fields = [current, ...before].flatMap((step) => step.fields);
+    if (fields.every((field) => own.has(field.selector))) return false;
+    if (
+      holdsNoControlOfItsOwn(probe, current, before) &&
+      (probe.fields.length === 0 ||
+        (ran !== undefined && holdsNoControlOfItsOwn(probe, ran)))
+    )
+      return false;
+    const others = new Map([...before, current].flatMap((step) => [...controlsOf(step)]));
+    for (const [selector, control] of others)
+      if (!own.has(selector) && (yield* shows(hooks, control))) return false;
+    return true;
+  });
+
+/** Whether `probe` has a field the `current` screen lacks, where that screen has a field. */
+const fieldOfItsOwn = (probe: AutofillStep, current: AutofillStep) =>
+  current.fields.length > 0 &&
+  probe.fields.some(
+    (field) => !current.fields.some((previous) => previous.selector === field.selector),
+  );
+
+/**
+ * The later recorded screens on the page and in the pop-up of `step`, on `currentPage`, that hold
+ * every control of it and a field it lacks, as an email and password screen does an email
+ * screen's with the same button: where one shows, the page is that screen, not `step`
+ * (`makeReplayScreenWait`). A step with no field, as an approval or a button alone is, has none.
+ */
+const fullerScreens = (
+  step: AutofillStep,
+  currentPage: RecordedPage,
+  later: readonly AutofillRecipeStep[],
+  resolve: (request: AutofillStepRequest) => AutofillStep,
+) => {
+  const own = [...controlsOf(step).keys()];
+  return later.filter((recorded) => {
+    if (recorded.methods !== undefined || recorded.approval !== undefined) return false;
+    const fuller = resolve(recorded);
+    const controls = controlsOf(fuller);
+    return (
+      pageMatches(recorded.page, currentPage) &&
+      fuller.popup?.origin === step.popup?.origin &&
+      own.every((selector) => controls.has(selector)) &&
+      fieldOfItsOwn(fuller, step)
+    );
+  });
+};
+
+/**
+ * A later recorded screen that shows another screen than the current one (`showsAnotherScreen`,
+ * with the screens just before it, `before`) proves progression; a coincident same-page button
+ * cannot.
+ */
+export const inspectReplayProgression = <E>(
   hooks: Pick<AutofillHooks<E>, "inspect">,
   currentPage: RecordedPage,
   current: AutofillStep,
   alternatives: readonly AutofillStep[],
   later: readonly AutofillRecipeStep[],
   resolve: (request: AutofillStepRequest) => AutofillStep,
-  screens: ReplayScreens,
+  screens: Pick<ReplayScreens, "matches">,
+  before: readonly AutofillStep[] = [],
+  ran?: AutofillStep,
 ) =>
   Effect.gen(function* () {
     for (const alternative of alternatives) {
@@ -64,26 +192,18 @@ const inspectReplayProgression = <E>(
       if (!("outcome" in found)) return { found } as const;
     }
     for (const recorded of later) {
-      const probes =
-        recorded.methods === undefined
-          ? [resolve(recorded)]
-          : recorded.methods.map((method) => ({
-              fields: [],
-              submit: method.selector,
-              ...(recorded.popup === undefined ? {} : { popup: recorded.popup }),
-            }));
-      for (const probe of probes) {
+      for (const probe of screenProbes(recorded, resolve)) {
         const found = yield* hooks.inspect(probe);
         if (
           !("outcome" in found) &&
           screens.matches(found.page, recorded) &&
-          (!pageMatches(found.page, currentPage) ||
-            (current.fields.length > 0 &&
-              probe.fields.some(
-                (field) => !current.fields.some((previous) => previous.selector === field.selector),
-              )))
+          (yield* showsAnotherScreen(hooks, found.page, probe, currentPage, current, before, ran))
         )
-          return { next: recorded } as const;
+          return {
+            next: recorded,
+            page: found.page,
+            byLook: !fieldOfItsOwn(probe, current) && holdsNoControlOfItsOwn(probe, current, before),
+          } as const;
       }
     }
     return undefined;
@@ -171,6 +291,22 @@ const atDeadline =
     });
 
 /**
+ * Whether a browser that started empty (`startedEmpty`) has yet to send the password or code its
+ * recipe records: a page it shows off the screens before then is the sign-in's own, such as a
+ * redirect page a sign-in opener passes through before the login form shows.
+ */
+const loginUnproved = <E extends YieldableError, V extends string>(
+  input: Pick<AutofillReplayInput<E, V>, "hooks" | "recipe">,
+  progress: ScreenWaitProgress<V>,
+) =>
+  input.hooks.startedEmpty === true &&
+  input.hooks.signedInBefore !== true &&
+  !progress.ran.some((step) => step.fields.some((field) => provesLogin(field.slot))) &&
+  input.recipe.steps.some((step) =>
+    step.fields.some((field) => "slot" in field && provesLogin(field.slot)),
+  );
+
+/**
  * A sign-in that may end on a page that can't tell went past the screens once the page left them
  * and the entry page, stayed put a moment (or until the screen's deadline) and can't tell, as a
  * site's login page sends a signed-in browser to its account picker. A page off the sign-in
@@ -180,9 +316,13 @@ const atDeadline =
  * code screen: the wait runs to its deadline, where the host's challenge look runs first
  * (`atDeadline`), and a code screen that never showed leaves the sign-in check to decide, which may
  * still end on such a page, as when a site skips its code screen this time (`codeScreenMissing`).
+ * A browser that started empty is past no sign-in before its login's password or code went in
+ * (`loginUnproved`), so its wait runs on to the screen's deadline. A check without values whose
+ * screen never showed by then reads that page as its landing all the same, as before.
  */
 const landedCantTell = <E extends YieldableError, V extends string>(
-  input: Pick<AutofillReplayInput<E, V>, "hooks" | "recipe">,
+  input: Pick<AutofillReplayInput<E, V>, "hooks" | "recipe" | "credentials">,
+  progress: ScreenWaitProgress<V>,
   awaited: AutofillStep,
   off: OffScreens | undefined,
   now: number,
@@ -191,6 +331,7 @@ const landedCantTell = <E extends YieldableError, V extends string>(
   screens: ReplayScreens,
 ) =>
   input.hooks.confirmCantTell !== undefined &&
+  (!loginUnproved(input, progress) || (input.credentials === undefined && now >= until)) &&
   !awaited.fields.some((field) => field.slot === "code") &&
   off !== undefined &&
   (now - off.since >= landingSettleMs || now >= until) &&
@@ -295,17 +436,6 @@ type ScreenWaitProgress<V extends string> = {
 const passwordBox = { selector: 'input[type="password" i]', slot: "password" } as const;
 
 /**
- * Whether a step's controls show: anything but their absence (`not_found`, or `popup_missing` for
- * a popup that closed) counts, as a control the host cannot read or tell apart may still be one.
- */
-const shows = <E>(hooks: Pick<AutofillHooks<E>, "inspect">, step: AutofillStep) =>
-  Effect.map(
-    hooks.inspect(step),
-    (found) =>
-      !("outcome" in found) || (found.reason !== "not_found" && found.reason !== "popup_missing"),
-  );
-
-/**
  * A sign-in whose screens all sit on the page it opened, as one in a dialog, never leaves that
  * address, so no page off the screens can show it went past them (`landedCantTell`). Once the
  * login's password or code went in, a wait for a screen that asks for nothing secret, such as a
@@ -371,9 +501,10 @@ const holdsShown = <V extends string>(
   !progress.anythingSent;
 
 /**
- * One screen wait's hold (`holdsShown`): true, after a poll's sleep, while the screen it found
- * has not yet stayed shown `landingSettleMs` (1.5 s) before the wait's deadline; a screen not found starts it
- * again.
+ * One screen wait's hold (`holdsShown`, or `fuller`: a later recorded screen on its page holds all
+ * its controls and a field more, which may still be drawing): true, after a poll's sleep, while
+ * the screen it found has not yet stayed shown `landingSettleMs` (1.5 s) before the wait's
+ * deadline; a screen not found starts it again.
  */
 const holdShown = <V extends string>(
   input: Pick<AutofillReplayInput, "credentials">,
@@ -385,10 +516,15 @@ const holdShown = <V extends string>(
     step: AutofillStep,
     found: AutofillInspection | AutofillRefusal | undefined,
     until: number,
+    fuller = false,
   ) =>
     Effect.gen(function* () {
       if (found === undefined) shownSince = undefined;
-      if (found === undefined || "outcome" in found || !holdsShown(input, progress, step))
+      if (
+        found === undefined ||
+        "outcome" in found ||
+        !(fuller || holdsShown(input, progress, step))
+      )
         return false;
       const now = yield* Clock.currentTimeMillis;
       shownSince ??= now;
@@ -449,6 +585,9 @@ export const makeReplayScreenWait = <
   const checkHere = markerHere(input);
   const now = Clock.currentTimeMillis;
   const deadline = atDeadline(hooks, progress, timing.stepWaitMs, resubmit);
+  // The screens waits passed over as gone, and how many steps had run then: while none ran since,
+  // they are screens just before the next wait's, beside the step that last ran.
+  const passed: { steps: AutofillStep[]; ran: number } = { steps: [], ran: 0 };
   /** Inspect the current stage, rejection evidence and proved later stages before timing a wait. */
   const inspectStage = (
     step: AutofillStep,
@@ -456,10 +595,20 @@ export const makeReplayScreenWait = <
     later: readonly AutofillRecipeStep[],
     alternatives: readonly AutofillStep[],
     due: boolean,
+    look: { since?: number | undefined },
   ) =>
     Effect.gen(function* () {
       const inspected = yield* inspectSettled(input, step);
-      if (!("outcome" in inspected)) return { found: inspected } as const;
+      if (!("outcome" in inspected)) {
+        // A later recorded screen with every control of this one and a field more is the one
+        // the page shows, as email and password together are where an email screen was recorded.
+        for (const recorded of fullerScreens(step, currentPage, later, resolve)) {
+          const fuller = yield* hooks.inspect(resolve(recorded));
+          if (!("outcome" in fuller) && screens.matches(fuller.page, recorded))
+            return yield* passOver(step, recorded);
+        }
+        return { found: inspected } as const;
+      }
       // Failing again, the page's signed-in check decides before the replay ends.
       if (inspected.reason === "page_unavailable") return { pageError: inspected } as const;
       if (
@@ -482,17 +631,41 @@ export const makeReplayScreenWait = <
         later,
         resolve,
         screens,
+        [progress.ran.at(-1), ...(passed.ran === progress.ran.length ? passed.steps : [])].filter(
+          (before) => before !== undefined,
+        ),
+        progress.ran.at(-1),
       );
       if (progressed !== undefined) {
         if (progressed.found !== undefined) return { found: progressed.found } as const;
-        yield* input.emit({
-          stage: "skipped",
-          reason: "later_recorded_screen",
-          nextStep: recipe.steps.indexOf(progressed.next),
-        });
-        return "skipped" as const;
+        // A button-only screen may draw after the fields beside it, and a screen recognized only
+        // by the controls gone may be one still drawing a field, so passing over by the page's
+        // look waits until that look held `landingSettleMs`.
+        if (
+          (step.fields.length === 0 || progressed.byLook) &&
+          pageMatches(progressed.page, currentPage)
+        ) {
+          const at = yield* now;
+          look.since ??= at;
+          if (at - look.since < landingSettleMs) return { waiting: inspected } as const;
+        }
+        return yield* passOver(step, progressed.next);
       }
+      look.since = undefined;
       return { waiting: inspected } as const;
+    });
+  /** Passes over `step` to a later recorded screen, `next`, kept as a screen just before. */
+  const passOver = (step: AutofillStep, next: AutofillRecipeStep) =>
+    Effect.gen(function* () {
+      if (passed.ran !== progress.ran.length) passed.steps = [];
+      passed.steps.push(step);
+      passed.ran = progress.ran.length;
+      yield* input.emit({
+        stage: "skipped",
+        reason: "later_recorded_screen",
+        nextStep: recipe.steps.indexOf(next),
+      });
+      return "skipped" as const;
     });
   return (
     step: AutofillStep,
@@ -508,12 +681,14 @@ export const makeReplayScreenWait = <
       let inPlace: OffScreens | undefined;
       let waitUntil = until;
       const held = holdShown(input, progress, timing);
+      const look: { since?: number | undefined } = {};
+      const fuller = fullerScreens(step, current, later, resolve).length > 0;
       while (true) {
         const due = (yield* now) >= waitUntil;
-        const stage = yield* inspectStage(step, current, later, alternatives, due);
+        const stage = yield* inspectStage(step, current, later, alternatives, due, look);
         if (stage === "extra_retried") continue;
         if (typeof stage === "string") return stage;
-        if (yield* held(step, stage.found, waitUntil)) continue;
+        if (yield* held(step, stage.found, waitUntil, fuller)) continue;
         if (stage.found !== undefined) return { found: stage.found } as const;
         const inspected = stage.waiting ?? stage.pageError;
         const here = yield* checkHere;
@@ -528,7 +703,8 @@ export const makeReplayScreenWait = <
         if (landedInPlace) progress.landedInPlace = true;
         const landed = landedReason(
           here.signedIn,
-          landedCantTell(input, step, left.off, at, waitUntil, here, screens) || landedInPlace,
+          landedCantTell(input, progress, step, left.off, at, waitUntil, here, screens) ||
+            landedInPlace,
           entryCantTell(
             progress,
             entry,

@@ -42,7 +42,9 @@ const RefusalText = Schema.String.pipe(
 export const InputRefusal = Schema.Struct({
   field: Schema.optionalWith(RefusalText, { exact: true }),
   available: Schema.optionalWith(
-    Schema.Array(RefusalText).pipe(Schema.minItems(1), Schema.maxItems(maximumRefusalChoices)),
+    Schema.Array(
+      Schema.Union(RefusalText, Schema.Number.pipe(Schema.finite()), Schema.Boolean),
+    ).pipe(Schema.minItems(1), Schema.maxItems(maximumRefusalChoices)),
     { exact: true },
   ),
   kind: Schema.optionalWith(

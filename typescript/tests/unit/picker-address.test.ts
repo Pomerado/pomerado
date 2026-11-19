@@ -642,6 +642,38 @@ describe("matchAddressRows", () => {
     expect(await matchAddressRows(`${"1 Example St ".repeat(50)}, Exampleton`, [place])).toMatchObject({ picked: false, reason: "option_missing", available: [place] });
   });
 
+  test("takes the plain address row for a street address typed alone, beside named places at that number", async () => {
+    const asked = "1 Sample Ridge Blvd, Exampleton, CA 90001";
+    const plain = "1 Sample Ridge Blvd, Exampleton, CA";
+    const named = ["Example Tower", "1 Sample Ridge Blvd Parking", "Sample Ridge Neighbors"].map((name) => `${name}, ${plain}`);
+    for (const [rows, index] of [[[plain, ...named], 0], [[...named, plain], 3]] as const)
+      for (const read of [false, true])
+        expect(await matchAddressRows(asked, { rows: rows.map((text) => ({ text, categorized: false })), read }, { country: "US" })).toEqual({ picked: true, index, label: plain, unit: "", wanted: asked });
+  });
+
+  test("reads a postal district written after its town as that town, and two districts as two places", async () => {
+    const rowsOf = (...texts: string[]) => ({ rows: texts.map((text) => ({ text, categorized: false })) });
+    const dublin = "1 Example Street, Dublin 2, Ireland";
+    expect(await matchAddressRows(dublin, rowsOf("1 Example Street, Dublin, Ireland"), { country: "IE" })).toMatchObject({ picked: true, index: 0 });
+    expect(await matchAddressRows(dublin, rowsOf("1 Example Street, Dublin 4, Ireland"), { country: "IE" })).toMatchObject({ picked: false });
+    const copenhagen = "Eksempelvej 1, 1050 København K, Denmark";
+    for (const row of ["Eksempelvej 1, Copenhagen, Denmark", "Eksempelvej 1, 1050 Copenhagen Municipality, Denmark"])
+      expect(await matchAddressRows(copenhagen, rowsOf(row), { country: "DK" })).toMatchObject({ picked: true, index: 0, label: row });
+    // A US address of the same shape answers as before.
+    const us = "1 Example St, Dublin 2, CA 94568";
+    expect(await matchAddressRows(us, rowsOf("1 Example St, Dublin, CA 94568"), { country: "US" })).toMatchObject({ picked: true, index: 0 });
+  });
+
+  test("takes the row that lists a postcode's area for a caller who gave only that postcode", async () => {
+    const rowsOf = (...texts: string[]) => ({ rows: texts.map((text) => ({ text, categorized: false })) });
+    // A house whose number equals the postcode, then the area row.
+    for (const area of ["62701 Exampleton, IL, USA", "62701, Example Grove, IL, USA", "62701, Exampleton, Example County, IL, USA"])
+      expect(await matchAddressRows("62701", rowsOf("62701, Example Trail, Sampleton, IL, USA", area), { country: "US" })).toMatchObject({ picked: true, index: 1, label: area });
+    // A street, then another town: a house, not the postcode's area.
+    for (const house of ["62701, Example Trail, Sampleton, IL, USA", "62701 Example, Sampleton, IL, USA"])
+      expect(await matchAddressRows("62701", rowsOf(house), { country: "US" })).toMatchObject({ picked: false });
+  });
+
   // PlaceMatch compares at most 100 rows at once. A longer list is asked about, never cut, so the
   // caller's place past the 100th row is never left out unseen.
   test("asks about a list with more rows than PlaceMatch compares, and leaves none out", async () => {

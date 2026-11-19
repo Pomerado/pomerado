@@ -49,7 +49,8 @@ const catalog = [
   },
   {
     name: "forms",
-    description: "Native/custom selection, resolvers, staged forms and expected terms",
+    description:
+      "Native/custom selection, resolvers, staged forms and expected terms, and files a tool uploads, downloads or returns",
     references: [
       "dates-and-dropdowns.ts",
       "picker.ts",

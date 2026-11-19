@@ -48,8 +48,11 @@ export interface AccountChoice {
   readonly maskedLabel?: string;
 }
 
-/** A choice a refusal lists: its label as shown, or one taken from the caller's own account. */
-export type RefusalChoice = string | AccountChoice;
+/** A choice's value as a refusal lists it: its label as shown, or a true/false or finite number. */
+export type RefusalValue = string | number | boolean;
+
+/** A choice a refusal lists: its value, or one taken from the caller's own account. */
+export type RefusalChoice = RefusalValue | AccountChoice;
 
 /**
  * Which input a refusal names and every choice the page offers for it, exactly as shown. A host
@@ -59,7 +62,7 @@ export type RefusalChoice = string | AccountChoice;
  */
 export interface InputRefusalDetail {
   readonly field?: string;
-  readonly available?: readonly string[];
+  readonly available?: readonly RefusalValue[];
   /**
    * The refusal's kind as a short token, lowercase words joined by underscores, such as a
    * refused cursor's `expired`. Never page text.
@@ -77,13 +80,13 @@ const refusalKindPattern = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/u;
 const maximumRefusalKindLength = 40;
 
 /**
- * A choice as a host may carry it, bounded: a true/false or finite number choice as its text, and
+ * A choice as a host may carry it, bounded: a true/false or finite number choice as itself, and
  * one marked from the caller's own account with its label and masked label, a masked label longer
  * than a question's left out. None for any other.
  */
 const boundedChoice = (choice: unknown): RefusalChoice | undefined => {
   if (typeof choice === "boolean" || (typeof choice === "number" && Number.isFinite(choice)))
-    return String(choice);
+    return choice;
   if (typeof choice === "string")
     return choice.trim() === "" ? undefined : choice.slice(0, maximumRefusalChoiceLength);
   if (typeof choice !== "object" || choice === null) return undefined;
@@ -121,11 +124,11 @@ const boundedChoices = (detail: unknown) => {
  * or by its place in the list without one.
  */
 const publicChoice = (choice: RefusalChoice, index: number) =>
-  typeof choice === "string" ? choice : (choice.maskedLabel ?? `Saved option ${index + 1}`);
+  typeof choice === "object" ? (choice.maskedLabel ?? `Saved option ${index + 1}`) : choice;
 
 /**
  * The detail as a host may carry it: a bounded field name and up to the most choices, each bounded,
- * a true/false or finite number choice as its text, and one from the caller's own account as its
+ * a true/false or finite number choice as itself, and one from the caller's own account as its
  * masked label, or "Saved option N" by its place without one, or with `fullLabels`, for a host that
  * shows the account's own entries, as its label.
  */
@@ -137,7 +140,7 @@ export const boundedRefusalDetail = (
   const field: unknown = Reflect.get(detail, "field");
   const kind: unknown = Reflect.get(detail, "kind");
   const choices = boundedChoices(detail).map((choice, index) =>
-    fullLabels && typeof choice !== "string" ? choice.label : publicChoice(choice, index),
+    fullLabels && typeof choice === "object" ? choice.label : publicChoice(choice, index),
   );
   return {
     ...(typeof field === "string" && field.trim() !== ""

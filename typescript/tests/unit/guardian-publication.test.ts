@@ -1001,10 +1001,12 @@ describe("the publication policy", () => {
   });
 
   // A caller's place, venue or company name matches in its usual forms, so neither the review of
-  // a live step nor the publication review asks a tool to require an exact match.
+  // a live step nor the publication review asks a tool to require an exact match. A tool took the
+  // site's first suggestion for a pickup place, since the equal-match rule left that choice to each
+  // tool: only the address matcher chooses an address, pickup or drop-off value.
   it("gives the execution and publication reviews the same fuzzy proper-noun rule", () => {
     const rule =
-      "A tool matches the caller's proper nouns, such as places, venues and company names, with a fuzzy match that accepts the usual forms of the same name. Never ask a tool to require an exact match. When more than one option matches a caller's value equally, the tool either takes the first in the site's order and returns the one it used, as the site labels it, or lists them for the caller to choose one, in a question or a refusal whose options each select exactly one of them. Which of the two is the tool's own choice, never a finding or a reason to deny. A tool that takes the first and does not return the one it used is a schema_mismatch finding with reason source_correction.";
+      "A tool matches the caller's proper nouns, such as places, venues and company names, with a fuzzy match that accepts the usual forms of the same name. Never ask a tool to require an exact match. When more than one option matches a caller's value equally, the tool either takes the first in the site's order and returns the one it used, as the site labels it, or lists them for the caller to choose one, in a question or a refusal whose options each select exactly one of them. Which of the two is the tool's own choice, never a finding or a reason to deny, except for an address, pickup or drop-off value, which only the address matcher chooses. A tool that takes the first and does not return the one it used is a schema_mismatch finding with reason source_correction.";
     expect(guardianPublicationPolicy.split(rule)).toHaveLength(2);
     expect(guardianExecutionPolicy(nativeExecutionEnvironment)).toContain(`\n${rule}\n`);
   });
@@ -1026,7 +1028,8 @@ describe("the publication policy", () => {
   // choice. Only taking the first without returning the match it used is a finding, and one the
   // publication review can return.
   it("finds a tool that takes the first of equal matches without returning it, never the choice", () => {
-    const choice = "Which of the two is the tool's own choice, never a finding or a reason to deny.";
+    const choice =
+      "Which of the two is the tool's own choice, never a finding or a reason to deny, except for an address, pickup or drop-off value, which only the address matcher chooses.";
     const missing =
       "A tool that takes the first and does not return the one it used is a schema_mismatch finding with reason source_correction.";
     expect(guardianPublicationPolicy.split(`${choice} ${missing}`)).toHaveLength(2);
@@ -1038,11 +1041,15 @@ describe("the publication policy", () => {
   // returns its quote, may publish signed out, as the cart skill lets it build: no later call needs
   // that cart. A cart a later call must find still needs
   // a verified sign-in, and the same-run guest checkout keeps its own clause. Hosts with their own
-  // publication policy get it with publicationCartPolicy.
+  // publication policy get it with publicationCartPolicy. A site notice in another container than
+  // the tool's controls never makes that finding, even when the accessibility snapshot hides the
+  // divider between them.
   it("lets a cart tool whose own guest cart lives only inside one run publish signed out", () => {
     const rule =
       "A cart tool (one that reads, adds to, changes or checks out a cart) runs signed in, unless it fills the cart and places the order in the same run through the site's guest checkout and its description says so, or its description says it starts its own guest cart that lives only inside one run, which no later call or person must find, as a tool that fills a cart and returns its quote before checkout may, and the source and trusted evidence agree; without a verified sign-in in trusted_execution_context, any other cart tool is a cart_sign_in finding with reason evidence at the description.";
-    expect(publicationCartPolicy.startsWith(`${rule} `)).toBe(true);
+    const notice =
+      "A site notice applies only to the controls in its own container in the captured page's structure, not by its place in the accessibility snapshot, which can hide dividers, so a cart_sign_in finding never rests on a notice whose container holds no control the tool uses.";
+    expect(publicationCartPolicy.startsWith(`${rule} ${notice} `)).toBe(true);
     expect(guardianPublicationPolicy.split(rule)).toHaveLength(2);
     expect(publicationFindingCategories).toContain("cart_sign_in");
   });
@@ -1305,9 +1312,9 @@ describe("the publication policy", () => {
   // the address resolver takes it and still refuses another address. A choice among the account's
   // saved addresses is not a typed address. An address typeahead the tool drives itself is also an
   // own picker, whose fix names the address resolver too, so the two rules ask for the same fix.
-  it("finds a typed street address matched without the address resolver", () => {
+  it("finds a typed address, pickup or drop-off value matched without the address resolver", () => {
     expect(publicationOutputPolicy).toContain(
-      "Own address match: source that matches a street address the caller typed against the site's suggestions with pickValue, rankChoices or matching of its own, instead of matchAddressRows over the rows pickerAddressRows read, or resolveAddress over the site's own suggestion request. A choice among the account's saved addresses is not this finding.",
+      "Own address match: source that matches an address, pickup or drop-off value the caller typed against the site's suggestions with pickValue, rankChoices, taking the first or matching of its own, instead of matchAddressRows over the rows pickerAddressRows read, or resolveAddress over the site's own suggestion request. A choice among the account's saved addresses is not this finding.",
     );
     expect(
       publicationOutputPolicy.slice(
@@ -1315,21 +1322,22 @@ describe("the publication policy", () => {
         publicationOutputPolicy.indexOf("Own address match:"),
       ),
     ).toContain(
-      "The fix is pickValue or pickValues, with their options for the site's quirks, such as query, answered, committed, commit or blur; for a street address the caller typed, it is pickerTypeAddress and pickerAddressRows in one call, matchAddressRows in the script, then pickerMatchAddress in the next call, clicking the row it returns.",
+      "The fix is pickValue or pickValues, with their options for the site's quirks, such as query, answered, committed, commit or blur; for an address, pickup or drop-off value the caller typed, it is pickerTypeAddress and pickerAddressRows in one call, matchAddressRows in the script, then pickerMatchAddress in the next call, clicking the row it returns.",
     );
     expect(guardianPublicationPolicy).toContain(publicationOutputPolicy);
   });
 
   // Matching a record by today's date, or turning the site's "Tomorrow" into a date, picks the
-  // wrong day as surely as refusing a past date does when today is UTC's. A time with no offset
-  // names no moment, but a repair or change is judged only on the times it adds or changes, so
-  // the many tools that return one today still repair.
-  it("finds a comparison with today in UTC, and an output time with no offset that a build adds", () => {
+  // wrong day as surely as refusing a past date does when today is UTC's. A time's zone is best
+  // effort: a site may show local times and name no zone, so a time without one never blocks a
+  // build, repair or change.
+  it("finds a comparison with today in UTC, and never an output time with no offset on its own", () => {
     expect(publicationOutputPolicy).toContain(
       "Date in UTC: source that compares a site's date or time with today's date or the time in UTC, such as new Date().toISOString().slice(0, 10), rather than with today in the site's time zone or in that of the place the date is at,",
     );
+    expect(publicationOutputPolicy).not.toContain("Zone-less time:");
     expect(publicationOutputPolicy).toContain(
-      "Zone-less time: an output time with no UTC offset, unless the output also returns that time with one. In a repair or change, only for an output time it adds or changes.",
+      "An output time with no UTC offset or time zone is never a finding on its own; the rationale may note it.",
     );
     expect(guardianPublicationPolicy).not.toContain("Past date in UTC");
     expect(guardianPublicationPolicy).toContain(publicationOutputPolicy);
