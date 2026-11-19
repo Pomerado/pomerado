@@ -204,6 +204,7 @@ const replay = (
     readonly password?: string;
     readonly valueFree?: boolean;
     readonly siteAnswer?: "link" | "refused";
+    readonly stepWaitMs?: number;
   } = {},
 ) => {
   const asked: string[] = [];
@@ -213,7 +214,14 @@ const replay = (
         Object.fromEntries(
           request.questions.map((question) => {
             asked.push(question.id);
-            return [question.id, question.id === "sign_in_link" ? link : String(246810 + asked.length)];
+            return [
+              question.id,
+              question.id === "sign_in_link"
+                ? link
+                : question.type === "confirm"
+                  ? { confirmed: true }
+                  : String(246810 + asked.length),
+            ];
           }),
         ) as InputAnswers,
     ),
@@ -240,7 +248,7 @@ const replay = (
         ...(options.siteAnswer === undefined
           ? {}
           : { hosted: { siteAnswer: () => Effect.succeed(options.siteAnswer) } }),
-        timing: { stepWaitMs: 300, pollMs: 2 },
+        timing: { stepWaitMs: options.stepWaitMs ?? 300, pollMs: 2 },
         quiet: { quietMs: 20, capMs: 120 },
         sent: { current: false },
       }),
@@ -467,13 +475,85 @@ it("ends at a notice it does not know after the password went, sending nothing a
 });
 
 it("stops when the site goes back to a state it acted in before, typing nothing again", async () => {
-  const site = scriptedSite({ start: emailScreen, password: passwordScreen }, (_at, clicked) =>
-    clicked === "#continue" ? "password" : "start",
-  );
-  const ended = await replay(site, branches);
-  expect(ended).toMatchObject({ outcome: "unclear", reason: "credential_screen_returned" });
-  expect(site.fills).toEqual(["email", "password"]);
-  expect(site.clicks).toEqual(["#continue", "#go"]);
+  const emailState = { fingerprint: arrival(emailScreen), step: stepAt("/sign-in", [email], "#continue") };
+  const passwordState = { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") };
+  // A second recording of the email state, its step told apart only by a marker, looks the same.
+  const twin = {
+    ...emailState,
+    step: stepAt("/sign-in", [email], "#continue", { rejectedMarkers: [{ selector: "#unknown", slot: "email" }] }),
+  };
+  for (const library of [branches, libraryOf([emailState, passwordState], [twin])]) {
+    const site = scriptedSite({ start: emailScreen, password: passwordScreen }, (_at, clicked) =>
+      clicked === "#continue" ? "password" : "start",
+    );
+    const ended = await replay(site, library);
+    expect(ended).toMatchObject({ outcome: "unclear", reason: "credential_screen_returned" });
+    expect(site.fills).toEqual(["email", "password"]);
+    expect(site.clicks).toEqual(["#continue", "#go"]);
+  }
+});
+
+it("waits at a notice state's boxes after its approval until the site signs in", async () => {
+  const request = "we sent a sign-in request to your phone";
+  const library = libraryOf([
+    { fingerprint: arrival(combined), step: stepAt("/", [email, password], "#continue") },
+    { fingerprint: { ...arrival(combined), message: request }, step: stepAt("/", [], undefined, { approval: "device" }) },
+  ]);
+  // The site's page keeps the form and its request a moment after the owner approves.
+  const site = scriptedSite({ start: combined, requested: { ...combined, texts: [request] } }, (_at, clicked) => {
+    if (clicked !== "#continue") return undefined;
+    setTimeout(() => {
+      site.site.screen = "home";
+    }, 100);
+    return "requested";
+  });
+  const ended = await replay(site, library);
+  expect(ended).toMatchObject({ outcome: "signed_in" });
+  expect(ended.asked).toEqual(["approved"]);
+  expect(site.clicks).toEqual(["#continue"]);
+});
+
+it("asks for a new code when the site refuses one from a code box that sends itself", async () => {
+  const library = libraryOf([
+    {
+      fingerprint: arrival(codeScreen),
+      step: stepAt("/verify", [code], undefined, { rejectedMarkers: [{ selector: "#bad-code", slot: "code" }] }),
+    },
+  ]);
+  const site = scriptedSite({ start: codeScreen, refused: { ...codeScreen, errors: ["#bad-code"] } }, () => undefined);
+  let typed = 0;
+  // The code box sends its form on its last digit.
+  const fill: typeof site.hooks.fill = (call) =>
+    Effect.map(site.hooks.fill(call), (report) => {
+      site.site.screen = ++typed > 1 ? "home" : "refused";
+      site.site.typed.clear();
+      return report;
+    });
+  expect(await replay({ ...site, hooks: { ...site.hooks, fill } }, library)).toMatchObject({ outcome: "signed_in" });
+  expect(site.fills).toEqual(["code", "code"]);
+});
+
+it("never picks a sign-in method a second time when the page keeps the choice", async () => {
+  const choose: Screen = { path: "/method", boxes: [], buttons: ["#text-me", "#use-password"], texts: ["how should we reach you"] };
+  const methods = [
+    { method: "sms", selector: "#text-me" },
+    { method: "password", selector: "#use-password" },
+  ];
+  const library = libraryOf([{ fingerprint: arrival(choose), step: stepAt("/method", [], "#text-me", { methods }) }]);
+  const site = scriptedSite({ start: choose }, () => undefined);
+  expect(await replay(site, library)).toMatchObject({ reason: "state_repeated" });
+  expect(site.clicks).toEqual(["#text-me"]);
+});
+
+it("signs in on a page that can't tell once it held still, before the step wait", { timeout: 4_000 }, async () => {
+  const landing: Screen = { path: "/landing", boxes: [], texts: ["welcome back"] };
+  const library = libraryOf([{ fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") }]);
+  const site = scriptedSite({ start: passwordScreen, landing }, () => "landing");
+  const confirmed: string[] = [];
+  const hooks = { ...site.hooks, confirmCantTell: () => Effect.sync(() => void confirmed.push("confirmed")) };
+  const ended = await replay({ ...site, hooks }, library, { stepWaitMs: 10_000 });
+  expect(ended).toMatchObject({ outcome: "signed_in", cantTell: true });
+  expect(confirmed).toEqual(["confirmed"]);
 });
 
 it("ends unclear when the press after a typed password lost its call's answer", async () => {

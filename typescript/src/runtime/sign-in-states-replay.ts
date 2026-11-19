@@ -29,6 +29,7 @@ import type { AutofillSignInState } from "./autofill-state.js";
 import { recordedRejections } from "./autofill-rejection.js";
 import { approvalNumber, openPastedLink, withApprovalNumber } from "./autofill-replay-approval.js";
 import { settleCarried } from "./autofill-replay-fill.js";
+import { landingSettleMs } from "./autofill-replay-pages.js";
 import { alreadySignedIn, makeReplay, type Replay, workspaceOf } from "./autofill-replay-session.js";
 import {
   askOne,
@@ -49,8 +50,7 @@ import { workspaceHost } from "./workspace-origin.js";
 
 /**
  * How long a press waits for the page to hold still, and at most, when the state it is in may
- * still grow into another known state; and how long the page may show the same state after a
- * press before the replay stops there.
+ * still grow into another known state.
  */
 export interface StatesQuiet {
   readonly quietMs: number;
@@ -127,8 +127,8 @@ type Acted = {
   readonly acted: StateEntry;
   readonly reached: ObservedState;
   /**
-   * The press it made with nothing typed, where no state it leads to takes a code or an approval,
-   * which a page that kept the state gets once more.
+   * The press it made with nothing typed and no method picked, where no state it leads to takes a
+   * code or an approval, which a page that kept the state gets once more.
    */
   readonly press?: AutofillStep;
   /** The state's controls went before anything was sent: it is looked for once more. */
@@ -189,9 +189,9 @@ const shownOn = <E extends YieldableError, V extends string, L extends AutofillL
   Effect.gen(function* () {
     const inspection = yield* run.input.hooks.inspect(step);
     if ("outcome" in inspection) return inspection.reason;
+    if (!onStateFrames(run, state, inspection)) return "screen_origin_changed" as const;
     const refused = yield* admitScreen(run.as, run.replay, state.step, inspection.page, inspection);
-    if (refused !== undefined) return refused;
-    return onStateFrames(run, state, inspection) ? inspection : ("screen_origin_changed" as const);
+    return refused ?? inspection;
   });
 
 /**
@@ -223,13 +223,18 @@ const preferred = <E extends YieldableError, V extends string, L extends Autofil
   );
 };
 
-/** Whether a state was acted in before something went out: it is never acted in again. */
+/**
+ * Whether a state, or one that looks the same, was acted in before something went out: it is never
+ * acted in again, whichever of a library's look-alikes the page would match.
+ */
 const actedBefore = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
   state: StateEntry,
 ) =>
   (run.replay.progress.anythingSent || run.replay.sent.maySent.size > 0) &&
-  run.visited.includes(state.key);
+  run.input.library.states.some(
+    (other) => run.visited.includes(other.key) && sameFingerprint(other.fingerprint, state.fingerprint),
+  );
 
 /**
  * The known state the page shows: one whose fingerprint it is and whose recorded controls show,
@@ -267,7 +272,7 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
       if (typeof shown !== "string") return { state, inspection: shown } satisfies Shown;
       refused ??= shown;
     }
-    return returned === undefined ? refused : { returned };
+    return returned === undefined ? refused : { returned: returned as StateEntry };
   });
 
 const signedIn = <E extends YieldableError, V extends string, L extends AutofillLogin>(
@@ -385,10 +390,14 @@ const endCheck = <E extends YieldableError, V extends string, L extends Autofill
         ? ({ ended: { ...signedIn(run, marker).ended, ...already } } as Ended<V>)
         : undefined;
     }
-    return (yield* replay.endedCantTell(undefined))
-      ? ({ ended: { ...signedIn(run, marker).ended, cantTell: true } } as Ended<V>)
-      : undefined;
+    return (yield* replay.endedCantTell(undefined)) ? cantTellEnd(run, marker) : undefined;
   });
+
+/** Signed in on a page that can't tell, as the host confirmed (`endedCantTell`). */
+const cantTellEnd = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  marker: SignedInEntry,
+) => ({ ended: { ...signedIn(run, marker).ended, cantTell: true } }) as Ended<V>;
 
 const rejection = (slot: string) =>
   slot === "password" ? "password_rejected" : slot === "code" ? "code_rejected" : "username_rejected";
@@ -416,6 +425,7 @@ const siteAnswer = <E extends YieldableError, V extends string, L extends Autofi
     if (
       read === undefined ||
       replay.progress.linkAsked ||
+      replay.state.steps.some((step) => step.approval === "email_link") ||
       run.answered.has(state.key) ||
       fields.some((field) => field.slot === "code") ||
       !fields.some(
@@ -466,17 +476,22 @@ const returnedReason = <E extends YieldableError, V extends string, L extends Au
  * waits for a screen. The marker signs in. Once anything may have gone out, a recorded error marker
  * of a state acted in stops the replay as that rejection, whatever else the page shows. A known
  * state is taken once its controls show and pass its origin rule, the states the last led to
- * first; one acted in before something went out showing again stops it (`returnedReason`). While
- * the state just acted in stands, its boxes as they were with or without a new text, a code state
- * whose code went asks for a new one at its code marker or after `capMs` (`code`); the site's own
- * answer, read once it held still and again at `capMs`, opens an emailed link (`link`) or ends a
- * refused login; at `capMs`, a new text no known state has is an unknown state, else a press that
- * typed nothing and sends no code or link is made once more (`repress`), and otherwise it stops
- * (`returnedReason`), as nothing is sent twice. A page with boxes no known state has or holds ends
- * the replay once it held still `quietMs`; a page of text alone, one a known state may still grow
- * into, or one a known state's controls have not shown on, gets the whole step wait, as a slow page
- * is no unknown state, and at its end the host's challenge look runs once, as at a recipe screen's
- * deadline. Before an unknown state, or none, the recipe replay's last check runs (`endCheck`).
+ * first; one acted in before something went out showing again stops it (`returnedReason`), unless
+ * the state just acted in stands. It stands while the page shows its boxes as they were, with or
+ * without a new text, or a notice state's boxes beside its text; through the step wait, as the
+ * recipe replay waits for its next screen, a code state whose code went asks for a new one at its
+ * code marker or at the step wait (`code`); the site's own answer, read once it held still and
+ * again at the step wait, opens an emailed link (`link`) or ends a refused login; at the step
+ * wait, a new text no known state has is an unknown state, else a press that typed nothing and
+ * sends no code or link is made once more (`repress`), and otherwise it stops (`returnedReason`),
+ * as nothing is sent twice. A box that sent itself counts as sent first (`settleCarried`). A page
+ * with boxes no known state has or holds ends the replay once it held still `quietMs`; a page of
+ * text alone, one a known state may still grow into, or one a known state's controls have not
+ * shown on, gets the whole step wait, as a slow page is no unknown state, and at its end the
+ * host's challenge look runs once, as at a recipe screen's deadline. Once the login went out, a
+ * page of text alone that held still `landingSettleMs` and can't tell signs in, as at the recipe
+ * replay's marker wait. Before an unknown state, or none, the recipe replay's last check runs
+ * (`endCheck`).
  */
 const arrive = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -494,9 +509,11 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
     let stood = false;
     let challenged = false;
     let answerRead = false;
+    let cantTellRead: string | undefined;
     for (;;) {
       const signed = yield* signedInHere(run);
       if (signed !== undefined) return signed;
+      if (acted !== undefined) settleCarried(replay);
       let codeMarked = false;
       if (acted !== undefined && mayHaveSent(run)) {
         const marked = yield* markedNow(run);
@@ -514,19 +531,26 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
         const text = fingerprintText(shape);
         if (held?.text !== text) held = { text, since: at };
         const still = at - held.since >= quiet.quietMs;
-        const capped = at - start >= quiet.capMs;
-        const again = acted !== undefined && sameFingerprint(shape, acted.acted.fingerprint);
+        const capped = at - start >= replay.timing.stepWaitMs;
+        const fingerprint = acted?.acted.fingerprint;
+        const again =
+          fingerprint !== undefined &&
+          (sameFingerprint(shape, fingerprint) ||
+            (fingerprint.message !== undefined &&
+              fingerprint.boxes.length > 0 &&
+              sameBoxes(shape, fingerprint) &&
+              read.texts.includes(fingerprint.message)));
+        stood =
+          fingerprint !== undefined &&
+          (again || (fingerprint.boxes.length > 0 && sameBoxes(shape, fingerprint)));
         if (!again && !blankFingerprint(shape)) {
           const shown = yield* matchState(run, shape, after, acted?.acted);
-          if (typeof shown === "object")
-            return "returned" in shown
-              ? stopped(run, returnedReason(run, shown.returned))
-              : { ...shown, observed: read };
-          refused = shown;
+          refused = typeof shown === "object" ? undefined : shown;
+          if (typeof shown === "object") {
+            if (!("returned" in shown)) return { ...shown, observed: read };
+            if (!stood) return stopped(run, returnedReason(run, shown.returned));
+          }
         }
-        stood =
-          acted !== undefined &&
-          (again || (acted.acted.fingerprint.boxes.length > 0 && sameBoxes(shape, acted.acted.fingerprint)));
         if (acted !== undefined && stood) {
           const state = acted.acted;
           if (takesCodeIn(run, state) && replay.sent.maySent.has("code") && (codeMarked || capped))
@@ -543,8 +567,18 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
               ? stopped(run, returnedReason(run, state))
               : ({ again: "repress" } satisfies Again);
           }
+        } else if (shape.boxes.length === 0) {
+          const marker = run.markers[0];
+          if (
+            replay.progress.anythingSent &&
+            marker !== undefined &&
+            at - held.since >= landingSettleMs &&
+            cantTellRead !== held.text
+          ) {
+            cantTellRead = held.text;
+            if (yield* replay.endedCantTell(undefined)) return cantTellEnd(run, marker);
+          }
         } else if (
-          shape.boxes.length > 0 &&
           refused === undefined &&
           still &&
           !run.input.library.states.some((state) => containsFingerprint(shape as StateFingerprint, state.fingerprint))
@@ -767,7 +801,9 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
     const acted = (press?: AutofillStep): Acted => ({
       acted: state,
       reached,
-      ...(press === undefined || typed.size > 0 || sendsOnPress(run, state) ? {} : { press }),
+      ...(press === undefined || typed.size > 0 || state.step.methods !== undefined || sendsOnPress(run, state)
+        ? {}
+        : { press }),
     });
     for (;;) {
       const step = state.step;
