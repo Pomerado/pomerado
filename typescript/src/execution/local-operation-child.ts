@@ -245,10 +245,15 @@ const executeLocally = (operation: Parameters<typeof executeKernelOperation>[0])
       const code = "code" in error && typeof error.code === "string" ? error.code : "";
       const [, named, sent] = code.split(":");
       const reason = Schema.decodeUnknownOption(FileRefusalReason)(named);
+      // The host's message carries its refusal's detail after the reason.
+      const said = `The host refused the file: ${named}. `;
       return new FileRefused({
         reason: reason._tag === "Some" ? reason.value : "unavailable",
         // Only a refusal the host says came before setting the input sent nothing.
         ...(reason._tag === "Some" && sent !== "dispatched" ? {} : { dispatched: true }),
+        ...(reason._tag === "Some" && error.message.startsWith(said)
+          ? { detail: error.message.slice(said.length) }
+          : {}),
       });
     };
     return yield* executeKernelOperation(operation, start.input, {

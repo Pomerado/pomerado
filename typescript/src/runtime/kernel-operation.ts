@@ -18,7 +18,9 @@ import type { WriteDeclaration } from "./operation.js";
 import { kernelTimeoutSec } from "./kernel-execute-client.js";
 import type { KernelExecuteClient } from "./kernel-execute-client.js";
 import { inspectSignInRejection } from "./sign-in-rejection.js";
+import { typeExtensions } from "./file-types.js";
 import {
+  downloadUrlMaxLength,
   FileField,
   FileRefused,
   ScreenshotTarget,
@@ -275,10 +277,11 @@ export interface KernelOperationContext<
    */
   readonly ensureSignedIn: () => Promise<{ readonly signedInAgain: boolean }>;
   /**
-   * The run's files: `place` puts a caller's file into a file input on the site, `collect`
-   * captures a download the page starts, `collectAll` every download a trigger starts and
-   * `screenshot` a picture of the page. The bytes stay with the host. A run without the host's
-   * file service, such as an offline run, throws `OperationFailure` on each.
+   * The run's files: `place` puts a caller's file into a file input on the site, `collect` captures
+   * a download the page starts, `collectAll` every download a trigger starts, `fetch` a file at an
+   * address the page can read and `screenshot` a picture of the page. The bytes stay with the host.
+   * A run without the host's file service, such as an offline run, throws `OperationFailure` on
+   * each.
    */
   readonly files: ScriptFiles;
   readonly errors: typeof operationErrors;
@@ -518,6 +521,90 @@ const collectFailure = (error: unknown) => {
 };
 
 /**
+ * Runs in the page: fetches `url` with the page's own session, under the page's own CORS rules
+ * (once more with cookies for the page's own site only, if that request failed), and, when the site
+ * answers a file, hands its bytes to the browser as a download named for the file, which the armed
+ * capture takes as it takes any other. A non-2xx answer, or a web page sent without `attachment`,
+ * is no file. Pasted into the page, so it refers to nothing outside its own body.
+ */
+async function fetchFileInPage(request: {
+  readonly url: string;
+  readonly timeoutMs: number;
+  readonly extensions: Readonly<Record<string, string>>;
+}): Promise<
+  | { readonly started: true }
+  | { readonly failed: "unreachable" | "page" }
+  | { readonly failed: "status"; readonly status: number }
+> {
+  const signal = AbortSignal.timeout(request.timeoutMs);
+  let response: Response;
+  try {
+    response = await fetch(request.url, { credentials: "include", signal });
+  } catch {
+    // Another site's public link that allows any page (`*`), asked directly or reached through
+    // a redirect, refuses a request with cookies, so the address is asked once more, within the
+    // same time limit, with cookies only for the page's own site.
+    try {
+      response = await fetch(request.url, { credentials: "same-origin", signal });
+    } catch {
+      return { failed: "unreachable" };
+    }
+  }
+  if (!response.ok) return { failed: "status", status: response.status };
+  const type = (response.headers.get("content-type") ?? "").split(";")[0]?.trim().toLowerCase() ?? "";
+  const disposition = response.headers.get("content-disposition") ?? "";
+  if ((type === "text/html" || type === "application/xhtml+xml") && !/^\s*attachment/iu.test(disposition))
+    return { failed: "page" };
+  const encoded = /filename\*\s*=\s*[^']*'[^']*'([^;]+)/iu.exec(disposition)?.[1];
+  const plain = /filename\s*=\s*(?:"([^"]*)"|([^;]+))/iu.exec(disposition);
+  const segment = new URL(response.url || request.url).pathname.split("/").pop();
+  let name = "";
+  for (const [candidate, escaped] of [
+    [encoded, true],
+    [plain?.[1] ?? plain?.[2], false],
+    [segment, true],
+  ] as const) {
+    if (name !== "" || candidate === undefined) continue;
+    try {
+      name = (escaped ? decodeURIComponent(candidate) : candidate).trim();
+    } catch {
+      name = candidate.trim();
+    }
+  }
+  if (name === "") name = "download";
+  const extension = request.extensions[type];
+  if (!name.includes(".") && extension !== undefined) name = `${name}.${extension}`;
+  let blob: Blob;
+  try {
+    blob = await response.blob();
+  } catch {
+    return { failed: "unreachable" };
+  }
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = name;
+  link.style.display = "none";
+  (document.body ?? document.documentElement).append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(link.href), 60_000);
+  return { started: true };
+}
+
+const FetchedInPage = Schema.Union(
+  Schema.Struct({ started: Schema.Literal(true) }),
+  Schema.Struct({ failed: Schema.Literal("unreachable", "page") }),
+  Schema.Struct({ failed: Schema.Literal("status"), status: Schema.Number }),
+);
+
+/** What a caller's script reads when `files.fetch` took no file from the address. */
+const fetchFailureMessages = {
+  unreachable:
+    "files.fetch could not read the address from the page: it did not answer in time, or it is on another site that does not share it with this page",
+  page: "files.fetch got a web page, not a file, from the address; it is usually a sign-in or error page",
+} as const;
+
+/**
  * The context's `files` over the host's channel. A live run marks a possible dispatch once a
  * placement set the file input, or may have, as an execute call does; a refusal before that
  * reached no page. Collecting only reads what the trigger's own calls made the page download.
@@ -630,6 +717,60 @@ const scriptFiles = (
         return await settle(
           collectAll({ slot, timeoutMs, ...(max === undefined ? {} : { max }) }),
         );
+      } catch (error) {
+        throw collectFailure(error);
+      }
+    },
+    fetch: async (url, fetchOptions) => {
+      const files = channel();
+      const address = typeof url === "string" ? URL.parse(url) : null;
+      if (
+        address === null ||
+        (address.protocol !== "https:" && address.protocol !== "http:") ||
+        address.href.length > downloadUrlMaxLength
+      )
+        throw new OperationFailure("files.fetch takes the file's http: or https: address", {
+          dispatch: "not_sent",
+        });
+      const timeoutMs = Math.min(
+        fetchOptions?.timeoutMs ?? downloadWaitMs,
+        Math.max(0, options.deadline.remainingMs()),
+      );
+      let slot: string;
+      try {
+        slot = await settle(files.arm());
+      } catch (error) {
+        throw fileFailure(error);
+      }
+      const request = { url: address.href, timeoutMs, extensions: typeExtensions };
+      const ended = () => Effect.runPromise(Effect.ignore(files.collect({ slot, timeoutMs: 0 })));
+      let fetched: typeof FetchedInPage.Type;
+      try {
+        const answer = await options.kernel.browsers.playwright.execute(options.sessionId, {
+          code: `return await page.evaluate(${fetchFileInPage.toString()}, ${JSON.stringify(request)});`,
+          timeout_sec: kernelTimeoutSec(Math.min(timeoutMs + 10_000, options.deadline.remainingMs())),
+        });
+        if (answer.success !== true) throw new Error(String(answer.error));
+        fetched = Schema.decodeUnknownSync(FetchedInPage)(answer.result);
+      } catch (error) {
+        // The capture ends with the fetch, so nothing it armed outlives the failure.
+        await ended();
+        throw new OperationFailure(`files.fetch failed in the page: ${String(error)}`, {
+          cause: error,
+          dispatch: "unknown",
+        });
+      }
+      if ("failed" in fetched) {
+        await ended();
+        throw new OperationFailure(
+          fetched.failed === "status"
+            ? `files.fetch got HTTP ${fetched.status} from the address, not a file`
+            : fetchFailureMessages[fetched.failed],
+          { dispatch: "unknown" },
+        );
+      }
+      try {
+        return await settle(files.collect({ slot, timeoutMs }));
       } catch (error) {
         throw collectFailure(error);
       }
