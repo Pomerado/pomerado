@@ -484,17 +484,16 @@ const Patch = Schema.Array(PatchOperation).pipe(
 );
 /**
  * The operation with its diff out of apply_patch's own envelope, when the diff comes in one for
- * this operation's file alone: `*** Begin Patch`, its `*** Add File:` or `*** Update File:` line,
- * and a closing `*** End Patch`. The editor takes only the diff's own lines.
+ * this operation's file alone: without its `*** Begin Patch` and `*** Add File:` or
+ * `*** Update File:` lines. The editor ends the diff at the envelope's `*** End Patch`.
  */
 const withoutEnvelope = (operation: typeof PatchOperation.Type): typeof PatchOperation.Type => {
   if (operation.type === "delete_file") return operation;
-  const lines = operation.diff.split("\n").map((line) => line.replace(/\r$/, ""));
-  while (lines.at(-1) === "") lines.pop();
+  const lines = operation.diff.split(/\r?\n/);
   const kind = operation.type === "create_file" ? "Add" : "Update";
-  const header = `*** ${kind} File: ${operation.path}`;
-  if (lines[0] !== "*** Begin Patch" || lines[1]?.trim() !== header) return operation;
-  const body = lines.slice(2, lines.at(-1) === "*** End Patch" ? -1 : undefined);
+  if (lines[0] !== "*** Begin Patch" || lines[1]?.trim() !== `*** ${kind} File: ${operation.path}`)
+    return operation;
+  const body = lines.slice(2);
   // An envelope that also names another file is left as sent, and does not apply.
   if (body.some((line) => /^\*\*\* (Add|Update|Delete) File:/.test(line))) return operation;
   return { ...operation, diff: body.join("\n") };
