@@ -304,6 +304,7 @@ const executeLocally = (operation: Parameters<typeof executeKernelOperation>[0])
       sessionId: start.sessionId,
       ...(start.siteOrigin === undefined ? {} : { siteOrigin: start.siteOrigin }),
       ...(start.siteDomain === undefined ? {} : { siteDomain: start.siteDomain }),
+      ...(start.browserTimeZone === undefined ? {} : { browserTimeZone: start.browserTimeZone }),
       ...(start.offline === true ? { offline: true } : {}),
       ...(start.list === undefined ? {} : { list: start.list }),
       dialogs: (report) =>

@@ -644,8 +644,8 @@ Then, for every field:
   `{ "eta_start": "2026-11-16T00:38:00-05:00", "eta_end": "2026-11-16T00:59:00-05:00",
   "eta_label": "12:38-12:59 AM", "time_zone": "America/New_York" }`. A time the page shows with no zone beside it is in
   the browser's own zone whenever the page computes it from a timestamp, as order trackers,
-  estimates and activity feeds do; read that zone in the same call as the times with
-  `browserTimeZoneCode`, never from the script's own clock, the caller's place or an address,
+  estimates and activity feeds do; take that zone from the context's `browserTimeZone`, never
+  from the script's own clock, the caller's place or an address,
   since the browser's clock can be in another zone than the caller's. Use the zone the page
   names instead when it names one, such as a store's hours or a flight's local times, and a
   timestamp in the page's own data, such as its embedded JSON, over its text. When the zone is

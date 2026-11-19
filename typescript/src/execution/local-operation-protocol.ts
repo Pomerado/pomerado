@@ -74,6 +74,7 @@ export const LocalOperationStart = Schema.Struct({
   sessionId: Schema.String,
   siteOrigin: Schema.optionalWith(Schema.String, { exact: true }),
   siteDomain: Schema.optionalWith(Schema.String, { exact: true }),
+  browserTimeZone: Schema.optionalWith(Schema.String, { exact: true }),
   timeoutMs: Schema.Number.pipe(Schema.positive(), Schema.finite()),
   mode: Schema.Literal("run", "contract"),
   validateInput: Schema.optionalWith(Schema.Boolean, { exact: true }),

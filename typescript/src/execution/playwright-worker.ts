@@ -448,12 +448,17 @@ await Effect.runPromise(
         ? yield* promise(() => context.newPage())
         : yield* adoptPage(browser, context, attached.targetId);
     const target = yield* identify(context, page);
+    // The zone the page runs in, read once here so a script gets it without code in the page.
+    const timeZone = yield* promise(() =>
+      page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone),
+    ).pipe(Effect.timeout("5 seconds"), Effect.orElseSucceed(() => undefined));
     if (attached !== undefined)
       browser.on("disconnected", () => port.postMessage({ kind: "disconnected" }));
     port.postMessage({
       kind: "ready",
       targetId: target.targetId,
       ...(attached === undefined ? { contextId: target.browserContextId } : {}),
+      ...(timeZone === undefined ? {} : { timeZone }),
     });
     const gate = yield* makeCallGate(options.callsAtOnce ?? 1);
     port.on("message", (value: unknown) => {

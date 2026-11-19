@@ -167,6 +167,8 @@ describe("zonedClock", () => {
     ])
       expect(() => zonedClock("2026-11-15", clock, "America/Los_Angeles"), clock).toThrow(RangeError);
     expect(() => zonedClock("nearest", "7:45 PM", "Mars/Olympus_Mons")).toThrow(RangeError);
+    // A context's `browserTimeZone` the host gave none, never the script's own zone.
+    expect(() => zonedClock("nearest", "7:45 PM", undefined as unknown as string)).toThrow(RangeError);
     expect(() => zonedClock("2026-02-30", "7:45 PM", "America/Los_Angeles")).toThrow(RangeError);
   });
 });
