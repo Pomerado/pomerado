@@ -1,6 +1,6 @@
 import { Either, Schema } from "effect";
 import { parseSync } from "oxc-parser";
-import type { Expression, Node } from "oxc-parser";
+import type { Expression, Node, ObjectExpression, Program } from "oxc-parser";
 import { QuestionId } from "../runtime/input-request.js";
 import { ScriptQuestionDeclarations } from "../runtime/script-input.js";
 
@@ -80,13 +80,67 @@ function* nodes(node: unknown): Generator<Node> {
   for (const value of Object.values(node)) if (typeof value === "object") yield* nodes(value);
 }
 
+/** A module's top-level `const` bindings to object literals, by name. */
+const objectConsts = (program: Program) => {
+  const consts = new Map<string, ObjectExpression>();
+  for (const statement of program.body) {
+    const declaration =
+      statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
+    if (declaration?.type !== "VariableDeclaration" || declaration.kind !== "const") continue;
+    for (const { id, init } of declaration.declarations)
+      if (id.type === "Identifier" && init?.type === "ObjectExpression") consts.set(id.name, init);
+  }
+  return consts;
+};
+
 /**
- * Read a draft's literal `defineOperation` questions without running its source. A computed,
- * absent or unparseable declaration has no static value.
+ * A contract's literal `questions`: an object literal's own, or those of a top-level const it
+ * names or spreads, a later key winning. `undefined` when it declares none, `notLiteral` when only
+ * running the code would tell. A spread or computed key it can't read keeps only a `questions`
+ * key written before it in the same literal. Each name resolves once; a cycle reads as unread.
+ */
+const contractQuestions = (
+  contract: Expression,
+  consts: ReadonlyMap<string, ObjectExpression>,
+  resolved = new Map<string, unknown>(),
+): unknown => {
+  if (contract.type === "Identifier") {
+    const bound = consts.get(contract.name);
+    if (bound === undefined) return notLiteral;
+    if (!resolved.has(contract.name)) {
+      resolved.set(contract.name, notLiteral);
+      resolved.set(contract.name, contractQuestions(bound, consts, resolved));
+    }
+    return resolved.get(contract.name);
+  }
+  if (contract.type !== "ObjectExpression") return notLiteral;
+  let questions: unknown;
+  let keyed = false;
+  for (const property of contract.properties) {
+    if (property.type === "Property" && !property.computed) {
+      if (
+        (property.key.type === "Identifier" && property.key.name === "questions") ||
+        (property.key.type === "Literal" && property.key.value === "questions")
+      )
+        [questions, keyed] = [literal(property.value), true];
+      continue;
+    }
+    const spread =
+      property.type === "SpreadElement"
+        ? contractQuestions(property.argument, consts, resolved)
+        : notLiteral;
+    if (spread === notLiteral ? !keyed : spread !== undefined) [questions, keyed] = [spread, false];
+  }
+  return questions;
+};
+
+/**
+ * Read a draft's literal `defineOperation` questions without running its source. A computed or
+ * unparseable declaration has no static value; a draft that declares none reads as `undefined`.
  */
 const draftQuestionValue = (path: string, source: string): unknown => {
   const lang = path.endsWith(".ts") ? "ts" : "js";
-  let program: unknown;
+  let program: Program;
   try {
     const parsed = parseSync(path, source, { lang, sourceType: "module" });
     if (parsed.errors.length > 0) return notLiteral;
@@ -99,18 +153,11 @@ const draftQuestionValue = (path: string, source: string): unknown => {
     (node) => node.type === "CallExpression" && isDefineOperation(node.callee),
   );
   const [call] = calls;
+  if (calls.length === 0) return undefined;
   if (calls.length !== 1 || call?.type !== "CallExpression") return notLiteral;
   const contract = call.arguments[0];
-  if (contract === undefined || contract.type !== "ObjectExpression") return notLiteral;
-  const property = contract.properties.find(
-    (candidate) =>
-      candidate.type === "Property" &&
-      !candidate.computed &&
-      ((candidate.key.type === "Identifier" && candidate.key.name === "questions") ||
-        (candidate.key.type === "Literal" && candidate.key.value === "questions")),
-  );
-  if (property === undefined || property.type !== "Property") return notLiteral;
-  return literal(property.value);
+  if (contract === undefined || contract.type === "SpreadElement") return notLiteral;
+  return contractQuestions(contract, objectConsts(program));
 };
 
 /** An unpublished example may ask only these fixed, reviewable questions. */
@@ -125,6 +172,13 @@ export const draftQuestionDeclarations = (
     () => ({}),
   );
 };
+
+/**
+ * Whether only running a draft's code would tell its questions: it does not parse, or it calls
+ * `defineOperation` more than once, or with a contract or questions this reader can't resolve.
+ */
+export const draftQuestionsUnread = (path: string, source: string) =>
+  draftQuestionValue(path, source) === notLiteral;
 
 /** Reject a literal contract's invalid ids before an example or write step can run. */
 export const draftQuestionDeclarationFailure = (
