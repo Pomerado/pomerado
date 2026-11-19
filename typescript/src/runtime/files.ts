@@ -376,11 +376,12 @@ export interface ScriptFiles {
    * Fetches the file at `url`, an `http:` or `https:` address, from the run's page with the page's
    * own session, and returns it for the output as `collect` returns a download. Use it for a
    * document the browser shows in its own viewer, such as a PDF, which starts no download for
-   * `collect` to take. The page makes the request, so the address must be on the page's own site
-   * or on one that lets the page read it; when the request fails, the address is asked once more
-   * with cookies for the page's own site only, so another site's public link loads. It waits up to `timeoutMs` (30 s by default). An answer other
-   * than 2xx, a web page sent without `attachment`, or an address the page cannot read throws an
-   * `OperationFailure` that says which; so does a file `collect` would refuse.
+   * `collect` to take. The page makes the request, so the address must be on the page's own site or
+   * on one that lets the page read it; when the request fails, the address is asked once more with
+   * cookies for the page's own site only, so another site's public link loads. It waits up to
+   * `timeoutMs` (30 s by default). An answer other than 2xx, a web page sent without `attachment`,
+   * or an address the page cannot read throws an `OperationFailure` that says which; so does a file
+   * `collect` would refuse.
    */
   readonly fetch: (url: string, options?: { readonly timeoutMs?: number }) => Promise<FileObject>;
   /**

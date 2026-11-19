@@ -207,6 +207,33 @@ describe("a collected download whose bytes contradict what it claims", () => {
       media_type: "application/pdf",
     },
     {
+      case: "a whole linearized PDF one byte short of its declared length, its last newline dropped",
+      download: {
+        name: "report.pdf",
+        body: `${linearizedStart}${" ".repeat(9000 - linearizedStart.length - 6)}%%EOF`,
+        media_type: "application/pdf",
+      },
+      media_type: "application/pdf",
+    },
+    {
+      case: "a whole PDF whose linearized header declares a stale, larger length",
+      download: {
+        name: "report.pdf",
+        body: `${linearizedStart.replace("/L 9000", "/L 999999999")}%%EOF\n`,
+        media_type: "application/pdf",
+      },
+      media_type: "application/pdf",
+    },
+    {
+      case: "a whole PDF whose linearized header declares a 30-digit length",
+      download: {
+        name: "report.pdf",
+        body: `${linearizedStart.replace("/L 9000", `/L ${"9".repeat(30)}`)}%%EOF\n`,
+        media_type: "application/pdf",
+      },
+      media_type: "application/pdf",
+    },
+    {
       case: "a PDF named as an image, under the type its bytes prove",
       download: { name: "card.png", body: pdf },
       media_type: "application/pdf",

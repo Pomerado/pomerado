@@ -277,10 +277,11 @@ export interface KernelOperationContext<
    */
   readonly ensureSignedIn: () => Promise<{ readonly signedInAgain: boolean }>;
   /**
-   * The run's files: `place` puts a caller's file into a file input on the site, `collect`
-   * captures a download the page starts, `collectAll` every download a trigger starts, `fetch` a
-   * file at an address the page can read and `screenshot` a picture of the page. The bytes stay with the host. A run without the host's
-   * file service, such as an offline run, throws `OperationFailure` on each.
+   * The run's files: `place` puts a caller's file into a file input on the site, `collect` captures
+   * a download the page starts, `collectAll` every download a trigger starts, `fetch` a file at an
+   * address the page can read and `screenshot` a picture of the page. The bytes stay with the host.
+   * A run without the host's file service, such as an offline run, throws `OperationFailure` on
+   * each.
    */
   readonly files: ScriptFiles;
   readonly errors: typeof operationErrors;
@@ -521,10 +522,10 @@ const collectFailure = (error: unknown) => {
 
 /**
  * Runs in the page: fetches `url` with the page's own session, under the page's own CORS rules
- * (once more with cookies for the page's own site only, if that request failed), and, when the site answers a file,
- * hands its bytes to the browser as a download named for the file, which the armed capture takes
- * as it takes any other. A non-2xx answer, or a web page sent without `attachment`, is no file.
- * Pasted into the page, so it refers to nothing outside its own body.
+ * (once more with cookies for the page's own site only, if that request failed), and, when the site
+ * answers a file, hands its bytes to the browser as a download named for the file, which the armed
+ * capture takes as it takes any other. A non-2xx answer, or a web page sent without `attachment`,
+ * is no file. Pasted into the page, so it refers to nothing outside its own body.
  */
 async function fetchFileInPage(request: {
   readonly url: string;

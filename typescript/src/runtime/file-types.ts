@@ -208,11 +208,12 @@ const looselyClaimedTypes = new Set([
 const pdfMarkerWindow = 1024;
 
 /**
- * A PDF's shape: `none` without a `%PDF-` header near the start; `short` when a linearized PDF's
- * dictionary declares a length (`/L`) above its byte count, as when a download stops after the
- * first page; `unended` with no `%%EOF` marker after the header; else `whole`. Data after the
- * last `%%EOF`, such as page markup a server wrote after the file, leaves it `whole`, as PDF
- * readers open it.
+ * A PDF's shape: `none` without a `%PDF-` header near the start; `unended` with no `%%EOF`
+ * marker after the header; `short` when a linearized PDF's dictionary declares a length (`/L`)
+ * above its byte count and the file holds one `%%EOF`, its first page's, as when a download stops
+ * after the first page; else `whole`. A whole file under a stale or wrong `/L` still has its
+ * final `%%EOF` too, so it is `whole`, and so is one with data after its last `%%EOF`, such as
+ * page markup a server wrote after the file, as PDF readers open both.
  */
 const pdfShape = (bytes: Uint8Array) => {
   const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -220,8 +221,10 @@ const pdfShape = (bytes: Uint8Array) => {
   const header = start.indexOf("%PDF-");
   if (header === -1) return "none";
   const declared = /\/Linearized\s[^>]*?\/L\s+(\d+)/u.exec(start.toString("latin1", header))?.[1];
-  if (declared !== undefined && Number(declared) > bytes.byteLength) return "short";
-  return buffer.indexOf("%%EOF", header + 5) === -1 ? "unended" : "whole";
+  const end = buffer.indexOf("%%EOF", header + 5);
+  if (end === -1) return "unended";
+  const oneEnd = buffer.indexOf("%%EOF", end + 5) === -1;
+  return declared !== undefined && Number(declared) > bytes.byteLength && oneEnd ? "short" : "whole";
 };
 
 /** Whether the bytes prove a binary type: a known signature, or an ISO media `ftyp` box. */
@@ -239,11 +242,11 @@ const lookOf = (bytes: Uint8Array) => {
 /**
  * Why a download's bytes contradict what it claims, else undefined. A claim is the type its server
  * sent or its name's extension implies, and only a type with a signature claims anything. Under
- * such a claim a download is refused when it is empty, or when its bytes prove no binary type,
- * such as an HTML sign-in page sent as `application/pdf` or named `.pdf`; bytes that prove another
- * type are a real file, kept under their own type. A PDF is also refused when it has no `%%EOF`
- * marker, or is linearized and shorter than the length it declares. The answer names the claim, the size and what the bytes look like,
- * never their contents.
+ * such a claim a download is refused when it is empty, or when its bytes prove no binary type, such
+ * as an HTML sign-in page sent as `application/pdf` or named `.pdf`; bytes that prove another type
+ * are a real file, kept under their own type. A PDF is also refused when it has no `%%EOF` marker,
+ * or is linearized, shorter than the length it declares and holds only its first page's `%%EOF`.
+ * The answer names the claim, the size and what the bytes look like, never their contents.
  */
 export const downloadContradiction = (
   bytes: Uint8Array,
