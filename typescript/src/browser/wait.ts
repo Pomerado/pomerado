@@ -1613,7 +1613,7 @@ const waitForChange = async (fields, options = {}) => {
  * returns `ReadyResult`, and fails as a `ReadyWaitFailure` with `blockers` and a message naming
  * what held it back last: `not_ready` once nothing progressed for `noProgressMs`, `ready_timeout`
  * at `timeout` (default `answerCap`), `ready_ambiguous` when more than one visible element
- * matches.
+ * matches, unless all are links that open the same other page the same way.
  *
  * A value is still loading, never absent, while it is empty, reads as a loading word or only dots,
  * matches the field's `placeholder` pattern, or sits in an `aria-busy`, skeleton or shimmer

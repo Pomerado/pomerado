@@ -211,16 +211,15 @@ test("a secret the browser writes into a URL's path, with | encoded, never reach
   }
 });
 
-test("a separator hidden from assistive technology still splits the capture, so a notice stays with its own button", async () => {
+test("a separator hidden from assistive technology, and an unnamed form's edge, still split the capture, so a notice stays with its own button", async () => {
   test.setTimeout(90_000);
-  // A form, with a select inside its label, ends with its button; a divider hidden from the
-  // accessibility tree follows it, then a logo-only button, another hidden divider, a notice and
-  // another button. The snapshot drops the dividers and the wrappers. The page redefines how an
-  // array turns into JSON, as an old script library does.
+  // An unnamed form, with a select inside its label, ends with its button; a divider hidden from
+  // the accessibility tree follows it, then a logo-only button, another hidden divider, a notice
+  // and another button. The snapshot drops the dividers, the form and the wrappers.
   const site = await startSite((_request, response) =>
     html(
       response,
-      `<title>Checkout</title><script>Array.prototype.toJSON = function () { return "[]"; };</script><main><form><input aria-label="Email"><label>Country <select><option>Canada</option><option>Norway</option></select></label>` +
+      `<title>Checkout</title><main><form><input aria-label="Email"><label>Country <select><option>Canada</option><option>Norway</option></select></label>` +
         `<button type="button">Continue to payment</button></form>` +
         `<x-divider role="separator" aria-hidden="true" style="display:block;border-top:1px solid">or</x-divider>` +
         `<div><button type="button" aria-label="Wallet app"><svg aria-hidden="true" width="16" height="16"></svg></button><hr aria-hidden="true">` +
@@ -242,7 +241,21 @@ test("a separator hidden from assistive technology still splits the capture, so 
     expect(toolResult(last, "second")).toMatchObject({ status: "completed" });
     // The second step's review reads the page the first one left.
     expect(captureOf(executions(guardian.reviews)[1])).toContain(
-      '  - button "Continue to payment"\n  - separator [aria-hidden]\n  - button "Wallet app"\n  - separator [aria-hidden]\n  - text: By continuing, you agree to open a store account.\n  - button "Continue with wallet"',
+      [
+        "- main:",
+        "  - form:",
+        '    - textbox "Email"',
+        "    - text: Country",
+        '    - combobox "Country":',
+        '      - option "Canada" [selected]',
+        '      - option "Norway"',
+        '    - button "Continue to payment"',
+        "  - separator [aria-hidden]",
+        '  - button "Wallet app"',
+        "  - separator [aria-hidden]",
+        "  - text: By continuing, you agree to open a store account.",
+        '  - button "Continue with wallet"',
+      ].join("\n"),
     );
   } finally {
     await site.close();
@@ -254,13 +267,16 @@ test("text the page holds only out of view reads as hidden in the capture, and a
   // An announcement kept off screen beside an aria-hidden icon; a shown error and a shown count,
   // each with an off-screen copy, the count's holding its number in an element; a price whose
   // off-screen copy sits beside the aria-hidden digits it shows; and shown text with off-screen
-  // copies that are aria-hidden or not displayed.
+  // copies that are aria-hidden or not displayed. The page also holds a divider hidden from
+  // assistive technology, and redefines how an array turns into JSON, as an old script library
+  // does.
   const offScreen = "position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden";
   const announcement = "Time is up. You can no longer add items.";
   const site = await startSite((_request, response) =>
     html(
       response,
-      `<title>Order</title><main><h1>Add to your order</h1><div role="status">3 hours left</div>` +
+      `<title>Order</title><script>Array.prototype.toJSON = function () { return "[]"; };</script>` +
+        `<main><h1>Add to your order</h1><hr aria-hidden="true"><div role="status">3 hours left</div>` +
         `<div><svg aria-hidden="true" width="8" height="8"></svg><span style="${offScreen}" aria-live="assertive">${announcement}</span></div>` +
         `<div role="alert">Card declined</div><div style="${offScreen}">Card declined</div>` +
         `<p>Showing 24 results</p><div style="${offScreen}">Showing <span>24</span> results</div>` +

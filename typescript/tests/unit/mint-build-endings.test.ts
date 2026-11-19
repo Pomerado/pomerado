@@ -1359,6 +1359,13 @@ const metadataNotEnglish = new MintFailure({
   reason: "metadata_not_english" as NonNullable<MintFailure["reason"]>,
   review: { outcome: "deny", rationale: metadataNotEnglishRationale },
 });
+const ownOptionRationale =
+  "Select the list's option with pickValue, then run that code again and call finish_build with the new executionId.";
+const ownOptionPick = new MintFailure({
+  code: "PublicationUnavailable",
+  reason: "own_option_pick" as NonNullable<MintFailure["reason"]>,
+  review: { outcome: "deny", rationale: ownOptionRationale },
+});
 
 // A host refusal whose instruction or rationale names the step that fixes it is no reason the
 // build cannot go on: the first host_refused report after it is refused with that step, and a
@@ -1421,6 +1428,12 @@ it.each([
     refusal: metadataNotEnglish,
     reason: "metadata_not_english",
     step: { refusalRationale: metadataNotEnglishRationale },
+    absent: "refusalInstruction",
+  },
+  {
+    refusal: ownOptionPick,
+    reason: "own_option_pick",
+    step: { refusalRationale: ownOptionRationale },
     absent: "refusalInstruction",
   },
 ])(
