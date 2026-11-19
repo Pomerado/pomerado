@@ -1041,13 +1041,15 @@ it("has a write's last question before a commit that pays pass order, in any cha
  * A checkout's final confirm folded each line's quantity into its name, passed the line total as
  * the price each, and listed its fees and tip as items. The writes and caller-input skills name
  * the order's own fields for those, and the cart skill suggests the same parts for a checkout's
- * output, apart from the confirm's fixed fields.
+ * output, apart from the confirm's fixed fields. A confirm also left out a credit the checkout
+ * applied, so its lines added up to more than its total: the writes skill lists every line, credits
+ * in the discount, and makes the total what the caller will be charged.
  */
 it("has a purchase confirm's order and a checkout's output give lines, fees and tip their own fields", async () => {
   const texts = await renderedTexts("typescript/authoring");
   const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
   expect(text("writes")).toContain(
-    "Fill `order` as the checkout shows it: each item's real quantity, its `unit` when sold by weight or measure, and its price each, its line total or both; fees, a tip and a discount go in their own fields. When an item's measure is in a unit `unit` does not list, give it quantity 1 and its line total, with the measure as the checkout shows it in its name.",
+    "Fill `order` as the checkout shows it, every line included: each item's real quantity, its `unit` when sold by weight or measure, and its price each, its line total or both; fees and a tip go in their own fields, and every discount, credit and promotion, summed, in `discount`. When an item's measure is in a unit `unit` does not list, give it quantity 1 and its line total, with the measure as the checkout shows it in its name. `total` is the amount the caller will be charged at that point, and the lines add up to it.",
   );
   expect(text("caller-input")).toContain(
     "its `items` (each `name`, `quantity`, `unit` for an item sold by weight or measure, and `price` each, `lineTotal` or both), `fees` (each `name` and `amount`), `discount`, `shipping`, `tax`, `tip` and `total`",
@@ -1722,7 +1724,7 @@ it("renders the pinned standalone authoring", async () => {
     ["539abe36b602c8e2eff8745dd0462aea41837a20cc0b90cbef7a01cbad6fb89a", "testing"],
     ["ca80679c4488dec4ee85052fb39f1493b6d5f8ca4a5df9b56d10a2e96078e848", "pagination"],
     ["ce18aef2164a7253ee07827ad282cd1d036147eb8dc14e88e232816e4f6df1f0", "forms"],
-    ["0753eb39299436c1f8e00917ae278c8d21ad12ae98dc510fecfac630a1d1e946", "writes"],
+    ["daf8e3b718be09e61731eae67e86f2746038c62960d37cb34b3704405c7640ed", "writes"],
     ["a1dff3822c5ab9823e003168d484aff0411e6be9e3eae398cc80f1ea9b3dfc8d", "cart"],
     ["2f00649d366ef6ae4250700f9c79c27d5e5328ff72190581a39ccaff23a6c795", "caller-input"],
     ["d47486fdd08e7a7ff6ab8f38ee03e6a3e8e2287eb67f2412f1fe996543ea1857", "publication"],
