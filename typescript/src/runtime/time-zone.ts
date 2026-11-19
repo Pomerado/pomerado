@@ -10,6 +10,8 @@ const pad = (value: number) => String(value).padStart(2, "0");
 
 /** The wall clock in `timeZone` at instant `ms`, read as if it were UTC's, to the second. */
 const wallAt = (ms: number, timeZone: string) => {
+  // `Intl` reads a missing zone as the process's own, which is never the site's.
+  if (typeof timeZone !== "string") throw new RangeError("A time zone is an IANA name");
   const parts = new Map(
     new Intl.DateTimeFormat("en-US", {
       timeZone,
@@ -126,7 +128,7 @@ export type ClockDay = `${number}-${number}-${number}` | "next" | "last" | "near
  * wrote only once, as in `12:38-12:59 AM`. `day` is the date the site states, `YYYY-MM-DD`, or
  * the rule that picks one from yesterday, today and tomorrow in the zone (`ClockDay`). `timeZone`
  * is the zone the site wrote the time in: the zone the page names beside it, or else the
- * browser's own zone as `browserTimeZoneCode` reads it, since a page writes most times it shows
+ * browser's own zone, a script context's `browserTimeZone`, since a page writes most times it shows
  * in its browser's zone. `now` is the instant `day`'s rule counts from, by default the current
  * time. Across a daylight-saving change, a time the change skips moves forward by the change; one
  * it repeats takes the earlier of the two on a stated date, while a rule weighs both, so `next`
@@ -162,7 +164,9 @@ export const zonedClock = (
  * `America/New_York`, the zone the page writes the times it computes in. Pass a frame,
  * `await browserTimeZone(frame)`, to read the zone a frame runs in. Read it in the call that
  * reads the times, and never from the script's own clock: the script runs elsewhere, often in
- * UTC, and the browser's clock follows where it browses from, not the caller's place.
+ * UTC, and the browser's clock follows where it browses from, not the caller's place. A script's
+ * context already holds the page's zone as `browserTimeZone`, with no code in the page; this
+ * stays for tools written before it.
  *
  * ```js
  * const eta = await visibleText(page.locator(".eta-time"));
