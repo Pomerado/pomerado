@@ -1293,6 +1293,13 @@ export interface ExecutionEvidence {
    * agent's result carries it; the execution ledger and checkpoints never hold it.
    */
   readonly scriptQuestion?: ScriptQuestionOutcome;
+  /**
+   * Trusted host marker: the caller said no to a question this execution's script asked, with a
+   * confirm's no or an option marked `declines`. An `owner_declined` block stands on it, as on a no
+   * to the minter's own confirm question. `proof`: the host takes that no as the proof of the
+   * build's change, and the minter is told to keep its edits and call finish_build.
+   */
+  readonly ownerDeclined?: { readonly proof: boolean };
   /** Emitted only by the harness when capability preflight rejects before a claim. */
   readonly preflight?: "rejected_before_claim";
   /**
@@ -1382,6 +1389,7 @@ export const ExecutionEvidence: Schema.Schema<ExecutionEvidence> = Schema.Struct
     ),
     { exact: true },
   ),
+  ownerDeclined: Schema.optionalWith(Schema.Struct({ proof: Schema.Boolean }), { exact: true }),
   preflight: Schema.optionalWith(Schema.Literal("rejected_before_claim"), { exact: true }),
   refusal: Schema.optionalWith(ExecutionRefusal, { exact: true }),
   fileCap: Schema.optionalWith(DownloadCap, { exact: true }),

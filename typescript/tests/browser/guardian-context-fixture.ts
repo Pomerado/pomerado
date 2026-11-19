@@ -146,6 +146,8 @@ export const recordingGuardian = (
       review: RecordedReview,
     ) => "allow" | "deny" | Readonly<Record<string, unknown>>;
     readonly decideUpdate?: (review: RecordedReview) => string;
+    /** A question review's decision; it allows every question by default. */
+    readonly decideQuestion?: (review: RecordedReview) => Readonly<Record<string, unknown>> | undefined;
     readonly readPage?: boolean;
     readonly fail?: (call: number) => Error | undefined;
   } = {},
@@ -188,7 +190,13 @@ export const recordingGuardian = (
     const review = reviews.at(-1);
     if (review === undefined) throw new Error("No review recorded");
     if (question)
-      return [message(JSON.stringify({ outcome: "allow_business", rationale: "Fixture asks." }))];
+      return [
+        message(
+          JSON.stringify(
+            options.decideQuestion?.(review) ?? { outcome: "allow_business", rationale: "Fixture asks." },
+          ),
+        ),
+      ];
     if (update)
       return [
         message(

@@ -5,7 +5,9 @@
 // reuse changes the answer's shape; a host reading kept answers back decodes one it cannot read,
 // or refuses one an earlier release kept with more fields; a purchase confirm asks again for the
 // same order its owner said yes to, or reuses a yes to another order, a no, another job's yes or
-// a yes after a commit step ran.
+// a yes after a commit step ran; a script question Guardian rewords as a repeat takes an answer the
+// owner never gave: against a named no or another pick, from a yes among several options that go
+// on, over a condition the owner set beside their answer, or for an agent's own question.
 import { Effect, Either, Option, Schema } from "effect";
 import { describe, expect, it } from "vitest";
 import {
@@ -13,10 +15,12 @@ import {
   forgetScriptAnswers,
   KeptScriptAnswer,
   keptScriptAnswers,
+  repeatedScriptAnswers,
   reusedScriptAnswers,
   scriptQuestionKeys,
   validateKeptAnswers,
 } from "../../src/mint/script-answer-reuse.js";
+import type { AnsweredQuestion, QuestionDecision } from "../../src/guardian/question.js";
 import type { InputRequest, ValidAnswers } from "../../src/runtime/input-request.js";
 
 const request = (questions: InputRequest["questions"]): InputRequest => ({
@@ -230,5 +234,302 @@ describe("a browser hand-off", () => {
         },
       ]),
     ).toBeUndefined();
+  });
+});
+
+describe("a script question Guardian rewords as a repeat of the owner's earlier answer", () => {
+  // The owner's yes to the agent's own question, before a step's script asks its purchase choice.
+  const approval: AnsweredQuestion = {
+    id: "approve_payment",
+    question: "May the tool place this order with your saved card if its total is within your limit?",
+    answer: { confirmed: true },
+  };
+  const pay = {
+    ...request([
+      {
+        id: "payment",
+        type: "choice",
+        prompt: "Pay with your saved card, or do not place the order?",
+        options: [
+          { id: "card", label: "Visa ending 4242", accountSpecific: true, maskedLabel: "Saved card" },
+          { id: "stop", label: "Do not place the order", declines: true },
+        ],
+      },
+    ]),
+    order: { currency: "USD", items: [{ name: "Synthetic drink", quantity: 1, price: "6.82" }], total: "6.82" },
+  } satisfies InputRequest;
+  const repeat = (
+    answers: QuestionDecision["answers"],
+    answeredBy: readonly string[] = ["approve_payment"],
+  ): QuestionDecision => ({
+    outcome: "reword",
+    rationale: "The owner already approved this payment.",
+    label: "repeat",
+    answers,
+    answeredBy,
+  });
+  const card = repeat([{ question: "payment", option: "Saved card", confirmed: null }]);
+  const live = () => true;
+  const paid: ValidAnswers = { payment: { type: "choice", value: "card" } };
+
+  it("takes the option the repeat names when it rests on the owner's yes", () => {
+    expect(repeatedScriptAnswers(pay, card, [approval], live)).toEqual(paid);
+    // By its full label as well as its masked one, ignoring case and spacing.
+    const full = repeat([{ question: "payment", option: " visa ending 4242", confirmed: null }]);
+    expect(repeatedScriptAnswers(pay, full, [approval], live)).toEqual(paid);
+    const confirm = request([{ id: "approve", type: "confirm", prompt: "Accept the terms?" }]);
+    const yes = repeat([{ question: "approve", option: null, confirmed: true }]);
+    expect(repeatedScriptAnswers(confirm, yes, [approval], live)).toEqual({
+      approve: { type: "confirm", value: { confirmed: true } },
+    });
+  });
+
+  it("asks the owner when the review names no answer, another label, or an answer it can't check", () => {
+    const named = (decision: QuestionDecision, answered = [approval]) =>
+      repeatedScriptAnswers(pay, decision, answered, live);
+    expect(named({ ...card, label: "already_authorized" })).toBeUndefined();
+    expect(named({ ...card, outcome: "allow_business" })).toBeUndefined();
+    expect(named(repeat(undefined))).toBeUndefined();
+    expect(named(repeat([{ question: "payment", option: "Saved card", confirmed: null }], []))).toBeUndefined();
+    // An id the owner never answered, or an answer the owner replaced since.
+    expect(named(repeat(card.answers, ["approve_other"]))).toBeUndefined();
+    const replaced = { id: "approve_again", question: approval.question, answer: { confirmed: true } };
+    expect(named(card, [approval, replaced])).toBeUndefined();
+    // No option or more than one by that label, another question's answer, or a missing one.
+    expect(named(repeat([{ question: "payment", option: "Gift card", confirmed: null }]))).toBeUndefined();
+    expect(named(repeat([{ question: "other", option: "Saved card", confirmed: null }]))).toBeUndefined();
+    expect(named(repeat([{ question: "payment", option: null, confirmed: true }]))).toBeUndefined();
+  });
+
+  it("never answers a purchase with a no, a decline, a yes it may have spent, or a text", () => {
+    const declined = { ...approval, answer: { confirmed: false } };
+    expect(repeatedScriptAnswers(pay, card, [declined], live)).toBeUndefined();
+    const stop = repeat([{ question: "payment", option: "Do not place the order", confirmed: null }]);
+    expect(repeatedScriptAnswers(pay, stop, [approval], live)).toBeUndefined();
+    expect(repeatedScriptAnswers(pay, card, [approval], () => false)).toBeUndefined();
+    const chosen: AnsweredQuestion = { id: "card_choice", question: "Which card?", answer: "Saved card" };
+    expect(repeatedScriptAnswers(pay, repeat(card.answers, ["card_choice"]), [chosen], live)).toBeUndefined();
+    // Without an order, an earlier choice settles a choice, but a yes never rests on a no.
+    const { order: _order, ...unpaid } = pay;
+    expect(repeatedScriptAnswers(unpaid, repeat(card.answers, ["card_choice"]), [chosen], live)).toEqual(paid);
+    expect(repeatedScriptAnswers(unpaid, card, [declined], live)).toBeUndefined();
+  });
+
+  it("names no answer by an id two of the owner's latest answers share", () => {
+    // The owner said yes to a delivery window under the same id after approving the payment.
+    const window: AnsweredQuestion = { id: "approve_payment", question: "Keep the default delivery window?", answer: { confirmed: true } };
+    expect(repeatedScriptAnswers(pay, card, [approval, window], live)).toBeUndefined();
+    // An id whose earlier answer the owner replaced under another id names nothing; the newer one
+    // names its own, unless another answer shares its id.
+    const replaced = { ...approval, answer: "Replaced by a newer answer" };
+    const newer = { id: "approve_again", question: approval.question, answer: { confirmed: true } };
+    expect(repeatedScriptAnswers(pay, card, [replaced, newer], live)).toBeUndefined();
+    const again = repeat(card.answers, ["approve_again"]);
+    expect(repeatedScriptAnswers(pay, again, [replaced, newer], live)).toEqual(paid);
+    const shared = { ...window, id: "approve_again", answer: "Replaced by a newer answer" };
+    expect(repeatedScriptAnswers(pay, again, [shared, replaced, newer], live)).toBeUndefined();
+  });
+
+  it("answers a confirm yes only from a named yes", () => {
+    const remove = request([{ id: "remove", type: "confirm", prompt: "Remove the saved address?" }]);
+    const chosen: AnsweredQuestion = { id: "card_choice", question: "Which card?", answer: "Saved card" };
+    const yes = repeat([{ question: "remove", option: null, confirmed: true }], ["card_choice"]);
+    expect(repeatedScriptAnswers(remove, yes, [chosen], live)).toBeUndefined();
+    // A no needs no yes: here the owner chose to keep the address.
+    const kept: AnsweredQuestion = { id: "address_choice", question: "Keep or remove the saved address?", answer: "Keep it" };
+    const no = repeat([{ question: "remove", option: null, confirmed: false }], ["address_choice"]);
+    expect(repeatedScriptAnswers(remove, no, [kept], live)).toEqual({ remove: { type: "confirm", value: { confirmed: false } } });
+  });
+
+  it("takes an option that goes on only from a named yes or a named pick of that option", () => {
+    const size = request([
+      {
+        id: "size",
+        type: "choice",
+        prompt: "Which size?",
+        options: [
+          { id: "small", label: "Small" },
+          { id: "large", label: "Large" },
+        ],
+      },
+    ]);
+    const small: AnsweredQuestion = { id: "size_pick", question: "Which size should the tool order?", answer: "Small" };
+    const named = (option: string) => repeat([{ question: "size", option, confirmed: null }], ["size_pick"]);
+    expect(repeatedScriptAnswers(size, named("Small"), [small], live)).toEqual({ size: { type: "choice", value: "small" } });
+    expect(repeatedScriptAnswers(size, named("Large"), [small], live)).toBeUndefined();
+  });
+
+  it("never takes an option that goes on against a named pick of another, or from a yes among several", () => {
+    const submit = request([
+      {
+        id: "submit",
+        type: "choice",
+        prompt: "Submit the claim?",
+        options: [
+          { id: "go", label: "Submit" },
+          { id: "express", label: "Express review" },
+          { id: "stop", label: "Do not submit", declines: true },
+        ],
+      },
+    ]);
+    const fill: AnsweredQuestion = { id: "fill", question: "May the tool fill in the claim form?", answer: { confirmed: true } };
+    const pick = (answer: string, note?: string): AnsweredQuestion => ({
+      id: "pick",
+      question: "Submit the claim once it's filled in?",
+      answer,
+      ...(note === undefined ? {} : { note }),
+    });
+    const chose = (option: string, answeredBy = ["fill", "pick"]) =>
+      repeat([{ question: "submit", option, confirmed: null }], answeredBy);
+    // The owner's pick of the decline, or of another option that goes on, stands against it.
+    expect(repeatedScriptAnswers(submit, chose("Submit"), [fill, pick("Do not submit")], live)).toBeUndefined();
+    expect(repeatedScriptAnswers(submit, chose("Express review"), [fill, pick("Submit")], live)).toBeUndefined();
+    expect(repeatedScriptAnswers(submit, chose("Submit"), [fill, pick("Submit")], live)).toEqual({
+      submit: { type: "choice", value: "go" },
+    });
+    // A pick that carries the owner's note settles nothing: the script would never get the note.
+    expect(repeatedScriptAnswers(submit, chose("Submit"), [fill, pick("Submit", "Only after noon")], live)).toBeUndefined();
+    // A yes alone settles an option that goes on only when it is the question's only such option,
+    // whatever its prompt says.
+    expect(repeatedScriptAnswers(submit, chose("Submit", ["fill"]), [fill], live)).toBeUndefined();
+    const express: AnsweredQuestion = {
+      id: "fill",
+      question: "May the tool send the claim for express review?",
+      answer: { confirmed: true },
+    };
+    expect(repeatedScriptAnswers(submit, chose("Express review", ["fill"]), [express], live)).toBeUndefined();
+    // A pick whose text two options share stands against either.
+    const twice = request([
+      {
+        id: "submit",
+        type: "choice",
+        prompt: "Add protection?",
+        options: [
+          { id: "add", label: "Add protection" },
+          { id: "no", label: "No thanks", declines: true },
+          { id: "no_again", label: "No thanks", declines: true },
+        ],
+      },
+    ]);
+    expect(repeatedScriptAnswers(twice, chose("Add protection"), [fill, pick("No thanks")], live)).toBeUndefined();
+    // An account's option shown with no masked label names no option.
+    const cards = request([
+      {
+        id: "submit",
+        type: "choice",
+        prompt: "Which card?",
+        options: [
+          { id: "a", label: "Visa ending 4242", accountSpecific: true, maskedLabel: "••••" },
+          { id: "stop", label: "Do not pay", declines: true },
+        ],
+      },
+    ]);
+    expect(repeatedScriptAnswers(cards, chose("••••"), [fill, pick("••••")], live)).toBeUndefined();
+  });
+
+  it("never answers a yes or an option that goes on when a named answer is a no", () => {
+    const declined: AnsweredQuestion = { id: "decline", question: "Keep the order open?", answer: { confirmed: false } };
+    const confirm = request([{ id: "approve", type: "confirm", prompt: "Accept the terms?" }]);
+    const yes = repeat([{ question: "approve", option: null, confirmed: true }], ["approve_payment", "decline"]);
+    expect(repeatedScriptAnswers(confirm, yes, [approval, declined], live)).toBeUndefined();
+    const size = request([
+      {
+        id: "size",
+        type: "choice",
+        prompt: "Which size?",
+        options: [
+          { id: "small", label: "Small" },
+          { id: "large", label: "Large" },
+        ],
+      },
+    ]);
+    const small: AnsweredQuestion = { id: "size_pick", question: "Which size should the tool order?", answer: "Small" };
+    const chose = repeat([{ question: "size", option: "Small", confirmed: null }], ["size_pick", "decline"]);
+    expect(repeatedScriptAnswers(size, chose, [small, declined], live)).toBeUndefined();
+  });
+
+  it("never answers a yes or an option that goes on when a named answer carries the owner's condition", () => {
+    const plan = request([
+      {
+        id: "plan",
+        type: "choice",
+        prompt: "Add the protection plan?",
+        options: [
+          { id: "add", label: "Add plan ($12)" },
+          { id: "skip", label: "Skip", declines: true },
+        ],
+      },
+    ]);
+    const addConfirm = request([{ id: "plan", type: "confirm", prompt: "Add plan ($12)?" }]);
+    const checkout: AnsweredQuestion = { id: "checkout", question: "May the tool check out?", answer: { confirmed: true } };
+    const asked = (answer: AnsweredQuestion["answer"], beside: Partial<AnsweredQuestion> = {}): AnsweredQuestion => ({
+      id: "said",
+      question: "Should the tool add the protection plan?",
+      answer,
+      ...beside,
+    });
+    const add = repeat([{ question: "plan", option: "Add plan ($12)", confirmed: null }], ["checkout", "said"]);
+    const yes = repeat([{ question: "plan", option: null, confirmed: true }], ["checkout", "said"]);
+    // Plain, the owner's yes and pick settle it.
+    expect(repeatedScriptAnswers(plan, add, [checkout, asked("Add plan ($12)")], live)).toEqual({
+      plan: { type: "choice", value: "add" },
+    });
+    expect(repeatedScriptAnswers(addConfirm, yes, [checkout, asked({ confirmed: true })], live)).toEqual({
+      plan: { type: "confirm", value: { confirmed: true } },
+    });
+    for (const said of [
+      asked("Yes, add it", { note: "Only if it costs under $10" }),
+      asked("Only if it costs under $10"),
+      asked(["Add plan ($12)"], { note: "Only if it costs under $10" }),
+      asked(["Add plan ($12)"], { other: "Only if it costs under $10" }),
+      asked({ confirmed: true, text: "Only if it costs under $10" }),
+      asked("Add plan ($12)", { note: "Only if it costs under $10" }),
+    ]) {
+      expect(repeatedScriptAnswers(plan, add, [checkout, said], live)).toBeUndefined();
+      expect(repeatedScriptAnswers(addConfirm, yes, [checkout, said], live)).toBeUndefined();
+    }
+  });
+
+  it("never answers an agent's own question", () => {
+    const agents = { ...pay, source: "agent" } satisfies InputRequest;
+    expect(repeatedScriptAnswers(pay, card, [approval], live)).toEqual(paid);
+    expect(repeatedScriptAnswers(agents, card, [approval], live)).toBeUndefined();
+  });
+
+  it("never answers yes to a confirm that takes a follow-up text", () => {
+    const dialog = request([
+      { id: "accept", type: "confirm", prompt: "Accept the dialog?", followUp: { prompt: "What should it say?" } },
+    ]);
+    const yes = repeat([{ question: "accept", option: null, confirmed: true }]);
+    expect(repeatedScriptAnswers(dialog, yes, [approval], live)).toBeUndefined();
+  });
+
+  it("never answers a code, a secret, a text or a multiple choice", () => {
+    const code = request([
+      { id: "code", type: "secret", secretKind: "one_time_code", prompt: "What code did the site send?" },
+    ]);
+    const note = request([{ id: "note", type: "text", prompt: "Any delivery note?" }]);
+    const extras = request([
+      {
+        id: "extras",
+        type: "multi_choice",
+        prompt: "Which extras?",
+        options: [
+          { id: "gift", label: "Gift wrap" },
+          { id: "card", label: "Card" },
+        ],
+        minSelections: 0,
+        maxSelections: 2,
+      },
+    ]);
+    for (const asked of [code, note, extras])
+      expect(
+        repeatedScriptAnswers(
+          asked,
+          repeat([{ question: asked.questions[0]?.id ?? "", option: "481516", confirmed: true }]),
+          [approval],
+          live,
+        ),
+      ).toBeUndefined();
   });
 });

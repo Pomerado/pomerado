@@ -111,7 +111,8 @@ export async function load(bytes) {
      * (`inferred_country`). With no rows, `unit` and `inferred_country` are null.
      * `rows`: strings, or `{ text, categorized }` where `categorized` says the site shows the row
      * with a category of its own (a venue type), as it does not for a dropped pin. `options` may
-     * be omitted or null. Input over `LIMITS` throws a RangeError.
+     * be omitted or null; `options.rules` turns on optional rules, each off by default
+     * (`districtMayDiffer`: see `Rules` in the Rust crate). Input over `LIMITS` throws a RangeError.
      */
     pickExplained(query, rows, options) {
       checkText("the query", query);
@@ -119,7 +120,10 @@ export async function load(bytes) {
       if (rows.length === 0) return { ...NONE, same: [], reasons: [], notes: [], rows: [] };
       const texts = rows.map((r) => (typeof r === "string" ? r : r?.text));
       const flags = rows.map((r) => (typeof r === "object" && r?.categorized ? "1" : "0")).join("");
-      return JSON.parse(call("am_pick_explained", [query, joined(texts), country, flags], (p) => dec.decode(new Uint8Array(x.memory.buffer, p, x.am_out_len()))));
+      const rules = options?.rules?.districtMayDiffer === true ? "district_may_differ" : "";
+      const args = [query, joined(texts), country, flags];
+      const read = (p) => dec.decode(new Uint8Array(x.memory.buffer, p, x.am_out_len()));
+      return JSON.parse(rules === "" ? call("am_pick_explained", args, read) : call("am_pick_explained_with", [...args, rules], read));
     },
     /** The row is a site's control ("See more results for <text>", "Search "<text>""), never a place. */
     isControl(query, row) {
