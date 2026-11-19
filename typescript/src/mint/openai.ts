@@ -479,9 +479,26 @@ const Patch = Schema.Array(PatchOperation).pipe(
   Schema.minItems(1),
   Schema.annotations({
     description:
-      "Edits applied before the step is reviewed and run, as apply_patch operations. If one does not apply, nothing runs.",
+      "Edits applied before the step is reviewed and run, as apply_patch operations. If one does not apply, nothing runs. When you edit a step and run it, prefer to send the edit as this call's patch.",
   }),
 );
+/**
+ * The operation with its diff out of apply_patch's own envelope, when the diff comes in one for
+ * this operation's file alone: `*** Begin Patch`, its `*** Add File:` or `*** Update File:` line,
+ * and a closing `*** End Patch`. The editor takes only the diff's own lines.
+ */
+const withoutEnvelope = (operation: typeof PatchOperation.Type): typeof PatchOperation.Type => {
+  if (operation.type === "delete_file") return operation;
+  const lines = operation.diff.split("\n").map((line) => line.replace(/\r$/, ""));
+  while (lines.at(-1) === "") lines.pop();
+  const kind = operation.type === "create_file" ? "Add" : "Update";
+  const header = `*** ${kind} File: ${operation.path}`;
+  if (lines[0] !== "*** Begin Patch" || lines[1]?.trim() !== header) return operation;
+  const body = lines.slice(2, lines.at(-1) === "*** End Patch" ? -1 : undefined);
+  // An envelope that also names another file is left as sent, and does not apply.
+  if (body.some((line) => /^\*\*\* (Add|Update|Delete) File:/.test(line))) return operation;
+  return { ...operation, diff: body.join("\n") };
+};
 
 /**
  * The execute tool's one model-facing schema, for every build: strict, with each optional field
@@ -1160,7 +1177,7 @@ const openAIMinter = (
             const applyPatch = async (patch: unknown, callId: string | undefined) => {
               const decoded = Schema.decodeUnknownEither(Patch)(patch);
               if (decoded._tag === "Left") throw new MintFailure({ code: "InvalidRequest" });
-              const operations = decoded.right;
+              const operations = decoded.right.map(withoutEnvelope);
               const editor = turn.session.createEditor?.();
               if (editor === undefined) throw new MintFailure({ code: "Unavailable" });
               const keys = operations.map((operation) => JSON.stringify(operation));
@@ -1196,7 +1213,7 @@ const openAIMinter = (
             // message (buildToolsMessage).
             const executeTool = hostTool(
               "execute",
-              `Review then run authored code using host-bound input and the selected execution/test scaffold. For authenticated work, use explore/liveBrowser to discover the public login controls, then authenticate/liveBrowser for trusted host credentials, with a signInStep for each sign-in screen when the build's tools message says signIn host_autofill (when this invocation has no login yet, the host signs in with the saved login for the site, asking the caller which one when several could, or asks the caller for a login, in the same call); business work waits for a successful sign-in. fixtureRefs contains host-published capture paths: savedHTTP response bodies or a session capture.json to replay through SiteHttp, or savedDOM first a DOM snapshot then selected asset response bodies; never an input or operation reference; consult the workspace README's reference sections for available facilities. Reads explore, then run one example; when the host-bound input is empty ({}), pass the tool's input you wrote from the request and the owner's answers as exampleInput (JSON text), and the example runs it; once the tool refused the caller's own input with InvalidInput, an example may pass another record of the same kind as exampleInput in its place. A read runs live tests on inputs you choose: where the build offers live_tests, it plans its cases in test/cases.json and runs them in batches with live_tests, on src/tool.mjs and on src/tool-http.mjs; otherwise it runs them one at a time (testInput), a read signed out a wide, varied first batch of about 10 to 20 cases, and the host may limit how many. A signed-in read runs at most four distinct inputs. It tests src/tool-http.mjs on the same inputs too. A signed-in read runs no test on an input you choose: its example proves the tool, and it checks src/tool-http.mjs once with the caller's input. Run the example last, after your last edit. Writes perform the action once as act steps after sign-in, the first of which claims the write; when the host-bound input is empty or leaves out values the request states, an act step passes exampleInput the same way, keeping every value of that input as sent, and each act step that passes it runs it. A write's act session is its one run; a write build runs no tests beyond it, except one savedHTTP replay of the session for its HTTP version. intent states what this execution should establish; it never authorizes the execution. When you edit a step and run it, send the edit as this call's patch: the host applies it before it reviews and runs the step. A response's calls other than reads run one at a time in your order, each after the calls before it returned, so send a later call in the same response only when it does not depend on an earlier call's result.`,
+              `Review then run authored code using host-bound input and the selected execution/test scaffold. For authenticated work, use explore/liveBrowser to discover the public login controls, then authenticate/liveBrowser for trusted host credentials, with a signInStep for each sign-in screen when the build's tools message says signIn host_autofill (when this invocation has no login yet, the host signs in with the saved login for the site, asking the caller which one when several could, or asks the caller for a login, in the same call); business work waits for a successful sign-in. fixtureRefs contains host-published capture paths: savedHTTP response bodies or a session capture.json to replay through SiteHttp, or savedDOM first a DOM snapshot then selected asset response bodies; never an input or operation reference; consult the workspace README's reference sections for available facilities. Reads explore, then run one example; when the host-bound input is empty ({}), pass the tool's input you wrote from the request and the owner's answers as exampleInput (JSON text), and the example runs it; once the tool refused the caller's own input with InvalidInput, an example may pass another record of the same kind as exampleInput in its place. A read runs live tests on inputs you choose: where the build offers live_tests, it plans its cases in test/cases.json and runs them in batches with live_tests, on src/tool.mjs and on src/tool-http.mjs; otherwise it runs them one at a time (testInput), a read signed out a wide, varied first batch of about 10 to 20 cases, and the host may limit how many. A signed-in read runs at most four distinct inputs. It tests src/tool-http.mjs on the same inputs too. A signed-in read runs no test on an input you choose: its example proves the tool, and it checks src/tool-http.mjs once with the caller's input. Run the example last, after your last edit. Writes perform the action once as act steps after sign-in, the first of which claims the write; when the host-bound input is empty or leaves out values the request states, an act step passes exampleInput the same way, keeping every value of that input as sent, and each act step that passes it runs it. A write's act session is its one run; a write build runs no tests beyond it, except one savedHTTP replay of the session for its HTTP version. intent states what this execution should establish; it never authorizes the execution. A response's calls other than reads run one at a time in your order, each after the calls before it returned, so send a later call in the same response only when it does not depend on an earlier call's result.`,
               "Execution did not succeed. Diagnose the root cause and retained evidence. Correct request/source errors within existing authority; preserve prior effects. Another example read requires explicit host repeatableRead:true; never replay a nonrepeatable example or a write that may have committed. After a failed authenticate, fix its cause and call authenticate again.",
               // The step's intent reaches Guardian as the agent's own, untrusted note on it.
               (request, intent) => turn.actions.execute(request, intent),

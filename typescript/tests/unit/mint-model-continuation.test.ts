@@ -2777,6 +2777,43 @@ it("stops at the first operation of execute's patch that fails, and applies the 
   ]);
 });
 
+it("applies execute's patch sent in apply_patch's own envelope for each file", async () => {
+  let f: Awaited<ReturnType<typeof fixture>> | undefined;
+  const review = reviewingSource(() => f!.workspace.readFile!({ path: "src/tool.ts" }));
+  const enveloped = [
+    {
+      type: "create_file",
+      path: "src/extra.ts",
+      diff: "*** Begin Patch\n*** Add File: src/extra.ts\n+export {};\n*** End Patch",
+    },
+    {
+      type: "update_file",
+      path: "src/tool.ts",
+      diff: [
+        "*** Begin Patch",
+        "*** Update File: src/tool.ts",
+        "@@",
+        "-export default {};",
+        "+export default { step: 2 };",
+        "*** End Patch",
+        "",
+      ].join("\n"),
+    },
+  ];
+  f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", { ...execution, patch: enveloped }, "run_step"),
+        call("finish_build", publication),
+      ][index] ?? prose(),
+    { reviewAndExecute: review.reviewAndExecute },
+  );
+  expect(await f.run()).toMatchObject({ build: "published" });
+  expect(toolResult(f.requests[1], "run_step")).toMatchObject({ status: "completed" });
+  expect(await f.workspace.readFile!({ path: "src/extra.ts" })).toBe("export {};");
+  expect(review.reviewed).toEqual([{ purpose: "example", source: "export default { step: 2 };" }]);
+});
+
 it("refuses execute's patch outside the authored files and runs nothing", async () => {
   let f: Awaited<ReturnType<typeof fixture>> | undefined;
   const review = reviewingSource(() => f!.workspace.readFile!({ path: "src/tool.ts" }));
