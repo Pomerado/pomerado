@@ -752,7 +752,7 @@ export const handsOffSignIn = (recipe: { readonly steps: readonly object[] }) =>
  * host hands the browser to a person, who signs in there and marks it done. Such a step fills no
  * field and names only its page.
  */
-const HandOffRecipeStep = choiceRule(
+export const HandOffRecipeStep = choiceRule(
   keyboardRule(
     wildcardRule(
       dismissRule(

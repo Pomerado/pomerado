@@ -87,6 +87,8 @@ export interface TypingWatch {
 export interface PlaywrightExecutor {
   readonly sessionId: string;
   readonly targetId: string;
+  /** The IANA zone the page ran in when the executor started, a script's `browserTimeZone`. */
+  readonly timeZone?: string;
   readonly executeResponse: BrowserExecute;
   /** Runs page code as `executeResponse` does, watching which of `values` it types `where`. */
   readonly watchTyping: (
@@ -238,7 +240,7 @@ const stopFromCallback = <A>(
   });
 
 const bindNativeWorker = (owner: NativeOwnership, worker: Worker, startupTimeoutMs: number) =>
-  Effect.async<{ targetId: string }, Error>((resume) => {
+  Effect.async<{ targetId: string; timeZone?: string }, Error>((resume) => {
     const fail = (error: Error) => {
       clearTimeout(timer);
       stopFromCallback(owner, error, resume);
@@ -257,7 +259,12 @@ const bindNativeWorker = (owner: NativeOwnership, worker: Worker, startupTimeout
       if (reply.kind === "ready") {
         clearTimeout(timer);
         if (reply.contextId !== undefined) owner.contextId = reply.contextId;
-        resume(Effect.succeed({ targetId: reply.targetId }));
+        resume(
+          Effect.succeed({
+            targetId: reply.targetId,
+            ...(reply.timeZone === undefined ? {} : { timeZone: reply.timeZone }),
+          }),
+        );
       } else if (reply.kind === "disconnected") {
         if (!owner.stopped) fail(new Error("Native browser disconnected; completion uncertain"));
       } else {
@@ -500,6 +507,7 @@ export const makePlaywrightExecutor = (
     return {
       sessionId: randomUUID(),
       targetId: ready.targetId,
+      ...(ready.timeZone === undefined ? {} : { timeZone: ready.timeZone }),
       executeResponse,
       watchTyping,
       execute,

@@ -20,7 +20,7 @@ const caseTimeoutMs = defaultLiveTestCaseMs;
 const authoredSource = /^(?:src|explore|test|scratch)\//u;
 
 /** What one local run of a case's input showed. Outputs stay in memory. */
-const outcomeOf = (
+export const outcomeOf = (
   executed: Either.Either<{ readonly output: unknown }, unknown>,
 ): LiveTestOutcome => {
   if (Either.isRight(executed)) return { status: "completed", output: executed.right.output };
@@ -35,9 +35,14 @@ const outcomeOf = (
       status: "invalid_input",
       message: failure.message,
       ...(failure.refusal?.field === undefined ? {} : { field: failure.refusal.field }),
-      ...(failure.refusal?.available === undefined
-        ? {}
-        : { available: failure.refusal.available }),
+      ...(failure.refusal?.available !== undefined
+        ? { available: failure.refusal.available }
+        : failure.offersNone === true
+          ? { available: [] }
+          : {}),
+      ...(failure.refusal?.kind === undefined ? {} : { kind: failure.refusal.kind }),
+      // The runtime's own refusal of the input schema names its issues, not the tool's choices.
+      ...(failure.inputIssues === undefined ? { choicesReported: true } : {}),
     };
   return {
     status: "failed",
@@ -132,6 +137,7 @@ export const localLiveTests = (state: MintState): LiveTestHost => {
                 browser,
                 siteOrigin: context.siteOrigin,
                 ...(domain === undefined ? {} : { siteDomain: domain }),
+                ...(browser.timeZone === undefined ? {} : { browserTimeZone: browser.timeZone }),
                 timeoutMs: caseTimeoutMs,
                 mode: "run",
                 target: "browser",

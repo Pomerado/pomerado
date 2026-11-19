@@ -374,15 +374,16 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
     "workspace/AGENTS.md",
     "ending, and the build goes on. Before ending blocked because a value the request gave is unavailable or invalid on the site, such as a time slot the site does not offer that day, a date outside its calendar or a name it does not list, ask the owner with `request_input` to revise it or stop, as the key rules say. End blocked only when they stop or their answer cannot be met either. A read whose bad value is its example's record proves the tool on another record first (\"Reads, writes and examples\"). In maintenance, follow the intake screen instead. Give the evidence in `intent`",
   ],
-  // Only what the caller asked for decides whether a tool books or refuses, each check guards the
-  // caller's request or the tool's own change and passes where the task went right, every listed
-  // option gets read, a repair fixes a broken input but keeps a caller's documented design
-  // decision, a fix covers every required control the input has no value for rather than the one
-  // that failed, and a format read from one sample breaks on the next value, so the minter reads
-  // it off the page.
+  // A form can open filled in from an earlier search, so the code first sets or clears every field
+  // it fills. Only what the caller asked for decides whether a tool books or refuses, each check
+  // guards the caller's request or the tool's own change and passes where the task went right,
+  // every listed option gets read, a repair fixes a broken input but keeps a caller's documented
+  // design decision, a fix covers every required control the input has no value for rather than
+  // the one that failed, and a format read from one sample breaks on the next value, so the
+  // minter reads it off the page.
   [
     "core",
-    "never just the example's value. The example's values are one case, never limits. - Prefer keying only on what the caller asked for. A detail that changes from one listing to the next, such as a seating label or a room name, shouldn't decide whether the tool books or refuses unless the caller chose it. A tool's check guards what the caller asked for or what the tool itself changes: it proves the caller's request before the step it guards and the tool's own change after it, stops on anything else only for a problem the page shows, not for something it can't find, and passes on every page where the task went right. A repair narrows a check that stopped a run where the task went right, or removes it when it guards neither. - Read results for every option the schema lists. When an option leads to a page with a different structure (other fields or sections), handle that layout too, and on a read signed out run it live as a test case (testing skill); an option that only reorders or filters the same rows needs no case of its own. Never return results for another option in its place. - A repair that finds a declared input broken, never applied or always reported unsupported fixes it in the same repair, whether or not a caller is waiting. Keeping a tool's contract means every input and output it declares works, not leaving a broken one as it was. An input whose description starts \"By design:\" is applied in the use it records, a caller's decision: keep that use and its description word for word, and change them only after asking the same design question again (the input schema, \"Inputs that tailor the answer\"). - Prefer fixing the whole class of a failure over its one instance: when the page requires a control the input has no value for, prefer making every such control a declared caller question with the page's live options over throwing for it. - Never derive a format from one sample: not an input format, an element key, a selector, a URL path or a label. A key the page showed for the example's value says nothing about the next value, as when a calendar keyed December 3 as `12-3-2026` where the tool expected `12-03-2026`. Read the format off the page for the value you need, such as the day cell whose visible label or accessible name is the caller's date, or a key the page itself lists, never a key rebuilt from the one you saw. - Inputs are values a caller knows",
+    "never just the example's value. The example's values are one case, never limits. A form can open filled in from an earlier search: first set or clear every field the code fills, and don't rely on what a field showed before. - Prefer keying only on what the caller asked for. A detail that changes from one listing to the next, such as a seating label or a room name, shouldn't decide whether the tool books or refuses unless the caller chose it. A tool's check guards what the caller asked for or what the tool itself changes: it proves the caller's request before the step it guards and the tool's own change after it, stops on anything else only for a problem the page shows, not for something it can't find, and passes on every page where the task went right. A repair narrows a check that stopped a run where the task went right, or removes it when it guards neither. - Read results for every option the schema lists. When an option leads to a page with a different structure (other fields or sections), handle that layout too, and on a read signed out run it live as a test case (testing skill); an option that only reorders or filters the same rows needs no case of its own. Never return results for another option in its place. - A repair that finds a declared input broken, never applied or always reported unsupported fixes it in the same repair, whether or not a caller is waiting. Keeping a tool's contract means every input and output it declares works, not leaving a broken one as it was. An input whose description starts \"By design:\" is applied in the use it records, a caller's decision: keep that use and its description word for word, and change them only after asking the same design question again (the input schema, \"Inputs that tailor the answer\"). - Prefer fixing the whole class of a failure over its one instance: when the page requires a control the input has no value for, prefer making every such control a declared caller question with the page's live options over throwing for it. - Never derive a format from one sample: not an input format, an element key, a selector, a URL path or a label. A key the page showed for the example's value says nothing about the next value, as when a calendar keyed December 3 as `12-3-2026` where the tool expected `12-03-2026`. Read the format off the page for the value you need, such as the day cell whose visible label or accessible name is the caller's date, or a key the page itself lists, never a key rebuilt from the one you saw. - Inputs are values a caller knows",
   ],
   // The minter reads the never-loosened needed values, the facts a caller could use, typed output
   // and kept rows before it writes the schema and the parser, so a fact the code could not read
@@ -1480,7 +1481,7 @@ it("has a paying step fill the card and press through to pay in one reviewed ste
     "then fill the card and press pay in that one step, with no question between them unless the checkout itself requires one.",
   );
   expect(flat("caller-input")).toContain(
-    "such as a pickup time that moved from 12:15 to 12:30, don't go back to change it, and don't press again in a later step after a press failed. Report it instead: a build ends with `report_blocked` naming it, and a run fails saying so, before the order's commit mark when it can.",
+    "such as a pickup time that moved from 12:15 to 12:30, don't go back to change it, and don't press again in a later step after a press failed, unless the host says the press never reached the site. Report it instead: a build ends with `report_blocked` naming it, and a run fails saying so, before the order's commit mark when it can.",
   );
   expect(flat("writes")).toContain(
     "Keep the click on the final commit control, such as Save, Send, Submit, Book or Pay, in its own step, except a pay press after the host's card fill, which goes in the fill's step (caller-input skill).",
@@ -1718,7 +1719,7 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["07fee5f5459ac9115a4afaf93da50054c750253c269a79ecea4683a98b5ea6f8", "core"],
+    ["498164f7d0e3dd83a2ecb1c49f83163916c1e76b573ef60a8bb0e88dd3e8b853", "core"],
     ["97e3b5ebdbe8d5fca43790729084de4eef4fbcf5fdf71ad645e679fd72f4e804", "search"],
     ["5918d38595593c4dfbf5028322c5b678c3082d6c473573f454f53f511b2f5f53", "auth"],
     ["539abe36b602c8e2eff8745dd0462aea41837a20cc0b90cbef7a01cbad6fb89a", "testing"],
@@ -1726,7 +1727,7 @@ it("renders the pinned standalone authoring", async () => {
     ["b0220727e7f21e1c5d10101e74996ddb3d2d4e18061ac85c807203ed4ab0f695", "forms"],
     ["3cd1434cdea838aee3b06589f685812620c48d2aba277f86622d6bb45282cb40", "writes"],
     ["8287515976be8d5dbebd929d0550822c15fe2f4e8b8fe59a47ebed7d40b996fa", "cart"],
-    ["2f00649d366ef6ae4250700f9c79c27d5e5328ff72190581a39ccaff23a6c795", "caller-input"],
+    ["919ad5b06c06c46f6b9f1a1049e6ba7cc7c2c12428847de871eb5555483e96fe", "caller-input"],
     ["d47486fdd08e7a7ff6ab8f38ee03e6a3e8e2287eb67f2412f1fe996543ea1857", "publication"],
     ["6745f230da3802f1f0dbe8990098de01895e5ca42e2c58efbb83b0c423a282ea", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],

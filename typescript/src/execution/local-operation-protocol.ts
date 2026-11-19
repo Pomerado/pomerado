@@ -74,6 +74,7 @@ export const LocalOperationStart = Schema.Struct({
   sessionId: Schema.String,
   siteOrigin: Schema.optionalWith(Schema.String, { exact: true }),
   siteDomain: Schema.optionalWith(Schema.String, { exact: true }),
+  browserTimeZone: Schema.optionalWith(Schema.String, { exact: true }),
   timeoutMs: Schema.Number.pipe(Schema.positive(), Schema.finite()),
   mode: Schema.Literal("run", "contract"),
   validateInput: Schema.optionalWith(Schema.Boolean, { exact: true }),
@@ -223,6 +224,8 @@ export const LocalOperationMessage = Schema.Union(
       { exact: true },
     ),
     refusal: Schema.optionalWith(InputRefusal, { exact: true }),
+    /** The script's refusal named its input with an explicitly empty list of choices. */
+    offersNone: Schema.optionalWith(Schema.Literal(true), { exact: true }),
     unapplied: Schema.optionalWith(InputNotApplied, { exact: true }),
     ...JournalFields,
   }),

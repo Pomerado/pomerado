@@ -57,6 +57,10 @@ const { SessionSignInAnswer } = await import("../runtime/session-sign-in.js");
 const { ScriptCardFillAnswer } = await import("../runtime/script-card-fill.js");
 const { CollectedDownload, FileOutput, FileRefusalReason, FileRefused, PlacedFile } =
   await import("../runtime/files.js");
+const offersNone = (error: Error) => {
+  const available: unknown = Reflect.get(error, "available");
+  return Array.isArray(available) && available.length === 0;
+};
 const refusalOf = (detail: InputRefusalDetail) =>
   detail.field === undefined && detail.available === undefined && detail.kind === undefined
     ? {}
@@ -304,6 +308,7 @@ const executeLocally = (operation: Parameters<typeof executeKernelOperation>[0])
       sessionId: start.sessionId,
       ...(start.siteOrigin === undefined ? {} : { siteOrigin: start.siteOrigin }),
       ...(start.siteDomain === undefined ? {} : { siteDomain: start.siteDomain }),
+      ...(start.browserTimeZone === undefined ? {} : { browserTimeZone: start.browserTimeZone }),
       ...(start.offline === true ? { offline: true } : {}),
       ...(start.list === undefined ? {} : { list: start.list }),
       dialogs: (report) =>
@@ -564,6 +569,10 @@ await Effect.runPromise(
             // one from the caller's own account by its full label, as the local host shows it.
             ...("_tag" in error && error._tag === "InvalidInput"
               ? refusalOf(boundedRefusalDetail(error, { fullLabels: true }))
+              : {}),
+            // The runtime keeps an explicitly empty list only beside the input it names.
+            ...("_tag" in error && error._tag === "InvalidInput" && offersNone(error)
+              ? { offersNone: true }
               : {}),
             // An input the script could not apply, with what the page kept instead.
             ...(() => {
