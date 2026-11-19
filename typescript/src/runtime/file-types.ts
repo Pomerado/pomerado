@@ -204,25 +204,24 @@ const looselyClaimedTypes = new Set([
   "application/vnd.ms-powerpoint",
 ]);
 
-/** How far from each end a PDF's header and end marker may sit, as PDF readers accept them. */
+/** How far from the start a PDF's header, and a linearized PDF's dictionary, may sit. */
 const pdfMarkerWindow = 1024;
 
 /**
- * A PDF's shape: `whole` with its `%PDF-` header near the start and its last `%%EOF` marker near
- * the end or followed only by whitespace or NUL padding, `cut` with the header but no such end
- * marker, else `none`. A linearized PDF cut short keeps its first page's `%%EOF` with content
- * after it, so it is `cut`.
+ * A PDF's shape: `none` without a `%PDF-` header near the start; `short` when a linearized PDF's
+ * dictionary declares a length (`/L`) above its byte count, as when a download stops after the
+ * first page; `unended` with no `%%EOF` marker after the header; else `whole`. Data after the
+ * last `%%EOF`, such as page markup a server wrote after the file, leaves it `whole`, as PDF
+ * readers open it.
  */
 const pdfShape = (bytes: Uint8Array) => {
   const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const header = buffer.subarray(0, pdfMarkerWindow).indexOf("%PDF-");
+  const start = buffer.subarray(0, pdfMarkerWindow);
+  const header = start.indexOf("%PDF-");
   if (header === -1) return "none";
-  const end = buffer.lastIndexOf("%%EOF");
-  if (end <= header) return "cut";
-  if (end >= bytes.byteLength - pdfMarkerWindow) return "whole";
-  return buffer.subarray(end + 5).every((byte) => byte === 0 || /\s/u.test(String.fromCharCode(byte)))
-    ? "whole"
-    : "cut";
+  const declared = /\/Linearized\s[^>]*?\/L\s+(\d+)/u.exec(start.toString("latin1", header))?.[1];
+  if (declared !== undefined && Number(declared) > bytes.byteLength) return "short";
+  return buffer.indexOf("%%EOF", header + 5) === -1 ? "unended" : "whole";
 };
 
 /** Whether the bytes prove a binary type: a known signature, or an ISO media `ftyp` box. */
@@ -242,8 +241,8 @@ const lookOf = (bytes: Uint8Array) => {
  * sent or its name's extension implies, and only a type with a signature claims anything. Under
  * such a claim a download is refused when it is empty, or when its bytes prove no binary type,
  * such as an HTML sign-in page sent as `application/pdf` or named `.pdf`; bytes that prove another
- * type are a real file, kept under their own type. A PDF must also end with its `%%EOF` marker,
- * so one cut short is refused. The answer names the claim, the size and what the bytes look like,
+ * type are a real file, kept under their own type. A PDF is also refused when it has no `%%EOF`
+ * marker, or is linearized and shorter than the length it declares. The answer names the claim, the size and what the bytes look like,
  * never their contents.
  */
 export const downloadContradiction = (
@@ -261,8 +260,10 @@ export const downloadContradiction = (
     if (bytes.byteLength === 0) return `${by}, but the download is empty.`;
     const size = `its ${bytes.byteLength} bytes`;
     const pdf = type === "application/pdf" ? pdfShape(bytes) : undefined;
-    if (pdf === "cut")
-      return `${by}, but ${size} do not end with a %%EOF end marker, so the PDF is cut short or damaged.`;
+    if (pdf === "unended")
+      return `${by}, but ${size} have no %%EOF end marker, so the PDF is cut short or damaged.`;
+    if (pdf === "short")
+      return `${by}, but ${size} are fewer than its linearized header declares, so the PDF is cut short.`;
     if (pdf === "whole" || provenBinary(bytes)) continue;
     return `${by}, but ${size} are not ${pdf === "none" ? "a PDF" : type}: ${lookOf(bytes)}.`;
   }

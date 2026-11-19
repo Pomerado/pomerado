@@ -521,7 +521,7 @@ const collectFailure = (error: unknown) => {
 
 /**
  * Runs in the page: fetches `url` with the page's own session, under the page's own CORS rules
- * (another site's address without cookies once, if it refused them), and, when the site answers a file,
+ * (once more with cookies for the page's own site only, if that request failed), and, when the site answers a file,
  * hands its bytes to the browser as a download named for the file, which the armed capture takes
  * as it takes any other. A non-2xx answer, or a web page sent without `attachment`, is no file.
  * Pasted into the page, so it refers to nothing outside its own body.
@@ -540,9 +540,9 @@ async function fetchFileInPage(request: {
   try {
     response = await fetch(request.url, { credentials: "include", signal });
   } catch {
-    // Another site's public link that allows any page (`*`) refuses a request with cookies, so
-    // it is asked once more without them.
-    if (new URL(request.url).origin === location.origin) return { failed: "unreachable" };
+    // Another site's public link that allows any page (`*`), asked directly or reached through
+    // a redirect, refuses a request with cookies, so the address is asked once more, within the
+    // same time limit, with cookies only for the page's own site.
     try {
       response = await fetch(request.url, { credentials: "same-origin", signal });
     } catch {
@@ -600,7 +600,7 @@ const FetchedInPage = Schema.Union(
 const fetchFailureMessages = {
   unreachable:
     "files.fetch could not read the address from the page: it did not answer in time, or it is on another site that does not share it with this page",
-  page: "files.fetch got a web page, not a file, from the address, such as a sign-in or error page",
+  page: "files.fetch got a web page, not a file, from the address; it is usually a sign-in or error page",
 } as const;
 
 /**

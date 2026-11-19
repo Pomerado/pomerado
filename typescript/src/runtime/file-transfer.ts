@@ -571,9 +571,10 @@ export const makeRunFiles = (options: {
         Effect.mapError(() => new FileRefused({ reason: "unavailable" })),
       );
     /**
-     * Keeps a file within the run's caps for its caller, as one the run collected. An empty file,
-     * or one whose bytes contradict the type its server or name claims, is refused
-     * `invalid_download` before it counts, so the run fails rather than return it.
+     * Keeps a file within the run's caps for its caller, as one the run collected. A file whose
+     * server or name claims a type with a signature, and that is empty, whose bytes prove no file
+     * type or that is a PDF cut short (`downloadContradiction`), is refused `invalid_download`
+     * before it counts, so the run fails rather than return it.
      */
     const keepCollected = (name: string, bytes: Uint8Array, contentType?: string) =>
       Effect.gen(function* () {

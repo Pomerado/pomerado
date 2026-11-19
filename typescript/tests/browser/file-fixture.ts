@@ -17,7 +17,7 @@ export const report =
  * name, size and sha256), a link that downloads a statement and one for each of two months'
  * statements, and documents served inline: `/report.pdf` a PDF, `/expired.pdf` a sign-in
  * page in its place, `/mislabelled.pdf` that page sent as a PDF, `/public.pdf` the PDF that any
- * site may read without cookies and `/missing.pdf` a 404. `received` lists each upload,
+ * site may read without cookies, `/moved?to=<address>` a redirect there and `/missing.pdf` a 404. `received` lists each upload,
  * and `requested` the path of every request the site answered. Its `/drop` page uploads a file the moment its input holds one; with `frame`, the main page
  * embeds that address in an iframe. `/shadow-drop` does the same with its input inside an open
  * shadow root.
@@ -59,6 +59,12 @@ export const startFileSite = async (options: { readonly frame?: string } = {}) =
         response.setHeader("Content-Disposition", "inline");
         if (url.pathname === "/public.pdf") response.setHeader("Access-Control-Allow-Origin", "*");
         response.end(url.pathname === "/mislabelled.pdf" ? signIn : report);
+        return;
+      }
+      if (url.pathname === "/moved") {
+        response.statusCode = 302;
+        response.setHeader("Location", url.searchParams.get("to") ?? "/");
+        response.end();
         return;
       }
       if (url.pathname === "/missing.pdf") {

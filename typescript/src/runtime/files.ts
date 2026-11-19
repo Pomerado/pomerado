@@ -160,7 +160,7 @@ export type DownloadCap = typeof DownloadCap.Type;
  * - `other_site`: the field's page is not on the tool's site.
  * - `no_download`: no download finished within the wait.
  * - `invalid_download`: the server or the name claims a type with a signature, and the download is
- *   empty, its bytes prove no binary type (an HTML page sent as a PDF), or a PDF lacks its end.
+ *   empty, its bytes prove no file type (an HTML page sent as a PDF), or it is a PDF cut short.
  * - `not_collected`: an output names a file this run did not collect.
  */
 export const FileRefusalReason = Schema.Literal(
@@ -343,9 +343,10 @@ export interface ScriptFiles {
    * carries only the file's metadata and sha256, and is returned as an output `FileOutput`. A
    * download over the host's per-file cap, or over what the run's caps leave, throws an
    * `OperationFailure` that names the cap, never `InvalidInput`: the page made the file, so the
-   * limit is the host's and the caller has no other file to send. An empty download, or one whose
-   * bytes are not the type its server or name claims, such as an HTML sign-in page sent as a PDF,
-   * throws an `OperationFailure` (`invalid_download`) that says what came back.
+   * limit is the host's and the caller has no other file to send. A download whose server or name
+   * claims a type with a signature, and that is empty, whose bytes prove no file type (an HTML
+   * sign-in page sent as a PDF) or that is a PDF cut short, throws an `OperationFailure`
+   * (`invalid_download`) that says what came back. Bytes that prove another type are kept as it.
    */
   readonly collect: (
     trigger: () => Promise<unknown>,
@@ -376,8 +377,8 @@ export interface ScriptFiles {
    * own session, and returns it for the output as `collect` returns a download. Use it for a
    * document the browser shows in its own viewer, such as a PDF, which starts no download for
    * `collect` to take. The page makes the request, so the address must be on the page's own site
-   * or on one that lets the page read it; another site's address that refuses the page's cookies
-   * is asked once more without them. It waits up to `timeoutMs` (30 s by default). An answer other
+   * or on one that lets the page read it; when the request fails, the address is asked once more
+   * with cookies for the page's own site only, so another site's public link loads. It waits up to `timeoutMs` (30 s by default). An answer other
    * than 2xx, a web page sent without `attachment`, or an address the page cannot read throws an
    * `OperationFailure` that says which; so does a file `collect` would refuse.
    */

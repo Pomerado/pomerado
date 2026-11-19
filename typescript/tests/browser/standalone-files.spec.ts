@@ -571,10 +571,10 @@ return true;`,
   }
 });
 
-test("files.fetch returns a PDF the site shows inline or another site shares, and fails on a sign-in page, an error, a mislabelled page or another site's private one", async () => {
+test("files.fetch returns a PDF the site shows inline or another site shares, directly or through a redirect, and fails on a sign-in page, an error, a mislabelled page or another site's private one", async () => {
   test.info().annotations.push({
     type: "slow",
-    description: "One native run that fetches six addresses through Chromium",
+    description: "One native run that fetches seven addresses through Chromium",
   });
   const site = await startFileSite();
   const other = await startFileSite();
@@ -591,6 +591,7 @@ async ({files}) => {
   return {
     report: await fetched("/report.pdf"),
     shared: await fetched("/public.pdf", ${JSON.stringify(other.url)}),
+    moved: await fetched(${JSON.stringify(`/moved?to=${encodeURIComponent(new URL("/public.pdf", other.url).href)}`)}),
     private: await fetched("/report.pdf", ${JSON.stringify(other.url)}),
     expired: await fetched("/expired.pdf"),
     missing: await fetched("/missing.pdf"),
@@ -620,11 +621,14 @@ async ({files}) => {
     expect(output["shared"], JSON.stringify(result)).toMatchObject({
       $file: { name: "public.pdf", media_type: "application/pdf", size: report.length },
     });
+    expect(output["moved"], JSON.stringify(result)).toMatchObject({
+      $file: { name: "public.pdf", media_type: "application/pdf", size: report.length },
+    });
     expect(output["private"]).toBe(
       "files.fetch could not read the address from the page: it did not answer in time, or it is on another site that does not share it with this page",
     );
     expect(output["expired"]).toBe(
-      "files.fetch got a web page, not a file, from the address, such as a sign-in or error page",
+      "files.fetch got a web page, not a file, from the address; it is usually a sign-in or error page",
     );
     expect(output["missing"]).toBe("files.fetch got HTTP 404 from the address, not a file");
     expect(output["mislabelled"]).toBe(

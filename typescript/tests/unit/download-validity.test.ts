@@ -21,6 +21,13 @@ const binary = (...start: readonly (number | string)[]) =>
 /** A synthetic one-page PDF: its header, a body and its end marker. */
 const pdf = "%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n";
 const signInPage = "<!doctype html><title>Sign in</title><form><input name=user></form>";
+/**
+ * A synthetic linearized PDF's first page: its dictionary declares the whole file's length (`/L`),
+ * and the first page ends with its own `%%EOF`, as such a file is laid out.
+ */
+const linearizedStart =
+  "%PDF-1.7\n1 0 obj << /Linearized 1 /L 9000 /H [ 200 120 ] /O 3 /E 600 /N 2 /T 8800 >> endobj\n" +
+  "2 0 obj << /Type /Catalog /Pages 4 0 R >> endobj\ntrailer << /Size 5 /Root 2 0 R >>\n%%EOF\n";
 
 /**
  * Runs a script that clicks once inside `files.collect`, with a host whose capture finished
@@ -114,16 +121,16 @@ describe("a collected download whose bytes contradict what it claims", () => {
     {
       case: "a PDF cut short before its end marker",
       download: { name: "report.pdf", body: pdf.slice(0, 40), media_type: "application/pdf" },
-      says: "The server sent it as application/pdf, but its 40 bytes do not end with a %%EOF end marker, so the PDF is cut short or damaged.",
+      says: "The server sent it as application/pdf, but its 40 bytes have no %%EOF end marker, so the PDF is cut short or damaged.",
     },
     {
       case: "a linearized PDF cut short after its first page's end marker",
       download: {
         name: "report.pdf",
-        body: `${pdf}${"2 0 obj << /Type /Page >> endobj\n".repeat(64)}`,
+        body: `${linearizedStart}${"3 0 obj << /Type /Page >> endobj\n".repeat(64)}`,
         media_type: "application/pdf",
       },
-      says: "The server sent it as application/pdf, but its 2189 bytes do not end with a %%EOF end marker, so the PDF is cut short or damaged.",
+      says: `The server sent it as application/pdf, but its ${linearizedStart.length + 33 * 64} bytes are fewer than its linearized header declares, so the PDF is cut short.`,
     },
     {
       case: "an empty download the server sent as a PDF",
@@ -179,6 +186,24 @@ describe("a collected download whose bytes contradict what it claims", () => {
     {
       case: "a PDF padded with NUL bytes past its end marker",
       download: { name: "report.pdf", body: `${pdf}${"\0".repeat(4096)}`, media_type: "application/pdf" },
+      media_type: "application/pdf",
+    },
+    {
+      case: "a PDF the server followed with its page's markup",
+      download: {
+        name: "report.pdf",
+        body: `${pdf}<!doctype html><html><body>${"<p>Statement</p>".repeat(128)}</body></html>`,
+        media_type: "application/pdf",
+      },
+      media_type: "application/pdf",
+    },
+    {
+      case: "a whole linearized PDF",
+      download: {
+        name: "report.pdf",
+        body: `${linearizedStart}${" ".repeat(9000 - linearizedStart.length - 6)}%%EOF\n`,
+        media_type: "application/pdf",
+      },
       media_type: "application/pdf",
     },
     {
