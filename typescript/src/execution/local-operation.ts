@@ -130,6 +130,8 @@ export class LocalOperationFailure extends Error {
   readonly sessionLoss?: "session_not_kept";
   /** The input a script's `InvalidInput` named and the choices the page offers for it. */
   readonly refusal?: InputRefusalDetail;
+  /** The script's `InvalidInput` named its input with an explicitly empty list of choices. */
+  readonly offersNone?: true;
   /** The input a script's `InputNotApplied` named and what the page kept instead. */
   readonly unapplied?: InputNotAppliedDetail;
   /** The authored source line that threw, such as `src/tool.mjs:12`, when the child named one. */
@@ -145,6 +147,7 @@ export class LocalOperationFailure extends Error {
       readonly reported?: boolean;
       readonly sessionLoss?: "session_not_kept";
       readonly refusal?: InputRefusalDetail;
+      readonly offersNone?: true;
       readonly unapplied?: InputNotAppliedDetail;
       readonly frame?: string;
     } = {},
@@ -153,6 +156,7 @@ export class LocalOperationFailure extends Error {
     this.reported = options.reported ?? true;
     if (options.sessionLoss !== undefined) this.sessionLoss = options.sessionLoss;
     if (options.refusal !== undefined) this.refusal = options.refusal;
+    if (options.offersNone !== undefined) this.offersNone = options.offersNone;
     if (options.unapplied !== undefined) this.unapplied = options.unapplied;
     if (options.frame !== undefined) this.frame = options.frame;
   }
@@ -377,6 +381,7 @@ const handleTerminalMessage = (
             ...(pending.size === 0 ? {} : { reported: false }),
             ...(message.sessionLoss === undefined ? {} : { sessionLoss: message.sessionLoss }),
             ...(message.refusal === undefined ? {} : { refusal: message.refusal }),
+            ...(message.offersNone === undefined ? {} : { offersNone: message.offersNone }),
             ...(message.unapplied === undefined ? {} : { unapplied: message.unapplied }),
             ...(message.frame === undefined ? {} : { frame: message.frame }),
           },

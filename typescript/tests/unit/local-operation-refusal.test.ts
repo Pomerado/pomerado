@@ -1,8 +1,10 @@
-import { Effect } from "effect";
+import { Effect, Either } from "effect";
 import { expect, it } from "vitest";
 import { runLocalOperation } from "../../src/execution/local-operation.js";
 import { createLocalWorkspace } from "../../src/execution/local-workspace.js";
+import { judgeCase } from "../../src/mint/live-tests.js";
 import { boundedRefusalDetail, operationErrors } from "../../src/runtime/operation-failure.js";
+import { outcomeOf as liveTestOutcome } from "../../src/standalone/mint-live-tests.js";
 import { runOutcomeFailure } from "../../src/standalone/run-report.js";
 
 // A script that refuses its caller's value in the local operation child, against a browser that
@@ -143,4 +145,23 @@ it("tells a local caller the reason and field, with no choices, when a script re
     field: "size",
   });
   expect(failure.message).not.toContain("Available");
+});
+
+// A live case that expects a refusal passes only on one a host can tell is the caller's: it starts
+// "Caller input error:", lists the page's choices or names its input with an explicitly empty
+// list, or has a kind of its own. A host that repairs checks any other, so that case fails. The
+// runtime's own refusal of the input schema is no refusal of the tool's, and a host that doesn't
+// report a refusal's empty list and kind, such as an older one, keeps every refusal passing.
+it.each([
+  { name: "neither start nor list", source: refusing(""), input: { size: "M" }, verdict: "fail" },
+  { name: "an empty list beside its field", source: refusing(`, { field: "size", available: [] }`), input: { size: "M" }, verdict: "pass" },
+  { name: "the caller input start", source: refusing("").replace('"Size "', '"Caller input error: Size "'), input: { size: "M" }, verdict: "pass" },
+  { name: "a kind", source: refusing(`, { field: "size", kind: "sold_out" }`), input: { size: "M" }, verdict: "pass" },
+  { name: "the input schema's refusal", source: refusing(""), input: { size: 1 }, verdict: "pass" },
+  { name: "neither, from a host that doesn't report choices", source: refusing(""), input: { size: "M" }, verdict: "pass", unreported: true },
+])("judges a live case's refusal with $name", async ({ source, input, verdict, unreported }) => {
+  const failure = await Effect.runPromise(Effect.flip(run(source, input)));
+  const reported = liveTestOutcome(Either.left(failure));
+  const outcome = unreported === true ? { ...reported, choicesReported: false } : reported;
+  expect(judgeCase({ expect: "invalid_input" }, { id: "case", outcome, durationMs: 0 }, undefined).verdict).toBe(verdict);
 });

@@ -383,6 +383,13 @@ export type LiveTestOutcome =
       readonly message?: string;
       readonly field?: string;
       readonly available?: readonly RefusalValue[];
+      readonly kind?: string;
+      /**
+       * The host reports the tool's own refusal with its explicitly empty list and its kind, so
+       * one without either names no choice. Absent, as from an older host, the refusal is judged
+       * as before.
+       */
+      readonly choicesReported?: boolean;
     }
   | {
       readonly status: "failed";
@@ -543,6 +550,9 @@ const inconclusiveDetail: Readonly<Record<LiveTestInconclusiveReason, string>> =
   site_block: "The site refused this test browser the page or its data call, or showed a block page, so the case tested nothing about the tool. That is the site's refusal, not a script failure, and the script needs no change for it. It counts neither as a pass nor a fail toward review. The host opened this browser for testing, so a caller's rule about stopping at blocks, which is about the tool's own runs, does not cover it. Prefer going on: publish with this case inconclusive and say so in coverage.",
 };
 
+/** The start of an obvious refusal's message (`errors.InvalidInput`). */
+const callerInputErrorPrefix = "Caller input error:";
+
 /**
  * The failures a tool throws on purpose to refuse loudly, the only ones a case that expects
  * `error` passes on. Any other throw, an `OperationFailure` that wraps an unexpected exception
@@ -614,14 +624,26 @@ export const judgeCase = (
         ...(outcome.message === undefined ? {} : { message: outcome.message.slice(0, 600) }),
         ...(Object.keys(refusal).length === 0 ? {} : { refusal }),
       };
+      // A host that repairs can't tell such a refusal is the caller's, so it would check it.
+      const unmarked =
+        outcome.choicesReported === true &&
+        outcome.message?.startsWith(callerInputErrorPrefix) === false &&
+        outcome.available === undefined &&
+        outcome.kind === undefined;
       if (testCase.expect === "invalid_input" || testCase.expect === "error")
-        return {
-          ...base,
-          verdict: "pass",
-          ...(outcome.available === undefined || outcome.available.length === 0
-            ? { detail: "The refusal lists no choices (available). Where the page offers choices, list them." }
-            : {}),
-        };
+        return unmarked
+          ? {
+              ...base,
+              verdict: "fail",
+              detail: `${page}The refusal neither starts "Caller input error:" nor lists choices (available). Start it so when the refusal is obvious; otherwise list the page's choices for the input, or available: [] when it offers none.`,
+            }
+          : {
+              ...base,
+              verdict: "pass",
+              ...(outcome.available === undefined || outcome.available.length === 0
+                ? { detail: "The refusal lists no choices (available). Where the page offers choices, list them." }
+                : {}),
+            };
       return {
         ...base,
         verdict: "fail",
