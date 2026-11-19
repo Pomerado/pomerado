@@ -446,7 +446,11 @@ const markedNow = <E extends YieldableError, V extends string, L extends Autofil
     return marked;
   });
 
-/** Why a state acted in before something went out shows again: its credential came back, or itself. */
+/**
+ * Why a state acted in shows again with nothing to explain it: its password or identifier went out
+ * and came back (`credential_screen_returned`), as the recipe replay names a credential screen
+ * that returns, so no host sends it again; else the state itself (`state_repeated`).
+ */
 const returnedReason = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
   state: StateEntry,
@@ -468,7 +472,7 @@ const returnedReason = <E extends YieldableError, V extends string, L extends Au
  * answer, read once it held still and again at `capMs`, opens an emailed link (`link`) or ends a
  * refused login; at `capMs`, a new text no known state has is an unknown state, else a press that
  * typed nothing and sends no code or link is made once more (`repress`), and otherwise it stops
- * (`state_repeated`), as nothing is sent twice. A page with boxes no known state has or holds ends
+ * (`returnedReason`), as nothing is sent twice. A page with boxes no known state has or holds ends
  * the replay once it held still `quietMs`; a page of text alone, one a known state may still grow
  * into, or one a known state's controls have not shown on, gets the whole step wait, as a slow page
  * is no unknown state, and at its end the host's challenge look runs once, as at a recipe screen's
@@ -536,7 +540,7 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
           if (capped) {
             if (!again) break;
             return acted.press === undefined
-              ? stopped(run, "state_repeated")
+              ? stopped(run, returnedReason(run, state))
               : ({ again: "repress" } satisfies Again);
           }
         } else if (

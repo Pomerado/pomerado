@@ -313,7 +313,7 @@ it("stops when the state it pressed in shows again, never sending the password t
   ]);
   const repeated = scriptedSite({ start: passwordScreen }, () => "start");
   const ended = await replay(repeated, library);
-  expect(ended).toMatchObject({ outcome: "unclear", reason: "state_repeated" });
+  expect(ended).toMatchObject({ outcome: "unclear", reason: "credential_screen_returned" });
   expect(repeated.fills).toEqual(["password"]);
   expect(repeated.clicks).toEqual(["#go"]);
   // The site's error marker shows with a text of its own, as most do.
@@ -359,7 +359,7 @@ it("presses once more a press that typed no secret when the page kept its state"
   expect(site.clicks).toEqual(["#sign-in", "#sign-in", "#go"]);
   // A press that sent the email, in a state that may lead to a code, is never made again.
   const kept = scriptedSite({ start: emailScreen }, () => undefined);
-  expect(await replay(kept, branches)).toMatchObject({ outcome: "unclear", reason: "state_repeated" });
+  expect(await replay(kept, branches)).toMatchObject({ outcome: "unclear", reason: "credential_screen_returned" });
   expect(kept.clicks).toEqual(["#continue"]);
 });
 
