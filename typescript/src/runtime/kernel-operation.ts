@@ -139,6 +139,12 @@ export interface KernelOperationContext<
    * live browser; then only `siteOrigin` itself is the site. Never derive it from `siteOrigin`.
    */
   readonly siteDomain: string | undefined;
+  /**
+   * The IANA zone the job's browser runs in, such as `America/New_York`, as the host set or read
+   * it: the zone a page writes the times it computes from a timestamp in, which can differ from
+   * the caller's and the script's own. Undefined when the host knows none.
+   */
+  readonly browserTimeZone: string | undefined;
   readonly input: Input;
   /**
    * Asks the host to decide a native dialog a call left open. Kernel keeps a dialog open between
@@ -438,6 +444,8 @@ interface ScriptBrowser {
   readonly siteOrigin?: string;
   /** The host's registrable domain for `siteOrigin`; the sandbox has no public suffix list. */
   readonly siteDomain?: string;
+  /** The zone the host put the browser on or read from its page, the script's `browserTimeZone`. */
+  readonly browserTimeZone?: string;
   /** An offline run cannot reach a site, so it never signs in. */
   readonly offline?: boolean;
   readonly dialogs?: DialogDecider;
@@ -869,6 +877,7 @@ const makeKernelOperationContext = <Input>(
     sessionId: options.sessionId,
     siteOrigin: options.siteOrigin,
     siteDomain: options.siteDomain,
+    browserTimeZone: options.browserTimeZone,
     input: options.input,
     // Records how the run proved its effect, a read-back unless the site's message says so.
     verified: (proof) => {
