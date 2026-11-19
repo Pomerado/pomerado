@@ -849,6 +849,7 @@ const withHostNotices = (
     ...(actions.abandonSignIn === undefined
       ? {}
       : { abandonSignIn: wrap(actions.abandonSignIn) }),
+    ...(actions.readPage === undefined ? {} : { readPage: wrap(actions.readPage) }),
   };
 };
 
@@ -8515,6 +8516,25 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   }),
                 ),
             }),
+        // The agent reads the live page with no script, so Guardian has nothing to review. The
+        // host navigates, clicks and types nothing; the read holds the execution permit, so it
+        // sees the page between steps, never during one.
+        ...(dependencies.readPage === undefined || questionOnly
+          ? {}
+          : {
+              readPage: (input: unknown) =>
+                serial.withPermits(1)(
+                  Effect.gen(function* () {
+                    const read = dependencies.readPage;
+                    if (read === undefined) return yield* new MintFailure({ code: "Unavailable" });
+                    yield* active();
+                    yield* decode(Schema.Struct({}), input);
+                    const page = yield* read();
+                    yield* diagnose({ phase: "page_read", status: page.status });
+                    return JSON.stringify({ kind: "host_page_read", ...page });
+                  }),
+                ),
+            }),
         // A read's live tests: the cases the agent designed and their results, and batches
         // run in parallel browsers after one Guardian review. It holds the execution permit, since
         // a batch uses the build's own browser too.
@@ -8779,6 +8799,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         ...(actions.abandonSignIn === undefined
           ? {}
           : { abandonSignIn: working(actions.abandonSignIn) }),
+        ...(actions.readPage === undefined ? {} : { readPage: working(actions.readPage) }),
         // A published build with a write unresolved gives the reviewer its last turn;
         // publication itself never waits for it.
         finish: (input) =>

@@ -552,6 +552,7 @@ const hostToolNames = [
   "check_signed_in_marker",
   "abandon_sign_in",
   "live_tests",
+  "read_page",
 ] as const;
 const hostTools: ReadonlySet<string> = new Set(hostToolNames);
 
@@ -1365,6 +1366,23 @@ const openAIMinter = (
                     ),
                     parameters: parameters(withIntent(Schema.Struct({}))),
                   });
+            const readLivePage = turn.actions.readPage;
+            const readPage = tool({
+                    ...hostTool(
+                      "read_page",
+                      turn.hostToolDescriptions?.readPage ??
+                        "Read the page this attempt's live browser shows now, with no script and no review: the host takes the same observation every live execution ends with, publishes it to captures/ as one, and returns the page's address, title and accessibility snapshot, screened as captures are, with the paths of its snapshot and DOM files; a snapshot too long to return whole ends early and says so, and its file holds the rest. Use it to look at the page before writing an explore step, and after one to see where it left the page. It is read-only: it never navigates, reloads, clicks, types, waits for the page or opens a browser, so it shows only what is already on the page, and it is never part of the published tool. unavailable means it read nothing, and its instruction says why. intent states what you want to learn from the page.",
+                      "The page could not be read. This says nothing about the page; read it again, or look at it with an explore step.",
+                      (request) => {
+                        // From the wrap-up point it counts as exploring, as a live explore does.
+                        const closed = wrapUp && modelCalls >= wrapUpAt && reviewAskedAt < wrapUpAt;
+                        return closed
+                          ? Effect.succeed(exploringOver(modelCalls, modelCallCapacity))
+                          : (readLivePage?.(request) ?? notOfferedAction());
+                      },
+                    ),
+                    parameters: parameters(withIntent(Schema.Struct({}))),
+                  });
             const runLiveTests = turn.actions.liveTests;
             const liveTests = tool({
                     ...hostTool(
@@ -1391,6 +1409,7 @@ const openAIMinter = (
               ...(turn.actions.checkSignedInMarker === undefined ? [] : ["check_signed_in_marker"]),
               ...(turn.actions.abandonSignIn === undefined ? [] : ["abandon_sign_in"]),
               ...(turn.actions.liveTests === undefined ? [] : ["live_tests"]),
+              ...(turn.actions.readPage === undefined ? [] : ["read_page"]),
             ]);
             /**
              * A tool this build does not offer, refused by the host whatever the request allowed:
@@ -1441,6 +1460,7 @@ const openAIMinter = (
               checkSignedInMarker,
               abandonSignIn,
               liveTests,
+              readPage,
             ].map((entry) => (offeredTools.has(entry.name) ? entry : refuseNotOffered(entry)));
             const agent = new SandboxAgent({
               name: "Pomerado minter",

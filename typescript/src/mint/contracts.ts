@@ -2124,7 +2124,18 @@ export interface MintActions {
   readonly liveTests?: (input: unknown) => Effect.Effect<string, MintFailure>;
   /** Gives up signing in, so the build goes on signed out; absent where the host has no hook. */
   readonly abandonSignIn?: (input: unknown) => Effect.Effect<string, MintFailure>;
+  /** Reads the live page with no script (`LivePageReader`); absent where the host has none. */
+  readonly readPage?: (input: unknown) => Effect.Effect<string, MintFailure>;
 }
+
+/**
+ * The host's read of the attempt's live page (`MintDependencies.readPage`): `status` says whether
+ * it read the page; the rest is the host's own screened account of it.
+ */
+export type LivePageReader = () => Effect.Effect<
+  { readonly status: string } & Readonly<Record<string, unknown>>,
+  MintFailure
+>;
 
 /**
  * A host's descriptions of the optional tools it offers, such as which of its own skills to read
@@ -2135,6 +2146,7 @@ export interface HostToolDescriptions {
   readonly requestBrowserRecovery?: string;
   readonly checkSignedInMarker?: string;
   readonly abandonSignIn?: string;
+  readonly readPage?: string;
 }
 
 export interface MintTurn {
@@ -3237,6 +3249,13 @@ export interface MintDependencies {
   readonly checkSignedInMarker?: (
     marker: SignedInMarkerCheckRequest,
   ) => Effect.Effect<SignedInMarkerCheck, MintFailure>;
+  /**
+   * Reads the page the attempt's live browser shows now, with no script and so no review: the
+   * host's own observation of it, screened as its captures are, or why it read nothing (`status`).
+   * It never navigates, clicks, types or opens a browser. Absent, the minter is offered no
+   * `read_page` tool.
+   */
+  readonly readPage?: LivePageReader;
   /**
    * Runs a read's planned live tests in batches (`LiveTestHost`). Absent, the minter is offered
    * no live_tests tool, and a read tests one input at a time with execute.
