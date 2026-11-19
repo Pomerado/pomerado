@@ -9,6 +9,7 @@ import type { WriteDeclaration } from "../runtime/operation.js";
 import {
   classifyRun,
   commitReportOf,
+  confirmedBeforeLastStep,
   failedRunOutcome,
   returnedRefusal,
   runnerVerified,
@@ -60,7 +61,9 @@ const journalOf = ({ effect, commits, confirmation }: LocalOperationJournal): Lo
 const journalEffect = (journal: LocalOperationJournal, revision: OutcomeRevision | undefined) =>
   journal.effect === "not_sent"
     ? "not_started"
-    : journal.effect === "possible" || !runnerVerified(revision, "verified", journal.confirmation)
+    : journal.effect === "possible" ||
+        confirmedBeforeLastStep(journal.commits) ||
+        !runnerVerified(revision, "verified", journal.confirmation)
       ? "may_have_dispatched"
       : "verified";
 
