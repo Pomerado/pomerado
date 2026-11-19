@@ -7968,6 +7968,26 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       yield* screenMintText(dependencies, report.explanation),
                     );
                     // Read only for a report that may stand on it.
+                    // A repair of its caller's own run keeps that run's input, so no other example
+                    // can run there: the tool answers the input as the site shows it.
+                    if (
+                      report.reason === "example_unreachable" &&
+                      request.mode === "maintenance" &&
+                      ["owner", "owner_requirements"].includes(yield* maintenanceConfirmer)
+                    ) {
+                      yield* recordHostRefusal(
+                        "report_blocked",
+                        "example_kept",
+                        JSON.stringify({ reported: report.reason }),
+                      );
+                      return JSON.stringify({
+                        status: "blocked_refused",
+                        reason: "example_kept",
+                        userInputRequired: false,
+                        instruction:
+                          "This repair keeps its caller's input, so no other example can run and the build has not ended. Have the tool answer this input as the site shows it, or report another reason.",
+                      });
+                    }
                     const liveTestsRefusal =
                       report.reason === "host_refused"
                         ? yield* liveTestsRefusedForDenial

@@ -1583,8 +1583,10 @@ export type PublicationRequest = typeof PublicationRequest.Type;
  *   Guardian reviews its explanation like any blocked ending. Never a site's, Guardian's or the
  *   owner's refusal. Optional: no host has to handle it until its core reports it.
  * - `example_unreachable`: the example can't reach the part the task needs while another example
- *   would, so a host may ask its caller for one. Never the site's refusal. Optional: no host has to
- *   handle it until its core reports it.
+ *   would, the site refused nothing, and no other example can run in this attempt, so a host may
+ *   ask its caller for one. Never the site's refusal. In maintenance the harness refuses it as
+ *   `example_kept` while `taskUpdateConfirmer` answers `owner` or `owner_requirements`, a repair
+ *   that keeps its caller's input. Optional: no host has to handle it until its core reports it.
  * The host refuses each ending without its basis on record. A `policy` report whose only basis is
  * the owner's no or an unanswered question ends as `owner_declined` or `question_unanswered`. A
  * target on another registrable domain is never a reason by itself: Guardian reviews such work.
