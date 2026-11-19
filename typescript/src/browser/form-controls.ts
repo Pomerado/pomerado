@@ -82,9 +82,11 @@ export const CalendarDate = Schema.String.pipe(
 export const blockingFieldsHook = "__pomeradoBlockingFields";
 
 /**
- * The attribute core's pickers set on an option of a site's list before they click it: `pickValue`
- * and `pickValues` on what they click, with their own suffixes, and `chooseOption` on its option.
- * A host can then tell a click of theirs from one of a script's own on the same list.
+ * The attribute core's pickers put on an option of a site's list before it is pressed, so a host
+ * can tell their press from one of a script's own by its presence on the pressed element or an
+ * element holding it, while it handles the press. Its value varies: `pickValue` and `pickValues`
+ * set their own (and `-hit` on a row's button) and clear it when they end, and `chooseOption` and
+ * the row `pickerMatchAddress` returns for the script to click carry it empty, left in place.
  */
 export const pickedOptionMark = "data-pomerado-pick";
 

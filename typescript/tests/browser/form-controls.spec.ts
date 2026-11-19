@@ -485,14 +485,23 @@ test("chooseOption marks the option it clicks, so a host can tell its click from
 }) => {
   await page.setContent(`<form>${dropdown("Size", [["s", "Small"], ["l", "Large"]])}</form>`);
   await page.evaluate((mark) => {
+    const presses: unknown[] = [];
+    Reflect.set(window, "presses", presses);
     document.addEventListener("pointerdown", (event) => {
-      Reflect.set(window, "pressedMarked", (event.target as Element).closest(`[${mark}]`) !== null);
+      const target = event.target as Element;
+      presses.push({
+        option: target.closest("[role=option]")?.textContent ?? null,
+        marked: target.closest(`[${mark}]`) !== null,
+      });
     }, true);
   }, pickedOptionMark);
   expect(await call(page, `return await chooseOption(page.getByLabel("Size"), "Large");`)).toEqual({
     result: { shape: "combobox", label: "Large", value: "l" },
   });
-  expect(await page.evaluate(() => Reflect.get(window, "pressedMarked"))).toBe(true);
+  expect(await page.evaluate(() => Reflect.get(window, "presses"))).toEqual([
+    { option: null, marked: false },
+    { option: "Large", marked: true },
+  ]);
 });
 
 test("chooseOption matches a name whatever its apostrophe style", async ({ page }) => {
