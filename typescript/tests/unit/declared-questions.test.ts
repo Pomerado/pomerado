@@ -7,6 +7,7 @@ import { makeInputAsker } from "../../src/inputs/callback.js";
 import {
   draftQuestionDeclarationFailure,
   draftQuestionDeclarations,
+  draftQuestionsUnread,
 } from "../../src/mint/draft-questions.js";
 import type { InputRequest } from "../../src/runtime/input-request.js";
 import {
@@ -37,6 +38,27 @@ describe("draftQuestionDeclarations", () => {
       `{name:"ask_note",input:Schema.Unknown,output:Schema.Unknown,questions:{note:{type:"text",prompt:"Which note should I keep?"} as const} satisfies object}`,
     );
     expect(draftQuestionDeclarations("src/tool.ts", source)).toEqual({ note });
+  });
+
+  it("reads the questions of a contract passed by the name of a top-level const", () => {
+    const source = operation(`export const definition = {name:"ask_note",input:Schema.Unknown,output:Schema.Unknown,questions:{note:{type:"text",prompt:"Which note should I keep?"}}};
+export default defineOperation(definition, async () => ({}));`);
+    expect(draftQuestionDeclarations("src/tool.mjs", source)).toEqual({ note });
+  });
+
+  it("reads a spread const's questions, a later questions key winning", () => {
+    const base = `const base = {name:"ask_note",input:Schema.Unknown,output:Schema.Unknown,questions:{seat:{type:"text",prompt:"Which seat?"}}};`;
+    const seat = { seat: { type: "text", prompt: "Which seat?" } };
+    expect(draftQuestionDeclarations("src/tool.mjs", operation(`${base}
+export default defineOperation({...base}, async () => ({}));`))).toEqual(seat);
+    expect(draftQuestionDeclarations("src/tool.mjs", operation(`${base}
+export default defineOperation({...base,questions:{note:{type:"text",prompt:"Which note should I keep?"}}}, async () => ({}));`))).toEqual({ note });
+  });
+
+  it("tells questions it can't read without running the code from none declared", () => {
+    expect(draftQuestionsUnread("src/tool.mjs", operation("makeContract()"))).toBe(true);
+    expect(draftQuestionsUnread("src/tool.mjs", operation(`{name:"a",input:Schema.Unknown,output:Schema.Unknown}`))).toBe(false);
+    expect(draftQuestionsUnread("src/tool.mjs", "export default {};")).toBe(false);
   });
 
   it.each([
