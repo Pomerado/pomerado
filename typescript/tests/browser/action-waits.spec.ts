@@ -1132,8 +1132,7 @@ test.describe("readiness before acting", () => {
     const link = `<a href="https://shop.example.test/orders/1">View order</a>`;
     await page.setContent(`<p>Box 1 ${link}</p><p>Box 2 ${link}</p>`);
     const answer = await ready(page, `page.getByRole("link", { name: "View order" })`, "");
-    expect(answer.reason).toBeUndefined();
-    expect(answer.looks).toBeGreaterThanOrEqual(2);
+    expect(answer).toMatchObject({ waitedFor: [] });
   });
 
   test("two visible links with the same text that open different pages stay ambiguous", async ({ page }) => {
