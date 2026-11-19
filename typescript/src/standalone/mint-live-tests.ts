@@ -132,6 +132,7 @@ export const localLiveTests = (state: MintState): LiveTestHost => {
                 browser,
                 siteOrigin: context.siteOrigin,
                 ...(domain === undefined ? {} : { siteDomain: domain }),
+                ...(browser.timeZone === undefined ? {} : { browserTimeZone: browser.timeZone }),
                 timeoutMs: caseTimeoutMs,
                 mode: "run",
                 target: "browser",

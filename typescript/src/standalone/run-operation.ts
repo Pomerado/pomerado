@@ -142,6 +142,7 @@ export const runOperation = (
       browser,
       siteOrigin: operationOrigin,
       ...(siteDomain(siteOrigin) === undefined ? {} : { siteDomain: siteDomain(siteOrigin) ?? "" }),
+      ...(browser.timeZone === undefined ? {} : { browserTimeZone: browser.timeZone }),
       timeoutMs: options.timeoutMs ?? 1_200_000,
       // A write's output that failed its schema was produced after the write, so it comes back.
       keepDriftedOutput: request.effect !== "read",

@@ -41,6 +41,8 @@ export const NativeWorkerReply = Schema.Union(
     targetId: Schema.String,
     /** The context the worker made and owns; absent for a page it adopted over CDP. */
     contextId: Schema.optional(Schema.String),
+    /** The IANA zone the page runs in; absent when the page could not be read. */
+    timeZone: Schema.optional(Schema.String),
   }),
   /** The worker's own connection to a CDP-attached browser closed. */
   Schema.Struct({ kind: Schema.Literal("disconnected") }),
