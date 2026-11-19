@@ -198,10 +198,10 @@ const captureMarker = "\n…[truncated at 256 KiB]";
 const captureElements = 10_000;
 /**
  * Reads the page in the browser worker: its URL, and its accessibility snapshot with hidden
- * separators marked (`markedAriaSnapshotCode`), cut to 256 KiB there, so no more crosses to the
- * host. A page over the element limit is not snapshotted. The script ends on its own within 8
- * seconds: it waits at most 3 for the element count and 5 for the snapshot, and a page that does
- * not answer in time, as when its scripts keep it busy, is reported unanswered.
+ * separators and unnamed forms marked (`markedAriaSnapshotCode`), cut to 256 KiB there, so no more
+ * crosses to the host. A page over the element limit is not snapshotted. The script ends on its
+ * own within 8 seconds: it waits at most 3 for the element count and 5 for the snapshot, and a
+ * page that does not answer in time, as when its scripts keep it busy, is reported unanswered.
  */
 const pageSnapshotCode = `const url = page.url();
 const late = Symbol("late");
