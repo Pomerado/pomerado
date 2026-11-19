@@ -212,7 +212,9 @@ exception: it is optional unless the task can't run without it (below).
   site offers no control for it, and say so in the description.
 - Every value the code types, selects or fills on the site comes from the input and
   accepts what the site's field accepts. An enum lists the site's full set of options,
-  never just the example's value. The example's values are one case, never limits.
+  never just the example's value. The example's values are one case, never limits. A form can
+  open filled in from an earlier search: set or clear every field the code fills, and don't rely
+  on what a field showed before.
 - Prefer keying only on what the caller asked for. A detail that changes from one listing to
   the next, such as a seating label or a room name, shouldn't decide whether the tool books or
   refuses unless the caller chose it. A tool's check guards what the caller asked for or what the
