@@ -552,7 +552,7 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
     /**
      * The session step named for publication read back through a file other than the one
      * published, and the write session is closed with no act step left to run that file, so
-     * nothing left in the attempt can prove it.
+     * nothing left in the attempt can prove it. A host sends it alone, with no `alsoRefused`.
      */
     | "read_back_unrepeatable"
     /**
@@ -3393,8 +3393,11 @@ export interface MintDependencies {
   /**
    * Whether a write build's closed session may run this act step anyway. A host that knows the
    * session saved nothing may let one more step run the file it publishes, when the read-back
-   * that closed the session ran another file. Absent, or false, a closed session runs no act
-   * step, as before.
+   * that closed the session ran another file. It is asked for every act step a closed session
+   * would refuse, a session that starts closed on an earlier attempt's claim included, and before
+   * the repeat check, the host's preflight and review, any of which may still refuse the step, so a
+   * host that allows a bounded number counts the steps its session recorded, not its answers.
+   * Absent, or false, a closed session runs no act step, as before.
    */
   readonly closedSessionAct?: (request: ExecutionRequest) => boolean;
   /** Host evidence of each publication decision; absent, reviews get none. */
