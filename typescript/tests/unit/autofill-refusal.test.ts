@@ -130,7 +130,8 @@ it("sends back a code step that names part of its screen's one-character boxes, 
 });
 
 // A step with no fields whose submit the host clicked, such as a switch to another sign-in method,
-// typed nothing, so it sent nothing of the login; the same click after a filled field may have.
+// typed nothing, so it sent nothing of the login, unless it carried what an earlier screen typed;
+// the same click after a filled field may have.
 it("counts a clicked step with no fields as no send of the login, and says it typed nothing", () => {
   const url = "https://www.example.test/login";
   const switched = { outcome: "filled", fields: [], submit: "clicked", url } as const;
@@ -139,8 +140,9 @@ it("counts a clicked step with no fields as no send of the login, and says it ty
     fields: [{ slot: "account_number", status: "filled" }],
   } as const;
   expect(maySend(switched)).toBe(true);
-  expect(maySendLogin(switched)).toBe(false);
-  expect(maySendLogin(filled)).toBe(true);
-  expect(stepNotice(switched)).toMatch(/^The step has no fields, so the host typed nothing/);
+  expect(maySendLogin(switched, false)).toBe(false);
+  expect(maySendLogin(switched, true)).toBe(true);
+  expect(maySendLogin(filled, false)).toBe(true);
+  expect(stepNotice(switched)).toMatch(/^The host typed nothing and only clicked the submit/);
   expect(stepNotice(filled)).toMatch(/^The host filled the fields and clicked the submit/);
 });

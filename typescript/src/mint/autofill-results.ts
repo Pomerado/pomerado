@@ -221,7 +221,7 @@ export const clickLayerSubmitNotice =
 
 /** After a step with no fields whose submit the host clicked. */
 export const fieldlessClickNotice =
-  "The step has no fields, so the host typed nothing and only clicked the submit. Explore read-only to read the next screen, then send its signInStep, or signInStep.signedIn with what shows the site signed in.";
+  "The host typed nothing and only clicked the submit. Explore read-only to read the next screen (never read a field the host filled), then send its signInStep, or signInStep.signedIn with what shows the site signed in.";
 
 /** After a step whose submit key the host pressed. */
 const keyNotices = {

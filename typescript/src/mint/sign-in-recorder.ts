@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Effect, Schema } from "effect";
 import { recipeStep } from "../destinations/autofill-recipe.js";
-import { maySendLogin, typingRefusal } from "../destinations/autofill-refusal.js";
+import { maySend, maySendLogin, typingRefusal } from "../destinations/autofill-refusal.js";
 import { refusalEvidence } from "../destinations/autofill-refusal-evidence.js";
 import {
   codeBoxesRefusal,
@@ -493,7 +493,7 @@ export const makeSignInRecorder = (input: {
       afterSubmit = undefined;
       const report = yield* again({ step, inspection: inspected });
       addFilledSecrets(h, recordResubmit(state, step, report).filter(isSecret));
-      if (maySendLogin(report)) {
+      if (maySend(report)) {
         state.mayHaveSent = true;
         addFilledSecrets(h, submitFilled(state).filter(isSecret));
         yield* markersAfterSubmit(state);
@@ -521,6 +521,7 @@ export const makeSignInRecorder = (input: {
         if (!emptied(again.report)) return again;
       }
       // The minter went on: the screen before, which it submitted or which sent itself, is sent.
+      const carried = (before?.filled.size ?? 0) > 0;
       settleMinter(h, before);
       const masked = maskedMethodRefusal(h, request);
       if (masked !== undefined) return shown(yield* masked);
@@ -622,7 +623,7 @@ export const makeSignInRecorder = (input: {
         addFilledSecrets(h, step.fields.map((field) => field.slot).filter(isExtraSecret));
       }
       // A host click after the fill, or a lost answer, may have sent every filled value.
-      if (maySendLogin(report)) {
+      if (maySendLogin(report, carried)) {
         state.mayHaveSent = true;
         addFilledSecrets(h, submitFilled(state).filter(isSecret));
         yield* markersAfterSubmit(state);
