@@ -245,6 +245,15 @@ export const maySend = (stepReport: AutofillStepReport) =>
       stepReport.submit === "page" ||
       stepReport.clicked === true));
 
+/**
+ * A fill that may have sent the login (`maySend`), unless the step has no fields and its sign-in
+ * held no value an earlier screen typed and no click sent (`carried`): its click, as a switch to
+ * another sign-in method, then sent nothing of the login.
+ */
+export const maySendLogin = (stepReport: AutofillStepReport, carried: boolean) =>
+  maySend(stepReport) &&
+  (carried || !(stepReport.outcome === "filled" && stepReport.fields.length === 0));
+
 /** A failed fill's diagnostic phase when the call that lost its answer was a field's typing. */
 export const lostTypingPhase = "typing";
 
