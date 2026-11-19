@@ -44,6 +44,23 @@ const identifierFirst = signInRecipe(
   ],
   { selector: "#account" },
 );
+// A screen of username and password, then a screen of only a button that the password screen the
+// site sends back also shows, then a code screen.
+const passwordThenButton = signInRecipe(
+  [
+    {
+      page: login,
+      fields: [
+        { selector: "#user", slot: "username", accepts: ["username"] },
+        { selector: "#password", slot: "password" },
+      ],
+      submit: "#sign-in",
+    },
+    { page: login, fields: [], submit: "#continue" },
+    { page: login, fields: [{ selector: "#code", slot: "code" }], submit: "#verify" },
+  ],
+  { selector: "#account" },
+);
 // An identifier screen alone, as a site that only ever signs in by an emailed link records.
 const identifierOnly = signInRecipe(
   [
@@ -66,10 +83,11 @@ const target = {
 
 /**
  * One replay of `recipe` on the site, whose login page shows `shown` (the username and password
- * fields by default) and which signs in at once when `signsIn`, else keeps its page after each
- * submit, its password field gone after one when `passwordGone`, with the host's read of its answer
- * (`siteAnswer`: `none` reads no answer, and undefined passes no read): what it asked, what it
- * opened, how many times the host read the answer and how it ended.
+ * fields by default, and any button listed) and which signs in at once when `signsIn`, else keeps
+ * its page after each submit, its password field gone after one when `passwordGone`, with the
+ * host's read of its answer (`siteAnswer`: `none` reads no answer, and undefined passes no read):
+ * what it asked, what it opened, the submits it pressed, how many times the host read the answer
+ * and how it ended.
  */
 const replay = (options: {
   readonly recipe?: typeof passwordScreen;
@@ -81,6 +99,7 @@ const replay = (options: {
   const state = { page: login, shown: new Set(options.shown ?? ["#user", "#password"]) };
   const asked: string[] = [];
   const opened: string[] = [];
+  const pressed: string[] = [];
   const reads = { current: 0 };
   const check = () =>
     Effect.sync(() =>
@@ -99,7 +118,7 @@ const replay = (options: {
     inspect: (step) =>
       Effect.sync(() =>
         state.page === login &&
-        step.fields.length > 0 &&
+        (step.fields.length > 0 || state.shown.has(step.submit ?? "")) &&
         step.fields.every((field) => state.shown.has(field.selector))
           ? ({
               page: login,
@@ -115,6 +134,7 @@ const replay = (options: {
       ),
     fill: ({ step }) =>
       Effect.sync(() => {
+        if (step.submit !== undefined) pressed.push(step.submit);
         if (options.signsIn === true) state.page = account;
         if (options.passwordGone === true) state.shown.delete("#password");
         return {
@@ -169,7 +189,7 @@ const replay = (options: {
             },
           }),
     }).pipe(Effect.scoped),
-  ).then((outcome) => ({ outcome, asked, opened, reads: reads.current }));
+  ).then((outcome) => ({ outcome, asked, opened, pressed, reads: reads.current }));
 };
 
 it("asks for the emailed link the site's answer to the password asked for, opens it and signs in", async () => {
@@ -214,4 +234,49 @@ it("never reads the site's answer when the submitted screen did not come back", 
   expect(passwordGone.asked).toEqual([]);
   expect(passwordGone.reads).toBe(0);
   expect(passwordGone.outcome).not.toMatchObject({ outcome: "signed_in" });
+});
+
+// The site's answer to the password is read right after its submit, before the replay waits for or
+// presses the next recorded screen: a button-only screen whose button the returned password screen
+// shows too is never pressed on a refused or link-asking answer.
+it("reads the site's answer to the password before it presses the next recorded screen", async () => {
+  const shown = ["#user", "#password", "#continue"];
+  const asked = await replay({ recipe: passwordThenButton, shown, siteAnswer: "link" });
+  expect(asked.asked).toEqual(["sign_in_link"]);
+  expect(asked.opened).toEqual([login, link]);
+  expect(asked.pressed).toEqual(["#sign-in"]);
+  expect(asked.outcome).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(asked.reads).toBe(1);
+  // A refused login (a wrong password, a locked account) ends as the returned screen does, for the
+  // host's own verdict on it.
+  const refused = await replay({ recipe: passwordThenButton, shown, siteAnswer: "refused" });
+  expect(refused.asked).toEqual([]);
+  expect(refused.pressed).toEqual(["#sign-in"]);
+  expect(refused.outcome).toEqual({ outcome: "unclear", reason: "credential_screen_returned" });
+});
+
+// No answer to read, or none at all, goes on as before: the button is pressed and the code screen
+// waited for. A site that signed in on the password is never asked about.
+it("goes on to the next recorded screen when the site's answer to the password says nothing", async () => {
+  const shown = ["#user", "#password", "#continue"];
+  for (const siteAnswer of ["none", undefined] as const) {
+    const ended = await replay({
+      recipe: passwordThenButton,
+      shown,
+      ...(siteAnswer === undefined ? {} : { siteAnswer }),
+    });
+    expect(ended.asked).toEqual([]);
+    expect(ended.pressed).toEqual(["#sign-in", "#continue"]);
+    expect(ended.outcome).not.toMatchObject({ outcome: "signed_in" });
+    expect(ended.outcome).not.toMatchObject({ reason: "credential_screen_returned" });
+  }
+  const signedIn = await replay({
+    recipe: passwordThenButton,
+    shown,
+    signsIn: true,
+    siteAnswer: "link",
+  });
+  expect(signedIn.asked).toEqual([]);
+  expect(signedIn.outcome).toMatchObject({ outcome: "signed_in" });
+  expect(signedIn.reads).toBe(0);
 });
