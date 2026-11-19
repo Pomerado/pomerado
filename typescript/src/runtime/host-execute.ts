@@ -28,18 +28,31 @@ const ${name} = await (async () => {
  * accessibility snapshot, with a `- separator [aria-hidden]` line where a rendered `hr` or
  * `role="separator"` hidden from assistive technology splits rendered content. The snapshot drops
  * such a separator, and an unnamed form or group's edge with it, so a notice after one reads as
- * part of the controls before it. The page is only read; when that read fails, the snapshot is
- * unmarked. Pass no `mode: "ai"`: that snapshot already lists a visible aria-hidden separator.
+ * part of the controls before it. An unnamed `form` element, which the snapshot leaves out too,
+ * gets a `- form:` line over its own lines, as a named form has, so where it ends shows as well. A
+ * `fieldset`, and an element whose role is group, form or region, already shows, named or not.
+ * The page is only read; when that read fails, the snapshot is unmarked. Pass no `mode: "ai"`:
+ * that snapshot already lists a visible aria-hidden separator.
  *
  * One pass in document order, past aria-hidden subtrees, finds the anchors around each run of
  * such separators: rendered text, or a control's own label. The line goes before the first line,
  * shortly after the last three anchors before the run, that holds the anchor after it, or before
  * the groups that open between them. It goes nowhere when that anchor shares a line with the one
  * before, when an open shadow root comes first, or when an anchor is not found.
+ *
+ * A form outermost among forms, with no role or name of its own, is found by such anchors too: up
+ * to three before it, all its own, and the first after it. Its first anchor is the first found
+ * past the forms marked before it with the anchors before it each shortly before the next, the
+ * last on an earlier line. Each of its own follows shortly after the one before, and the one after
+ * it on a later line, past what holds its last. Its `- form:` line goes over the lines from its
+ * first anchor's to the end of what holds its last, at the outermost level between the two. A
+ * form gets none when nothing anchored is outside it, such as one that holds the whole page, or
+ * when its first or last anchor, or the one after it, is not found that way; an anchor of its own
+ * between those that is not found is passed over.
  */
 export const markedAriaSnapshotCode = `
 const markedAriaSnapshot = async (locator, options) => {
-  const [aria, splits] = await Promise.all([
+  const [aria, [splits, forms]] = await Promise.all([
     locator.ariaSnapshot(options),
     locator
       .evaluate((root) => {
@@ -54,8 +67,15 @@ const markedAriaSnapshot = async (locator, options) => {
             [holder, up] = [up, up.parentElement?.closest(hiddenSelector)];
           holders.add(holder);
         }
+        // The forms the snapshot drops, having no role or name of their own: the outermost ones
+        // not hidden from assistive technology.
+        const forms = [
+          ...root.querySelectorAll("form:not([role], [aria-label], [aria-labelledby])"),
+        ].filter(
+          (form) => form.closest(hiddenSelector) === null && !form.parentElement?.closest("form"),
+        );
         // One string crosses back: Playwright serializes each array element separately, slowly.
-        if (holders.size === 0) return "[]";
+        if (holders.size === 0 && forms.length === 0) return "[[],[]]";
         // The longest run of a label or text the snapshot writes as is.
         const words = (text) =>
           (text ?? "")
@@ -110,6 +130,48 @@ const markedAriaSnapshot = async (locator, options) => {
           const anchor = words(text ? node.nodeValue : nameOf(node));
           return anchor !== "" && rendered(text ? node.parentElement : node) ? anchor : "";
         };
+        const candidate = (node) =>
+          node.nodeType === Node.TEXT_NODE ? /\\S/.test(node.nodeValue) : control(node);
+        const lastOf = (node) => {
+          while (node.lastChild !== null) node = node.lastChild;
+          return node;
+        };
+        // Up to \`count\` anchors in \`scope\` next to \`node\`, after it or (\`back\`) before it, in
+        // document order, past aria-hidden subtrees.
+        const anchorsBeside = (scope, node, back, count) => {
+          const walk = document.createTreeWalker(
+            scope,
+            NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
+          );
+          walk.currentNode = node;
+          const step = () => (back ? walk.previousNode() : walk.nextNode());
+          const anchors = [];
+          for (let next = step(); next !== null && anchors.length < count; next = step()) {
+            // Walking back reaches what an aria-hidden element holds before the element itself.
+            const text = next.nodeType === Node.TEXT_NODE;
+            const hidden = back
+              ? ((text ? next.parentElement : next)?.closest(hiddenSelector) ?? null)
+              : !text && next.matches(hiddenSelector)
+                ? next
+                : null;
+            if (hidden !== null) walk.currentNode = back ? hidden : lastOf(hidden);
+            else if (candidate(next)) {
+              const anchor = anchorOf(next);
+              if (anchor !== "") anchors[back ? "unshift" : "push"](anchor);
+            }
+          }
+          return anchors;
+        };
+        // Each form's anchors: up to three before it, all its own, and the first after it. A form
+        // with nothing anchored outside it, such as one holding the whole page, is left out.
+        const edges = forms.flatMap((form) => {
+          const before = anchorsBeside(root, form, true, 3);
+          const after = anchorsBeside(root, lastOf(form), false, 1);
+          if (before.length === 0 && after.length === 0) return [];
+          const inside = anchorsBeside(form, form, false, Infinity);
+          return inside.length === 0 ? [] : [[before, inside, after[0] ?? null]];
+        });
+        if (holders.size === 0) return JSON.stringify([[], edges]);
         const walker = document.createTreeWalker(
           root,
           NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
@@ -123,9 +185,7 @@ const markedAriaSnapshot = async (locator, options) => {
           if (node.nodeType === Node.ELEMENT_NODE && node.matches(hiddenSelector)) {
             crossed ||= holders.has(node);
             // Past all it holds: a filter that rejected it would cost a call per node.
-            let last = node;
-            while (last.lastChild !== null) last = last.lastChild;
-            walker.currentNode = last;
+            walker.currentNode = lastOf(node);
             continue;
           }
           if (crossed && before === undefined) {
@@ -139,8 +199,7 @@ const markedAriaSnapshot = async (locator, options) => {
           crossed = false;
           // The snapshot shows a shadow root's content first, which this pass cannot read.
           if (node.nodeType === Node.ELEMENT_NODE && node.shadowRoot !== null) before = undefined;
-          if (node.nodeType === Node.TEXT_NODE ? !/\\S/.test(node.nodeValue) : !control(node))
-            continue;
+          if (!candidate(node)) continue;
           if (before !== undefined) {
             const anchor = anchorOf(node);
             if (anchor !== "") {
@@ -153,12 +212,12 @@ const markedAriaSnapshot = async (locator, options) => {
           recent.push(node);
           if (recent.length > 128) recent.splice(0, 64);
         }
-        return JSON.stringify(splits);
+        return JSON.stringify([splits, edges]);
       }, undefined, { timeout: options?.timeout })
       .then(JSON.parse)
-      .catch(() => []),
+      .catch(() => [[], []]),
   ]);
-  if (splits.length === 0) return aria;
+  if (splits.length === 0 && forms.length === 0) return aria;
   const lines = aria.split("\\n");
   // The first line from \`from\`, and before \`to\`, that holds \`text\`, or -1.
   const find = (text, from, to = lines.length) => {
@@ -168,6 +227,65 @@ const markedAriaSnapshot = async (locator, options) => {
   };
   // How far past one anchor's line the next is looked for.
   const lookahead = 50;
+  // Where \`text\` ends, as [line, column], next from \`at\` and before line \`to\`, or undefined.
+  const seek = (text, [line, column], to) => {
+    for (let index = line; index < Math.min(to, lines.length); index++) {
+      const found = lines[index].indexOf(text, index === line ? column : 0);
+      if (found !== -1) return [index, found + text.length];
+    }
+  };
+  // Where \`text\` starts, as [line, column], last before \`at\` and after line \`to\`, or undefined.
+  const seekBack = (text, [line, column], to) => {
+    for (let index = line; index > Math.max(to, -1); index--) {
+      const end = index === line ? column - text.length : Infinity;
+      const found = end < 0 ? -1 : lines[index].lastIndexOf(text, end);
+      if (found !== -1) return [index, found];
+    }
+  };
+  const indent = (line) => line.length - line.trimStart().length;
+  // The last line of the last form marked: a form's own lines come after it.
+  let done = -1;
+  for (const [before, inside, after] of forms) {
+    // Its first anchor, with the anchors before it each shortly before the next, the last of
+    // them on an earlier line, so the form starts on a line of its own.
+    let first = seek(inside[0], [done + 1, 0], lines.length);
+    let previous;
+    for (; first !== undefined; first = seek(inside[0], first, lines.length)) {
+      let at = [first[0], first[1] - inside[0].length];
+      for (const [index, anchor] of [...before].reverse().entries()) {
+        at = at && seekBack(anchor, at, at[0] - 1 - lookahead);
+        if (index === 0) previous = at;
+      }
+      if (before.length === 0 || (at !== undefined && previous[0] < first[0])) break;
+    }
+    if (first === undefined) continue;
+    // Its own anchors in turn: one not found is passed over, but not its last.
+    let last = first;
+    let found = true;
+    for (const anchor of inside.slice(1)) {
+      const next = seek(anchor, last, last[0] + 1 + lookahead);
+      found = next !== undefined;
+      if (found) last = next;
+    }
+    if (!found) continue;
+    // Its lines: from its first anchor's to the end of what holds its last, at the outermost
+    // level between the two.
+    let level = Infinity;
+    for (let index = first[0]; index <= last[0]; index++)
+      level = Math.min(level, indent(lines[index]));
+    const floor = Math.max(done + 1, before.length === 0 ? 0 : previous[0] + 1);
+    let top = first[0];
+    while (top > floor && indent(lines[top]) > level) top--;
+    let end = last[0];
+    while (end + 1 < lines.length && indent(lines[end + 1]) > level) end++;
+    // What follows the form starts on a later line, past what holds its last anchor.
+    const next = after === null ? undefined : seek(after, last, last[0] + 1 + lookahead);
+    if (indent(lines[top]) !== level || (after !== null && (next === undefined || next[0] <= end)))
+      continue;
+    lines.splice(top, 0, " ".repeat(level) + "- form:");
+    for (let index = top + 1; index <= end + 1; index++) lines[index] = "  " + lines[index];
+    done = end + 1;
+  }
   const marked = new Set();
   let from = 0;
   for (const split of splits) {

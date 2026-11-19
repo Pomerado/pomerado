@@ -211,11 +211,11 @@ test("a secret the browser writes into a URL's path, with | encoded, never reach
   }
 });
 
-test("a separator hidden from assistive technology still splits the capture, so a notice stays with its own button", async () => {
+test("a separator hidden from assistive technology, and an unnamed form's edge, still split the capture, so a notice stays with its own button", async () => {
   test.setTimeout(90_000);
-  // A form, with a select inside its label, ends with its button; a divider hidden from the
-  // accessibility tree follows it, then a logo-only button, another hidden divider, a notice and
-  // another button. The snapshot drops the dividers and the wrappers.
+  // An unnamed form, with a select inside its label, ends with its button; a divider hidden from
+  // the accessibility tree follows it, then a logo-only button, another hidden divider, a notice
+  // and another button. The snapshot drops the dividers, the form and the wrappers.
   const site = await startSite((_request, response) =>
     html(
       response,
@@ -241,7 +241,21 @@ test("a separator hidden from assistive technology still splits the capture, so 
     expect(toolResult(last, "second")).toMatchObject({ status: "completed" });
     // The second step's review reads the page the first one left.
     expect(captureOf(executions(guardian.reviews)[1])).toContain(
-      '  - button "Continue to payment"\n  - separator [aria-hidden]\n  - button "Wallet app"\n  - separator [aria-hidden]\n  - text: By continuing, you agree to open a store account.\n  - button "Continue with wallet"',
+      [
+        "- main:",
+        "  - form:",
+        '    - textbox "Email"',
+        "    - text: Country",
+        '    - combobox "Country":',
+        '      - option "Canada" [selected]',
+        '      - option "Norway"',
+        '    - button "Continue to payment"',
+        "  - separator [aria-hidden]",
+        '  - button "Wallet app"',
+        "  - separator [aria-hidden]",
+        "  - text: By continuing, you agree to open a store account.",
+        '  - button "Continue with wallet"',
+      ].join("\n"),
     );
   } finally {
     await site.close();
