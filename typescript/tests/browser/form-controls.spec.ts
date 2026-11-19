@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "playwright";
-import { formControlsCode } from "../../src/browser/form-controls.js";
+import { formControlsCode, pickedOptionMark } from "../../src/browser/form-controls.js";
 import { sameText } from "../../src/runtime/text.js";
 import { makeLocalKernel } from "../../src/testing/local-kernel.js";
 
@@ -478,6 +478,21 @@ test("chooseOption types into a dropdown that filters as you type", async ({ pag
     await call(page, `return await chooseOption(page.getByLabel("Country"), "Chile");`),
   ).toEqual({ result: { shape: "combobox", label: "Chile", value: "CH" } });
   expect(await submitted(page)).toEqual({ Country: "CH" });
+});
+
+test("chooseOption marks the option it clicks, so a host can tell its click from a script's own", async ({
+  page,
+}) => {
+  await page.setContent(`<form>${dropdown("Size", [["s", "Small"], ["l", "Large"]])}</form>`);
+  await page.evaluate((mark) => {
+    document.addEventListener("pointerdown", (event) => {
+      Reflect.set(window, "pressedMarked", (event.target as Element).closest(`[${mark}]`) !== null);
+    }, true);
+  }, pickedOptionMark);
+  expect(await call(page, `return await chooseOption(page.getByLabel("Size"), "Large");`)).toEqual({
+    result: { shape: "combobox", label: "Large", value: "l" },
+  });
+  expect(await page.evaluate(() => Reflect.get(window, "pressedMarked"))).toBe(true);
 });
 
 test("chooseOption matches a name whatever its apostrophe style", async ({ page }) => {

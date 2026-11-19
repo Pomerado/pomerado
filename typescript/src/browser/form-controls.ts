@@ -81,6 +81,13 @@ export const CalendarDate = Schema.String.pipe(
  */
 export const blockingFieldsHook = "__pomeradoBlockingFields";
 
+/**
+ * The attribute core's pickers set on an option of a site's list before they click it: `pickValue`
+ * and `pickValues` on what they click, with their own suffixes, and `chooseOption` on its option.
+ * A host can then tell a click of theirs from one of a script's own on the same list.
+ */
+export const pickedOptionMark = "data-pomerado-pick";
+
 /** Words of a validation message, such as "Required" or "This field is required.", rather than a field's name. */
 export const formControlMessageWords = /\brequired\b|\b(?:is|are) (?:missing|not valid)\b|\bthis field\b|\bplease (?:enter|select|choose|provide|fill|complete|correct)\b|\benter a valid\b|\bmust (?:be|contain|have|match)\b|\bcan(?:not|'t|’t| not) be (?:blank|empty)\b|\binvalid\b|\bist erforderlich\b|\bes (?:obligatorio|requerido)\b|\best (?:obligatoire|requis)\b/i;
 
@@ -374,6 +381,7 @@ const formControlChooseCustom = async (control, wanted, timeout, words) => {
   if (picked.failure) throw formControlFailure(picked.failure);
   const option = listbox.locator("[role=option]").nth(picked.option.index);
   await option.scrollIntoViewIfNeeded({ timeout });
+  await option.evaluate((element, mark) => element.setAttribute(mark, ""), ${JSON.stringify(pickedOptionMark)}, { timeout });
   await option.click({ timeout });
   const chosen = options[picked.option.index];
   // The control shows the choice as its label or one of the wanted names, alone or as whole words
