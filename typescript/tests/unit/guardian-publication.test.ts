@@ -1324,15 +1324,16 @@ describe("the publication policy", () => {
   });
 
   // Matching a record by today's date, or turning the site's "Tomorrow" into a date, picks the
-  // wrong day as surely as refusing a past date does when today is UTC's. A time with no offset
-  // names no moment, but a repair or change is judged only on the times it adds or changes, so
-  // the many tools that return one today still repair.
-  it("finds a comparison with today in UTC, and an output time with no offset that a build adds", () => {
+  // wrong day as surely as refusing a past date does when today is UTC's. A time's zone is best
+  // effort: a site may show local times and name no zone, so a time without one never blocks a
+  // build, repair or change.
+  it("finds a comparison with today in UTC, and never an output time with no offset on its own", () => {
     expect(publicationOutputPolicy).toContain(
       "Date in UTC: source that compares a site's date or time with today's date or the time in UTC, such as new Date().toISOString().slice(0, 10), rather than with today in the site's time zone or in that of the place the date is at,",
     );
+    expect(publicationOutputPolicy).not.toContain("Zone-less time:");
     expect(publicationOutputPolicy).toContain(
-      "Zone-less time: an output time with no UTC offset, unless the output also returns that time with one. In a repair or change, only for an output time it adds or changes.",
+      "An output time with no UTC offset or time zone is never a finding on its own; the rationale may note it.",
     );
     expect(guardianPublicationPolicy).not.toContain("Past date in UTC");
     expect(guardianPublicationPolicy).toContain(publicationOutputPolicy);
