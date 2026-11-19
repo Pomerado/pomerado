@@ -195,6 +195,9 @@ const exploringOver = (used: number, capacity: number) =>
     instruction: modelCallNotice(used, capacity, true),
   });
 
+/** A finish_build reply in which publication review asked for more. */
+const ReviewAsked = Schema.parseJson(Schema.Struct({ code: Schema.Literal("ReviewDenied") }));
+
 /**
  * A provider failure that the same request can get past later: a lost connection, a timeout,
  * a rate limit or a server error, after the SDK's own retries. A host failure, an abort or a
@@ -637,10 +640,12 @@ const openAIMinter = (
       const causeMetadata = ports.causeMetadata ?? modelCauseMetadata;
       const modelCallCapacity = limits.modelCallCapacity ?? mintModelCallCapacity;
       const turnsPerSegment = limits.segmentTurns ?? segmentTurns;
-      const wrapUp = limits.wrapUp ?? true;
       const wrapUpAt = modelCallCapacity - turnsPerSegment;
-      /** The model calls made when the attempt last called finish_build. */
-      let finishedAt = -1;
+      const wrapUp = (limits.wrapUp ?? true) && wrapUpAt > 0;
+      /** The model calls made when publication review last asked this attempt for more. */
+      let reviewAskedAt = -1;
+      /** Whether this attempt heard its wrap-up notice. */
+      let toldWrapUp = false;
       const retry = limits.modelRetry ?? modelCallRetry;
       const deadline = turn.deadline ?? Deadline.after();
       // Whether the provider rejected OpenAI's prompt-cache settings, for this run's requests.
@@ -1202,7 +1207,7 @@ const openAIMinter = (
                 const exploringClosed =
                   wrapUp &&
                   modelCalls >= wrapUpAt &&
-                  finishedAt < wrapUpAt &&
+                  reviewAskedAt < wrapUpAt &&
                   "purpose" in request &&
                   request.purpose === "explore" &&
                   "target" in request &&
@@ -1237,10 +1242,16 @@ const openAIMinter = (
                 "finish_build",
                 "Request current-source review and publication against a completed read example or the write session step that confirmed the write. Coverage describes checks actually run and gaps. outputOverrides names each output check finding whose value is correct as returned, such as intended code or page text that only resembles code, with why; the reviewer checks them. findingResponses answers a finding of the last publication denial you hold wrong, by its id, with the evidence that shows it; the next review rules on each. A not_published response may allow source correction and another finish_build request. A new example read requires explicit host repeatableRead:true; nonrepeatable examples remain fenced. intent states why this source and execution satisfy the request.",
                 "Publication did not succeed. Correct supported source or metadata errors and submit finish_build again when justified. Existing execution results remain valid independently. A new example read requires explicit host repeatableRead:true; never replay a nonrepeatable example, a write that may have committed or an uncertain authentication action.",
-                (request) => {
-                  finishedAt = modelCalls;
-                  return turn.actions.finish(request);
-                },
+                (request) =>
+                  turn.actions.finish(request).pipe(
+                    // A review that asks for more reopens live exploring for what it names.
+                    Effect.tap((reply) =>
+                      Effect.sync(() => {
+                        if (Either.isRight(Schema.decodeUnknownEither(ReviewAsked)(reply)))
+                          reviewAskedAt = modelCalls;
+                      }),
+                    ),
+                  ),
               ),
               parameters: parameters(withIntent(PublicationRequest)),
             });
@@ -1811,18 +1822,29 @@ const openAIMinter = (
               );
               return [...history, { role: "user", content }];
             };
-            const runSegment = (input: RunState<unknown, typeof agent>) =>
-              runner.run(agent, input, {
+            /** `history`, then the wrap-up notice once the attempt reached its wrap-up point. */
+            const withWrapUpNotice = (history: AgentInputItem[]): AgentInputItem[] => {
+              if (!wrapUp || toldWrapUp || modelCalls < wrapUpAt) return history;
+              toldWrapUp = true;
+              return [
+                ...history,
+                { role: "user", content: modelCallNotice(modelCalls, modelCallCapacity, true) },
+              ];
+            };
+            const runSegment = (input: RunState<unknown, typeof agent>) => {
+              // An attempt that wraps up ends its segment at the wrap-up point, where the notice
+              // goes. A state resuming held calls makes its next model call in the same turn.
+              const rerun = input.getInterruptions().length > 0 ? 1 : 0;
+              return runner.run(agent, input, {
                 signal,
-                // An attempt that wraps up ends its segment at the wrap-up point, where the
-                // notice goes.
                 maxTurns:
                   replayTurnLimit ??
-                  (wrapUp && modelCalls < wrapUpAt
-                    ? Math.min(turnsPerSegment, input._currentTurn + wrapUpAt - modelCalls)
+                  (wrapUp && modelCalls - rerun < wrapUpAt
+                    ? Math.min(turnsPerSegment, input._currentTurn - rerun + wrapUpAt - modelCalls)
                     : turnsPerSegment),
                 sandbox: { session: turn.session },
               });
+            };
             type SegmentResult = Awaited<ReturnType<typeof runSegment>>;
             try {
               let input: string | AgentInputItem[] | RunState<unknown, typeof agent> =
@@ -1834,7 +1856,7 @@ const openAIMinter = (
                   // Restored before a model call: the message follows the restored history.
                   await archiveBeforeSegment(input);
                   totalUsage.add(input.usage);
-                  input = await withResumeMessage(input.history);
+                  input = withWrapUpNotice(await withResumeMessage(input.history));
                 } else {
                   // The saved response replays first and its calls return. The segment then ends
                   // before the next model call, which carries the message after their results.
@@ -1879,7 +1901,7 @@ const openAIMinter = (
                   if (replayTurnLimit !== undefined) {
                     // The restored response's calls returned: the resume message follows them.
                     totalUsage.add(error.state.usage);
-                    input = await withResumeMessage(history);
+                    input = withWrapUpNotice(await withResumeMessage(history));
                     continue;
                   }
                   if (modelCalls >= modelCallCapacity || diagnostics?.durabilityFailure())
@@ -1889,13 +1911,14 @@ const openAIMinter = (
                   totalUsage.add(error.state.usage);
                   diagnostics?.segment({ reason: "sdk_turn_ceiling", modelCalls });
                   finalsWithoutTool = 0;
-                  input =
-                    modelCallCapacity - modelCalls <= turnsPerSegment
+                  input = wrapUp
+                    ? withWrapUpNotice(history)
+                    : modelCallCapacity - modelCalls <= turnsPerSegment
                       ? [
                           ...history,
                           {
                             role: "user",
-                            content: modelCallNotice(modelCalls, modelCallCapacity, wrapUp),
+                            content: modelCallNotice(modelCalls, modelCallCapacity, false),
                           },
                         ]
                       : history;
@@ -1970,7 +1993,7 @@ const openAIMinter = (
                 );
                 await archiveBeforeSegment(result.state);
                 input = [
-                  ...(await withResumeMessage(result.history)),
+                  ...withWrapUpNotice(await withResumeMessage(result.history)),
                   {
                     role: "user",
                     content:

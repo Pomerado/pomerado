@@ -3143,10 +3143,10 @@ const readSource = (index: number) =>
   call("read_source", { path: "src/tool.ts", offset: null, limit: null }, `read_${index}`);
 
 // The last segment's worth of model calls is for publishing: from exactly that call (9 of 16 here,
-// 384 of 512 by default) the notice says to stop exploring, and the host refuses a live explore
-// step until the next finish_build. What publication review then asks for still runs, with calls
-// to spare. A host with its own wrap-up (wrapUp false) explores on and hears no notice before a
-// segment boundary.
+// 384 of 512 by default), after calls held behind an edit too, the notice says to stop exploring,
+// and the host refuses a live explore step until publication review asks for more. What the review
+// asks for then runs, with calls to spare. A host with its own wrap-up (wrapUp false) explores on
+// and hears no notice before a segment boundary.
 it.each([true, false])(
   "wraps an attempt up at its last segment's model calls (wrapUp %s)",
   async (wrapUp) => {
@@ -3157,17 +3157,23 @@ it.each([true, false])(
       rationale: "Capture the site's own search request, or say why the HTTP version cannot work.",
       findings: [],
     });
+    const note = patch(
+      { type: "create_file", path: "src/notes.ts", diff: "+export const notes = 1;" },
+      "note",
+    );
     const f = await fixture(
       (_request, index) =>
-        index < 9
-          ? readSource(index)
-          : ([
-              exploreLive("explore"),
-              call("execute", execution, "example"),
-              call("finish_build", publication, "finish"),
-              exploreLive("asked_capture"),
-              together(stepPatch("correction"), call("finish_build", publication, "finish_again")),
-            ][index - 9] ?? prose()),
+        index === 7
+          ? together(note, readSource(index))
+          : index < 9
+            ? readSource(index)
+            : ([
+                exploreLive("explore"),
+                call("execute", execution, "example"),
+                call("finish_build", publication, "finish"),
+                exploreLive("asked_capture"),
+                together(stepPatch("correction"), call("finish_build", publication, "finish_again")),
+              ][index - 9] ?? prose()),
       { publish: review.publish },
       {},
       { modelCallCapacity: 16, segmentTurns: 7, wrapUp },
@@ -3188,19 +3194,30 @@ it.each([true, false])(
   },
 );
 
+// Final text at the wrap-up point still hears the notice, and a finish_build the host refuses
+// before any review, with no passing receipt, leaves live exploring closed.
 it("ends a wrapped-up attempt with no passing receipt by saying what is missing", async () => {
   const missing = "No example passed: the results page never loaded.";
   const f = await fixture(
     (_request, index) =>
-      index < 9 ? readSource(index) : index === 9 ? exploreLive("explore") : prose(missing),
+      index < 8
+        ? readSource(index)
+        : ([
+            prose("Still looking."),
+            exploreLive("explore"),
+            call("finish_build", publication, "finish"),
+            exploreLive("explore_again"),
+          ][index - 8] ?? prose(missing)),
     {},
     {},
-    { modelCallCapacity: 16, segmentTurns: 7 },
+    { modelCallCapacity: 20, segmentTurns: 11 },
   );
   expect(await f.run()).toMatchObject({
     build: "incomplete",
     stopReason: "final_text_without_tool",
     stopExplanation: missing,
   });
+  expect(JSON.stringify(f.requests[9]?.input)).toContain("9 of the 20 model calls");
+  expect(JSON.stringify(f.requests[12]?.input)).toContain("exploring_over");
   expect(f.counts()).toEqual({ executed: 0, published: 0, asked: 0 });
 });
