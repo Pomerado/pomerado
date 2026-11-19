@@ -509,6 +509,7 @@ const writeCompletionReasons: ReadonlySet<string> = new Set([
   "write_path_undeclared",
   "confirmation_undeclared",
   "confirmation_unrecorded",
+  "read_back_unrepeatable",
   // A read's execution after the build became a write: the write itself is still to do.
   "example_before_effect_change",
 ]);
@@ -6416,7 +6417,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 return yield* new MintFailure({ code: "AlreadyExecuted" });
               if (
                 submitted.purpose === "act" &&
-                (writeSession === "closed" || (writeSession === "none" && exampleClaimed))
+                ((writeSession === "closed" &&
+                  dependencies.closedSessionAct?.(submitted) !== true) ||
+                  (writeSession === "none" && exampleClaimed))
               )
                 return yield* new MintFailure({ code: "AlreadyExecuted" });
               const repeated = yield* repeatedWriteRefusal(submitted);
@@ -7471,6 +7474,13 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 }
                 const fixable = fixableRefusal(error, notPublished, review);
                 if (fixable !== undefined) return fixable;
+                if (error.reason === "read_back_unrepeatable")
+                  return notPublished(
+                    error.code,
+                    error.reason,
+                    {},
+                    "Not published: the step named for publication read back through a file other than the one you publish, and the write session is closed with no act step left to run that file, so nothing left in this attempt can show the published file works. End the build with report_blocked, reason host_refused.",
+                  );
                 if (error.reason === "destination_validation") {
                   // Publication uses the route evidence the host recorded while the example ran.
                   // Source edits and another finish_build on the same receipt cannot change it,
