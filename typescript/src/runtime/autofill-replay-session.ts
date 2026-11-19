@@ -201,6 +201,10 @@ const makeReplaySession = <E extends YieldableError, V extends string, L extends
      * generator's code, and with no code given the link is asked for instead.
      */
     linkCodeScreen: undefined as string | undefined,
+    /** The site's answer asked the owner for the sign-in link it emailed (`openAnsweredLink`). */
+    linkAsked: false,
+    /** The step whose returned screen the host gave the site's answer for (`readAnswer`). */
+    answered: undefined as AutofillStep | undefined,
     /**
      * The login's workspace origin as this replay knows it: the pinned one, or the host this
      * replay admitted after it sent the login's identifier on the site's own sign-in.
