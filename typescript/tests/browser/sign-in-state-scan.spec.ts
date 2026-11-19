@@ -117,10 +117,11 @@ test("a page with no box reads as its heading and buttons, with no address, numb
       <p>Signed in as sam_smith or j.doe</p>
       <p>not jdoe? or (owner)</p>
       <p>back to jdoe-admin, user:jdoe or j***h</p>
+      <p>that code is invalid</p>
       <p>&#x5c71;&#x7530;&#x592a;&#x90ce;&#x69d8;&#x3001;&#x3088;&#x3046;&#x3053;&#x305d;</p>
       <button>Resend in 30 seconds</button>
       <button aria-label="Use another email"><svg width="12" height="12"></svg></button>`,
-  }, ["jdoe@example.test", "Owner"]);
+  }, ["jdoe@example.test", "Owner", "ali"]);
   const state = await scan();
   expect(state.fingerprint).toEqual({
     top: site,
@@ -136,6 +137,7 @@ test("a page with no box reads as its heading and buttons, with no address, numb
     "~ in as ~ or ~",
     "not ~? or ~)",
     "back to ~, ~ or ~",
+    "that code is invalid",
   ]);
   expect(JSON.stringify(state)).not.toMatch(/sam|smith|doe|owner|555|\u5c71/iu);
 });

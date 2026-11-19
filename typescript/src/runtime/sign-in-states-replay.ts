@@ -39,7 +39,7 @@ import {
   valuesNeeded,
 } from "./autofill-replay-steps.js";
 import { admitScreen, noteExactSent } from "./autofill-replay-workspace.js";
-import { isIdentifier, screenSubmit, submittedLoginProof } from "./autofill-state.js";
+import { isIdentifier, provesLogin, screenSubmit, submittedLoginProof } from "./autofill-state.js";
 import type { AutofillLogin } from "./autofill-values.js";
 import { workspaceHost } from "./workspace-origin.js";
 
@@ -224,8 +224,19 @@ const preferred = <E extends YieldableError, V extends string, L extends Autofil
 };
 
 /**
- * Whether a state, or one that looks the same, was acted in before something went out: it is never
- * acted in again, whichever of a library's look-alikes the page would match.
+ * What acting in a state does: the boxes it types, or with none, the control it presses, the
+ * methods it picks from and the approval it asks.
+ */
+const actionOf = (step: StateEntry["step"]) =>
+  JSON.stringify(
+    step.fields.length > 0
+      ? step.fields.map((field) => field.selector).sort()
+      : [step.submit, step.methods?.map((method) => method.selector), step.approval],
+  );
+
+/**
+ * Whether a state, or a look-alike that does the same there, was acted in before something went
+ * out: it is never acted in again, whichever of a library's recordings of it the page would match.
  */
 const actedBefore = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -233,7 +244,10 @@ const actedBefore = <E extends YieldableError, V extends string, L extends Autof
 ) =>
   (run.replay.progress.anythingSent || run.replay.sent.maySent.size > 0) &&
   run.input.library.states.some(
-    (other) => run.visited.includes(other.key) && sameFingerprint(other.fingerprint, state.fingerprint),
+    (other) =>
+      run.visited.includes(other.key) &&
+      sameFingerprint(other.fingerprint, state.fingerprint) &&
+      actionOf(other.step) === actionOf(state.step),
   );
 
 /**
@@ -376,6 +390,7 @@ const endCheck = <E extends YieldableError, V extends string, L extends Autofill
   run: Run<E, V, L>,
   observed: ObservedState | undefined,
   stood: boolean,
+  last: StateEntry | undefined,
 ) =>
   Effect.gen(function* () {
     const { replay } = run;
@@ -383,7 +398,8 @@ const endCheck = <E extends YieldableError, V extends string, L extends Autofill
       return undefined;
     for (const marker of run.markers) if (yield* replay.verify(marker)) return signedIn(run, marker);
     const marker = run.markers[0];
-    if (marker === undefined || run.input.hooks.confirmCantTell === undefined) return undefined;
+    if (marker === undefined || run.input.hooks.confirmCantTell === undefined || !mayCantTell(run, last))
+      return undefined;
     if (!replay.progress.anythingSent) {
       const already = yield* alreadySignedIn(run.as, replay, undefined);
       return already.outcome === "signed_in"
@@ -392,6 +408,25 @@ const endCheck = <E extends YieldableError, V extends string, L extends Autofill
     }
     return (yield* replay.endedCantTell(undefined)) ? cantTellEnd(run, marker) : undefined;
   });
+
+/**
+ * Whether a page that can't tell may sign in, as the recipe replay's screen wait decides
+ * (`landedCantTell`): never on a browser that started empty before a password or code of the
+ * library went in (`loginUnproved`), nor after a state whose press leads to a code or an approval,
+ * as a code screen's wait never ends so.
+ */
+const mayCantTell = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  last: StateEntry | undefined,
+) => {
+  const { hooks, library } = run.input;
+  const unproved =
+    hooks.startedEmpty === true &&
+    hooks.signedInBefore !== true &&
+    !run.replay.progress.ran.some((step) => step.fields.some((field) => provesLogin(field.slot))) &&
+    library.states.some((state) => state.step.fields.some((field) => "slot" in field && provesLogin(field.slot)));
+  return !unproved && (last === undefined || !sendsOnPress(run, last));
+};
 
 /** Signed in on a page that can't tell, as the host confirmed (`endedCantTell`). */
 const cantTellEnd = <E extends YieldableError, V extends string, L extends AutofillLogin>(
@@ -510,6 +545,7 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
     let challenged = false;
     let answerRead = false;
     let cantTellRead: string | undefined;
+    let back: StateEntry | undefined;
     for (;;) {
       const signed = yield* signedInHere(run);
       if (signed !== undefined) return signed;
@@ -549,6 +585,7 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
           if (typeof shown === "object") {
             if (!("returned" in shown)) return { ...shown, observed: read };
             if (!stood) return stopped(run, returnedReason(run, shown.returned));
+            back = shown.returned;
           }
         }
         if (acted !== undefined && stood) {
@@ -562,6 +599,7 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
             if (said === "refused") return stopped(run, "credential_screen_returned");
           }
           if (capped) {
+            if (!again && back !== undefined) return stopped(run, returnedReason(run, back));
             if (!again) break;
             return acted.press === undefined
               ? stopped(run, returnedReason(run, state))
@@ -573,7 +611,8 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
             replay.progress.anythingSent &&
             marker !== undefined &&
             at - held.since >= landingSettleMs &&
-            cantTellRead !== held.text
+            cantTellRead !== held.text &&
+            mayCantTell(run, after)
           ) {
             cantTellRead = held.text;
             if (yield* replay.endedCantTell(undefined)) return cantTellEnd(run, marker);
@@ -597,7 +636,7 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
       }
       yield* pause(run);
     }
-    const checked = yield* endCheck(run, observed, stood);
+    const checked = yield* endCheck(run, observed, stood, after);
     if (checked !== undefined) return checked;
     if (refused !== undefined) return stopped(run, refused);
     return shape === undefined || blankFingerprint(shape)

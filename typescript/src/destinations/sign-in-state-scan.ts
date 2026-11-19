@@ -21,9 +21,9 @@ export { type ObservedBox, type ObservedState, stateAfter } from "./sign-in-stat
  * A text as a state holds it, normalized here, never in the page, whose own code may change what
  * its string functions return: a run of digits becomes "#", of stars or dots "*", a word with an
  * address or a starred one "@", and each word a name or a login may be "~": one with a capital,
- * with "_", "." or "*" or a digit between its letters, in a script with no capitals, or holding one
- * of the sign-in's own `logins` of three characters or more, in any case. Lowercase, at most
- * `limit` characters.
+ * with "_" or "." or a digit between its letters, a star beside a letter, in a script with no
+ * capitals, or holding one of the sign-in's own `logins` of three characters or more as a whole
+ * part between other characters, in any case. Lowercase, at most `limit` characters.
  */
 const normalized = (text: string, limit: number, logins: readonly string[]) =>
   text
@@ -35,11 +35,14 @@ const normalized = (text: string, limit: number, logins: readonly string[]) =>
     .replace(/\p{Nd}+/gu, "#")
     .split(" ")
     .map((word) => {
-      const end = /[.,;:!?)]*$/u.exec(word)?.[0] ?? "";
+      let cut = word.length;
+      while (cut > 0 && ".,;:!?)".includes(word[cut - 1] ?? "")) cut -= 1;
+      const end = word.slice(cut);
       if (word.includes("@")) return `@${end}`;
       const bare = word.replace(/\p{Default_Ignorable_Code_Point}/gu, "").toLowerCase();
-      return /[\p{Lu}\p{Lt}\p{Lo}]|[\p{L}#][._*][\p{L}#]|\p{L}#|#\p{L}/u.test(word) ||
-        logins.some((login) => bare.includes(login))
+      const parts = bare.split(/[^\p{L}\p{N}]+/u);
+      return /[\p{Lu}\p{Lt}\p{Lo}]|[\p{L}#][._][\p{L}#]|\p{L}#|#\p{L}|\p{L}\*|\*\p{L}/u.test(word) ||
+        logins.some((login) => (/^[\p{L}\p{N}]+$/u.test(login) ? parts.includes(login) : bare.includes(login)))
         ? `~${end}`
         : word;
     })

@@ -545,6 +545,45 @@ it("never picks a sign-in method a second time when the page keeps the choice", 
   expect(site.clicks).toEqual(["#text-me"]);
 });
 
+it("never signs in on a page that can't tell before the password went in", { timeout: 8_000 }, async () => {
+  const library = libraryOf([
+    { fingerprint: arrival(emailScreen), step: stepAt("/sign-in", [email], "#continue") },
+    { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") },
+  ]);
+  const between: Screen = { path: "/next", boxes: [], texts: ["taking you to your sign-in page"] };
+  const site = scriptedSite({ start: emailScreen, between, password: passwordScreen }, (_at, clicked) => {
+    if (clicked !== "#continue") return "home";
+    setTimeout(() => {
+      site.site.screen = "password";
+    }, 2_000);
+    return "between";
+  });
+  const hooks = { ...site.hooks, startedEmpty: true, confirmCantTell: () => Effect.void };
+  const ended = await replay({ ...site, hooks }, library, { stepWaitMs: 10_000 });
+  expect(ended).toMatchObject({ outcome: "signed_in", loginProved: true });
+  expect(ended).not.toHaveProperty("cantTell");
+  expect(site.fills).toEqual(["email", "password"]);
+  // Nor at a page no state knows with nothing sent.
+  const chooser = scriptedSite({ start: { path: "/choose", boxes: [], buttons: ["#here"], texts: ["pick a place"] } }, () => undefined);
+  const fresh = { ...chooser.hooks, startedEmpty: true, confirmCantTell: () => Effect.void };
+  expect(await replay({ ...chooser, hooks: fresh }, library)).toMatchObject({ outcome: "unsent", reason: "unknown_state" });
+});
+
+it("acts in a text-only state that reads like one acted in before but presses another control", async () => {
+  const notice: Screen = { path: "/notice", boxes: [], buttons: ["#next"], texts: ["~"] };
+  const remember: Screen = { path: "/remember", boxes: [], buttons: ["#yes"], texts: ["~"] };
+  const library = libraryOf([
+    { fingerprint: arrival(emailScreen), step: stepAt("/sign-in", [email], "#continue") },
+    { fingerprint: arrival(notice), step: stepAt("/notice", [], "#next") },
+    { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") },
+    { fingerprint: arrival(remember), step: stepAt("/remember", [], "#yes") },
+  ]);
+  const next: Readonly<Record<string, string>> = { "#continue": "notice", "#next": "password", "#go": "remember", "#yes": "home" };
+  const site = scriptedSite({ start: emailScreen, notice, password: passwordScreen, remember }, (_at, clicked) => next[clicked]);
+  expect(await replay(site, library)).toMatchObject({ outcome: "signed_in" });
+  expect(site.clicks).toEqual(["#continue", "#next", "#go", "#yes"]);
+});
+
 it("signs in on a page that can't tell once it held still, before the step wait", { timeout: 4_000 }, async () => {
   const landing: Screen = { path: "/landing", boxes: [], texts: ["welcome back"] };
   const library = libraryOf([{ fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") }]);
