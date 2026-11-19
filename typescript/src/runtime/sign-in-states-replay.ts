@@ -376,13 +376,15 @@ const signedInHere = <E extends YieldableError, V extends string, L extends Auto
  * check: each marker verified in full, opening its account page, then the host's look at a page
  * that can't tell (`alreadySignedIn`, `endedCantTell`). Never while the state just acted in still
  * stands, or the page shows a password or code box, as no signed-in page does: a repair goes on
- * from that page as it is.
+ * from that page as it is. Before the step wait ran out (`waitedOut`), the can't-tell look keeps
+ * the early guard (`mayCantTell`).
  */
 const endCheck = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
   observed: ObservedState | undefined,
   stood: boolean,
   last: StateEntry | undefined,
+  waitedOut: boolean,
 ) =>
   Effect.gen(function* () {
     const { replay } = run;
@@ -390,7 +392,7 @@ const endCheck = <E extends YieldableError, V extends string, L extends Autofill
       return undefined;
     for (const marker of run.markers) if (yield* replay.verify(marker)) return signedIn(run, marker);
     const marker = run.markers[0];
-    if (marker === undefined || run.input.hooks.confirmCantTell === undefined || !mayCantTell(run, last, false))
+    if (marker === undefined || run.input.hooks.confirmCantTell === undefined || !mayCantTell(run, last, !waitedOut))
       return undefined;
     if (!replay.progress.anythingSent) {
       const already = yield* alreadySignedIn(run.as, replay, undefined);
@@ -539,6 +541,7 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
     let challenged = false;
     let answerRead = false;
     let cantTellRead: string | undefined;
+    let waitedOut = false;
     for (;;) {
       const signed = yield* signedInHere(run);
       if (signed !== undefined) return signed;
@@ -625,12 +628,15 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
           replay.progress.challenge = challenge.vendor;
           return stopped(run, "challenge_unsolved", { challenge: challenge.vendor });
         }
-        if (challenge === undefined) break;
+        if (challenge === undefined) {
+          waitedOut = true;
+          break;
+        }
         start = yield* now;
       }
       yield* pause(run);
     }
-    const checked = yield* endCheck(run, observed, stood, after);
+    const checked = yield* endCheck(run, observed, stood, after, waitedOut);
     if (checked !== undefined) return checked;
     if (refused !== undefined) return stopped(run, refused);
     return shape === undefined || blankFingerprint(shape)

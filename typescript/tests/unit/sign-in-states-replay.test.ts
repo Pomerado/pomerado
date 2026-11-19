@@ -567,6 +567,15 @@ it("never signs in on a page that can't tell before the password went in", { tim
   const chooser = scriptedSite({ start: { path: "/choose", boxes: [], buttons: ["#here"], texts: ["pick a place"] } }, () => undefined);
   const fresh = { ...chooser.hooks, startedEmpty: true, confirmCantTell: () => Effect.void };
   expect(await replay({ ...chooser, hooks: fresh }, library)).toMatchObject({ outcome: "unsent", reason: "unknown_state" });
+  // Nor, before the step wait ran out, at a page no state knows while the password's code may come.
+  const coded = libraryOf([
+    { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") },
+    { fingerprint: arrival(codeScreen), step: stepAt("/verify", [code], "#verify") },
+  ]);
+  const phone: Screen = { path: "/phone", boxes: [{ selector: "#phone", kind: "identifier" }], buttons: ["#ok"] };
+  const asked = scriptedSite({ start: passwordScreen, phone }, () => "phone");
+  const tells = { ...asked.hooks, confirmCantTell: () => Effect.void };
+  expect(await replay({ ...asked, hooks: tells }, coded)).toMatchObject({ outcome: "unclear", reason: "unknown_state" });
 });
 
 it("never presses a look-alike of a state acted in that names the same control by another selector", async () => {
