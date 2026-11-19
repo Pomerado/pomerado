@@ -95,12 +95,27 @@ interface Run<E extends YieldableError, V extends string, L extends AutofillLogi
   readonly quiet: StatesQuiet;
   readonly markers: readonly SignedInEntry[];
   readonly visited: string[];
-  /** The one look again this replay gives a state whose fill failed before anything was sent. */
+  /**
+   * The one look again this replay gives a state whose fill failed before anything was sent, or
+   * Enter in place of a submit that went once its identifiers were typed.
+   */
   gone: boolean;
+  /** The states whose site's answer the host gave. */
+  readonly answered: Set<string>;
 }
 
 type Shown = { readonly state: StateEntry; readonly inspection: AutofillInspection };
 type Ended<V extends string> = { readonly ended: SignInStatesOutcome<V> };
+/**
+ * What the state just acted in, showing again, asks of the replay: its press once more
+ * (`repress`), a new code for a code it refused (`code`), or the emailed link the site's own answer
+ * says it sent (`link`).
+ */
+type Again =
+  | { readonly again: "repress" }
+  | { readonly again: "code"; readonly explicit: boolean }
+  | { readonly again: "link" };
+const isAgain = (value: object): value is Again => "again" in value;
 /** The state a replay last acted in, and the page as read when it reached it. */
 type Acted = {
   readonly acted: StateEntry;
@@ -290,6 +305,41 @@ const signedInHere = <E extends YieldableError, V extends string, L extends Auto
 const rejection = (slot: string) =>
   slot === "password" ? "password_rejected" : slot === "code" ? "code_rejected" : "username_rejected";
 
+/** Whether a state's step takes a code. */
+const takesCodeIn = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  state: StateEntry,
+) => resolved(run, state.step).fields.some((field) => field.slot === "code");
+
+/**
+ * The site's own answer to a state whose password or identifier went out and that shows again, as
+ * the host reads it (`hosted.siteAnswer`), as the recipe replay reads it for a credential screen
+ * that came back: never once an emailed link was asked for, never for a state that takes a code,
+ * and once per state at most.
+ */
+const siteAnswer = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  state: StateEntry,
+) =>
+  Effect.gen(function* () {
+    const { replay } = run;
+    const read = run.input.hosted?.siteAnswer;
+    const fields = resolved(run, state.step).fields;
+    if (
+      read === undefined ||
+      replay.progress.linkAsked ||
+      run.answered.has(state.key) ||
+      fields.some((field) => field.slot === "code") ||
+      !fields.some(
+        (field) => (field.slot === "password" || isIdentifier(field.slot)) && replay.sent.seenSent(field.slot),
+      )
+    )
+      return undefined;
+    const said = yield* read();
+    if (said !== undefined) run.answered.add(state.key);
+    return said;
+  });
+
 /**
  * Waits for the page to show a known state after `after`, reached as `reached`, acted (`acted`), or
  * at the start, as the recipe replay waits for a screen. The marker signs in; a known state is
@@ -315,6 +365,7 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
     let shape: StateFingerprint | undefined;
     let refused: string | undefined;
     let challenged = false;
+    let answerRead = false;
     for (;;) {
       const signed = yield* signedInHere(run, false);
       if (signed !== undefined) return signed;
@@ -326,10 +377,22 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
         if (held?.text !== text) held = { text, since: at };
         if (acted && after !== undefined && sameFingerprint(shape, after.fingerprint)) {
           const marked = yield* replay.observeRejections;
-          if (marked !== "unavailable" && marked[0] !== undefined)
-            return stopped(run, rejection(marked[0]));
-          if (at - start >= quiet.capMs)
-            return last?.press === undefined ? stopped(run, "state_repeated") : ("repress" as const);
+          const first = marked === "unavailable" ? undefined : marked[0];
+          if (first !== undefined && first !== "code") return stopped(run, rejection(first));
+          const still = at - held.since >= quiet.quietMs;
+          const capped = at - start >= quiet.capMs;
+          if (takesCodeIn(run, after) && replay.sent.maySent.has("code") && (first === "code" || still))
+            return { again: "code", explicit: first === "code" } satisfies Again;
+          if ((still && !answerRead) || capped) {
+            answerRead = true;
+            const said = yield* siteAnswer(run, after);
+            if (said === "link") return { again: "link" } satisfies Again;
+            if (said === "refused") return stopped(run, "credential_screen_returned");
+          }
+          if (capped)
+            return last?.press === undefined
+              ? stopped(run, "state_repeated")
+              : ({ again: "repress" } satisfies Again);
         } else if (!blankFingerprint(shape)) {
           const shown = yield* matchState(run, shape, after, acted ? after : undefined);
           if (typeof shown === "object") return { ...shown, observed };
@@ -612,9 +675,33 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
         ...(method?.option === undefined ? {} : { option: method.option }),
         ...(step.choice === undefined ? {} : { choice: step.choice }),
       };
-      const here = yield* shownWithin(run, state, press);
+      // A submit that went once the identifiers were typed, as a Continue the site turns into its
+      // single sign-on control: Enter in the last field sends their form, once per replay.
+      const enterInstead =
+        !run.gone &&
+        !replay.progress.anythingSent &&
+        replay.sent.maySent.size === 0 &&
+        full.fields.length > 0 &&
+        full.fields.every((field) => field.slot === "email" || field.slot === "username");
+      const once = yield* shownOn(run, state, press);
+      const here = once === "not_found" && !enterInstead ? yield* shownWithin(run, state, press) : once;
+      const failed =
+        typeof here === "string" ? here : yield* replay.runStep(press, here);
+      if ((failed === "not_found" || failed === "submit_refused") && enterInstead) {
+        run.gone = true;
+        yield* input.emit({ stage: "retried", reason: "submit_gone_after_typing" });
+        const { submit: _gone, submitVia: _via, ...rest } = full;
+        const keyed: AutofillStep = { ...rest, submitKey: "Enter" };
+        const shown = yield* shownOn(run, state, keyed);
+        if (typeof shown === "string") return stopped(run, shown);
+        const enter = yield* replay.runStep(keyed, shown);
+        if (enter !== undefined) return stopped(run, enter);
+        replay.progress.anythingSent = true;
+        input.sent.current = true;
+        noteExactSent(replay, step, full, shown);
+        return acted();
+      }
       if (typeof here === "string") return stopped(run, here);
-      const failed = yield* replay.runStep(press, here);
       if (failed !== undefined) return stopped(run, failed);
       if (typed.size > 0) {
         replay.progress.anythingSent = true;
@@ -634,18 +721,42 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
     }
   });
 
-/** The press a state's page kept the state after, once more, typing nothing (`repress`). */
-const pressAgain = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+/**
+ * What the state just acted in, showing again, asks (`Again`): its press once more, typing nothing;
+ * a new code from the caller in its code boxes, with its submit, bounded as the recipe replay bounds
+ * a refused code's retries (`runStep` with `rejected`); or the emailed link the site's answer
+ * named, pasted and opened as an approval's (`openPastedLink`), once per sign-in.
+ */
+const actAgain = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
-  last: Acted & { readonly press: AutofillStep },
+  last: Acted,
+  again: Again,
 ) =>
   Effect.gen(function* () {
-    yield* run.input.emit({ stage: "retried", reason: "state_kept_after_press" });
-    const here = yield* shownWithin(run, last.acted, last.press);
+    const { replay, input } = run;
+    const state = last.acted;
+    const full = resolved(run, state.step);
+    const step: AutofillStep =
+      again.again === "repress" && last.press !== undefined
+        ? last.press
+        : again.again === "code"
+          ? { ...full, fields: full.fields.filter((field) => field.slot === "code") }
+          : { fields: [], ...(full.popup === undefined ? {} : { popup: full.popup }) };
+    yield* input.emit({ stage: "retried", reason: `state_${again.again}` });
+    const here = yield* shownWithin(run, state, step);
     if (typeof here === "string") return stopped(run, here);
-    const failed = yield* run.replay.runStep(last.press, here);
+    if (again.again === "link") {
+      replay.progress.linkAsked = true;
+      const opened = yield* openPastedLink(run.as, here);
+      return opened === "opened" ? { acted: state, reached: last.reached } : stopped(run, opened);
+    }
+    if (again.again === "code") replay.recordRejected(["code"]);
+    const failed =
+      again.again === "code"
+        ? yield* replay.runStep(step, here, "rejected", again.explicit)
+        : yield* replay.runStep(step, here);
     if (failed !== undefined) return stopped(run, failed);
-    return { acted: last.acted, reached: last.reached } satisfies Acted;
+    return { acted: state, reached: last.reached } satisfies Acted;
   });
 
 /**
@@ -679,18 +790,19 @@ export const replaySignInStates = <
       markers,
       visited: [],
       gone: false,
+      answered: new Set(),
     };
     yield* input.hooks.open(input.entryUrl);
     let last: Acted | undefined;
     for (;;) {
       const arrived = yield* arrive(run, last);
-      if (arrived === "repress" && last?.press !== undefined) {
-        const pressed = yield* pressAgain(run, { ...last, press: last.press });
-        if ("ended" in pressed) return pressed.ended;
-        last = pressed;
+      if (isAgain(arrived)) {
+        if (last === undefined) return stopped(run, "state_repeated").ended;
+        const again = yield* actAgain(run, last, arrived);
+        if ("ended" in again) return again.ended;
+        last = again;
         continue;
       }
-      if (arrived === "repress") return stopped(run, "state_repeated").ended;
       if ("ended" in arrived) return arrived.ended;
       if (run.visited.length >= maximumStateVisits) return stopped(run, "state_limit").ended;
       run.visited.push(arrived.state.key);

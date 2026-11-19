@@ -130,9 +130,10 @@ const scriptedSite = (
           fills.push(field.slot);
           site.typed.set(field.selector, values[index] ?? "");
         });
-        if (step.submit !== undefined) {
-          clicks.push(step.submit);
-          const to = next(site.screen, step.submit);
+        const pressed = step.submit ?? (step.submitKey === undefined ? undefined : "Enter");
+        if (pressed !== undefined) {
+          clicks.push(pressed);
+          const to = next(site.screen, pressed);
           if (to !== undefined && to !== site.screen) {
             site.screen = to;
             site.typed.clear();
@@ -198,7 +199,11 @@ const stepAt = (path: string, fields: AutofillRecipeStep["fields"], submit?: str
 const replay = (
   site: ReturnType<typeof scriptedSite>,
   library: SignInStates,
-  options: { readonly password?: string; readonly valueFree?: boolean } = {},
+  options: {
+    readonly password?: string;
+    readonly valueFree?: boolean;
+    readonly siteAnswer?: "link" | "refused";
+  } = {},
 ) => {
   const asked: string[] = [];
   const ask = makeInputAsker((request) =>
@@ -207,7 +212,7 @@ const replay = (
         Object.fromEntries(
           request.questions.map((question) => {
             asked.push(question.id);
-            return [question.id, question.id === "sign_in_link" ? link : "246810"];
+            return [question.id, question.id === "sign_in_link" ? link : String(246810 + asked.length)];
           }),
         ) as InputAnswers,
     ),
@@ -231,6 +236,9 @@ const replay = (
           unanswered: (cause) => new TestFailure({ code: `unanswered:${String(cause)}` }),
           unavailable: () => new TestFailure({ code: "unavailable" }),
         },
+        ...(options.siteAnswer === undefined
+          ? {}
+          : { hosted: { siteAnswer: () => Effect.succeed(options.siteAnswer) } }),
         timing: { stepWaitMs: 300, pollMs: 2 },
         quiet: { quietMs: 20, capMs: 120 },
         sent: { current: false },
@@ -340,6 +348,48 @@ it("presses once more a press that typed no secret when the page kept its state"
   );
   expect(await replay(site, library)).toMatchObject({ outcome: "signed_in" });
   expect(site.clicks).toEqual(["#sign-in", "#sign-in", "#go"]);
+});
+
+it("asks for a new code when the site refuses one, as many times as a recipe's replay does", async () => {
+  const library = libraryOf([
+    {
+      fingerprint: arrival(codeScreen),
+      step: stepAt("/verify", [code], "#verify", { rejectedMarkers: [{ selector: "#bad-code", slot: "code" }] }),
+    },
+  ]);
+  let tries = 0;
+  const site = scriptedSite(
+    { start: codeScreen, refused: { ...codeScreen, errors: ["#bad-code"] } },
+    () => (++tries > 1 ? "home" : "refused"),
+  );
+  expect(await replay(site, library)).toMatchObject({ outcome: "signed_in" });
+  expect(site.fills).toEqual(["code", "code"]);
+  const always = scriptedSite({ start: codeScreen, refused: { ...codeScreen, errors: ["#bad-code"] } }, () => "refused");
+  expect(await replay(always, library)).toMatchObject({ outcome: "unclear", reason: "code_rejected" });
+  expect(always.fills).toEqual(["code", "code", "code"]);
+});
+
+it("presses Enter in the email box when its Continue went once the email was typed", async () => {
+  const library = libraryOf([
+    { fingerprint: arrival(emailScreen), step: stepAt("/sign-in", [email], "#continue") },
+  ]);
+  const site = scriptedSite(
+    { start: () => ({ ...emailScreen, buttons: site.site.typed.has("#email") ? [] : ["#continue"] }) },
+    (_at, pressed) => (pressed === "Enter" ? "home" : undefined),
+  );
+  expect(await replay(site, library)).toMatchObject({ outcome: "signed_in" });
+  expect(site.clicks).toEqual(["Enter"]);
+});
+
+it("opens the link the site's own answer says it emailed when the password state shows again", async () => {
+  const library = libraryOf([
+    { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") },
+  ]);
+  const site = scriptedSite({ start: passwordScreen }, () => "start");
+  const ended = await replay(site, library, { siteAnswer: "link" });
+  expect(ended).toMatchObject({ outcome: "signed_in" });
+  expect(site.site.opened).toEqual([link]);
+  expect(site.fills).toEqual(["password"]);
 });
 
 const notice = "check your email for a sign-in link";

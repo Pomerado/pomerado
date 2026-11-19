@@ -25,14 +25,15 @@ export { type ObservedBox, type ObservedState, stateAfter } from "./sign-in-stat
  * box, the first visible h1, else h2, heading, h3 or paragraph, and up to eight buttons; these
  * and every visible text outside a control (`texts`) are normalized: an address or
  * a starred one becomes "@", a run of digits "#", of stars or dots "*", and a capitalized word
- * after a sentence's first "~", as a name would be.
+ * after a sentence's first "~", as a name would be. In a button's label every capitalized word is
+ * "~", its first too, as an account's chip or "Continue as" names its login.
  */
 const scanFrame = `() => {
-  const normalized = (text, limit) => {
+  const normalized = (text, limit, label = false) => {
     const masked = (text ?? "").normalize("NFKC").replace(/\\s+/g, " ").trim()
       .replace(/\\S*@\\S*?(?=[.,;:!?)]*(?:\\s|$))/g, "@").replace(/[*\\u2022\\u25cf\\u00b7\\u2219]+/g, "*").replace(/\\d+/g, "#");
     const words = masked.split(" ").map((word, index, all) =>
-      index > 0 && !/[.!?:]$/.test(all[index - 1]) && /^\\p{Lu}/u.test(word)
+      (label || (index > 0 && !/[.!?:]$/.test(all[index - 1]))) && /^\\p{Lu}/u.test(word)
         ? "~" + word.replace(/^[\\p{L}\\p{M}'\\u2019-]+/u, "")
         : word);
     return words.join(" ").toLowerCase().slice(0, limit);
@@ -130,7 +131,7 @@ const scanFrame = `() => {
     .find((element) => element !== undefined);
   const buttons = [...document.querySelectorAll('button, [role="button" i], input[type="submit" i], input[type="button" i]')]
     .filter(shows)
-    .map((element) => normalized(element.getAttribute("aria-label") || element.innerText || element.value, 120))
+    .map((element) => normalized(element.getAttribute("aria-label") || element.innerText || element.value, 120, true))
     .filter((label) => label !== "")
     .slice(0, 8);
   return { ...result, ...(message === undefined ? {} : { message: normalized(message.innerText, 200) }), buttons };

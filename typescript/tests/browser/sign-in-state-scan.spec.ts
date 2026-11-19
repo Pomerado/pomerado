@@ -119,13 +119,26 @@ test("a page with no box reads as its heading and buttons, with no address, numb
     boxes: [],
     submit: false,
     message: "we sent a link to @. hi ~, check your inbox",
-    buttons: ["resend in # seconds", "use another email"],
+    buttons: ["~ another email", "~ in # seconds"],
   });
   expect(state.texts).toEqual([
     "questions? call # #",
     "we sent a link to @. hi ~, check your inbox",
     "not ~? start over",
   ]);
+});
+
+test("two logins' account pickers that differ only in the names on their chips read alike", async ({
+  page,
+}) => {
+  const picker = (name: string, address: string) => `<h1>Choose an account</h1>
+    <button>${name} ${address}</button>
+    <button>Continue as ${name.split(" ")[0]}</button>
+    <button>Use another account</button>`;
+  const first = await (await open(page, { [site]: picker("Sam Smith", "s***@example.test") }))();
+  const second = await (await open(page, { [site]: picker("Ana Diaz", "a***@example.test") }))();
+  expect(first.fingerprint).toEqual(second.fingerprint);
+  expect(first.fingerprint.buttons).toEqual(["~ another account", "~ as ~", "~ ~ @"]);
 });
 
 test("a notice after a press beside the same boxes tells the state, and a typed box is no longer empty", async ({
