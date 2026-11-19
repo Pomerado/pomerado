@@ -215,11 +215,12 @@ test("a separator hidden from assistive technology still splits the capture, so 
   test.setTimeout(90_000);
   // A form, with a select inside its label, ends with its button; a divider hidden from the
   // accessibility tree follows it, then a logo-only button, another hidden divider, a notice and
-  // another button. The snapshot drops the dividers and the wrappers.
+  // another button. The snapshot drops the dividers and the wrappers. The page redefines how an
+  // array turns into JSON, as an old script library does.
   const site = await startSite((_request, response) =>
     html(
       response,
-      `<title>Checkout</title><main><form><input aria-label="Email"><label>Country <select><option>Canada</option><option>Norway</option></select></label>` +
+      `<title>Checkout</title><script>Array.prototype.toJSON = function () { return "[]"; };</script><main><form><input aria-label="Email"><label>Country <select><option>Canada</option><option>Norway</option></select></label>` +
         `<button type="button">Continue to payment</button></form>` +
         `<x-divider role="separator" aria-hidden="true" style="display:block;border-top:1px solid">or</x-divider>` +
         `<div><button type="button" aria-label="Wallet app"><svg aria-hidden="true" width="16" height="16"></svg></button><hr aria-hidden="true">` +
@@ -250,9 +251,10 @@ test("a separator hidden from assistive technology still splits the capture, so 
 
 test("text the page holds only out of view reads as hidden in the capture, and a shown copy does not", async () => {
   test.setTimeout(90_000);
-  // An announcement kept off screen beside an aria-hidden icon; a shown error with an off-screen
-  // copy; a price whose off-screen copy sits beside the aria-hidden digits it shows; and shown
-  // text with off-screen copies that are aria-hidden or not displayed.
+  // An announcement kept off screen beside an aria-hidden icon; a shown error and a shown count,
+  // each with an off-screen copy, the count's holding its number in an element; a price whose
+  // off-screen copy sits beside the aria-hidden digits it shows; and shown text with off-screen
+  // copies that are aria-hidden or not displayed.
   const offScreen = "position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden";
   const announcement = "Time is up. You can no longer add items.";
   const site = await startSite((_request, response) =>
@@ -261,6 +263,7 @@ test("text the page holds only out of view reads as hidden in the capture, and a
       `<title>Order</title><main><h1>Add to your order</h1><div role="status">3 hours left</div>` +
         `<div><svg aria-hidden="true" width="8" height="8"></svg><span style="${offScreen}" aria-live="assertive">${announcement}</span></div>` +
         `<div role="alert">Card declined</div><div style="${offScreen}">Card declined</div>` +
+        `<p>Showing 24 results</p><div style="${offScreen}">Showing <span>24</span> results</div>` +
         `<p><span style="${offScreen}">$9.99</span><span aria-hidden="true">$9<sup>99</sup></span></p>` +
         `<p>Saved</p><span style="${offScreen}" aria-hidden="true">Saved</span><span style="${offScreen};display:none">Saved</span></main>`,
     ),
@@ -279,7 +282,7 @@ test("text the page holds only out of view reads as hidden in the capture, and a
     });
     expect(toolResult(last, "second")).toMatchObject({ status: "completed" });
     expect(captureOf(executions(guardian.reviews)[1])).toContain(
-      `  - status: 3 hours left\n  - text: [hidden: ${announcement}]\n  - alert: Card declined\n  - text: Card declined\n  - paragraph: $9.99\n  - paragraph: Saved`,
+      `  - status: 3 hours left\n  - text: [hidden: ${announcement}]\n  - alert: Card declined\n  - text: Card declined\n  - paragraph: Showing 24 results\n  - text: Showing 24 results\n  - paragraph: $9.99\n  - paragraph: Saved`,
     );
   } finally {
     await site.close();
