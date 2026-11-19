@@ -195,8 +195,16 @@ const exploringOver = (used: number, capacity: number) =>
     instruction: modelCallNotice(used, capacity, true),
   });
 
-/** A finish_build reply in which publication review asked for more. */
-const ReviewAsked = Schema.parseJson(Schema.Struct({ code: Schema.Literal("ReviewDenied") }));
+/**
+ * A finish_build reply in which a publication review's ask stands: the review asked for more, or
+ * the same submission came back unchanged since it did.
+ */
+const ReviewAsked = Schema.parseJson(
+  Schema.Union(
+    Schema.Struct({ code: Schema.Literal("ReviewDenied") }),
+    Schema.Struct({ reason: Schema.Literal("unchanged_since_denial") }),
+  ),
+);
 
 /**
  * A provider failure that the same request can get past later: a lost connection, a timeout,
@@ -642,7 +650,7 @@ const openAIMinter = (
       const turnsPerSegment = limits.segmentTurns ?? segmentTurns;
       const wrapUpAt = modelCallCapacity - turnsPerSegment;
       const wrapUp = (limits.wrapUp ?? true) && wrapUpAt > 0;
-      /** The model calls made when publication review last asked this attempt for more. */
+      /** The model calls made when a publication review's ask last stood in a finish_build reply. */
       let reviewAskedAt = -1;
       /** Whether this attempt heard its wrap-up notice. */
       let toldWrapUp = false;
@@ -1244,7 +1252,7 @@ const openAIMinter = (
                 "Publication did not succeed. Correct supported source or metadata errors and submit finish_build again when justified. Existing execution results remain valid independently. A new example read requires explicit host repeatableRead:true; never replay a nonrepeatable example, a write that may have committed or an uncertain authentication action.",
                 (request) =>
                   turn.actions.finish(request).pipe(
-                    // A review that asks for more reopens live exploring for what it names.
+                    // A review's standing ask reopens live exploring for what it names.
                     Effect.tap((reply) =>
                       Effect.sync(() => {
                         if (Either.isRight(Schema.decodeUnknownEither(ReviewAsked)(reply)))

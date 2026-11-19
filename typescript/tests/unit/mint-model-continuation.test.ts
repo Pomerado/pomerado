@@ -3144,8 +3144,9 @@ const readSource = (index: number) =>
 
 // The last segment's worth of model calls is for publishing: from exactly that call (9 of 16 here,
 // 384 of 512 by default), after calls held behind an edit too, the notice says to stop exploring,
-// and the host refuses a live explore step until publication review asks for more. What the review
-// asks for then runs, with calls to spare. A host with its own wrap-up (wrapUp false) explores on
+// and the host refuses a live explore step until a publication review's ask stands in a
+// finish_build reply, here an earlier ask the unchanged submission meets again. What the review
+// asked for then runs, with calls to spare. A host with its own wrap-up (wrapUp false) explores on
 // and hears no notice before a segment boundary.
 it.each([true, false])(
   "wraps an attempt up at its last segment's model calls (wrapUp %s)",
@@ -3157,23 +3158,23 @@ it.each([true, false])(
       rationale: "Capture the site's own search request, or say why the HTTP version cannot work.",
       findings: [],
     });
-    const note = patch(
-      { type: "create_file", path: "src/notes.ts", diff: "+export const notes = 1;" },
-      "note",
-    );
+    const note = patch({ type: "create_file", path: "scratch/notes.md", diff: "+notes" }, "note");
     const f = await fixture(
       (_request, index) =>
-        index === 7
+        [
+          call("execute", execution, "example"),
+          call("finish_build", publication, "finish"),
+        ][index] ??
+        (index === 7
           ? together(note, readSource(index))
           : index < 9
             ? readSource(index)
             : ([
-                exploreLive("explore"),
-                call("execute", execution, "example"),
-                call("finish_build", publication, "finish"),
                 exploreLive("asked_capture"),
+                call("finish_build", publication, "finish_unchanged"),
+                exploreLive("capture"),
                 together(stepPatch("correction"), call("finish_build", publication, "finish_again")),
-              ][index - 9] ?? prose()),
+              ][index - 9] ?? prose())),
       { publish: review.publish },
       {},
       { modelCallCapacity: 16, segmentTurns: 7, wrapUp },
@@ -3182,12 +3183,13 @@ it.each([true, false])(
       build: "published",
       publicationRef: "corrected_revision",
     });
-    expect(f.requests).toHaveLength(14);
+    expect(f.requests).toHaveLength(13);
     const told = (index: number) => JSON.stringify(f.requests[index]?.input);
     expect(told(8)).not.toContain("model calls it may make");
     expect(told(9).includes("9 of the 16 model calls")).toBe(wrapUp);
     expect(told(9).includes("Stop exploring and finish")).toBe(wrapUp);
     expect(told(10).includes("exploring_over")).toBe(wrapUp);
+    expect(told(11)).toContain("unchanged_since_denial");
     // The capture the review asked for ran after the wrap-up point either way.
     expect(f.counts().executed).toBe(wrapUp ? 2 : 3);
     expect(review.publications()).toBe(2);
