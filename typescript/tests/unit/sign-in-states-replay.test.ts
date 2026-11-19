@@ -1,3 +1,4 @@
+import { inspect } from "node:util";
 import { Data, Effect, Either } from "effect";
 import { expect, it } from "vitest";
 import type { AutofillRecipeStep } from "../../src/destinations/autofill-recipe.js";
@@ -315,7 +316,9 @@ it("stops when the state it pressed in shows again, never sending the password t
   expect(ended).toMatchObject({ outcome: "unclear", reason: "state_repeated" });
   expect(repeated.fills).toEqual(["password"]);
   expect(repeated.clicks).toEqual(["#go"]);
-  const marked = scriptedSite({ start: passwordScreen, wrong: { ...passwordScreen, errors: ["#wrong"] } }, () => "wrong");
+  // The site's error marker shows with a text of its own, as most do.
+  const wrong = { ...passwordScreen, errors: ["#wrong"], texts: ["that password is not right"] };
+  const marked = scriptedSite({ start: passwordScreen, wrong }, () => "wrong");
   expect(await replay(marked, library)).toMatchObject({ outcome: "unclear", reason: "password_rejected" });
   expect(marked.fills).toEqual(["password"]);
 });
@@ -334,6 +337,12 @@ it("never types into a state whose box sits in a frame off its recorded origin",
   const ended = await replay({ ...site, observe }, library);
   expect(ended).toMatchObject({ outcome: "unsent", reason: "screen_origin_changed" });
   expect(site.fills).toEqual([]);
+  // The top page on the recorded origin, the box in a frame on another.
+  const onTop = libraryOf([{ fingerprint: arrival(emailScreen), step: stepAt("/sign-in", [email], "#continue") }]);
+  const inFrame = scriptedSite({ start: { ...emailScreen, frame: "https://other.example.test" } }, () => "home");
+  const looksTop = Effect.map(inFrame.observe, (observed) => ({ ...observed, fingerprint: arrival(emailScreen) }));
+  expect(await replay({ ...inFrame, observe: looksTop }, onTop)).toMatchObject({ reason: "screen_origin_changed" });
+  expect(inFrame.fills).toEqual([]);
 });
 
 it("presses once more a press that typed no secret when the page kept its state", async () => {
@@ -348,6 +357,10 @@ it("presses once more a press that typed no secret when the page kept its state"
   );
   expect(await replay(site, library)).toMatchObject({ outcome: "signed_in" });
   expect(site.clicks).toEqual(["#sign-in", "#sign-in", "#go"]);
+  // A press that sent the email, in a state that may lead to a code, is never made again.
+  const kept = scriptedSite({ start: emailScreen }, () => undefined);
+  expect(await replay(kept, branches)).toMatchObject({ outcome: "unclear", reason: "state_repeated" });
+  expect(kept.clicks).toEqual(["#continue"]);
 });
 
 it("asks for a new code when the site refuses one, as many times as a recipe's replay does", async () => {
@@ -367,6 +380,23 @@ it("asks for a new code when the site refuses one, as many times as a recipe's r
   const always = scriptedSite({ start: codeScreen, refused: { ...codeScreen, errors: ["#bad-code"] } }, () => "refused");
   expect(await replay(always, library)).toMatchObject({ outcome: "unclear", reason: "code_rejected" });
   expect(always.fills).toEqual(["code", "code", "code"]);
+});
+
+it("waits for a slow site to check a code before asking for another", async () => {
+  const library = libraryOf([
+    {
+      fingerprint: arrival(codeScreen),
+      step: stepAt("/verify", [code], "#verify", { rejectedMarkers: [{ selector: "#bad-code", slot: "code" }] }),
+    },
+  ]);
+  const slow = scriptedSite({ start: codeScreen }, () => {
+    setTimeout(() => {
+      slow.site.screen = "home";
+    }, 50);
+    return undefined;
+  });
+  expect(await replay(slow, library)).toMatchObject({ outcome: "signed_in" });
+  expect(slow.fills).toEqual(["code"]);
 });
 
 it("presses Enter in the email box when its Continue went once the email was typed", async () => {
@@ -397,7 +427,7 @@ const linkLibrary = libraryOf([
   { fingerprint: arrival(combined), step: stepAt("/", [email, password], "#continue") },
   {
     fingerprint: { ...arrival(combined), message: notice },
-    step: stepAt("/", [], undefined, { approval: "email_link" }),
+    step: stepAt("/", [], undefined, { approval: "email_link", delivery: "paste" }),
   },
 ]);
 
@@ -423,6 +453,61 @@ it("ends at a notice it does not know after the password went, sending nothing a
   expect(ended.unknownState).toMatchObject({ sent: true, fingerprint: { message: "we could not find that account" } });
   expect(site.fills).toEqual(["email", "password"]);
   expect(site.site.opened).toEqual([]);
+  // The outcome holds no typed value, however a host logs it.
+  for (const logged of [JSON.stringify(ended), inspect(ended, { depth: null })])
+    expect(logged).not.toMatch(/owner@example\.test|secret-1/u);
+});
+
+it("stops when the site goes back to a state it acted in before, typing nothing again", async () => {
+  const site = scriptedSite({ start: emailScreen, password: passwordScreen }, (_at, clicked) =>
+    clicked === "#continue" ? "password" : "start",
+  );
+  const ended = await replay(site, branches);
+  expect(ended).toMatchObject({ outcome: "unclear", reason: "credential_screen_returned" });
+  expect(site.fills).toEqual(["email", "password"]);
+  expect(site.clicks).toEqual(["#continue", "#go"]);
+});
+
+it("ends unclear when the press after a typed password lost its call's answer", async () => {
+  const library = libraryOf([{ fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") }]);
+  const site = scriptedSite({ start: passwordScreen }, () => "home");
+  const fill: typeof site.hooks.fill = (call) =>
+    call.step.fields.length > 0
+      ? site.hooks.fill(call)
+      : Effect.succeed({ outcome: "uncertain", reason: "fill_call_failed", failureDetail: {} } as AutofillStepReport);
+  expect(await replay({ ...site, hooks: { ...site.hooks, fill } }, library)).toMatchObject({ outcome: "unclear" });
+});
+
+it("waits out a known state the page draws in part on arrival", async () => {
+  const library = libraryOf([{ fingerprint: arrival(combined), step: stepAt("/", [email, password], "#continue") }]);
+  const site = scriptedSite({ start: (looks) => (looks < 30 ? emailOnly : combined) }, () => "home");
+  expect(await replay(site, library)).toMatchObject({ outcome: "signed_in" });
+  expect(site.fills).toEqual(["email", "password"]);
+});
+
+it("verifies the marker in full before a page it does not know, sent or not", async () => {
+  const landing: Screen = { path: "/landing", boxes: [], texts: ["welcome back"] };
+  const library = libraryOf([{ fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") }]);
+  for (const start of [passwordScreen, landing]) {
+    const site = scriptedSite({ start, landing }, () => "landing");
+    // The marker shows only on the account page the full check opens.
+    const url = `${origin}/landing`;
+    const hooks = {
+      ...site.hooks,
+      check: () => Effect.succeed<AutofillSignedInCheck>({ signedIn: false, failed: "indicator_not_visible", url }),
+      confirm: () =>
+        Effect.sync(
+          (): AutofillSignedInCheck =>
+            site.site.screen === "landing" || start === landing
+              ? { signedIn: true, url }
+              : { signedIn: false, failed: "indicator_not_visible", url },
+        ),
+    };
+    expect(await replay({ ...site, hooks }, library)).toMatchObject({
+      outcome: "signed_in",
+      alreadySignedIn: start === landing,
+    });
+  }
 });
 
 it("stops a value-free check before a press that has the site send a link", async () => {

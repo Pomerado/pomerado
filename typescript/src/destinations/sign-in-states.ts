@@ -46,7 +46,7 @@ export const StateFingerprint = Schema.Struct({
 });
 export type StateFingerprint = typeof StateFingerprint.Type;
 
-const Key = Schema.String.pipe(Schema.pattern(/^[0-9a-f]{16}$/u));
+const Key = Schema.String.pipe(Schema.pattern(/^[0-9a-f]{32}$/u));
 const Marker = LegacyAutofillRecipe.fields.signedIn;
 
 /** A recorded step on an absolute page, or a workspace step on a path. */
@@ -92,6 +92,8 @@ export type StateEntry = Extract<SignInStateEntry, { readonly kind: "state" }>;
 export type TransitionEntry = Extract<SignInStateEntry, { readonly kind: "transition" }>;
 export type SignedInEntry = Extract<SignInStateEntry, { readonly kind: "signed_in" }>;
 
+/** Code-unit order, the same on every host whatever its locale. */
+const byCodeUnit = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 /** JSON with every object's keys sorted and undefined dropped: the same value is the same bytes. */
 const canonical = (value: unknown): string =>
   JSON.stringify(value, (_key, inner: unknown) =>
@@ -99,17 +101,17 @@ const canonical = (value: unknown): string =>
       ? Object.fromEntries(
           Object.entries(inner)
             .filter(([, field]) => field !== undefined)
-            .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+            .sort(([a], [b]) => byCodeUnit(a, b)),
         )
       : inner,
   );
 const keyOf = (content: unknown) =>
-  createHash("sha256").update(canonical(content)).digest("hex").slice(0, 16);
+  createHash("sha256").update(canonical(content)).digest("hex").slice(0, 32);
 
 /** A fingerprint in its one written form: boxes and buttons sorted. */
 export const fingerprintOf = (fingerprint: StateFingerprint): StateFingerprint => ({
   top: fingerprint.top,
-  boxes: [...fingerprint.boxes].sort((a, b) => canonical(a).localeCompare(canonical(b))),
+  boxes: [...fingerprint.boxes].sort((a, b) => byCodeUnit(canonical(a), canonical(b))),
   submit: fingerprint.submit,
   ...(fingerprint.message === undefined ? {} : { message: fingerprint.message }),
   ...(fingerprint.buttons === undefined ? {} : { buttons: [...fingerprint.buttons].sort() }),
@@ -223,7 +225,8 @@ export const standingFingerprint = (reached: ObservedState, now: ObservedState):
   });
 };
 const boxText = ({ frame, kind, count }: StateBox) => canonical({ frame, kind, count });
-const sameBoxes = (a: StateFingerprint, b: StateFingerprint) =>
+/** Whether two fingerprints show the same boxes on the same top origin, whatever their text. */
+export const sameBoxes = (a: StateFingerprint, b: StateFingerprint) =>
   a.top === b.top &&
   canonical(fingerprintOf(a).boxes.map(boxText)) === canonical(fingerprintOf(b).boxes.map(boxText));
 
@@ -403,8 +406,9 @@ export const maximumStates = 64;
 /**
  * The library with a recorded sign-in's new entries appended after every existing one, which stay
  * as they are, and those entries (`added`), none when it knew them all. A state is known by its
- * key, its fingerprint and step alike. Refused: a hand-off step, which a library never runs; a
- * state that shows nothing to tell it by; and a library that would pass `maximumStates`.
+ * key, its fingerprint and step alike. Refused: a hand-off step, which a library never runs, or a
+ * workspace step in a library with no workspace; a state that shows nothing to tell it by; and a
+ * library that would pass `maximumStates`.
  */
 export const appendSignInStates = (
   library: SignInStates,
@@ -412,7 +416,12 @@ export const appendSignInStates = (
 ):
   | { readonly library: SignInStates; readonly added: readonly SignInStateEntry[] }
   | { readonly refused: "unsupported_step" | "blank_state" | "library_full" } => {
-  if (observed.states.some(({ step }) => step.approval === "handoff"))
+  if (
+    observed.states.some(
+      ({ step }) =>
+        step.approval === "handoff" || (step.origin === "workspace" && library.workspace === undefined),
+    )
+  )
     return { refused: "unsupported_step" };
   if (observed.states.some(({ fingerprint }) => blankFingerprint(fingerprint)))
     return { refused: "blank_state" };

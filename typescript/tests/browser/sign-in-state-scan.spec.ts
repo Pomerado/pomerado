@@ -7,8 +7,8 @@ import { hostPage } from "./autofill-host-page.js";
 
 // The sign-in state scan on local Chromium, which decides what shows and runs each cross-origin
 // frame in its own process: every visible box on a sign-in origin by the kind its own attributes
-// say, and a page with no empty box by its message and buttons, with no name, address or number
-// left in any text.
+// say, and a page with no empty box by its message and buttons, with no name, login, address or
+// number left in any text.
 const site = "https://login.example.test";
 const provider = "https://auth.provider.example.org";
 const widget = "https://chat.widget.example.net";
@@ -103,13 +103,15 @@ test("the scan reads a frame on a listed sign-in origin by its origin, and no ot
   );
 });
 
-test("a page with no box reads as its heading and buttons, with no address, number or name", async ({
+test("a page with no box reads as its heading and buttons, with no address, number, name or login", async ({
   page,
 }) => {
   const scan = await open(page, {
     [site]: `<p>Questions? Call 555 0100</p>
-      <h1>We sent a link to j***@example.test. Hi Sam, check your inbox</h1>
+      <h1>Sam, we sent a link to j***@example.test. Check your inbox</h1>
       <p>Not <b>Sam</b>? Start over</p>
+      <p>Signed in as sam_smith or j.doe</p>
+      <p>&#x5c71;&#x7530;&#x592a;&#x90ce;&#x69d8;&#x3001;&#x3088;&#x3046;&#x3053;&#x305d;</p>
       <button>Resend in 30 seconds</button>
       <button aria-label="Use another email"><svg width="12" height="12"></svg></button>`,
   });
@@ -118,14 +120,16 @@ test("a page with no box reads as its heading and buttons, with no address, numb
     top: site,
     boxes: [],
     submit: false,
-    message: "we sent a link to @. hi ~, check your inbox",
+    message: "~, we sent a link to @. ~ your inbox",
     buttons: ["~ another email", "~ in # seconds"],
   });
   expect(state.texts).toEqual([
-    "questions? call # #",
-    "we sent a link to @. hi ~, check your inbox",
-    "not ~? start over",
+    "~? ~ # #",
+    "~, we sent a link to @. ~ your inbox",
+    "~ ~? ~ over",
+    "~ in as ~ or ~",
   ]);
+  expect(JSON.stringify(state)).not.toMatch(/sam|smith|doe|555|\u5c71/iu);
 });
 
 test("two logins' account pickers that differ only in the names on their chips read alike", async ({
@@ -174,7 +178,7 @@ test("a notice after a press beside the same boxes tells the state, and a typed 
       top: site,
       boxes,
       submit: true,
-      message: "that password is not right. try again in # minutes",
+      message: "~ password is not right. ~ again in # minutes",
     }),
   );
   await page.locator("input[name=email]").pressSequentially("sam@example.test");

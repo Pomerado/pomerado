@@ -14,8 +14,34 @@ export { type ObservedBox, type ObservedState, stateAfter } from "./sign-in-stat
 
 // The page as a sign-in state: one host call reads each visible box on a sign-in origin, by its
 // frame's origin and the kind of value its own attributes say it takes, never its value. Only a
-// page with no empty box is told by text: its main message and its buttons, normalized in the
-// page so no name, address or number leaves it.
+// page with no empty box is told by text: its main message and its buttons, normalized on the
+// host so no name, address or number is kept.
+
+/**
+ * A text as a state holds it, normalized here, never in the page, whose own code may change what
+ * its string functions return: an address or a starred one becomes "@", a run of digits "#", of
+ * stars or dots "*", and each word a name or a login may be "~": one with a capital, with "_" or
+ * "." or a digit between its letters, or in a script with no capitals. Lowercase, at most `limit`
+ * characters.
+ */
+const normalized = (text: string, limit: number) =>
+  text
+    .slice(0, 4_000)
+    .normalize("NFKC")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .replace(/\S*@\S*?(?=[.,;:!?)]*(?:\s|$))/gu, "@")
+    .replace(/[*\u2022\u25cf\u00b7\u2219]+/gu, "*")
+    .replace(/\p{Nd}+/gu, "#")
+    .split(" ")
+    .map((word) =>
+      /[\p{Lu}\p{Lt}\p{Lo}]|[\p{L}#][._][\p{L}#]|\p{L}#|#\p{L}/u.test(word)
+        ? `~${/[.,;:!?)]*$/u.exec(word)?.[0] ?? ""}`
+        : word,
+    )
+    .join(" ")
+    .toLowerCase()
+    .slice(0, limit);
 
 /**
  * Page code, run in each frame: the visible boxes that take typing, with their kinds, whether each
@@ -23,21 +49,9 @@ export { type ObservedBox, type ObservedState, stateAfter } from "./sign-in-stat
  * box with its count. A box with no hint of its kind counts as an identifier only when required or
  * in a form that has a submit or another counted box; a search box never counts. With no empty
  * box, the first visible h1, else h2, heading, h3 or paragraph, and up to eight buttons; these
- * and every visible text outside a control (`texts`) are normalized: an address or
- * a starred one becomes "@", a run of digits "#", of stars or dots "*", and a capitalized word
- * after a sentence's first "~", as a name would be. In a button's label every capitalized word is
- * "~", its first too, as an account's chip or "Continue as" names its login.
+ * and every visible text outside a control (`texts`) as they stand, which the host normalizes.
  */
 const scanFrame = `() => {
-  const normalized = (text, limit, label = false) => {
-    const masked = (text ?? "").normalize("NFKC").replace(/\\s+/g, " ").trim()
-      .replace(/\\S*@\\S*?(?=[.,;:!?)]*(?:\\s|$))/g, "@").replace(/[*\\u2022\\u25cf\\u00b7\\u2219]+/g, "*").replace(/\\d+/g, "#");
-    const words = masked.split(" ").map((word, index, all) =>
-      (label || (index > 0 && !/[.!?:]$/.test(all[index - 1]))) && /^\\p{Lu}/u.test(word)
-        ? "~" + word.replace(/^[\\p{L}\\p{M}'\\u2019-]+/u, "")
-        : word);
-    return words.join(" ").toLowerCase().slice(0, limit);
-  };
   const shows = (element) => {
     if (!element.checkVisibility({ visibilityProperty: true, opacityProperty: true })) return false;
     const box = element.getBoundingClientRect();
@@ -123,18 +137,17 @@ const scanFrame = `() => {
     own.set(block, own.get(block) + (last === block ? "" : " ") + node.textContent);
     last = block;
   }
-  const texts = [...new Set([...own.values()].map((text) => normalized(text, 200)))].filter((text) => text.length >= 2);
-  const result = { boxes: found.map(({ form, ...box }) => box), texts };
+  const result = { boxes: found.map(({ form, ...box }) => box), texts: [...own.values()].map((text) => text.slice(0, 2000)) };
   if (found.some((box) => box.empty)) return result;
   const message = ["h1", "h2", '[role="heading" i]', "h3", "p"]
     .map((selector) => [...document.querySelectorAll(selector)].find((element) => shows(element) && element.innerText.trim() !== ""))
     .find((element) => element !== undefined);
   const buttons = [...document.querySelectorAll('button, [role="button" i], input[type="submit" i], input[type="button" i]')]
     .filter(shows)
-    .map((element) => normalized(element.getAttribute("aria-label") || element.innerText || element.value, 120, true))
-    .filter((label) => label !== "")
+    .map((element) => (element.getAttribute("aria-label") || element.innerText || element.value || "").slice(0, 500))
+    .filter((label) => label.trim() !== "")
     .slice(0, 8);
-  return { ...result, ...(message === undefined ? {} : { message: normalized(message.innerText, 200) }), buttons };
+  return { ...result, ...(message === undefined ? {} : { message: message.innerText.slice(0, 2000) }), buttons };
 }`;
 
 /** One host call over the primary tab's frames on the site or a configured sign-in origin. */
@@ -178,7 +191,7 @@ return { url: primary.url(), frames };`;
 
 const ScannedBox = Schema.Struct({
   kind: BoxKind,
-  count: Schema.optional(Schema.Number),
+  count: Schema.optional(Schema.Int.pipe(Schema.between(2, 12))),
   empty: Schema.Boolean,
   submit: Schema.Boolean,
 });
@@ -226,7 +239,7 @@ export const observeSignInState = (input: {
             ? "workspace"
             : origin;
         const boxes = scan.frames.flatMap((frame) =>
-          frame.boxes.map((box) => ({ frame: named(frame.origin), ...box })),
+          frame.boxes.slice(0, 200).map((box) => ({ frame: named(frame.origin), ...box })),
         );
         const written = (box: (typeof boxes)[number]): StateBox => ({
           frame: box.frame,
@@ -237,16 +250,23 @@ export const observeSignInState = (input: {
         // page's, still reads as a state a library can keep.
         const empty = boxes.filter((box) => box.empty).slice(0, 24);
         const told = empty.length > 0 ? undefined : scan.frames.find((frame) => frame.message !== undefined || (frame.buttons ?? []).length > 0);
+        const buttons = (told?.buttons ?? []).slice(0, 8).map((label) => normalized(label, 120));
         return {
           fingerprint: fingerprintOf({
             top: named(top),
             boxes: empty.map(written),
             submit: empty.some((box) => box.submit),
-            ...(told?.message === undefined ? {} : { message: told.message }),
-            ...(told === undefined ? {} : { buttons: told.buttons ?? [] }),
+            ...(told?.message === undefined ? {} : { message: normalized(told.message, 200) }),
+            ...(told === undefined ? {} : { buttons: buttons.filter((label) => label !== "") }),
           }),
           boxes: boxes.map((box) => ({ ...written(box), empty: box.empty, submit: box.submit })),
-          texts: [...new Set(scan.frames.flatMap((frame) => frame.texts))].slice(0, 40),
+          texts: [
+            ...new Set(
+              scan.frames.flatMap((frame) => frame.texts.slice(0, 40).map((text) => normalized(text, 200))),
+            ),
+          ]
+            .filter((text) => text.length >= 2)
+            .slice(0, 40),
         };
       }),
       Effect.orElseSucceed(() => undefined),
