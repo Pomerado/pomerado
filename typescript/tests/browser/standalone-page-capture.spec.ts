@@ -262,6 +262,49 @@ test("a separator hidden from assistive technology, and an unnamed form's edge, 
   }
 });
 
+test("text the page holds only out of view reads as hidden in the capture, and a shown copy does not", async () => {
+  test.setTimeout(90_000);
+  // An announcement kept off screen beside an aria-hidden icon; a shown error and a shown count,
+  // each with an off-screen copy, the count's holding its number in an element; a price whose
+  // off-screen copy sits beside the aria-hidden digits it shows; and shown text with off-screen
+  // copies that are aria-hidden or not displayed. The page also holds a divider hidden from
+  // assistive technology, and redefines how an array turns into JSON, as an old script library
+  // does.
+  const offScreen = "position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden";
+  const announcement = "Time is up. You can no longer add items.";
+  const site = await startSite((_request, response) =>
+    html(
+      response,
+      `<title>Order</title><script>Array.prototype.toJSON = function () { return "[]"; };</script>` +
+        `<main><h1>Add to your order</h1><hr aria-hidden="true"><div role="status">3 hours left</div>` +
+        `<div><svg aria-hidden="true" width="8" height="8"></svg><span style="${offScreen}" aria-live="assertive">${announcement}</span></div>` +
+        `<div role="alert">Card declined</div><div style="${offScreen}">Card declined</div>` +
+        `<p>Showing 24 results</p><div style="${offScreen}">Showing <span>24</span> results</div>` +
+        `<p><span style="${offScreen}">$9.99</span><span aria-hidden="true">$9<sup>99</sup></span></p>` +
+        `<p>Saved</p><span style="${offScreen}" aria-hidden="true">Saved</span><span style="${offScreen};display:none">Saved</span></main>`,
+    ),
+  );
+  const guardian = recordingGuardian({ readPage: true });
+  try {
+    const { last } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      turns: [
+        () => patch({ "explore/look.mjs": probe() }),
+        () => [call("execute", execution("explore", "explore/look.mjs"), "first")],
+        () => [call("execute", execution("explore", "explore/look.mjs"), "second")],
+      ],
+    });
+    expect(toolResult(last, "second")).toMatchObject({ status: "completed" });
+    expect(captureOf(executions(guardian.reviews)[1])).toContain(
+      `  - status: 3 hours left\n  - text: [hidden: ${announcement}]\n  - alert: Card declined\n  - text: Card declined\n  - paragraph: Showing 24 results\n  - text: Showing 24 results\n  - paragraph: $9.99\n  - paragraph: Saved`,
+    );
+  } finally {
+    await site.close();
+  }
+});
+
 test("a page over the element limit is not captured, and the browser keeps working", async () => {
   test.setTimeout(90_000);
   const items = Array.from(

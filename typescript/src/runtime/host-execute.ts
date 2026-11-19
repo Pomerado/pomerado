@@ -1,4 +1,5 @@
 import type { Effect } from "effect";
+import { visuallyHiddenCode } from "../browser/visible-text.js";
 import { timeoutDefaults } from "./deadline.js";
 
 /** One browser's host calls: plain Playwright code with `page`, `context` and `browser`. */
@@ -31,8 +32,14 @@ const ${name} = await (async () => {
  * part of the controls before it. An unnamed `form` element, which the snapshot leaves out too,
  * gets a `- form:` line over its own lines, as a named form has, so where it ends shows as well. A
  * `fieldset`, and an element whose role is group, form or region, already shows, named or not.
- * The page is only read; when that read fails, the snapshot is unmarked. Pass no `mode: "ai"`:
- * that snapshot already lists a visible aria-hidden separator.
+ * A line whose whole value is the text of an element held out of view reads `[hidden: <text>]`: an
+ * element that holds the text and no element, is positioned absolute or fixed, is displayed, is
+ * not aria-hidden and is hidden by `visuallyHiddenCode`'s rule, the first 200 found within 100 ms.
+ * Not marked: a copy of the words an aria-hidden sibling shows, such as a price's; a text the
+ * snapshot holds more often than such elements do, as when the page also shows it; and a text
+ * control's line or a line under one. The page is only read; when a read fails or runs out of
+ * time, the snapshot is unmarked by it, and the lines are matched against such texts for up to
+ * 100 ms. Pass no `mode: "ai"`: that snapshot already lists a visible aria-hidden separator.
  *
  * One pass in document order, past aria-hidden subtrees, finds the anchors around each run of
  * such separators: rendered text, or a control's own label. The line goes before the first line,
@@ -53,10 +60,10 @@ const ${name} = await (async () => {
  */
 export const markedAriaSnapshotCode = `
 const markedAriaSnapshot = async (locator, options) => {
-  const [aria, [splits, forms]] = await Promise.all([
+  const [aria, [[splits, forms], hidden]] = await Promise.all([
     locator.ariaSnapshot(options),
     locator
-      .evaluate((root) => {
+      .evaluate((root) => [((root) => {
         const hiddenSelector = '[aria-hidden="true" i]';
         // The outermost aria-hidden element holding each rendered separator the snapshot drops.
         const holders = new Set();
@@ -228,11 +235,49 @@ const markedAriaSnapshot = async (locator, options) => {
           if (recent.length > 128) recent.splice(0, 64);
         }
         return JSON.stringify([splits, edges]);
-      }, undefined, { timeout: options?.timeout })
-      .then(JSON.parse)
-      .catch(() => [[], []]),
+      })(root), ((root) => {
+${visuallyHiddenCode}
+        // The text of each element held out of view that holds it, one per line (a text holds no
+        // line break): the first 200 within 100 ms, or nothing past that time.
+        const words = (text) => text.replace(/[^\\p{L}\\p{N}]/gu, "").toLowerCase();
+        // The words each parent's aria-hidden children show, such as a price's styled digits.
+        const beside = new Map();
+        const texts = [];
+        const started = performance.now();
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        let last = null;
+        for (let node = walker.nextNode(); node !== null && texts.length < 200; node = walker.nextNode()) {
+          if (performance.now() - started > 100) return null;
+          const element = node.parentElement;
+          if (element === null || element === last || !/\\S/.test(node.data)) continue;
+          last = element;
+          // Only a positioned element that holds its text alone, as screen-reader-only text is, is
+          // judged, and only one the snapshot can show: displayed and not aria-hidden.
+          if (element.firstElementChild !== null) continue;
+          const computed = getComputedStyle(element);
+          if (!/^(absolute|fixed)$/.test(computed.position) || !visuallyHidden(element, computed)
+            || !element.checkVisibility({ visibilityProperty: true })
+            || element.closest('[aria-hidden="true" i]') !== null) continue;
+          const text = element.textContent.replace(/\\s+/g, " ").trim();
+          const parent = element.parentElement;
+          if (!beside.has(parent))
+            beside.set(parent, new Set([...(parent?.querySelectorAll(':scope > [aria-hidden="true" i]') ?? [])]
+              .map((child) => words(child.textContent))));
+          if (!beside.get(parent).has(words(text))) texts.push(text);
+        }
+        return texts.join("\\n");
+      })(root)], undefined, { timeout: options?.timeout })
+      .then(([marks, texts]) => {
+        // A page that redefines how an array turns into JSON leaves separators and forms unmarked.
+        const parsed = JSON.parse(marks);
+        return [
+          Array.isArray(parsed?.[0]) && Array.isArray(parsed[1]) ? parsed : [[], []],
+          typeof texts === "string" && texts !== "" ? texts.split("\\n") : [],
+        ];
+      })
+      .catch(() => [[[], []], []]),
   ]);
-  if (splits.length === 0 && forms.length === 0) return aria;
+  if (splits.length === 0 && forms.length === 0 && hidden.length === 0) return aria;
   const lines = aria.split("\\n");
   // The first line from \`from\`, and before \`to\`, that holds \`text\`, or -1.
   const find = (text, from, to = lines.length) => {
@@ -328,11 +373,43 @@ const markedAriaSnapshot = async (locator, options) => {
     marked.add(at);
     from = next;
   }
-  return lines
-    .flatMap((line, index) =>
-      marked.has(index)
-        ? [line.slice(0, line.length - line.trimStart().length) + "- separator [aria-hidden]", line]
-        : [line])
+  const out = lines.flatMap((line, index) =>
+    marked.has(index)
+      ? [line.slice(0, line.length - line.trimStart().length) + "- separator [aria-hidden]", line]
+      : [line]);
+  if (hidden.length === 0) return out.join("\\n");
+  const held = hidden.reduce((counts, text) => counts.set(text, (counts.get(text) ?? 0) + 1), new Map());
+  // How often the snapshot holds a text, plain or quoted; past 100 ms, too often to mark.
+  const counted = new Map();
+  const until = Date.now() + 100;
+  const occurrences = (text) => {
+    const escaped = JSON.stringify(text).slice(1, -1);
+    const count = (written) => aria.split(written).length - 1;
+    if (!counted.has(text))
+      counted.set(text, Date.now() > until ? Infinity : count(text) + (escaped === text ? 0 : count(escaped)));
+    return counted.get(text);
+  };
+  // A line's whole value that is such a text reads [hidden: <text>], unless the snapshot holds it
+  // more often than hidden elements do, as when the page also shows it. A text control's line and
+  // the lines under it are left as they are.
+  let control = Infinity;
+  return out
+    .map((line) => {
+      const level = indent(line);
+      if (level > control) return line;
+      control = /^\\s*- '?(?:textbox|searchbox|spinbutton|combobox|slider)\\b/.test(line) ? level : Infinity;
+      const value = /^(\\s*- [a-z]+(?: "(?:[^"\\\\]|\\\\.)*")?(?: \\[[^\\]]*\\])*: )(.+)$/.exec(line);
+      if (control !== Infinity || value === null) return line;
+      const [, prefix, raw] = value;
+      let text;
+      try {
+        text = raw.startsWith('"') ? JSON.parse(raw) : raw;
+      } catch {
+        return line;
+      }
+      if (!held.has(text) || occurrences(text) > held.get(text)) return line;
+      return prefix + (raw.startsWith('"') ? '"[hidden: ' + raw.slice(1, -1) + ']"' : "[hidden: " + raw + "]");
+    })
     .join("\\n");
 };
 `;

@@ -1,6 +1,51 @@
 import { normalizeText } from "../runtime/text.js";
 
 /**
+ * Page code that defines `visuallyHidden(element, computed)`: whether an element, given its
+ * computed style, is hidden from view but kept for screen readers, as `visibleText` judges it.
+ */
+export const visuallyHiddenCode = String.raw`  const clipsOverflow = (value) => value === "hidden" || value === "clip";
+  const lengths = (text) => text.trim().split(/[\s,]+/u).map((value) => parseFloat(value));
+  // clip: rect(top, right, bottom, left) with no area left, such as rect(0 0 0 0) or rect(1px 1px 1px 1px).
+  const clipHides = (clip) => {
+    const rect = /^rect\((.*)\)$/u.exec(clip);
+    if (rect === null) return false;
+    const [top, right, bottom, left] = lengths(rect[1]);
+    return (Number.isFinite(top) && Number.isFinite(bottom) && bottom <= top)
+      || (Number.isFinite(left) && Number.isFinite(right) && right <= left);
+  };
+  // clip-path: inset() that takes in at least the whole box, such as inset(50%).
+  const insetHides = (clipPath) => {
+    const inset = /^inset\(([^)]{0,200}?)(?:\s{1,10}round\b[^)]{0,200})?\)$/u.exec(clipPath);
+    if (inset === null || !/^[\d.\s%]+$/u.test(inset[1])) return false;
+    const [top = 0, right = top, bottom = top, left = right] = lengths(inset[1]);
+    return top + bottom >= 100 || left + right >= 100;
+  };
+  // Hidden from view but kept for screen readers: a clipped box of at most 1 px, a zero-area
+  // clip, or a box placed wholly outside the page.
+  const visuallyHidden = (element, computed) => {
+    // An element with display: contents has no box to clip or move; its children are judged.
+    if (computed.display === "contents") return false;
+    if (insetHides(computed.clipPath)) return true;
+    if (parseFloat(computed.textIndent) <= -999) return true;
+    const positioned = computed.position === "absolute" || computed.position === "fixed";
+    if (positioned && clipHides(computed.clip)) return true;
+    const clipped = clipsOverflow(computed.overflowX) && clipsOverflow(computed.overflowY);
+    if (!clipped && !positioned) return false;
+    const rect = element.getBoundingClientRect();
+    if (clipped && rect.width <= 1 && rect.height <= 1) return true;
+    if (!positioned) return false;
+    const fixed = computed.position === "fixed";
+    const x = fixed ? 0 : scrollX;
+    const y = fixed ? 0 : scrollY;
+    const width = fixed ? innerWidth : document.documentElement.scrollWidth;
+    const height = fixed ? innerHeight : document.documentElement.scrollHeight;
+    const before = (end, size) => end < 0 || (size > 0 && end <= 0);
+    return before(rect.right + x, rect.width) || before(rect.bottom + y, rect.height)
+      || rect.left + x >= width || rect.top + y >= height;
+  };`;
+
+/**
  * Page code for a Kernel call body, where `page` is in scope: paste it at the top of the code
  * string, then read values with `visibleText`, `visibleTexts` or `readRows` and your verified
  * Playwright locators. They read only the text a person sees on the rendered page, never the
@@ -92,46 +137,7 @@ const visibleTextPage = (elements, arg) => {
     if (name === "script" || name === "style" || name === "noscript" || name === "template") return true;
     return element.namespaceURI === "http://www.w3.org/2000/svg" && (name === "title" || name === "desc");
   };
-  const clipsOverflow = (value) => value === "hidden" || value === "clip";
-  const lengths = (text) => text.trim().split(/[\s,]+/u).map((value) => parseFloat(value));
-  // clip: rect(top, right, bottom, left) with no area left, such as rect(0 0 0 0) or rect(1px 1px 1px 1px).
-  const clipHides = (clip) => {
-    const rect = /^rect\((.*)\)$/u.exec(clip);
-    if (rect === null) return false;
-    const [top, right, bottom, left] = lengths(rect[1]);
-    return (Number.isFinite(top) && Number.isFinite(bottom) && bottom <= top)
-      || (Number.isFinite(left) && Number.isFinite(right) && right <= left);
-  };
-  // clip-path: inset() that takes in at least the whole box, such as inset(50%).
-  const insetHides = (clipPath) => {
-    const inset = /^inset\(([^)]{0,200}?)(?:\s{1,10}round\b[^)]{0,200})?\)$/u.exec(clipPath);
-    if (inset === null || !/^[\d.\s%]+$/u.test(inset[1])) return false;
-    const [top = 0, right = top, bottom = top, left = right] = lengths(inset[1]);
-    return top + bottom >= 100 || left + right >= 100;
-  };
-  // Hidden from view but kept for screen readers: a clipped box of at most 1 px, a zero-area
-  // clip, or a box placed wholly outside the page.
-  const visuallyHidden = (element, computed) => {
-    // An element with display: contents has no box to clip or move; its children are judged.
-    if (computed.display === "contents") return false;
-    if (insetHides(computed.clipPath)) return true;
-    if (parseFloat(computed.textIndent) <= -999) return true;
-    const positioned = computed.position === "absolute" || computed.position === "fixed";
-    if (positioned && clipHides(computed.clip)) return true;
-    const clipped = clipsOverflow(computed.overflowX) && clipsOverflow(computed.overflowY);
-    if (!clipped && !positioned) return false;
-    const rect = element.getBoundingClientRect();
-    if (clipped && rect.width <= 1 && rect.height <= 1) return true;
-    if (!positioned) return false;
-    const fixed = computed.position === "fixed";
-    const x = fixed ? 0 : scrollX;
-    const y = fixed ? 0 : scrollY;
-    const width = fixed ? innerWidth : document.documentElement.scrollWidth;
-    const height = fixed ? innerHeight : document.documentElement.scrollHeight;
-    const before = (end, size) => end < 0 || (size > 0 && end <= 0);
-    return before(rect.right + x, rect.width) || before(rect.bottom + y, rect.height)
-      || rect.left + x >= width || rect.top + y >= height;
-  };
+${visuallyHiddenCode}
   const excluded = (element, computed) =>
     arg.as === "accessible" ? element.getAttribute("aria-hidden") === "true" : visuallyHidden(element, computed);
   const childrenOf = (node) =>
