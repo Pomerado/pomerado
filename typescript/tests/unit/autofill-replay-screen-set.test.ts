@@ -255,7 +255,7 @@ it("reads a password screen that comes back whole as returned, not as a later sc
   expect(site.clicks).toEqual(["#next", "#go"]);
 });
 
-it("passes over no approval to a later screen with a field, as a password screen come back after its send", async () => {
+it("passes over no approval on its page to a later screen with a field, as a password screen come back after its send", async () => {
   const site = scriptedSite(
     {
       "sign-in": { path: "/sign-in", controls: ["#email", "#next"] },
@@ -264,20 +264,19 @@ it("passes over no approval to a later screen with a field, as a password screen
     () => "password",
   );
   const onPage = { ...password, page: `${origin}/sign-in` };
-  const started = Date.now();
   const outcome = await replay(
     recipeOf(
       email,
       onPage,
-      { page: `${origin}/approve`, fields: [], approval: "device" },
+      { page: `${origin}/sign-in`, fields: [], approval: "device" },
       { ...onPage, refills: ["password"] },
     ),
     site.hooks,
     { password: "synthetic-password" },
   );
-  expect(outcome.reason).toBe("screen_changed");
+  // It asks for the approval, and never sends the password again.
+  expect(outcome.asked).toContain("approved");
   expect(site.clicks).toEqual(["#next", "#go"]);
-  expect(Date.now() - started).toBeLessThan(1_000);
 });
 
 // One page, one button, two looks: email and password together for one login, and fewer fields
@@ -396,6 +395,22 @@ it("fills a screen at once where the screen with its controls and a field more i
   const started = Date.now();
   const outcome = await replay(
     recipeOf({ ...emailAlone, page: `${origin}/sign-in` }, { ...emailAndPassword, page: `${origin}/password` }),
+    site.hooks,
+    { password: "synthetic-password", stepWaitMs: 5_000 },
+  );
+  expect(outcome.reason).toBe("signed_in");
+  expect(site.filled).toEqual([["#email"]]);
+  expect(Date.now() - started).toBeLessThan(1_000);
+});
+
+it("fills a screen in a pop-up at once where the screen with its controls and a field more is on the page", async () => {
+  const site = scriptedSite(
+    { "sign-in": { path: "/sign-in", controls: ["#email", "#go"] } },
+    (screen) => (screen === "sign-in" ? "home" : undefined),
+  );
+  const started = Date.now();
+  const outcome = await replay(
+    recipeOf({ ...emailAlone, page: `${origin}/sign-in`, popup: { opener: "primary", origin: "https://id.example.test" } }, emailAndPassword),
     site.hooks,
     { password: "synthetic-password", stepWaitMs: 5_000 },
   );
