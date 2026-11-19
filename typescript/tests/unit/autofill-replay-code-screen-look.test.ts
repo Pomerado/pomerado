@@ -3,7 +3,7 @@ import { expect, it } from "vitest";
 import type { AutofillRecipe } from "../../src/destinations/autofill-recipe.js";
 import type { AutofillRefusal, AutofillStep } from "../../src/destinations/autofill-step.js";
 import { replayAutofillRecipe } from "../../src/runtime/autofill-replay.js";
-import type { AutofillHooks } from "../../src/runtime/autofill-state.js";
+import type { AutofillHooks, LandingControls } from "../../src/runtime/autofill-state.js";
 
 // The marker wait after the screens ends at a code screen the recipe never recorded only for a
 // replay that hands over at one (`endAtUnrecordedCode`). Every other replay never looks for one
@@ -65,9 +65,10 @@ const shown = (step: AutofillStep, page: string, empty: boolean, codeName?: stri
  * (`not_found`), still showing (`shown`), or another refusal. The code screen's fill may type the
  * code behind a submit that stays disabled (`typed`), or type nothing (`nothing`), sending nothing
  * either way. A read's replay (`cantTell`) may end on a page that can't tell, off its marker's
- * path. The code field may carry a name (`codeName`). The full check's confirmation reads signed
- * in unless `confirmed` is false. Returns when the replay looked for a code field, when it typed
- * the code and how many code fills it made, in test-clock ms.
+ * path. The code field may carry a name (`codeName`), or the page after the password show none
+ * (`codeBox: false`). The full check's confirmation reads signed in unless `confirmed` is false. A
+ * host may count the page's controls (`landing`). Returns when the replay looked for a code field,
+ * when it typed the code and how many code fills it made, in test-clock ms.
  */
 const replay = async (options: {
   readonly endAtUnrecordedCode?: boolean;
@@ -75,7 +76,9 @@ const replay = async (options: {
   readonly codeFill?: "typed" | "nothing";
   readonly cantTell?: true;
   readonly codeName?: string;
+  readonly codeBox?: false;
   readonly confirmed?: false;
+  readonly landing?: LandingControls;
 }) => {
   let passwordSent = false;
   let codeSent = false;
@@ -105,11 +108,14 @@ const replay = async (options: {
           : { signedIn: true as const, url: `${origin}/account` },
       ),
     ...(options.cantTell ? { confirmCantTell: () => Effect.void } : {}),
+    ...(options.landing === undefined
+      ? {}
+      : { landingControls: () => Effect.succeed(options.landing) }),
     inspect: (step) =>
       Effect.gen(function* () {
         if (step.fields[0]?.slot === "code") {
           codeLooks.push(yield* Clock.currentTimeMillis);
-          return passwordSent && !codeSent
+          return passwordSent && !codeSent && options.codeBox !== false
             ? shown(step, `${origin}/code`, true, options.codeName)
             : { outcome: "refused" as const, reason: "not_found" as const };
         }
@@ -291,3 +297,37 @@ it("keeps a hand-over replay's marker wait going, and types no code, on a page w
   expect(codeFills).toBe(0);
   expect(codeTypedAt).toBeUndefined();
 });
+
+// A read whose sign-in sent the password and ended on a page that can't tell, where the look for an
+// unrecorded code screen found no box its rule takes, records that page with no value: its kind,
+// why the look passed it and the host's counts of its controls, as on a page that asks how to send
+// a code. A host that counts nothing still gets the replay's own part.
+it.each([
+  [
+    "with the host's counts",
+    { codeBoxes: 0, methodChoices: 2, passwordFields: 0 },
+    {
+      page: "sign_in_origin",
+      codeLook: "not_found",
+      codeBoxes: 0,
+      methodChoices: 2,
+      passwordFields: 0,
+    },
+  ],
+  ["from a host that counts nothing", undefined, { page: "sign_in_origin", codeLook: "not_found" }],
+] as const)(
+  "records the page a read's sign-in ended on that can't tell %s",
+  async (_name, landing, expected) => {
+    const { outcome, codeFills } = await replay({
+      submitted: "not_found",
+      cantTell: true,
+      codeBox: false,
+      confirmed: false,
+      ...(landing === undefined ? {} : { landing }),
+    });
+    expect(codeFills).toBe(0);
+    expect(outcome).toEqual(
+      expect.objectContaining({ outcome: "signed_in", cantTell: true, landing: expected }),
+    );
+  },
+);

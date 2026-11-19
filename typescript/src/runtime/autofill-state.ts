@@ -125,6 +125,13 @@ export interface AutofillHooks<E = unknown, V extends string = string> {
    * identifiers the sign-in used, binding nothing. Absent, such a replay fails its sign-in check.
    */
   readonly confirmCantTell?: (identifiers: SentIdentifiers) => Effect.Effect<void, E>;
+  /**
+   * How many code boxes, method-choice controls and password fields the page shows, counts only and
+   * never a value, for the record of a page a sign-in that sent the login ended on and can't tell
+   * (`CantTellLanding`). Undefined when the host could not read them; it never fails. A host
+   * without it records that page with no counts.
+   */
+  readonly landingControls?: () => Effect.Effect<LandingControls | undefined>;
   /** Hears each same-site load that failed, as it fails; returns the removal. */
   readonly onLoadFailure?: (listener: (failure: unknown) => void) => () => void;
   /**
@@ -151,6 +158,13 @@ export interface AutofillHooks<E = unknown, V extends string = string> {
    * its DOM and its navigation's HTTP status, for a check's settling.
    */
   readonly pageState?: () => Effect.Effect<PageState | undefined>;
+}
+
+/** What a page shows, as `landingControls` counts it: never a value, a name or a word of the page. */
+export interface LandingControls {
+  readonly codeBoxes: number;
+  readonly methodChoices: number;
+  readonly passwordFields: number;
 }
 
 /** The host's masking of the values a sign-in types, and its check of a text for them. */
