@@ -1128,6 +1128,21 @@ test.describe("readiness before acting", () => {
     expect(answer.message).toMatch(/: 2 visible elements match; /u);
   });
 
+  test("two visible links that open the same page are one control", async ({ page }) => {
+    const link = `<a href="https://shop.example.test/orders/1">View order</a>`;
+    await page.setContent(`<p>Box 1 ${link}</p><p>Box 2 ${link}</p>`);
+    const answer = await ready(page, `page.getByRole("link", { name: "View order" })`, "");
+    expect(answer).toMatchObject({ waitedFor: [] });
+  });
+
+  test("two visible links with the same text that open different pages stay ambiguous", async ({ page }) => {
+    await page.setContent(`
+      <p>Order 1 <a href="https://shop.example.test/orders/1">View order</a></p>
+      <p>Order 2 <a href="https://shop.example.test/orders/2">View order</a></p>`);
+    const answer = await ready(page, `page.getByRole("link", { name: "View order" })`, "");
+    expect(answer.reason).toBe("ready_ambiguous");
+  });
+
   test("a control that never appears fails naming it absent, and a hidden one naming it hidden", async ({ page }) => {
     await page.setContent(`<button hidden>Save</button>`);
     expect((await ready(page, `page.getByRole("button", { name: "Pay" })`, "")).message).toMatch(/: no element matches; /u);
