@@ -121,14 +121,7 @@ export const showsAnotherScreen = <E>(
   ran?: AutofillStep,
 ) =>
   Effect.gen(function* () {
-    if (
-      !pageMatches(page, currentPage) ||
-      (current.fields.length > 0 &&
-        probe.fields.some(
-          (field) => !current.fields.some((previous) => previous.selector === field.selector),
-        ))
-    )
-      return true;
+    if (!pageMatches(page, currentPage) || fieldOfItsOwn(probe, current)) return true;
     const own = controlsOf(probe);
     const fields = [current, ...before].flatMap((step) => step.fields);
     if (fields.every((field) => own.has(field.selector))) return false;
@@ -144,13 +137,22 @@ export const showsAnotherScreen = <E>(
     return true;
   });
 
+/** Whether `probe` has a field the `current` screen lacks, where that screen has a field. */
+const fieldOfItsOwn = (probe: AutofillStep, current: AutofillStep) =>
+  current.fields.length > 0 &&
+  probe.fields.some(
+    (field) => !current.fields.some((previous) => previous.selector === field.selector),
+  );
+
 /**
- * The later recorded screens on the page of `step` that hold every control of it and a field it
- * lacks, as an email and password screen does an email screen's with the same button: where one
- * shows, the page is that screen, not `step` (`makeReplayScreenWait`).
+ * The later recorded screens on the page and in the pop-up of `step`, on `currentPage`, that hold
+ * every control of it and a field it lacks, as an email and password screen does an email
+ * screen's with the same button: where one shows, the page is that screen, not `step`
+ * (`makeReplayScreenWait`). A step with no field, as an approval or a button alone is, has none.
  */
 const fullerScreens = (
   step: AutofillStep,
+  currentPage: RecordedPage,
   later: readonly AutofillRecipeStep[],
   resolve: (request: AutofillStepRequest) => AutofillStep,
 ) => {
@@ -160,8 +162,10 @@ const fullerScreens = (
     const fuller = resolve(recorded);
     const controls = controlsOf(fuller);
     return (
+      pageMatches(recorded.page, currentPage) &&
+      fuller.popup?.origin === step.popup?.origin &&
       own.every((selector) => controls.has(selector)) &&
-      fuller.fields.some((field) => !step.fields.some((mine) => mine.selector === field.selector))
+      fieldOfItsOwn(fuller, step)
     );
   });
 };
@@ -198,7 +202,7 @@ export const inspectReplayProgression = <E>(
           return {
             next: recorded,
             page: found.page,
-            byLook: holdsNoControlOfItsOwn(probe, current, before),
+            byLook: !fieldOfItsOwn(probe, current) && holdsNoControlOfItsOwn(probe, current, before),
           } as const;
       }
     }
@@ -598,7 +602,7 @@ export const makeReplayScreenWait = <
       if (!("outcome" in inspected)) {
         // A later recorded screen with every control of this one and a field more is the one
         // the page shows, as email and password together are where an email screen was recorded.
-        for (const recorded of fullerScreens(step, later, resolve)) {
+        for (const recorded of fullerScreens(step, currentPage, later, resolve)) {
           const fuller = yield* hooks.inspect(resolve(recorded));
           if (!("outcome" in fuller) && screens.matches(fuller.page, recorded))
             return yield* passOver(step, recorded);
@@ -678,7 +682,7 @@ export const makeReplayScreenWait = <
       let waitUntil = until;
       const held = holdShown(input, progress, timing);
       const look: { since?: number | undefined } = {};
-      const fuller = fullerScreens(step, later, resolve).length > 0;
+      const fuller = fullerScreens(step, current, later, resolve).length > 0;
       while (true) {
         const due = (yield* now) >= waitUntil;
         const stage = yield* inspectStage(step, current, later, alternatives, due, look);

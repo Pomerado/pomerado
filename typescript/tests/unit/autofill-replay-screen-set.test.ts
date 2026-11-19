@@ -255,6 +255,31 @@ it("reads a password screen that comes back whole as returned, not as a later sc
   expect(site.clicks).toEqual(["#next", "#go"]);
 });
 
+it("passes over no approval to a later screen with a field, as a password screen come back after its send", async () => {
+  const site = scriptedSite(
+    {
+      "sign-in": { path: "/sign-in", controls: ["#email", "#next"] },
+      password: { path: "/sign-in", controls: ["#password", "#go"] },
+    },
+    () => "password",
+  );
+  const onPage = { ...password, page: `${origin}/sign-in` };
+  const started = Date.now();
+  const outcome = await replay(
+    recipeOf(
+      email,
+      onPage,
+      { page: `${origin}/approve`, fields: [], approval: "device" },
+      { ...onPage, refills: ["password"] },
+    ),
+    site.hooks,
+    { password: "synthetic-password" },
+  );
+  expect(outcome.reason).toBe("screen_changed");
+  expect(site.clicks).toEqual(["#next", "#go"]);
+  expect(Date.now() - started).toBeLessThan(1_000);
+});
+
 // One page, one button, two looks: email and password together for one login, and fewer fields
 // for another whose site keeps its email or asks for it alone. The fewer-field screen has no
 // control of its own, so only the fuller screen's field staying gone, or showing, tells them apart.
@@ -263,6 +288,7 @@ const emailAndPassword = { ...onSignIn, fields: [...email.fields, ...password.fi
 const emailAlone = { ...email, submit: "#go" };
 
 it("takes a later screen with fewer fields than the screen it waits for once that screen's other field stays gone", async () => {
+  const started = Date.now();
   const site = scriptedSite(
     { "sign-in": { path: "/sign-in", controls: ["#password", "#go"] } },
     (screen) => (screen === "sign-in" ? "home" : undefined),
@@ -274,7 +300,10 @@ it("takes a later screen with fewer fields than the screen it waits for once tha
   );
   expect(outcome.reason).toBe("signed_in");
   expect(site.filled).toEqual([["#password"]]);
-});
+  // It holds the look once, where the screen it waits for may still draw its email box, and not
+  // again at the code screen, where the password box is a field that screen lacks.
+  expect(Date.now() - started).toBeLessThan(2_900);
+}, 15_000);
 
 it("waits for the screen it waits for while its other field draws, rather than take the fewer-field screen", async () => {
   const drawn = Date.now() + 300;
@@ -354,9 +383,25 @@ it("never takes a fewer-field screen whose every control the screen that just ra
     site.hooks,
     { password: "synthetic-password" },
   );
-  expect(outcome.reason).not.toBe("signed_in");
+  expect(outcome.reason).toBe("not_found");
   expect(site.filled).toEqual([["#email", "#password"]]);
   expect(outcome.restarts).toEqual([]);
+});
+
+it("fills a screen at once where the screen with its controls and a field more is recorded on another page", async () => {
+  const site = scriptedSite(
+    { "sign-in": { path: "/sign-in", controls: ["#email", "#go"] } },
+    (screen) => (screen === "sign-in" ? "home" : undefined),
+  );
+  const started = Date.now();
+  const outcome = await replay(
+    recipeOf({ ...emailAlone, page: `${origin}/sign-in` }, { ...emailAndPassword, page: `${origin}/password` }),
+    site.hooks,
+    { password: "synthetic-password", stepWaitMs: 5_000 },
+  );
+  expect(outcome.reason).toBe("signed_in");
+  expect(site.filled).toEqual([["#email"]]);
+  expect(Date.now() - started).toBeLessThan(1_000);
 });
 
 it("waits for a required choice that draws after the fields beside it, after a screen ran", async () => {
