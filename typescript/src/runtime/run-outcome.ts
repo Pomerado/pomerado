@@ -110,6 +110,15 @@ export interface OutcomeRevision {
 }
 
 /**
+ * Whether the run recorded its confirmation while its last declared commit step stayed
+ * `not_sent`: the confirmation came after an earlier step, so it is that step's done marker,
+ * never the write's. A write is done only by its last declared step's own confirmation, so such
+ * a run's write may still be unfinished, though its runner's journal reads `verified`.
+ */
+export const confirmedBeforeLastStep = (marks: readonly CommitMark[] | undefined) =>
+  marks?.at(-1)?.state === "not_sent" && marks.some((mark) => mark.state === "confirmed");
+
+/**
  * Whether the runner's evidence verifies the run. A write published with a declared confirmation
  * is verified only by the confirmation it recorded (a script's `verified()` with its kind, an
  * HTTP implementation's `journal.confirmed`); an HTTP implementation's bare `journal.verified` is

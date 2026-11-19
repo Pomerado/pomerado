@@ -495,7 +495,12 @@ const readyWaitInPage = (elements, spec) => {
   const visible = elements.filter(shows);
   if (elements.length === 0) return { blockers: ["absent"] };
   if (visible.length === 0) return { blockers: ["hidden"] };
-  if (visible.length > 1) return { blockers: ["ambiguous"], visible: visible.length };
+  // Links that open the same other page the same way are one control, such as one record a page
+  // lists twice. A link to the page itself, such as "#" or a script's, says nothing of where it goes.
+  const opens = (element) => typeof element.href === "string" && /^https?:$/.test(element.protocol) &&
+    element.href.split("#")[0] !== location.href.split("#")[0] ? element.href + " " + element.target : null;
+  if (visible.length > 1 && (opens(visible[0]) === null || visible.some((element) => opens(element) !== opens(visible[0]))))
+    return { blockers: ["ambiguous"], visible: visible.length };
   const element = visible[0];
   const blockers = [];
   const details = {};
