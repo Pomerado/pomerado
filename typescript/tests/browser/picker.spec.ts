@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 import { Schema } from "effect";
+import { pickedOptionMark } from "../../src/browser/form-controls.js";
 import { matchAddressRows } from "../../src/browser/picker-address.js";
 import { pickChoices } from "../../src/browser/picker.js";
 import { type Api, call, callFailure, callRead, serve, submitted } from "./picker-fixture.js";
@@ -312,9 +313,19 @@ test("pickerTypeAddress types the address, and the whole row is taken once the t
     matches: ["Example Building, 1 Example Bldg, Example City"],
     unit: "Suite 5",
   });
+  // Each press on a row, as a host that tells a script's own picks from core's sees it.
+  await page.evaluate((mark) => {
+    const presses: unknown[] = [];
+    Reflect.set(window, "presses", presses);
+    document.addEventListener("pointerdown", (event) => {
+      presses.push((event.target as Element).closest(`[${mark}]`) !== null);
+    }, true);
+  }, pickedOptionMark);
   const whole = await pickAddressRow(page, field, address, { before: `await ${more}.click(); await ${more}.waitFor({ state: "detached" });` });
   expect(whole.clicked).toEqual({ picked: true, label: "Example Building, 1 Example Bldg, Example City, CA 94000, US", unit: "Suite 5" });
   expect(await submitted(page)).toEqual({ pickup: "w1" });
+  // The script's own press on the list's control to list more is its own; the row core returned is core's.
+  expect(await page.evaluate(() => Reflect.get(window, "presses"))).toEqual([false, true]);
 });
 
 // A row the list no longer shows, once the page changed it, is no row to click: the refusal quotes

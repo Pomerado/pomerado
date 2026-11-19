@@ -1778,6 +1778,9 @@ const pickerMatchAddress = async (control, match, options = {}) => {
     const tag = rows[at].tag;
     const hit = pickerTag(s, "data-pomerado-pick-hit", tag);
     const row = await ((await hit.count()) > 0 ? hit : pickerTag(s, "data-pomerado-pick", tag)).elementHandle(s.act());
+    // Marked as every core pick is (pickedOptionMark), with no token, so cleanup leaves it for the
+    // script's click.
+    await row.evaluate((element) => element.setAttribute("data-pomerado-pick", ""));
     return { picked: true, row, label: match.label, unit: match.unit };
   } catch (error) {
     throw pickerTimedOut(error, s);
