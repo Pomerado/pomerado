@@ -96,32 +96,40 @@ const objectConsts = (program: Program) => {
 /**
  * A contract's literal `questions`: an object literal's own, or those of a top-level const it
  * names or spreads, a later key winning. `undefined` when it declares none, `notLiteral` when only
- * running the code would tell. A spread it can't resolve keeps a `questions` key read before it.
+ * running the code would tell. A spread or computed key it can't read keeps only a `questions`
+ * key written before it in the same literal. Each name resolves once; a cycle reads as unread.
  */
 const contractQuestions = (
   contract: Expression,
   consts: ReadonlyMap<string, ObjectExpression>,
+  resolved = new Map<string, unknown>(),
 ): unknown => {
   if (contract.type === "Identifier") {
     const bound = consts.get(contract.name);
     if (bound === undefined) return notLiteral;
-    const others = new Map(consts);
-    others.delete(contract.name);
-    return contractQuestions(bound, others);
+    if (!resolved.has(contract.name)) {
+      resolved.set(contract.name, notLiteral);
+      resolved.set(contract.name, contractQuestions(bound, consts, resolved));
+    }
+    return resolved.get(contract.name);
   }
   if (contract.type !== "ObjectExpression") return notLiteral;
   let questions: unknown;
+  let keyed = false;
   for (const property of contract.properties) {
-    if (property.type === "SpreadElement") {
-      const spread = contractQuestions(property.argument, consts);
-      if (spread !== undefined && (spread !== notLiteral || questions === undefined))
-        questions = spread;
-    } else if (
-      !property.computed &&
-      ((property.key.type === "Identifier" && property.key.name === "questions") ||
-        (property.key.type === "Literal" && property.key.value === "questions"))
-    )
-      questions = literal(property.value);
+    if (property.type === "Property" && !property.computed) {
+      if (
+        (property.key.type === "Identifier" && property.key.name === "questions") ||
+        (property.key.type === "Literal" && property.key.value === "questions")
+      )
+        [questions, keyed] = [literal(property.value), true];
+      continue;
+    }
+    const spread =
+      property.type === "SpreadElement"
+        ? contractQuestions(property.argument, consts, resolved)
+        : notLiteral;
+    if (spread === notLiteral ? !keyed : spread !== undefined) [questions, keyed] = [spread, false];
   }
   return questions;
 };
@@ -165,7 +173,10 @@ export const draftQuestionDeclarations = (
   );
 };
 
-/** Whether a draft calls `defineOperation` with questions only running its code would tell. */
+/**
+ * Whether only running a draft's code would tell its questions: it does not parse, or it calls
+ * `defineOperation` more than once, or with a contract or questions this reader can't resolve.
+ */
 export const draftQuestionsUnread = (path: string, source: string) =>
   draftQuestionValue(path, source) === notLiteral;
 

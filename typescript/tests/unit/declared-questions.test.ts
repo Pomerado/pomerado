@@ -46,13 +46,19 @@ export default defineOperation(definition, async () => ({}));`);
     expect(draftQuestionDeclarations("src/tool.mjs", source)).toEqual({ note });
   });
 
-  it("reads a spread const's questions, a later questions key winning", () => {
+  it("reads a spread const's questions, a later key winning", () => {
     const base = `const base = {name:"ask_note",input:Schema.Unknown,output:Schema.Unknown,questions:{seat:{type:"text",prompt:"Which seat?"}}};`;
+    const read = (contract: string) =>
+      draftQuestionDeclarations("src/tool.mjs", operation(`${base}
+export default defineOperation(${contract}, async () => ({}));`));
     const seat = { seat: { type: "text", prompt: "Which seat?" } };
-    expect(draftQuestionDeclarations("src/tool.mjs", operation(`${base}
-export default defineOperation({...base}, async () => ({}));`))).toEqual(seat);
-    expect(draftQuestionDeclarations("src/tool.mjs", operation(`${base}
-export default defineOperation({...base,questions:{note:{type:"text",prompt:"Which note should I keep?"}}}, async () => ({}));`))).toEqual({ note });
+    const noteKey = `questions:{note:{type:"text",prompt:"Which note should I keep?"}}`;
+    expect(read("{...base}")).toEqual(seat);
+    expect(read(`{${noteKey},...base}`)).toEqual(seat);
+    expect(read(`{...base,${noteKey}}`)).toEqual({ note });
+    // A spread it can't resolve keeps only a questions key written before it, as before.
+    expect(read(`{${noteKey},...imported}`)).toEqual({ note });
+    expect(read("{...base,...imported}")).toEqual({});
   });
 
   it("tells questions it can't read without running the code from none declared", () => {

@@ -250,7 +250,7 @@ Guardian reviews five built-in kinds of request: execution, question, task updat
 - A call whose run failed returns an error result (`isError`) with its job, `structuredContent` included, a write that may have applied as well.
 - The tool's input carries its own description. A summary of its fields is added only when they aren't listed beside it, as for an input that is a reference.
   - It serves that schema in one canonical form. A reference is inlined where it can be, and an input that recurses keeps its references, with its definitions at the call schema's root.
-- A run asks only the questions publication reviewed, which `pomerado.json` keeps, even when there are none. Any other ask fails as `Undeclared` and asks nobody. An integration saved by an earlier release has none recorded, so it asks only what its entrypoint declares as a plain literal.
+- A run asks only the questions publication reviewed, which `pomerado.json` keeps, even when there are none. Any other ask fails as `Undeclared` and asks nobody. An integration saved by an earlier release has none recorded, so it asks only what its entrypoint declares, read as a step's questions are.
 - Each run starts at the site's root, as the integration's example did. The path of the configured URL isn't loaded. An operation that needs a deeper page opens it itself.
 - `pomerado run` and each served call open a new browser context, so they start with no cookies or storage. A library caller's runs share the browser context of their `createPomerado` scope, and a run doesn't clear it.
 - The operation's output is validated against the output schema before it is returned. It comes back without secret redaction. A write's output that fails the schema still comes back, as the failed jobs below say.
