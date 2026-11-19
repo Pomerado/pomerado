@@ -46,10 +46,10 @@ const ${name} = await (async () => {
  */
 export const markedAriaSnapshotCode = `
 const markedAriaSnapshot = async (locator, options) => {
-  const [aria, splits, hidden] = await Promise.all([
+  const [aria, [splits, hidden]] = await Promise.all([
     locator.ariaSnapshot(options),
     locator
-      .evaluate((root) => {
+      .evaluate((root) => [((root) => {
         const hiddenSelector = '[aria-hidden="true" i]';
         // The outermost aria-hidden element holding each rendered separator the snapshot drops.
         const holders = new Set();
@@ -161,11 +161,7 @@ const markedAriaSnapshot = async (locator, options) => {
           if (recent.length > 128) recent.splice(0, 64);
         }
         return JSON.stringify(splits);
-      }, undefined, { timeout: options?.timeout })
-      .then(JSON.parse)
-      .catch(() => []),
-    locator
-      .evaluate((root) => {
+      })(root), ((root) => {
 ${visuallyHiddenCode}
         // The text of each element held out of view that holds it, one per line (a text holds no
         // line break): the first 200 within 100 ms, or nothing past that time.
@@ -195,9 +191,10 @@ ${visuallyHiddenCode}
           if (!beside.get(parent).has(words(text))) texts.push(text);
         }
         return texts.join("\\n");
-      }, undefined, { timeout: options?.timeout })
-      .then((texts) => (typeof texts === "string" && texts !== "" ? texts.split("\\n") : []))
-      .catch(() => []),
+      })(root)], undefined, { timeout: options?.timeout })
+      .then(([splits, texts]) =>
+        [JSON.parse(splits), typeof texts === "string" && texts !== "" ? texts.split("\\n") : []])
+      .catch(() => [[], []]),
   ]);
   if (splits.length === 0 && hidden.length === 0) return aria;
   const lines = aria.split("\\n");
