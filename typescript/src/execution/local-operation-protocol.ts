@@ -224,6 +224,8 @@ export const LocalOperationMessage = Schema.Union(
       { exact: true },
     ),
     refusal: Schema.optionalWith(InputRefusal, { exact: true }),
+    /** The script's refusal named its input with an explicitly empty list of choices. */
+    offersNone: Schema.optionalWith(Schema.Literal(true), { exact: true }),
     unapplied: Schema.optionalWith(InputNotApplied, { exact: true }),
     ...JournalFields,
   }),
