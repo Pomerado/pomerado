@@ -84,13 +84,10 @@ const markedAriaSnapshot = async (locator, options) => {
             .split(/["'\\\\]/)
             .map((run) => run.replace(/\\s+/g, " ").trim())
             .reduce((longest, run) => (run.length > longest.length ? run : longest), "");
-        // An element shown as its children only has no box of its own, nor has a select's option.
+        // An element shown as its children only has no box of its own.
         const rendered = (element) => {
           const style = getComputedStyle(element);
-          const box =
-            style.display === "contents"
-              ? element.parentElement
-              : (element.closest("select") ?? element);
+          const box = style.display === "contents" ? element.parentElement : element;
           return style.visibility === "visible" && box?.checkVisibility() === true;
         };
         const control = (element) =>
@@ -140,6 +137,16 @@ const markedAriaSnapshot = async (locator, options) => {
           while (node.lastChild !== null) node = node.lastChild;
           return node;
         };
+        // A form's anchor, where a select's option, which has no box of its own, shows while its
+        // select does, unless it is hidden itself.
+        const formAnchorOf = (node) => {
+          const option = node.nodeType === Node.TEXT_NODE ? node.parentElement : null;
+          if (option?.localName !== "option") return anchorOf(node);
+          const select = option.closest("select");
+          return select !== null && getComputedStyle(option).display !== "none" && rendered(select)
+            ? words(node.nodeValue)
+            : "";
+        };
         // Up to \`count\` anchors in \`scope\` next to \`node\`, after it or (\`back\`) before
         // it, in document order, past aria-hidden subtrees.
         const anchorsBeside = (scope, node, back, count) => {
@@ -160,7 +167,7 @@ const markedAriaSnapshot = async (locator, options) => {
                 : null;
             if (hidden !== null) walk.currentNode = back ? hidden : lastOf(hidden);
             else if (candidate(next)) {
-              const anchor = anchorOf(next);
+              const anchor = formAnchorOf(next);
               if (anchor !== "") anchors[back ? "unshift" : "push"](anchor);
             }
           }
@@ -256,15 +263,13 @@ const markedAriaSnapshot = async (locator, options) => {
   };
   // The last line of the last form marked: a form's own lines come after it.
   let done = -1;
-  // Where the next form's first anchor is looked for: past the last form's first anchor.
+  // Where the next form's first anchor is looked for: past the last form's first anchor found.
   let resume = [0, 0];
   for (const [before, inside, after] of forms) {
     // Its first anchor, at one of the next \`lookahead\` places its text is found, with the
     // anchors before it each shortly before the next, the last of them on an earlier line, so
     // the form starts on a line of its own.
     let first = seek(inside[0], resume, lines.length);
-    if (first === undefined) continue;
-    resume = first;
     let previous;
     for (let tries = 1; first !== undefined; tries++) {
       let at = [first[0], first[1] - inside[0].length];
@@ -276,6 +281,7 @@ const markedAriaSnapshot = async (locator, options) => {
       first = tries < lookahead ? seek(inside[0], first, lines.length) : undefined;
     }
     if (first === undefined) continue;
+    resume = first;
     // Its own anchors in turn: one not found is passed over, but not its last.
     let last = first;
     let found = true;
