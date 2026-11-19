@@ -175,8 +175,10 @@ export const isTwoFactorOption = (
  *   replay presses. None when absent, so the replay stops before any screen that names a choice;
  * - `siteAnswer`: what the site's own answer to the credential screen the replay submitted last
  *   says, as the host reads it, for a replay whose submitted screen came back (`SiteAnswer`): read
- *   right after a submit that sent the password, and when the replay would end on that screen. None
- *   when absent, so that replay goes on, or ends there, as the screens decide.
+ *   right after a submit that sent the password while a recorded screen remains after it, and when
+ *   the replay would end on that screen. The first read may come before the site answered, and a
+ *   read with no answer is read again later, so a host never keeps an empty answer for the submit.
+ *   None when absent, so that replay goes on, or ends there, as the screens decide.
  */
 /**
  * What a site's own answer to a submitted credential screen that came back says, as a host reads

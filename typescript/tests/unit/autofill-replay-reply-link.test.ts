@@ -61,6 +61,23 @@ const passwordThenButton = signInRecipe(
   ],
   { selector: "#account" },
 );
+// The same, with the password's error marker recorded.
+const markedThenButton = signInRecipe(
+  [
+    {
+      page: login,
+      fields: [
+        { selector: "#user", slot: "username", accepts: ["username"] },
+        { selector: "#password", slot: "password" },
+      ],
+      submit: "#sign-in",
+      rejectedMarkers: [{ slot: "password", selector: "#password-error" }],
+    },
+    { page: login, fields: [], submit: "#continue" },
+    { page: login, fields: [{ selector: "#code", slot: "code" }], submit: "#verify" },
+  ],
+  { selector: "#account" },
+);
 // An identifier screen alone, as a site that only ever signs in by an emailed link records.
 const identifierOnly = signInRecipe(
   [
@@ -94,6 +111,7 @@ const replay = (options: {
   readonly shown?: readonly string[];
   readonly signsIn?: true;
   readonly passwordGone?: true;
+  readonly marked?: true;
   readonly siteAnswer?: SiteAnswer | "none";
 }) => {
   const state = { page: login, shown: new Set(options.shown ?? ["#user", "#password"]) };
@@ -115,6 +133,9 @@ const replay = (options: {
       }),
     check,
     confirm: check,
+    ...(options.marked === true
+      ? { markerVisible: (selector: string) => Effect.succeed(selector === "#password-error") }
+      : {}),
     inspect: (step) =>
       Effect.sync(() =>
         state.page === login &&
@@ -220,6 +241,8 @@ it("asks nothing when the site's answer asked for no link, or the site signed in
     expect(returned.asked).toEqual([]);
     expect(returned.opened).toEqual([login]);
     expect(returned.outcome).toEqual({ outcome: "unclear", reason: "credential_screen_returned" });
+    // With no recorded screen after the password, only the ending reads the site's answer.
+    expect(returned.reads).toBe(siteAnswer === undefined ? 0 : 1);
   }
   const signedIn = await replay({ signsIn: true, siteAnswer: "link" });
   expect(signedIn.asked).toEqual([]);
@@ -253,6 +276,7 @@ it("reads the site's answer to the password before it presses the next recorded 
   expect(refused.asked).toEqual([]);
   expect(refused.pressed).toEqual(["#sign-in"]);
   expect(refused.outcome).toEqual({ outcome: "unclear", reason: "credential_screen_returned" });
+  expect(refused.reads).toBe(1);
 });
 
 // No answer to read, or none at all, goes on as before: the button is pressed and the code screen
@@ -279,4 +303,19 @@ it("goes on to the next recorded screen when the site's answer to the password s
   expect(signedIn.asked).toEqual([]);
   expect(signedIn.outcome).toMatchObject({ outcome: "signed_in" });
   expect(signedIn.reads).toBe(0);
+});
+
+
+// A recorded marker that shows is the site's answer as the recipe records it: the host is never read
+// for it, and the replay ends as the marker says, as before.
+it("ends on a recorded marker that shows, never the host's read of the site's answer", async () => {
+  const shown = ["#user", "#password", "#continue"];
+  const marked = await replay({
+    recipe: markedThenButton,
+    shown,
+    marked: true,
+    siteAnswer: "refused",
+  });
+  expect(marked.reads).toBe(0);
+  expect(marked.outcome).toMatchObject({ reason: "password_rejected", rejectedFields: ["password"] });
 });

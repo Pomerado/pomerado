@@ -545,15 +545,14 @@ const runScreen = <E extends YieldableError, V extends string, L extends Autofil
     }
     // What a screen on its exact origin sent anchors the login's workspace (`admitScreen`).
     noteExactSent(replay, recorded, step, inspection);
-    // The site's own answer to the password decides before the next recorded screen does, which
-    // may show on the very screen the site sent back, as a screen of only a button: a link it
-    // emailed is asked for, and a refused login ends as that returned screen does. An emailed link
-    // recorded after this screen takes the site's link as recorded.
-    if (
-      step.fields.some((field) => field.slot === "password") &&
-      !later.some((next) => next.approval === "email_link")
-    ) {
-      const answer = yield* readAnswer(input, replay);
+    // The site's own answer to the password decides before a later recorded screen does, which
+    // may show on the very screen the site sent back, as a screen of only a button or another
+    // password field: a link it emailed is asked for, and a refused login ends as that returned
+    // screen does. A recorded marker that shows decides first, as the next screen's wait has it.
+    if (step.fields.some((field) => field.slot === "password") && later.length > 0) {
+      const marked = yield* replay.observeRejections;
+      const answer =
+        marked === "unavailable" || marked.length > 0 ? undefined : yield* readAnswer(input, replay);
       if (answer?.said === "link")
         return yield* openAnsweredLink(input, replay, answer.returned.inspection);
       if (answer?.said === "refused") return replay.outcome("credential_screen_returned");
@@ -944,8 +943,9 @@ const walkScreens = <E extends YieldableError, V extends string, L extends Autof
 /**
  * The site's own answer to the credential screen the replay submitted last, come back, password or
  * identifier alike (`returnedScreen`), as the host reads it (`hosted.siteAnswer`), with that screen.
- * None without the host's read, once an emailed link went in or was asked for, or when no screen
- * came back, as after a submit the site signed in on, which never asks the host.
+ * None without the host's read, once an emailed link went in or was asked for, when no screen came
+ * back, as after a submit the site signed in on, which never asks the host, or once the host gave
+ * its answer for that screen.
  */
 const readAnswer = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   input: AutofillReplayInput<E, V, L>,
@@ -960,9 +960,11 @@ const readAnswer = <E extends YieldableError, V extends string, L extends Autofi
     )
       return undefined;
     const returned = yield* replay.returnedScreen;
-    if (returned === undefined) return undefined;
+    if (returned === undefined || replay.progress.answered === returned.step) return undefined;
     const said = yield* read();
-    return said === undefined ? undefined : { said, returned };
+    if (said === undefined) return undefined;
+    replay.progress.answered = returned.step;
+    return { said, returned };
   });
 
 /**
