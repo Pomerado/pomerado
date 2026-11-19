@@ -1042,12 +1042,13 @@ describe("the publication policy", () => {
   // that cart. A cart a later call must find still needs
   // a verified sign-in, and the same-run guest checkout keeps its own clause. Hosts with their own
   // publication policy get it with publicationCartPolicy. A site notice in another container than
-  // the tool's controls, which the accessibility snapshot can hide, never makes that finding.
+  // the tool's controls never makes that finding, even when the accessibility snapshot hides the
+  // divider between them.
   it("lets a cart tool whose own guest cart lives only inside one run publish signed out", () => {
     const rule =
       "A cart tool (one that reads, adds to, changes or checks out a cart) runs signed in, unless it fills the cart and places the order in the same run through the site's guest checkout and its description says so, or its description says it starts its own guest cart that lives only inside one run, which no later call or person must find, as a tool that fills a cart and returns its quote before checkout may, and the source and trusted evidence agree; without a verified sign-in in trusted_execution_context, any other cart tool is a cart_sign_in finding with reason evidence at the description.";
     const notice =
-      "A site notice applies only to the controls in its own container in the captured page's structure, not to those after it in the accessibility snapshot, which can hide dividers, so a cart_sign_in finding never rests on a notice whose container holds no control the tool uses.";
+      "A site notice applies only to the controls in its own container in the captured page's structure, not by its place in the accessibility snapshot, which can hide dividers, so a cart_sign_in finding never rests on a notice whose container holds no control the tool uses.";
     expect(publicationCartPolicy.startsWith(`${rule} ${notice} `)).toBe(true);
     expect(guardianPublicationPolicy.split(rule)).toHaveLength(2);
     expect(publicationFindingCategories).toContain("cart_sign_in");
