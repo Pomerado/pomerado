@@ -913,13 +913,26 @@ describe("output notation checks", () => {
         arrives: Schema.String.annotations({
           description: "Arrival time in the arrival airport's local time, ISO 8601",
         }),
-        departs_at: Schema.String.annotations({ description: "Departure time, ISO 8601 with its offset" }),
+        departs_at: Schema.String.annotations({ description: "Departure time, ISO 8601 with the local UTC offset" }),
+        departure_date: Schema.String.annotations({
+          description: "Departure date in the departure airport's local time, YYYY-MM-DD",
+        }),
+        pickup: Schema.String.annotations({ description: "When to pick up at the local branch" }),
       }),
     );
-    expect(checksOf({ arrives: "2026-12-15T13:40", departs_at: "2026-12-15T07:15:00-08:00" }, { outputSchema: local })).toEqual([]);
-    expect(checksOf({ arrives: "13:40", departs_at: "2026-12-15T07:15:00" }, { outputSchema: local })).toEqual([
-      "departs_at format_mismatch",
-    ]);
+    expect(
+      checksOf(
+        { arrives: "2026-12-15T13:40", departs_at: "2026-12-15T07:15:00-08:00", departure_date: "2026-12-15" },
+        { outputSchema: local },
+      ),
+    ).toEqual([]);
+    // A field that says it is local time is checked against every other notation it names.
+    expect(
+      checksOf(
+        { arrives: "13:40", departs_at: "2026-12-15T07:15:00", departure_date: "2026-12-15T07:15", pickup: "7:45 PM" },
+        { outputSchema: local },
+      ),
+    ).toEqual(["departs_at format_mismatch", "departure_date format_mismatch", "pickup format_mismatch"]);
     expect(
       lintOutput({ departs: "2026-12-15T07:15:00", delivered: "7:45 PM" }).map(({ check, blocking }) => [check, blocking]),
     ).toEqual([

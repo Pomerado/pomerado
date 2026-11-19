@@ -648,7 +648,7 @@ Then, for every field:
   names instead when it names one, such as a store's hours or a flight's local times, and a
   timestamp in the page's own data, such as its embedded JSON, over its text. When the zone is
   unknown, return the site's local time in a field whose name or description says it is local
-  time; a missing zone never stops a build.
+  time; a missing zone never stops a build, repair or change.
 
 **Configure, then read.** Many pages show values that depend on choices made on the page: a
 record's options or variants, a plan or tier, dates, a party size or quantity, units, a
