@@ -689,3 +689,30 @@ it("lets a repair nobody can confirm remove the output field it added, and nothi
   // The refusal of a registered field points at leaving that part of the request out.
   expect(String(results[2]?.["instruction"])).toContain("publish the rest");
 });
+
+// A repair of its caller's own run keeps that run's input, so an example that can't reach the part
+// it needs is no ending there: the tool answers the input as the site shows it. The owner's own
+// requested change, which may take another example, ends on it.
+it.each([
+  { confirmer: "owner" as const, status: "blocked_refused" },
+  { confirmer: "owner_request" as const, status: "blocked" },
+])(
+  "takes example_unreachable in maintenance only off a repair that keeps its input: $confirmer",
+  async ({ confirmer, status }) => {
+    const results: unknown[] = [];
+    const f = await fixture(
+      (turn) =>
+        Effect.gen(function* () {
+          const explanation = "The page shows no such control for this example.";
+          const reply = yield* turn.actions.reportBlocked!({
+            reason: "example_unreachable",
+            explanation,
+          });
+          results.push(JSON.parse(reply));
+        }),
+      { taskUpdateConfirmer: () => Effect.succeed(confirmer) },
+    );
+    await f.run(repair);
+    expect(results[0]).toMatchObject({ status });
+  },
+);
