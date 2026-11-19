@@ -545,6 +545,20 @@ const runScreen = <E extends YieldableError, V extends string, L extends Autofil
     }
     // What a screen on its exact origin sent anchors the login's workspace (`admitScreen`).
     noteExactSent(replay, recorded, step, inspection);
+    // The site's own answer to the password decides before a later recorded screen does, which
+    // may show on the very screen the site sent back, as a screen of only a button or another
+    // password field: a link it emailed is asked for, and a refused login ends as that returned
+    // screen does. A recorded marker that shows decides first, as the next screen's wait has it.
+    if (step.fields.some((field) => field.slot === "password") && later.length > 0) {
+      const unmarked = Effect.map(
+        replay.observeRejections,
+        (marked) => marked !== "unavailable" && marked.length === 0,
+      );
+      const answer = yield* readAnswer(input, replay, unmarked);
+      if (answer?.said === "link")
+        return yield* openAnsweredLink(input, replay, answer.returned.inspection);
+      if (answer?.said === "refused") return replay.outcome("credential_screen_returned");
+    }
     // An approval happens off the page: the caller confirms it, then the screens go on.
     if (replay.progress.chosen === "push" && recorded.methods !== undefined)
       return yield* confirmPush(input, replay);
@@ -929,14 +943,62 @@ const walkScreens = <E extends YieldableError, V extends string, L extends Autof
   });
 
 /**
+ * The site's own answer to the credential screen the replay submitted last, come back, password or
+ * identifier alike (`returnedScreen`), as the host reads it (`hosted.siteAnswer`), with that screen.
+ * None without the host's read, once an emailed link went in or was asked for, when no screen came
+ * back, as after a submit the site signed in on, which never asks the host, once the host gave its
+ * answer for that screen, or when the screen that came back fails `unmarked`.
+ */
+const readAnswer = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  input: AutofillReplayInput<E, V, L>,
+  replay: Replay<E, V, L>,
+  unmarked: Effect.Effect<boolean> = Effect.succeed(true),
+) =>
+  Effect.gen(function* () {
+    const read = input.hosted?.siteAnswer;
+    if (
+      read === undefined ||
+      replay.progress.linkAsked ||
+      replay.state.steps.some((step) => step.approval === "email_link")
+    )
+      return undefined;
+    const returned = yield* replay.returnedScreen;
+    if (
+      returned === undefined ||
+      replay.progress.answered === returned.step ||
+      !(yield* unmarked)
+    )
+      return undefined;
+    const said = yield* read();
+    if (said === undefined) return undefined;
+    replay.progress.answered = returned.step;
+    return { said, returned };
+  });
+
+/**
+ * A `link` answer has the owner paste the sign-in link the site emailed, which the replay opens in
+ * its own browser (`openPastedLink`), trusted as the returned screen's page trusts it, and the
+ * sign-in's check after the screens decides (`settle`), at most once per sign-in.
+ */
+const openAnsweredLink = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  input: AutofillReplayInput<E, V, L>,
+  replay: Replay<E, V, L>,
+  screen: Pick<AutofillInspection, "siteOrigin" | "authenticationOrigins">,
+) =>
+  Effect.gen(function* () {
+    replay.progress.linkAsked = true;
+    yield* input.emit({ stage: "approval", approval: "email_link", reason: "site_answer" });
+    const opened = yield* openPastedLink(input, screen);
+    if (opened !== "opened") return replay.outcome(opened);
+    return yield* settle(input, replay);
+  });
+
+/**
  * A replay that would end with no verdict on the login (`credential_screen_returned`, or a failed
- * check, `sign_in_check_failed`) because the credential screen it submitted last came back, password
- * or identifier alike (`returnedScreen`), reads the site's own answer to that submit, as the host
- * reads it (`hosted.siteAnswer`), once that screen shows. A `link` answer has the owner paste the
- * sign-in link the site emailed, which the replay opens in its own browser (`openPastedLink`),
- * trusted as the returned screen's page trusts it, and the sign-in's check after the screens decides
- * (`settle`), at most once per sign-in. Any other ending stands, and so does this one when no
- * screen came back, an emailed link already went in, or the host reads no such answer.
+ * check, `sign_in_check_failed`) because the credential screen it submitted last came back reads the
+ * site's own answer to that submit once that screen shows (`readAnswer`), as a reply too late for
+ * the read right after the password's submit (`runScreen`) is: a `link` answer opens the link
+ * (`openAnsweredLink`). Any other ending stands, and so does this one on any other answer.
  */
 const answeredScreen = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   input: AutofillReplayInput<E, V, L>,
@@ -944,20 +1006,14 @@ const answeredScreen = <E extends YieldableError, V extends string, L extends Au
   ended: AutofillReplayOutcome<V>,
 ) =>
   Effect.gen(function* () {
-    const read = input.hosted?.siteAnswer;
     if (
       ended.outcome === "signed_in" ||
-      (ended.reason !== "credential_screen_returned" && ended.reason !== "sign_in_check_failed") ||
-      read === undefined ||
-      replay.state.steps.some((step) => step.approval === "email_link")
+      (ended.reason !== "credential_screen_returned" && ended.reason !== "sign_in_check_failed")
     )
       return ended;
-    const returned = yield* replay.returnedScreen;
-    if (returned === undefined || (yield* read()) !== "link") return ended;
-    yield* input.emit({ stage: "approval", approval: "email_link", reason: "site_answer" });
-    const opened = yield* openPastedLink(input, returned.inspection);
-    if (opened !== "opened") return replay.outcome(opened);
-    return yield* settle(input, replay);
+    const answer = yield* readAnswer(input, replay);
+    if (answer?.said !== "link") return ended;
+    return yield* openAnsweredLink(input, replay, answer.returned.inspection);
   });
 
 /**

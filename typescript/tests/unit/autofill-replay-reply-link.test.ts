@@ -44,6 +44,55 @@ const identifierFirst = signInRecipe(
   ],
   { selector: "#account" },
 );
+// A screen of username and password, then a screen of only a button that the password screen the
+// site sends back also shows, then a code screen.
+const passwordThenButton = signInRecipe(
+  [
+    {
+      page: login,
+      fields: [
+        { selector: "#user", slot: "username", accepts: ["username"] },
+        { selector: "#password", slot: "password" },
+      ],
+      submit: "#sign-in",
+    },
+    { page: login, fields: [], submit: "#continue" },
+    { page: login, fields: [{ selector: "#code", slot: "code" }], submit: "#verify" },
+  ],
+  { selector: "#account" },
+);
+// The same, with the password's error marker recorded.
+const markedThenButton = signInRecipe(
+  [
+    {
+      page: login,
+      fields: [
+        { selector: "#user", slot: "username", accepts: ["username"] },
+        { selector: "#password", slot: "password" },
+      ],
+      submit: "#sign-in",
+      rejectedMarkers: [{ slot: "password", selector: "#password-error" }],
+    },
+    { page: login, fields: [], submit: "#continue" },
+    { page: login, fields: [{ selector: "#code", slot: "code" }], submit: "#verify" },
+  ],
+  { selector: "#account" },
+);
+// A password screen, then an emailed link the site sends, recorded on its own page.
+const passwordThenLink = signInRecipe(
+  [
+    {
+      page: login,
+      fields: [
+        { selector: "#user", slot: "username", accepts: ["username"] },
+        { selector: "#password", slot: "password" },
+      ],
+      submit: "#sign-in",
+    },
+    { page: `${origin}/check-email`, fields: [], approval: "email_link", delivery: "paste" },
+  ],
+  { selector: "#account" },
+);
 // An identifier screen alone, as a site that only ever signs in by an emailed link records.
 const identifierOnly = signInRecipe(
   [
@@ -66,21 +115,24 @@ const target = {
 
 /**
  * One replay of `recipe` on the site, whose login page shows `shown` (the username and password
- * fields by default) and which signs in at once when `signsIn`, else keeps its page after each
- * submit, its password field gone after one when `passwordGone`, with the host's read of its answer
- * (`siteAnswer`: `none` reads no answer, and undefined passes no read): what it asked, what it
- * opened, how many times the host read the answer and how it ended.
+ * fields by default, and any button listed) and which signs in at once when `signsIn`, else keeps
+ * its page after each submit, its password field gone after one when `passwordGone`, with the
+ * host's read of its answer (`siteAnswer`: `none` reads no answer, and undefined passes no read):
+ * what it asked, what it opened, the submits it pressed, how many times the host read the answer
+ * and how it ended.
  */
 const replay = (options: {
   readonly recipe?: typeof passwordScreen;
   readonly shown?: readonly string[];
   readonly signsIn?: true;
   readonly passwordGone?: true;
+  readonly marked?: true;
   readonly siteAnswer?: SiteAnswer | "none";
 }) => {
   const state = { page: login, shown: new Set(options.shown ?? ["#user", "#password"]) };
   const asked: string[] = [];
   const opened: string[] = [];
+  const pressed: string[] = [];
   const reads = { current: 0 };
   const check = () =>
     Effect.sync(() =>
@@ -96,10 +148,13 @@ const replay = (options: {
       }),
     check,
     confirm: check,
+    ...(options.marked === true
+      ? { markerVisible: (selector: string) => Effect.succeed(selector === "#password-error") }
+      : {}),
     inspect: (step) =>
       Effect.sync(() =>
         state.page === login &&
-        step.fields.length > 0 &&
+        (step.fields.length > 0 || state.shown.has(step.submit ?? "")) &&
         step.fields.every((field) => state.shown.has(field.selector))
           ? ({
               page: login,
@@ -115,6 +170,7 @@ const replay = (options: {
       ),
     fill: ({ step }) =>
       Effect.sync(() => {
+        if (step.submit !== undefined) pressed.push(step.submit);
         if (options.signsIn === true) state.page = account;
         if (options.passwordGone === true) state.shown.delete("#password");
         return {
@@ -169,7 +225,7 @@ const replay = (options: {
             },
           }),
     }).pipe(Effect.scoped),
-  ).then((outcome) => ({ outcome, asked, opened, reads: reads.current }));
+  ).then((outcome) => ({ outcome, asked, opened, pressed, reads: reads.current }));
 };
 
 it("asks for the emailed link the site's answer to the password asked for, opens it and signs in", async () => {
@@ -200,6 +256,8 @@ it("asks nothing when the site's answer asked for no link, or the site signed in
     expect(returned.asked).toEqual([]);
     expect(returned.opened).toEqual([login]);
     expect(returned.outcome).toEqual({ outcome: "unclear", reason: "credential_screen_returned" });
+    // With no recorded screen after the password, only the ending reads the site's answer.
+    expect(returned.reads).toBe(siteAnswer === undefined ? 0 : 1);
   }
   const signedIn = await replay({ signsIn: true, siteAnswer: "link" });
   expect(signedIn.asked).toEqual([]);
@@ -214,4 +272,75 @@ it("never reads the site's answer when the submitted screen did not come back", 
   expect(passwordGone.asked).toEqual([]);
   expect(passwordGone.reads).toBe(0);
   expect(passwordGone.outcome).not.toMatchObject({ outcome: "signed_in" });
+});
+
+// The site's answer to the password is read right after its submit, before the replay waits for or
+// presses the next recorded screen: a button-only screen whose button the returned password screen
+// shows too is never pressed on a refused or link-asking answer.
+it("reads the site's answer to the password before it presses the next recorded screen", async () => {
+  const shown = ["#user", "#password", "#continue"];
+  const asked = await replay({ recipe: passwordThenButton, shown, siteAnswer: "link" });
+  expect(asked.asked).toEqual(["sign_in_link"]);
+  expect(asked.opened).toEqual([login, link]);
+  expect(asked.pressed).toEqual(["#sign-in"]);
+  expect(asked.outcome).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(asked.reads).toBe(1);
+  // A refused login (a wrong password, a locked account) ends as the returned screen does, for the
+  // host's own verdict on it.
+  const refused = await replay({ recipe: passwordThenButton, shown, siteAnswer: "refused" });
+  expect(refused.asked).toEqual([]);
+  expect(refused.pressed).toEqual(["#sign-in"]);
+  expect(refused.outcome).toEqual({ outcome: "unclear", reason: "credential_screen_returned" });
+  expect(refused.reads).toBe(1);
+});
+
+// No answer to read, or none at all, goes on as before: the button is pressed and the code screen
+// waited for. A site that signed in on the password is never asked about.
+it("goes on to the next recorded screen when the site's answer to the password says nothing", async () => {
+  const shown = ["#user", "#password", "#continue"];
+  for (const siteAnswer of ["none", undefined] as const) {
+    const ended = await replay({
+      recipe: passwordThenButton,
+      shown,
+      ...(siteAnswer === undefined ? {} : { siteAnswer }),
+    });
+    expect(ended.asked).toEqual([]);
+    expect(ended.pressed).toEqual(["#sign-in", "#continue"]);
+    expect(ended.outcome).not.toMatchObject({ outcome: "signed_in" });
+    expect(ended.outcome).not.toMatchObject({ reason: "credential_screen_returned" });
+  }
+  const signedIn = await replay({
+    recipe: passwordThenButton,
+    shown,
+    signsIn: true,
+    siteAnswer: "link",
+  });
+  expect(signedIn.asked).toEqual([]);
+  expect(signedIn.outcome).toMatchObject({ outcome: "signed_in" });
+  expect(signedIn.reads).toBe(0);
+});
+
+
+// A recorded marker that shows is the site's answer as the recipe records it: the host is never read
+// for it, and the replay ends as the marker says, as before.
+it("ends on a recorded marker that shows, never the host's read of the site's answer", async () => {
+  const shown = ["#user", "#password", "#continue"];
+  const marked = await replay({
+    recipe: markedThenButton,
+    shown,
+    marked: true,
+    siteAnswer: "refused",
+  });
+  expect(marked.reads).toBe(0);
+  expect(marked.outcome).toMatchObject({ reason: "password_rejected", rejectedFields: ["password"] });
+});
+
+// A link the site's answer to the password asks for is asked right there, in the place of an
+// emailed link recorded after the password, whose screen the returned password screen never is.
+it("asks for the link the site's answer asked for in the place of a recorded emailed link", async () => {
+  const asked = await replay({ recipe: passwordThenLink, siteAnswer: "link" });
+  expect(asked.asked).toEqual(["sign_in_link"]);
+  expect(asked.opened).toEqual([login, link]);
+  expect(asked.outcome).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(asked.reads).toBe(1);
 });
