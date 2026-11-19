@@ -898,6 +898,36 @@ describe("output notation checks", () => {
     ).toEqual([]);
   });
 
+  // A zone is best effort: when the tool cannot tell it, the site's local time in a field that
+  // says it is local time is right as it is. A zone-less time is advisory and never blocks.
+  it("leaves a zone-less time in a field that says it is local time alone, and never blocks on one", () => {
+    expect(
+      checksOf({
+        departure_local: "2026-12-15T07:15:00",
+        departureLocal: "7:45 PM",
+        arrival_local_time: "19:45",
+      }),
+    ).toEqual([]);
+    const local = contractJsonSchema(
+      Schema.Struct({
+        arrives: Schema.String.annotations({
+          description: "Arrival time in the arrival airport's local time, ISO 8601",
+        }),
+        departs_at: Schema.String.annotations({ description: "Departure time, ISO 8601 with its offset" }),
+      }),
+    );
+    expect(checksOf({ arrives: "2026-12-15T13:40", departs_at: "2026-12-15T07:15:00-08:00" }, { outputSchema: local })).toEqual([]);
+    expect(checksOf({ arrives: "13:40", departs_at: "2026-12-15T07:15:00" }, { outputSchema: local })).toEqual([
+      "departs_at format_mismatch",
+    ]);
+    expect(
+      lintOutput({ departs: "2026-12-15T07:15:00", delivered: "7:45 PM" }).map(({ check, blocking }) => [check, blocking]),
+    ).toEqual([
+      ["format_mismatch", false],
+      ["format_mismatch", false],
+    ]);
+  });
+
   it("leaves a timestamp with its offset, and a date alone, in a field that declares no format", () => {
     for (const departs of ["2026-12-15T07:15:00-08:00", "2026-12-15T15:15:00Z", "2026-12-15T07:15+05:30", "2026-12-15"])
       expect(checksOf({ departs })).toEqual([]);

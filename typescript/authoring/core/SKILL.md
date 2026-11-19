@@ -444,9 +444,9 @@ exception: it is optional unless the task can't run without it (below).
   for an optional one. Callers see each beside its name.
 - Shape inputs and outputs like Pomerado's own API, so every tool reads alike. A notation the
   request states, such as amounts as decimal strings or signed amounts, always wins, but a time
-  always keeps its zone; follow it and say so in the field's description. Otherwise: field names
+  keeps its zone when known; follow it and say so in the field's description. Otherwise: field names
   in snake_case; dates as `YYYY-MM-DD` and every time as an ISO 8601 timestamp with its zone's
-  offset; money as an integer in minor units
+  offset when the zone is known (below); money as an integer in minor units
   with the ISO 4217 `currency` the page shows beside it, such as `total_minor` 12999 and
   `currency` `"EUR"` read from "€129.99", and an amount that can go either way, such as a
   ledger entry, unsigned with a field that says its direction, such as `direction` `"debit"`
@@ -458,7 +458,7 @@ exception: it is optional unless the task can't run without it (below).
   between these and the site's own formats in code. The output check flags a date or timestamp
   not in the form its field declares, a value in another notation than its description names,
   a currency that is not an ISO 4217 code and a bare clock time in a record that names no
-  `time_zone` (`format_mismatch`), a field whose description
+  `time_zone`, unless its field says it is local time (`format_mismatch`), a field whose description
   promises such a notation that no `pattern` holds (`unheld_format`), and one value in two
   letter cases across a list (`case_variant`).
 - When `reference/site-tools.json` exists, you can view the site's other tools. Read
@@ -634,8 +634,8 @@ Then, for every field:
   it holds as a timestamp too. Compare a site's date or time with today or now only in the
   site's or the place's zone, never UTC's: `todayIn` and `zonedTime` from `pomerado/runtime`
   give both.
-- Never return a clock time with no zone, such as "7:45 PM" or "12:38-12:59 AM" alone: a caller
-  cannot tell which moment it is. Return each time as a timestamp with its offset, with
+- Give each time its zone when you can: with a clock time alone, such as "7:45 PM" or
+  "12:38-12:59 AM", a caller cannot tell which moment it is. Return it as a timestamp with its offset, with
   `zonedClock` from `pomerado/runtime` for a clock time the page shows, and name the IANA zone
   the site's text is in, such as `"America/New_York"`, in a `time_zone` field of the record or
   of the whole output, beside any `*_label` field that keeps the site's wording:
@@ -646,7 +646,9 @@ Then, for every field:
   `browserTimeZoneCode`, never from the script's own clock, the caller's place or an address,
   since the browser's clock can be in another zone than the caller's. Use the zone the page
   names instead when it names one, such as a store's hours or a flight's local times, and a
-  timestamp in the page's own data, such as its embedded JSON, over its text.
+  timestamp in the page's own data, such as its embedded JSON, over its text. When the zone is
+  unknown, return the site's local time in a field whose name or description says it is local
+  time; a missing zone never stops a build.
 
 **Configure, then read.** Many pages show values that depend on choices made on the page: a
 record's options or variants, a plan or tier, dates, a party size or quantity, units, a
