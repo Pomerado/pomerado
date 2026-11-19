@@ -893,6 +893,7 @@ const showingScreen = <E extends YieldableError, V extends string, L extends Aut
             pageOf(replay, last),
             lastStep,
             before,
+            before[0],
           ))
         )
           best = { index, controls };

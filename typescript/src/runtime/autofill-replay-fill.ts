@@ -190,6 +190,8 @@ const closedInPlace = <E extends YieldableError, V extends string, L extends Aut
         next === undefined ? [] : [next],
         (request) => session.values.resolve(request, session.input.credentials),
         { matches: session.matchesRecorded },
+        [],
+        asked,
       );
       return progressed === undefined ? undefined : ("next_screen" as const);
     });

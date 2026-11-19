@@ -50,6 +50,7 @@ const scriptedSite = (
 ) => {
   const state = { screen: "sign-in" };
   const clicks: string[] = [];
+  const filled: string[][] = [];
   const shown = () => screens[state.screen] ?? { path: "/home", controls: [] };
   const page = () => `${origin}${shown().path}`;
   const here = (): AutofillSignedInCheck =>
@@ -109,6 +110,7 @@ const scriptedSite = (
     fill: ({ step }) =>
       Effect.sync((): AutofillStepReport => {
         clicks.push(step.submit ?? "none");
+        filled.push(step.fields.map((field) => field.selector));
         const to = next(state.screen, step.submit);
         if (to !== undefined) state.screen = to;
         return {
@@ -119,7 +121,7 @@ const scriptedSite = (
         };
       }),
   };
-  return { hooks, clicks };
+  return { hooks, clicks, filled };
 };
 
 /** Replays `recipe` with `password` (none by default), each code asked answered with `code`. */
@@ -253,20 +255,168 @@ it("reads a password screen that comes back whole as returned, not as a later sc
   expect(site.clicks).toEqual(["#next", "#go"]);
 });
 
-it("never takes a later screen the screen it waits for holds all of, as that screen still drawing", async () => {
-  const site = scriptedSite({ "sign-in": { path: "/sign-in", controls: ["#password", "#go"] } }, () => undefined);
+it("passes over no approval on its page to a later screen with a field, as a password screen come back after its send", async () => {
+  const site = scriptedSite(
+    {
+      "sign-in": { path: "/sign-in", controls: ["#email", "#next"] },
+      password: { path: "/sign-in", controls: ["#password", "#go"] },
+    },
+    () => "password",
+  );
   const onPage = { ...password, page: `${origin}/sign-in` };
   const outcome = await replay(
     recipeOf(
-      { ...onPage, fields: [...email.fields, ...password.fields] },
-      codeAt("/sign-in", "#code"),
+      email,
+      onPage,
+      { page: `${origin}/sign-in`, fields: [], approval: "device" },
       { ...onPage, refills: ["password"] },
     ),
     site.hooks,
     { password: "synthetic-password" },
   );
+  // It asks for the approval, and never sends the password again.
+  expect(outcome.asked).toContain("approved");
+  expect(site.clicks).toEqual(["#next", "#go"]);
+});
+
+// One page, one button, two looks: email and password together for one login, and fewer fields
+// for another whose site keeps its email or asks for it alone. The fewer-field screen has no
+// control of its own, so only the fuller screen's field staying gone, or showing, tells them apart.
+const onSignIn = { ...password, page: `${origin}/sign-in` };
+const emailAndPassword = { ...onSignIn, fields: [...email.fields, ...password.fields] };
+const emailAlone = { ...email, submit: "#go" };
+
+it("takes a later screen with fewer fields than the screen it waits for once that screen's other field stays gone", async () => {
+  const started = Date.now();
+  const site = scriptedSite(
+    { "sign-in": { path: "/sign-in", controls: ["#password", "#go"] } },
+    (screen) => (screen === "sign-in" ? "home" : undefined),
+  );
+  const outcome = await replay(
+    recipeOf(emailAndPassword, codeAt("/sign-in", "#code"), { ...onSignIn, refills: ["password"] }),
+    site.hooks,
+    { password: "synthetic-password", stepWaitMs: 5_000 },
+  );
+  expect(outcome.reason).toBe("signed_in");
+  expect(site.filled).toEqual([["#password"]]);
+  // It holds the look once, where the screen it waits for may still draw its email box, and not
+  // again at the code screen, where the password box is a field that screen lacks.
+  expect(Date.now() - started).toBeLessThan(2_900);
+}, 15_000);
+
+it("waits for the screen it waits for while its other field draws, rather than take the fewer-field screen", async () => {
+  const drawn = Date.now() + 300;
+  const site = scriptedSite(
+    {
+      "sign-in": {
+        path: "/sign-in",
+        get controls() {
+          return Date.now() < drawn ? ["#password", "#go"] : ["#email", "#password", "#go"];
+        },
+      },
+    },
+    (screen) => (screen === "sign-in" ? "home" : undefined),
+  );
+  const outcome = await replay(
+    recipeOf(emailAndPassword, codeAt("/sign-in", "#code"), { ...onSignIn, refills: ["password"] }),
+    site.hooks,
+    { password: "synthetic-password", stepWaitMs: 5_000 },
+  );
+  expect(outcome.reason).toBe("signed_in");
+  expect(site.filled).toEqual([["#email", "#password"]]);
+});
+
+it("takes the email screen the site shows alone, with the email and password screen's button, then its code", async () => {
+  const site = scriptedSite(
+    {
+      "sign-in": { path: "/sign-in", controls: ["#email", "#go"] },
+      code: { path: "/sign-in", controls: ["#code", "#verify"] },
+    },
+    (screen) => ({ "sign-in": "code", code: "home" })[screen],
+  );
+  const outcome = await replay(
+    recipeOf(emailAndPassword, codeAt("/sign-in", "#code"), emailAlone),
+    site.hooks,
+    { password: "synthetic-password", stepWaitMs: 2_000 },
+  );
+  expect(outcome.reason).toBe("signed_in");
+  expect(site.filled).toEqual([["#email"], ["#code"]]);
+}, 15_000);
+
+for (const [name, controls] of [
+  ["at once", () => ["#email", "#password", "#go"]],
+  ["a moment after the email box", (drawn: number) => (Date.now() < drawn ? ["#email", "#go"] : ["#email", "#password", "#go"])],
+] as const)
+  it(`fills email and password together where the page shows both ${name}, though an email screen is recorded first`, async () => {
+    const drawn = Date.now() + 300;
+    const site = scriptedSite(
+      {
+        "sign-in": {
+          path: "/sign-in",
+          get controls() {
+            return controls(drawn);
+          },
+        },
+      },
+      (screen) => (screen === "sign-in" ? "home" : undefined),
+    );
+    const outcome = await replay(
+      recipeOf({ ...emailAlone, page: `${origin}/sign-in` }, codeAt("/sign-in", "#code"), emailAndPassword),
+      site.hooks,
+      { password: "synthetic-password", stepWaitMs: 5_000 },
+    );
+    expect(outcome.reason).toBe("signed_in");
+    expect(site.filled).toEqual([["#email", "#password"]]);
+  });
+
+it("never takes a fewer-field screen whose every control the screen that just ran holds, as that screen come back", async () => {
+  const site = scriptedSite(
+    {
+      "sign-in": { path: "/sign-in", controls: ["#email", "#password", "#go"] },
+      back: { path: "/sign-in", controls: ["#email", "#go"] },
+    },
+    (screen) => (screen === "sign-in" ? "back" : undefined),
+  );
+  const outcome = await replay(
+    recipeOf(emailAndPassword, keepAt("/sign-in"), { ...emailAlone, page: `${origin}/sign-in` }),
+    site.hooks,
+    { password: "synthetic-password" },
+  );
   expect(outcome.reason).toBe("not_found");
-  expect(site.clicks).toEqual([]);
+  expect(site.filled).toEqual([["#email", "#password"]]);
+  expect(outcome.restarts).toEqual([]);
+});
+
+it("fills a screen at once where the screen with its controls and a field more is recorded on another page", async () => {
+  const site = scriptedSite(
+    { "sign-in": { path: "/sign-in", controls: ["#email", "#go"] } },
+    (screen) => (screen === "sign-in" ? "home" : undefined),
+  );
+  const started = Date.now();
+  const outcome = await replay(
+    recipeOf({ ...emailAlone, page: `${origin}/sign-in` }, { ...emailAndPassword, page: `${origin}/password` }),
+    site.hooks,
+    { password: "synthetic-password", stepWaitMs: 5_000 },
+  );
+  expect(outcome.reason).toBe("signed_in");
+  expect(site.filled).toEqual([["#email"]]);
+  expect(Date.now() - started).toBeLessThan(1_000);
+});
+
+it("fills a screen in a pop-up at once where the screen with its controls and a field more is on the page", async () => {
+  const site = scriptedSite(
+    { "sign-in": { path: "/sign-in", controls: ["#email", "#go"] } },
+    (screen) => (screen === "sign-in" ? "home" : undefined),
+  );
+  const started = Date.now();
+  const outcome = await replay(
+    recipeOf({ ...emailAlone, page: `${origin}/sign-in`, popup: { opener: "primary", origin: "https://id.example.test" } }, emailAndPassword),
+    site.hooks,
+    { password: "synthetic-password", stepWaitMs: 5_000 },
+  );
+  expect(outcome.reason).toBe("signed_in");
+  expect(site.filled).toEqual([["#email"]]);
+  expect(Date.now() - started).toBeLessThan(1_000);
 });
 
 it("waits for a required choice that draws after the fields beside it, after a screen ran", async () => {
