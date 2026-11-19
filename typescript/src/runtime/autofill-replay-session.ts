@@ -33,6 +33,8 @@ import {
   type AutofillReplayInput,
   type AutofillRetryState,
   type AutofillReplayOutcome,
+  type CantTellLanding,
+  type CodeLookPassed,
   defaultTiming,
   pickMethod,
   shownAgain,
@@ -195,6 +197,10 @@ const makeReplaySession = <E extends YieldableError, V extends string, L extends
      * never the host generator's again.
      */
     unrecordedCodeScreen: undefined as string | undefined,
+    /** Why the latest look for a code screen the recipe never recorded passed the page. */
+    codeLookPassed: undefined as CodeLookPassed | undefined,
+    /** The kind of page a sign-in that ended can't tell landed on (`endedCantTell`). */
+    cantTellPage: undefined as CantTellLanding["page"] | undefined,
     /**
      * The code box on a recorded emailed link's screen that this replay is answering, by its page
      * and field (`codeScreenOf`): the recording says the site emails, so it never takes the host
@@ -393,6 +399,12 @@ const endedCantTell =
       cantTellInPlace(check, session.recipe, session.matchesRecorded, session.input.entryUrl);
     if (!inPlace && !cantTell(check, recorded, onScreens)) return false;
     yield* confirmCantTell(session.state.sentIdentifiers);
+    const origin = URL.parse(check.url ?? "")?.origin;
+    session.progress.cantTellPage = inPlace
+      ? "recorded_screen"
+      : recorded.steps.some((step) => URL.parse(step.page)?.origin === origin)
+        ? "sign_in_origin"
+        : "off_screens";
     return true;
   });
 

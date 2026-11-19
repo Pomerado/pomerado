@@ -20,6 +20,8 @@ import type { AutofillLogin } from "./autofill-values.js";
 import {
   type AutofillReplayInput,
   type AutofillReplayOutcome,
+  type CantTellLanding,
+  type CodeLookPassed,
   emptyRetryFields,
   askOne,
   isTwoFactorOption,
@@ -727,11 +729,17 @@ const runFoundCodeScreen = <E extends YieldableError, V extends string, L extend
   onLinkScreen = false,
 ) =>
   Effect.gen(function* () {
+    const passed = (why: CodeLookPassed) => {
+      replay.progress.codeLookPassed = why;
+      return "none" as const;
+    };
+    replay.progress.codeLookPassed = undefined;
     const field = yield* findCodeScreen(input.hooks);
     const found = "outcome" in field ? field : yield* codeBoxRow(input.hooks, field);
-    if ("outcome" in found || !onSignInOrigin(replay.signInOrigins(), found.inspection))
-      return "none" as const;
-    if (!(yield* lastScreenGone(input, replay))) return "none" as const;
+    if ("outcome" in found) return passed("not_found");
+    if (!onSignInOrigin(replay.signInOrigins(), found.inspection))
+      return passed("off_sign_in_origin");
+    if (!(yield* lastScreenGone(input, replay))) return passed("last_screen_shown");
     const screen = codeScreenOf(found.inspection);
     const earlier = replay.progress.unrecordedCodeScreen;
     replay.progress.unrecordedCodeScreen = screen;
@@ -851,8 +859,31 @@ const settle = <E extends YieldableError, V extends string, L extends AutofillLo
       const unrecorded = yield* unrecordedCode(input, replay, probed);
       if (unrecorded === "ran") continue;
       if (unrecorded !== "none") return replay.outcome(unrecorded);
-      return yield* lastCheck(input, replay, waited.cantTellHere);
+      const ended = yield* lastCheck(input, replay, waited.cantTellHere);
+      return "cantTell" in ended ? { ...ended, landing: yield* landingOf(input, replay) } : ended;
     }
+  });
+
+/**
+ * The record of the page a sign-in that sent the login ended on and can't tell (`CantTellLanding`):
+ * its kind and why the code screen look passed it, as the replay knows them, and the host's counts
+ * of its controls (`landingControls`), so a page the recipe never recorded, such as a choice of
+ * how to get a code, says what it was.
+ */
+const landingOf = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  input: AutofillReplayInput<E, V, L>,
+  replay: Replay<E, V, L>,
+) =>
+  Effect.gen(function* () {
+    const controls = yield* input.hooks.landingControls?.() ?? Effect.succeed(undefined);
+    const codeLook =
+      replay.progress.codeLookPassed ??
+      (replay.sent.maySent.has("code") ? ("code_sent" as const) : undefined);
+    return {
+      page: replay.progress.cantTellPage ?? "off_screens",
+      ...(codeLook === undefined ? {} : { codeLook }),
+      ...controls,
+    } satisfies CantTellLanding;
   });
 
 /**

@@ -24,6 +24,7 @@ import {
   type SecurityAnswerFills,
   isExtraSecret,
   isSecret,
+  type LandingControls,
   type NamedFields,
   provesLogin,
   takesAnotherCode,
@@ -49,13 +50,33 @@ import type { ReplaySession } from "./autofill-replay-session.js";
 // A run's replay of an autofill sign-in recipe: its contract and the pieces of one step.
 
 /**
+ * Why the look for a code screen the recipe never recorded passed a page (`runFoundCodeScreen`):
+ * no code box its rule takes (`not_found`), one off every sign-in origin (`off_sign_in_origin`), or
+ * the screen the replay last submitted still showing (`last_screen_shown`).
+ */
+export type CodeLookPassed = "not_found" | "off_sign_in_origin" | "last_screen_shown";
+
+/**
+ * The page a sign-in that sent the login ended on and can't tell, value-free: its kind (the
+ * address every recorded screen shares, another page on a recorded screen's origin, or off them),
+ * why the look for an unrecorded code screen passed it (`codeLook`; `code_sent` when no look ran
+ * since a code may have gone out), and the host's counts of its controls when it reads them
+ * (`landingControls`).
+ */
+export type CantTellLanding = {
+  readonly page: "recorded_screen" | "sign_in_origin" | "off_screens";
+  readonly codeLook?: CodeLookPassed | "code_sent";
+} & Partial<LandingControls>;
+
+/**
  * A replay that signed in, on the workspace origin its check verified for a tool with a workspace
  * relation; `cantTell` when it ended on a page that can't tell, which no check of the marker has
- * proven.
+ * proven, with that page's record (`landing`) once the sign-in sent the login.
  */
 type SignedInReplay = {
   readonly outcome: "signed_in";
   readonly cantTell?: true;
+  readonly landing?: CantTellLanding;
 } & CheckedWorkspace;
 
 /**
