@@ -1461,6 +1461,36 @@ it.each([
   expect(await f.run()).toMatchObject({ blocked: { reason: "host_refused", explanation } });
 });
 
+// A read-back that ran another file in a write session with no act step left names no step that
+// can fix it, so a host_refused report on it is taken at once and names it.
+it("takes host_refused at once after a read-back no step left can repeat", async () => {
+  const explanation = "A Pomerado check refused publication, so no tool was published.";
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", pureExample),
+        finishAs(0),
+        call("report_blocked", { reason: "host_refused", explanation }, "report"),
+      ][index] ?? prose("Stopping."),
+    {
+      publish: () =>
+        Effect.fail(
+          new MintFailure({ code: "PublicationUnavailable", reason: "read_back_unrepeatable" }),
+        ),
+    },
+  );
+  const outcome = await f.run();
+  expect(resultOf(f.requests[2], "finish_0")).toMatchObject({
+    status: "not_published",
+    reason: "read_back_unrepeatable",
+    instruction: expect.stringContaining("host_refused") as unknown,
+  });
+  expect(outcome).toMatchObject({ blocked: { reason: "host_refused", explanation } });
+  expect(blockedRecord(outcome)).toMatchObject({
+    hostRefusals: [{ source: "publication", reason: "read_back_unrepeatable" }],
+  });
+});
+
 // A tool another publication advanced is a fixable registry refusal whose instruction offers ending
 // the build, so it names no step: the report is taken at once.
 it("takes host_refused at once after a registry refusal that offers ending the build", async () => {

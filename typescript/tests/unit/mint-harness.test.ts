@@ -6486,6 +6486,48 @@ it("keeps a write session open past a confirmation its recorded path has steps a
   expect(receipts[1]).not.toHaveProperty("writePath");
 });
 
+// A host that lets a closed write session take one more act step (`closedSessionAct`) gets each
+// act step the session would refuse, and only the one it allows runs. Fails while a closed session
+// refuses every act step whatever its host says.
+it("runs an act step a host lets a closed write session take", async () => {
+  const asked: string[] = [];
+  let steps = 0;
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        const act = { ...execution, purpose: "act", target: "liveBrowser" };
+        yield* turn.actions.execute({ ...act, entrypoint: "src/check.ts" });
+        expect(
+          yield* Effect.either(turn.actions.execute({ ...act, entrypoint: "src/other.ts" })),
+        ).toMatchObject({ _tag: "Left", left: { code: "AlreadyExecuted" } });
+        yield* turn.actions.execute(act);
+        yield* turn.actions.finish({ ...publication, executionId: "act_2" });
+      }),
+    {
+      closedSessionAct: (request) => {
+        asked.push(request.entrypoint);
+        return request.entrypoint === execution.entrypoint;
+      },
+      reviewAndExecute: () =>
+        Effect.sync((): ExecutionEvidence => {
+          steps++;
+          return {
+            executionId: `act_${steps}`,
+            status: "completed",
+            effect: "verified",
+            confirmation: "readback",
+            resultRef: `result_${steps}`,
+            observations: "Read the page back",
+          };
+        }),
+      publish: () => Effect.succeed({ publicationRef: "published", diagnostics: [] }),
+    },
+  );
+  expect(await f.run({ ...request, effect: "write" })).toMatchObject({ build: "published" });
+  expect(steps).toBe(2);
+  expect(asked).toEqual(["src/other.ts", execution.entrypoint]);
+});
+
 // The fallback is for a read-back that cannot run, such as once the execution host is lost. It
 // fails when the withheld step does not keep the attempt open for publication.
 it("publishes a withheld write confirmation through the fallback after the execution host is lost", async () => {
