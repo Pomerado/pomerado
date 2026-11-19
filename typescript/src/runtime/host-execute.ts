@@ -29,11 +29,12 @@ const ${name} = await (async () => {
  * accessibility snapshot, with a `- separator [aria-hidden]` line where a rendered `hr` or
  * `role="separator"` hidden from assistive technology splits rendered content. The snapshot drops
  * such a separator, and an unnamed form or group's edge with it, so a notice after one reads as
- * part of the controls before it. Text the snapshot keeps that the page holds out of view and
- * shows nowhere, by `visibleTextPageCode`'s rule, reads `[hidden: <text>]` where a line's value
- * holds it; a copy beside an aria-hidden sibling, which shows it, is not marked. The page is only
- * read; when a read fails, the snapshot is unmarked by it. Pass no `mode: "ai"`: that snapshot
- * already lists a visible aria-hidden separator.
+ * part of the controls before it. A line whose whole value is the text of an element the page
+ * holds out of view and shows nowhere, by `visibleTextPageCode`'s rule, reads `[hidden: <text>]`.
+ * Not marked: a copy of the words an aria-hidden sibling shows, such as a price's, a text
+ * control's value or a line under one, and a text more lines hold than hidden elements do. The page
+ * is only read; when a read fails, the snapshot is unmarked by it. Pass no `mode: "ai"`: that
+ * snapshot already lists a visible aria-hidden separator.
  *
  * One pass in document order, past aria-hidden subtrees, finds the anchors around each run of
  * such separators: rendered text, or a control's own label. The line goes before the first line,
@@ -164,20 +165,31 @@ const markedAriaSnapshot = async (locator, options) => {
     locator
       .evaluate((root) => {
         ${visibleTextPageCode}
-        // The text of each element out of view that the page shows nowhere, by the visible reader.
+        // The text of each element out of view that the page shows nowhere, by the visible reader,
+        // one per line: a text holds no line break.
         const elements = [];
         const shown = visibleTextPage([root], { as: "visible", lines: false, hidden: elements })[0] ?? "";
-        const texts = new Set();
+        const words = (text) => text.replace(/[^\\p{L}\\p{N}]/gu, "").toLowerCase();
+        // The words each parent's aria-hidden children show, read once per parent, and whether
+        // each text is shown, checked once per text.
+        const beside = new Map();
+        const isShown = new Map();
+        const texts = [];
         for (const element of elements) {
           const text = element.textContent.replace(/\\s+/g, " ").trim();
-          // A screen-reader copy of what an aria-hidden sibling shows, such as a price's, is shown.
-          const twin = [...(element.parentElement?.children ?? [])].some((sibling) =>
-            sibling.matches('[aria-hidden="true" i]'));
-          if (text !== "" && !twin && !shown.includes(text)) texts.add(text);
+          const parent = element.parentElement;
+          if (!beside.has(parent))
+            beside.set(parent, new Set([...(parent?.children ?? [])]
+              .filter((child) => child.matches('[aria-hidden="true" i]'))
+              .map((child) => words(child.textContent))));
+          // A screen-reader copy of the words an aria-hidden sibling shows, such as a price's, is shown.
+          if (text === "" || beside.get(parent).has(words(text))) continue;
+          if (!isShown.has(text)) isShown.set(text, shown.includes(text));
+          if (!isShown.get(text)) texts.push(text);
         }
-        return JSON.stringify([...texts]);
+        return texts.join("\\n");
       }, undefined, { timeout: options?.timeout })
-      .then(JSON.parse)
+      .then((texts) => (typeof texts === "string" && texts !== "" ? texts.split("\\n") : []))
       .catch(() => []),
   ]);
   if (splits.length === 0 && hidden.length === 0) return aria;
@@ -208,23 +220,36 @@ const markedAriaSnapshot = async (locator, options) => {
     marked.add(at);
     from = next;
   }
-  // Each such text in a line's value, never in a name or a text control's value, as written
-  // plain or quoted, longest first.
-  const pattern = (form) =>
-    new RegExp(hidden.sort((a, b) => b.length - a.length)
-      .map((text) => form(text).replace(/[^\\w\\s]/g, "\\\\$&")).join("|"), "g");
-  const [plain, quoted] = hidden.length === 0 ? []
-    : [pattern((text) => text), pattern((text) => JSON.stringify(text).slice(1, -1))];
-  const hide = (line) => {
-    const value = plain && /^(\\s*- (?!(?:textbox|searchbox|spinbutton|combobox)\\b)[a-z]+(?: "(?:[^"\\\\]|\\\\.)*")?(?: \\[[^\\]]*\\])*: )(.+)$/.exec(line);
-    return value ? value[1] + value[2].replace(value[2].startsWith('"') ? quoted : plain, "[hidden: $&]") : line;
-  };
-  return lines
-    .flatMap((line, index) =>
-      marked.has(index)
-        ? [line.slice(0, line.length - line.trimStart().length) + "- separator [aria-hidden]", line]
-        : [line])
-    .map(hide)
+  const out = lines.flatMap((line, index) =>
+    marked.has(index)
+      ? [line.slice(0, line.length - line.trimStart().length) + "- separator [aria-hidden]", line]
+      : [line]);
+  if (hidden.length === 0) return out.join("\\n");
+  // A line's whole value, plain or quoted, but none of a text control or nested under one.
+  let control = Infinity;
+  const values = out.map((line) => {
+    const indent = line.length - line.trimStart().length;
+    if (indent > control) return undefined;
+    control = /^\\s*- (?:textbox|searchbox|spinbutton|combobox|slider)\\b/.test(line) ? indent : Infinity;
+    const value = /^(\\s*- [a-z]+(?: "(?:[^"\\\\]|\\\\.)*")?(?: \\[[^\\]]*\\])*: )(.+)$/.exec(line);
+    if (control !== Infinity || value === null) return undefined;
+    try {
+      return { prefix: value[1], raw: value[2], text: value[2].startsWith('"') ? JSON.parse(value[2]) : value[2] };
+    } catch {
+      return undefined;
+    }
+  });
+  // A value that is such a text reads [hidden: <text>], unless more lines hold it than hidden
+  // elements do, as when the page also shows it another way.
+  const tally = (texts) => texts.reduce((counts, text) => counts.set(text, (counts.get(text) ?? 0) + 1), new Map());
+  const held = tally(hidden);
+  const lined = tally(values.flatMap((value) => (value !== undefined && held.has(value.text) ? [value.text] : [])));
+  return out
+    .map((line, index) => {
+      const value = values[index];
+      if (value === undefined || !held.has(value.text) || lined.get(value.text) > held.get(value.text)) return line;
+      return value.prefix + (value.raw.startsWith('"') ? '"[hidden: ' + value.raw.slice(1, -1) + ']"' : "[hidden: " + value.raw + "]");
+    })
     .join("\\n");
 };
 `;
