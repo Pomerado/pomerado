@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Effect, Schema } from "effect";
 import { recipeStep } from "../destinations/autofill-recipe.js";
-import { maySend, typingRefusal } from "../destinations/autofill-refusal.js";
+import { maySendLogin, typingRefusal } from "../destinations/autofill-refusal.js";
 import { refusalEvidence } from "../destinations/autofill-refusal-evidence.js";
 import {
   codeBoxesRefusal,
@@ -493,7 +493,7 @@ export const makeSignInRecorder = (input: {
       afterSubmit = undefined;
       const report = yield* again({ step, inspection: inspected });
       addFilledSecrets(h, recordResubmit(state, step, report).filter(isSecret));
-      if (maySend(report)) {
+      if (maySendLogin(report)) {
         state.mayHaveSent = true;
         addFilledSecrets(h, submitFilled(state).filter(isSecret));
         yield* markersAfterSubmit(state);
@@ -622,7 +622,7 @@ export const makeSignInRecorder = (input: {
         addFilledSecrets(h, step.fields.map((field) => field.slot).filter(isExtraSecret));
       }
       // A host click after the fill, or a lost answer, may have sent every filled value.
-      if (maySend(report)) {
+      if (maySendLogin(report)) {
         state.mayHaveSent = true;
         addFilledSecrets(h, submitFilled(state).filter(isSecret));
         yield* markersAfterSubmit(state);

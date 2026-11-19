@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
-import { urlOrigin } from "../../src/destinations/autofill-refusal.js";
+import { maySend, maySendLogin, urlOrigin } from "../../src/destinations/autofill-refusal.js";
 import { codeBoxesRefusal, untrustedTarget } from "../../src/destinations/autofill-step.js";
+import { stepNotice } from "../../src/mint/autofill-results.js";
 
 // Page code can put any text in an opaque URL, its scheme included, so refusal evidence names one
 // only from a fixed set.
@@ -126,4 +127,20 @@ it("sends back a code step that names part of its screen's one-character boxes, 
       screen([{ box: 1, of: 2 }, { box: 2, of: 2 }]),
     ),
   ).toMatchObject({ target: 1, codeBoxes: { boxes: 2, named: [2] } });
+});
+
+// A step with no fields whose submit the host clicked, such as a switch to another sign-in method,
+// typed nothing, so it sent nothing of the login; the same click after a filled field may have.
+it("counts a clicked step with no fields as no send of the login, and says it typed nothing", () => {
+  const url = "https://www.example.test/login";
+  const switched = { outcome: "filled", fields: [], submit: "clicked", url } as const;
+  const filled = {
+    ...switched,
+    fields: [{ slot: "account_number", status: "filled" }],
+  } as const;
+  expect(maySend(switched)).toBe(true);
+  expect(maySendLogin(switched)).toBe(false);
+  expect(maySendLogin(filled)).toBe(true);
+  expect(stepNotice(switched)).toMatch(/^The step has no fields, so the host typed nothing/);
+  expect(stepNotice(filled)).toMatch(/^The host filled the fields and clicked the submit/);
 });
