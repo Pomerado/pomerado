@@ -248,11 +248,11 @@ test("a separator hidden from assistive technology still splits the capture, so 
   }
 });
 
-test("text the page holds out of view and shows nowhere reads as hidden in the capture, and a shown copy does not", async () => {
+test("text the page holds only out of view reads as hidden in the capture, and a shown copy does not", async () => {
   test.setTimeout(90_000);
-  // A countdown with an announcement kept off screen beside an aria-hidden icon, a shown error
-  // with an off-screen copy, a price whose off-screen copy sits beside the aria-hidden one it
-  // shows, and a field whose typed value is the announcement's text.
+  // An announcement kept off screen beside an aria-hidden icon; a shown error with an off-screen
+  // copy; a price whose off-screen copy sits beside the aria-hidden digits it shows; and shown
+  // text with off-screen copies that are aria-hidden or not displayed.
   const offScreen = "position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden";
   const announcement = "Time is up. You can no longer add items.";
   const site = await startSite((_request, response) =>
@@ -262,7 +262,7 @@ test("text the page holds out of view and shows nowhere reads as hidden in the c
         `<div><svg aria-hidden="true" width="8" height="8"></svg><span style="${offScreen}" aria-live="assertive">${announcement}</span></div>` +
         `<div role="alert">Card declined</div><div style="${offScreen}">Card declined</div>` +
         `<p><span style="${offScreen}">$9.99</span><span aria-hidden="true">$9<sup>99</sup></span></p>` +
-        `<label>Note <input placeholder="Optional" value="${announcement}"></label></main>`,
+        `<p>Saved</p><span style="${offScreen}" aria-hidden="true">Saved</span><span style="${offScreen};display:none">Saved</span></main>`,
     ),
   );
   const guardian = recordingGuardian({ readPage: true });
@@ -279,7 +279,7 @@ test("text the page holds out of view and shows nowhere reads as hidden in the c
     });
     expect(toolResult(last, "second")).toMatchObject({ status: "completed" });
     expect(captureOf(executions(guardian.reviews)[1])).toContain(
-      `  - status: 3 hours left\n  - text: [hidden: ${announcement}]\n  - alert: Card declined\n  - text: Card declined\n  - paragraph: $9.99\n  - text: Note\n  - textbox "Note":\n    - /placeholder: Optional\n    - text: ${announcement}`,
+      `  - status: 3 hours left\n  - text: [hidden: ${announcement}]\n  - alert: Card declined\n  - text: Card declined\n  - paragraph: $9.99\n  - paragraph: Saved`,
     );
   } finally {
     await site.close();

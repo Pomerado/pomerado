@@ -1,27 +1,10 @@
 import { normalizeText } from "../runtime/text.js";
 
 /**
- * Page code that defines `visibleTextPage(elements, arg)`, the reader `visibleTextCode` runs in the
- * page, for other page code that reads what a person sees. `arg.hidden`, when it is an array, gets
- * each element a read skipped as hidden in its mode.
+ * Page code that defines `visuallyHidden(element, computed)`: whether an element, given its
+ * computed style, is hidden from view but kept for screen readers, as `visibleText` judges it.
  */
-export const visibleTextPageCode = String.raw`// Runs in the page. It reads the rendered tree and never changes the page.
-const visibleTextPage = (elements, arg) => {
-  const normalize = ${String(normalizeText)};
-  const styles = new Map();
-  const style = (element) => {
-    let computed = styles.get(element);
-    if (computed === undefined) styles.set(element, (computed = getComputedStyle(element)));
-    return computed;
-  };
-  const parentOf = (node) =>
-    node.assignedSlot ?? node.parentElement ?? (node.parentNode instanceof ShadowRoot ? node.parentNode.host : null);
-  const skipped = (element) => {
-    const name = element.localName;
-    if (name === "script" || name === "style" || name === "noscript" || name === "template") return true;
-    return element.namespaceURI === "http://www.w3.org/2000/svg" && (name === "title" || name === "desc");
-  };
-  const clipsOverflow = (value) => value === "hidden" || value === "clip";
+export const visuallyHiddenCode = String.raw`  const clipsOverflow = (value) => value === "hidden" || value === "clip";
   const lengths = (text) => text.trim().split(/[\s,]+/u).map((value) => parseFloat(value));
   // clip: rect(top, right, bottom, left) with no area left, such as rect(0 0 0 0) or rect(1px 1px 1px 1px).
   const clipHides = (clip) => {
@@ -60,105 +43,7 @@ const visibleTextPage = (elements, arg) => {
     const before = (end, size) => end < 0 || (size > 0 && end <= 0);
     return before(rect.right + x, rect.width) || before(rect.bottom + y, rect.height)
       || rect.left + x >= width || rect.top + y >= height;
-  };
-  const excluded = (element, computed) =>
-    arg.as === "accessible" ? element.getAttribute("aria-hidden") === "true" : visuallyHidden(element, computed);
-  const childrenOf = (node) =>
-    node.shadowRoot?.childNodes
-      ?? (node.localName === "slot" ? node.assignedNodes({ flatten: true }) : node.childNodes);
-  const hasArea = (rects) => [...rects].some((rect) => rect.width > 0 || rect.height > 0);
-  // An element with display: contents has no box of its own: it shows what its children show,
-  // a rendered child element or a text node with a box.
-  const showsBox = (element) => {
-    if (style(element).display !== "contents")
-      return element.checkVisibility({ visibilityProperty: true, opacityProperty: true })
-        && hasArea(element.getClientRects());
-    return [...childrenOf(element)].some((child) => {
-      if (child.nodeType === Node.ELEMENT_NODE) return !skipped(child) && !excluded(child, style(child)) && showsBox(child);
-      if (child.nodeType !== Node.TEXT_NODE || child.data.trim() === "") return false;
-      const parent = parentOf(child);
-      if (parent === null || style(parent).visibility !== "visible") return false;
-      const range = document.createRange();
-      range.selectNodeContents(child);
-      return hasArea(range.getClientRects());
-    });
-  };
-  // A match is rendered when it has a box a person could see, and neither it nor an ancestor up
-  // to stop is hidden in this mode.
-  const rendered = (element, stop) => {
-    if (!element.isConnected || element.closest("[hidden], template") !== null) return false;
-    if (!showsBox(element)) return false;
-    for (let at = element; at !== null && at !== stop; at = parentOf(at)) {
-      if (at.nodeType !== Node.ELEMENT_NODE) break;
-      if (skipped(at) || excluded(at, style(at))) return false;
-      if (at === document.documentElement) break;
-    }
-    return true;
-  };
-  const inline = (display) => display.startsWith("inline") || display === "contents" || display.startsWith("ruby");
-  const read = (root, lines) => {
-    const parts = [];
-    const visit = (node) => {
-      if (node.nodeType === Node.TEXT_NODE) {
-        const parent = parentOf(node);
-        if (parent === null) return;
-        const computed = style(parent);
-        if (computed.visibility !== "visible") return;
-        const keepBreaks = /^(pre|break-spaces)/u.test(computed.whiteSpace);
-        parts.push(keepBreaks ? node.data : node.data.replace(/[\t\n\r\f ]+/gu, " "));
-        return;
-      }
-      if (node.nodeType !== Node.ELEMENT_NODE) return;
-      if (node !== root) {
-        if (skipped(node)) return;
-        const computed = style(node);
-        if (computed.display === "none" || parseFloat(computed.opacity) === 0) return;
-        if (excluded(node, computed)) return void arg.hidden?.push(node);
-      }
-      if (node.localName === "br") {
-        parts.push("\n");
-        return;
-      }
-      const computed = style(node);
-      const display = computed.display;
-      const separator = display === "table-cell" ? " " : inline(display) ? "" : "\n";
-      parts.push(separator);
-      if (computed.contentVisibility !== "hidden") for (const child of childrenOf(node)) visit(child);
-      parts.push(separator);
-    };
-    visit(root);
-    return normalize(parts.join(""), { lines });
-  };
-  if (arg.fields === undefined)
-    return elements.map((element) => (rendered(element, null) ? read(element, arg.lines) : null));
-  const rows = elements.filter((element) => rendered(element, null));
-  // No row rendered: an empty list when every row is a template with no box, such as a
-  // no-results page's hidden or display: none row. A row that has a box but is hidden another
-  // way, such as a list still fading in from opacity 0 or rows hidden in this mode, is not.
-  const showsContent = (element) =>
-    [element, ...[...element.querySelectorAll("*")].slice(0, 500)].some((child) =>
-      child.checkVisibility() && hasArea(child.getClientRects()));
-  if (rows.length === 0 && elements.some(showsContent)) return { hidden: elements.length };
-  const end = arg.limit === null ? rows.length : Math.min(rows.length, arg.from + arg.limit);
-  const records = [];
-  for (let index = arg.from; index < end; index += 1) {
-    const row = rows[index];
-    const record = {};
-    for (const [name, field] of arg.fields) {
-      const candidates = field.selector === ":scope" ? [row] : [...row.querySelectorAll(field.selector)];
-      const match = candidates.find((element) => element === row || rendered(element, row));
-      const value = match === undefined ? null
-        : field.attribute === null ? read(match, field.lines ?? arg.lines)
-        : match.getAttribute(field.attribute)?.trim() ?? null;
-      if (value === null && field.required) return { missing: { field: name, row: index } };
-      if (value !== null && value.length > arg.maxLength)
-        return { tooLong: { field: name, row: index, length: value.length } };
-      record[name] = value;
-    }
-    records.push(record);
-  }
-  return { records };
-};`;
+  };`;
 
 /**
  * Page code for a Kernel call body, where `page` is in scope: paste it at the top of the code
@@ -236,7 +121,120 @@ const visibleTextOptions = (options = {}) => {
   if (!Number.isInteger(maxLength) || maxLength < 1) throw new TypeError("maxLength must be a positive integer");
   return { as, lines: options.lines === true, maxLength };
 };
-${visibleTextPageCode}
+// Runs in the page. It reads the rendered tree and never changes the page.
+const visibleTextPage = (elements, arg) => {
+  const normalize = ${String(normalizeText)};
+  const styles = new Map();
+  const style = (element) => {
+    let computed = styles.get(element);
+    if (computed === undefined) styles.set(element, (computed = getComputedStyle(element)));
+    return computed;
+  };
+  const parentOf = (node) =>
+    node.assignedSlot ?? node.parentElement ?? (node.parentNode instanceof ShadowRoot ? node.parentNode.host : null);
+  const skipped = (element) => {
+    const name = element.localName;
+    if (name === "script" || name === "style" || name === "noscript" || name === "template") return true;
+    return element.namespaceURI === "http://www.w3.org/2000/svg" && (name === "title" || name === "desc");
+  };
+${visuallyHiddenCode}
+  const excluded = (element, computed) =>
+    arg.as === "accessible" ? element.getAttribute("aria-hidden") === "true" : visuallyHidden(element, computed);
+  const childrenOf = (node) =>
+    node.shadowRoot?.childNodes
+      ?? (node.localName === "slot" ? node.assignedNodes({ flatten: true }) : node.childNodes);
+  const hasArea = (rects) => [...rects].some((rect) => rect.width > 0 || rect.height > 0);
+  // An element with display: contents has no box of its own: it shows what its children show,
+  // a rendered child element or a text node with a box.
+  const showsBox = (element) => {
+    if (style(element).display !== "contents")
+      return element.checkVisibility({ visibilityProperty: true, opacityProperty: true })
+        && hasArea(element.getClientRects());
+    return [...childrenOf(element)].some((child) => {
+      if (child.nodeType === Node.ELEMENT_NODE) return !skipped(child) && !excluded(child, style(child)) && showsBox(child);
+      if (child.nodeType !== Node.TEXT_NODE || child.data.trim() === "") return false;
+      const parent = parentOf(child);
+      if (parent === null || style(parent).visibility !== "visible") return false;
+      const range = document.createRange();
+      range.selectNodeContents(child);
+      return hasArea(range.getClientRects());
+    });
+  };
+  // A match is rendered when it has a box a person could see, and neither it nor an ancestor up
+  // to stop is hidden in this mode.
+  const rendered = (element, stop) => {
+    if (!element.isConnected || element.closest("[hidden], template") !== null) return false;
+    if (!showsBox(element)) return false;
+    for (let at = element; at !== null && at !== stop; at = parentOf(at)) {
+      if (at.nodeType !== Node.ELEMENT_NODE) break;
+      if (skipped(at) || excluded(at, style(at))) return false;
+      if (at === document.documentElement) break;
+    }
+    return true;
+  };
+  const inline = (display) => display.startsWith("inline") || display === "contents" || display.startsWith("ruby");
+  const read = (root, lines) => {
+    const parts = [];
+    const visit = (node) => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        const parent = parentOf(node);
+        if (parent === null) return;
+        const computed = style(parent);
+        if (computed.visibility !== "visible") return;
+        const keepBreaks = /^(pre|break-spaces)/u.test(computed.whiteSpace);
+        parts.push(keepBreaks ? node.data : node.data.replace(/[\t\n\r\f ]+/gu, " "));
+        return;
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) return;
+      if (node !== root) {
+        if (skipped(node)) return;
+        const computed = style(node);
+        if (computed.display === "none" || parseFloat(computed.opacity) === 0 || excluded(node, computed)) return;
+      }
+      if (node.localName === "br") {
+        parts.push("\n");
+        return;
+      }
+      const computed = style(node);
+      const display = computed.display;
+      const separator = display === "table-cell" ? " " : inline(display) ? "" : "\n";
+      parts.push(separator);
+      if (computed.contentVisibility !== "hidden") for (const child of childrenOf(node)) visit(child);
+      parts.push(separator);
+    };
+    visit(root);
+    return normalize(parts.join(""), { lines });
+  };
+  if (arg.fields === undefined)
+    return elements.map((element) => (rendered(element, null) ? read(element, arg.lines) : null));
+  const rows = elements.filter((element) => rendered(element, null));
+  // No row rendered: an empty list when every row is a template with no box, such as a
+  // no-results page's hidden or display: none row. A row that has a box but is hidden another
+  // way, such as a list still fading in from opacity 0 or rows hidden in this mode, is not.
+  const showsContent = (element) =>
+    [element, ...[...element.querySelectorAll("*")].slice(0, 500)].some((child) =>
+      child.checkVisibility() && hasArea(child.getClientRects()));
+  if (rows.length === 0 && elements.some(showsContent)) return { hidden: elements.length };
+  const end = arg.limit === null ? rows.length : Math.min(rows.length, arg.from + arg.limit);
+  const records = [];
+  for (let index = arg.from; index < end; index += 1) {
+    const row = rows[index];
+    const record = {};
+    for (const [name, field] of arg.fields) {
+      const candidates = field.selector === ":scope" ? [row] : [...row.querySelectorAll(field.selector)];
+      const match = candidates.find((element) => element === row || rendered(element, row));
+      const value = match === undefined ? null
+        : field.attribute === null ? read(match, field.lines ?? arg.lines)
+        : match.getAttribute(field.attribute)?.trim() ?? null;
+      if (value === null && field.required) return { missing: { field: name, row: index } };
+      if (value !== null && value.length > arg.maxLength)
+        return { tooLong: { field: name, row: index, length: value.length } };
+      record[name] = value;
+    }
+    records.push(record);
+  }
+  return { records };
+};
 const visibleTextRead = async (locator, options) => {
   const { as, lines, maxLength } = visibleTextOptions(options);
   const texts = await locator.evaluateAll(visibleTextPage, { as, lines });

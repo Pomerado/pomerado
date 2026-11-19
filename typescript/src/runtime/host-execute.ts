@@ -1,5 +1,5 @@
 import type { Effect } from "effect";
-import { visibleTextPageCode } from "../browser/visible-text.js";
+import { visuallyHiddenCode } from "../browser/visible-text.js";
 import { timeoutDefaults } from "./deadline.js";
 
 /** One browser's host calls: plain Playwright code with `page`, `context` and `browser`. */
@@ -29,12 +29,14 @@ const ${name} = await (async () => {
  * accessibility snapshot, with a `- separator [aria-hidden]` line where a rendered `hr` or
  * `role="separator"` hidden from assistive technology splits rendered content. The snapshot drops
  * such a separator, and an unnamed form or group's edge with it, so a notice after one reads as
- * part of the controls before it. A line whose whole value is the text of an element the page
- * holds out of view and shows nowhere, by `visibleTextPageCode`'s rule, reads `[hidden: <text>]`.
- * Not marked: a copy of the words an aria-hidden sibling shows, such as a price's, a text
- * control's value or a line under one, and a text more lines hold than hidden elements do. The page
- * is only read; when a read fails, the snapshot is unmarked by it. Pass no `mode: "ai"`: that
- * snapshot already lists a visible aria-hidden separator.
+ * part of the controls before it. A line whose whole value is the text of an element held out of
+ * view reads `[hidden: <text>]`: an element that holds the text itself, is positioned absolute or
+ * fixed, is displayed, is not aria-hidden and is hidden by `visuallyHiddenCode`'s rule, the first
+ * 200 found within 100 ms. Not marked: a copy of the words an aria-hidden sibling shows, such as a
+ * price's; a text the snapshot holds more often than such elements do, as when the page also shows
+ * it; and a text control's line or a line under one. The page is only read; when a read fails or
+ * runs out of time, the snapshot is unmarked by it. Pass no `mode: "ai"`: that snapshot already
+ * lists a visible aria-hidden separator.
  *
  * One pass in document order, past aria-hidden subtrees, finds the anchors around each run of
  * such separators: rendered text, or a control's own label. The line goes before the first line,
@@ -164,28 +166,33 @@ const markedAriaSnapshot = async (locator, options) => {
       .catch(() => []),
     locator
       .evaluate((root) => {
-        ${visibleTextPageCode}
-        // The text of each element out of view that the page shows nowhere, by the visible reader,
-        // one per line: a text holds no line break.
-        const elements = [];
-        const shown = visibleTextPage([root], { as: "visible", lines: false, hidden: elements })[0] ?? "";
+${visuallyHiddenCode}
+        // The text of each element held out of view that holds it, one per line (a text holds no
+        // line break): the first 200 within 100 ms, or nothing past that time.
         const words = (text) => text.replace(/[^\\p{L}\\p{N}]/gu, "").toLowerCase();
-        // The words each parent's aria-hidden children show, read once per parent, and whether
-        // each text is shown, checked once per text.
+        // The words each parent's aria-hidden children show, such as a price's styled digits.
         const beside = new Map();
-        const isShown = new Map();
         const texts = [];
-        for (const element of elements) {
+        const started = performance.now();
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        let last = null;
+        for (let node = walker.nextNode(); node !== null && texts.length < 200; node = walker.nextNode()) {
+          if (performance.now() - started > 100) return null;
+          const element = node.parentElement;
+          if (element === null || element === last || !/\\S/.test(node.data)) continue;
+          last = element;
+          // Only a positioned element, as screen-reader-only text is, is judged, and only one the
+          // snapshot can show: displayed and not aria-hidden.
+          const computed = getComputedStyle(element);
+          if (!/^(absolute|fixed)$/.test(computed.position) || !visuallyHidden(element, computed)
+            || !element.checkVisibility({ visibilityProperty: true })
+            || element.closest('[aria-hidden="true" i]') !== null) continue;
           const text = element.textContent.replace(/\\s+/g, " ").trim();
           const parent = element.parentElement;
           if (!beside.has(parent))
-            beside.set(parent, new Set([...(parent?.children ?? [])]
-              .filter((child) => child.matches('[aria-hidden="true" i]'))
+            beside.set(parent, new Set([...(parent?.querySelectorAll(':scope > [aria-hidden="true" i]') ?? [])]
               .map((child) => words(child.textContent))));
-          // A screen-reader copy of the words an aria-hidden sibling shows, such as a price's, is shown.
-          if (text === "" || beside.get(parent).has(words(text))) continue;
-          if (!isShown.has(text)) isShown.set(text, shown.includes(text));
-          if (!isShown.get(text)) texts.push(text);
+          if (!beside.get(parent).has(words(text))) texts.push(text);
         }
         return texts.join("\\n");
       }, undefined, { timeout: options?.timeout })
@@ -225,30 +232,35 @@ const markedAriaSnapshot = async (locator, options) => {
       ? [line.slice(0, line.length - line.trimStart().length) + "- separator [aria-hidden]", line]
       : [line]);
   if (hidden.length === 0) return out.join("\\n");
-  // A line's whole value, plain or quoted, but none of a text control or nested under one.
+  const held = hidden.reduce((counts, text) => counts.set(text, (counts.get(text) ?? 0) + 1), new Map());
+  // How often the snapshot holds a text, plain or quoted.
+  const found = new Map();
+  const occurrences = (text) => {
+    const escaped = JSON.stringify(text).slice(1, -1);
+    const count = (form) => aria.split(form).length - 1;
+    if (!found.has(text)) found.set(text, count(text) + (escaped === text ? 0 : count(escaped)));
+    return found.get(text);
+  };
+  // A line's whole value that is such a text reads [hidden: <text>], unless the snapshot holds it
+  // more often than hidden elements do, as when the page also shows it. A text control's line and
+  // the lines under it are left as they are.
   let control = Infinity;
-  const values = out.map((line) => {
-    const indent = line.length - line.trimStart().length;
-    if (indent > control) return undefined;
-    control = /^\\s*- (?:textbox|searchbox|spinbutton|combobox|slider)\\b/.test(line) ? indent : Infinity;
-    const value = /^(\\s*- [a-z]+(?: "(?:[^"\\\\]|\\\\.)*")?(?: \\[[^\\]]*\\])*: )(.+)$/.exec(line);
-    if (control !== Infinity || value === null) return undefined;
-    try {
-      return { prefix: value[1], raw: value[2], text: value[2].startsWith('"') ? JSON.parse(value[2]) : value[2] };
-    } catch {
-      return undefined;
-    }
-  });
-  // A value that is such a text reads [hidden: <text>], unless more lines hold it than hidden
-  // elements do, as when the page also shows it another way.
-  const tally = (texts) => texts.reduce((counts, text) => counts.set(text, (counts.get(text) ?? 0) + 1), new Map());
-  const held = tally(hidden);
-  const lined = tally(values.flatMap((value) => (value !== undefined && held.has(value.text) ? [value.text] : [])));
   return out
-    .map((line, index) => {
-      const value = values[index];
-      if (value === undefined || !held.has(value.text) || lined.get(value.text) > held.get(value.text)) return line;
-      return value.prefix + (value.raw.startsWith('"') ? '"[hidden: ' + value.raw.slice(1, -1) + ']"' : "[hidden: " + value.raw + "]");
+    .map((line) => {
+      const indent = line.length - line.trimStart().length;
+      if (indent > control) return line;
+      control = /^\\s*- (?:textbox|searchbox|spinbutton|combobox|slider)\\b/.test(line) ? indent : Infinity;
+      const value = /^(\\s*- [a-z]+(?: "(?:[^"\\\\]|\\\\.)*")?(?: \\[[^\\]]*\\])*: )(.+)$/.exec(line);
+      if (control !== Infinity || value === null) return line;
+      const [, prefix, raw] = value;
+      let text;
+      try {
+        text = raw.startsWith('"') ? JSON.parse(raw) : raw;
+      } catch {
+        return line;
+      }
+      if (!held.has(text) || occurrences(text) > held.get(text)) return line;
+      return prefix + (raw.startsWith('"') ? '"[hidden: ' + raw.slice(1, -1) + ']"' : "[hidden: " + raw + "]");
     })
     .join("\\n");
 };
