@@ -22,5 +22,5 @@ How to undo this if it goes wrong, for example reverting this pull request and r
 List the checks you ran and their results, including anything you could not run.
 
 - [ ] Added a failing test first for a change in behavior, or explained why none applies.
-- [ ] Updated the docs and CHANGELOG.md when public behavior changed.
+- [ ] Updated the docs, and added a changelog fragment under `changes/`, when public behavior changed.
 - [ ] Followed the [contributing guide](https://github.com/Pomerado/pomerado/blob/main/CONTRIBUTING.md).
