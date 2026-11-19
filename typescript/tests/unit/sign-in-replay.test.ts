@@ -59,6 +59,8 @@ interface SiteOptions {
   readonly questions?: string[];
   /** The login screen sits on another origin of the site than the recipe recorded. */
   readonly loginOrigin?: string;
+  /** The origins of the frames the login screen's fields and its submit sit in on the page. */
+  readonly loginFrame?: { readonly fields: string; readonly submit: string };
   /** The login screen shows `#username-error` after a wrong username. */
   readonly usernameMarker?: boolean;
   /** The entry page fails to load. */
@@ -179,23 +181,28 @@ const fakeSite = (options: SiteOptions = {}) => {
         const selectors = [...step.fields.map((field) => field.selector), ...(step.submit === undefined ? [] : [step.submit])];
         if (selectors.length === 0 || !selectors.every(shows)) return { outcome: "refused", reason: "not_found" };
         const at = pageOrigin(state.page);
-        const target = {
-          ownerUrl: `${at}/${state.page}`,
-          documentOrigin: at,
-          actions: [`${at}/${state.page}`],
+        const framed = state.page === "login" ? options.loginFrame : undefined;
+        const target = (frame: string) => ({
+          ownerUrl: `${frame}/${state.page}`,
+          documentOrigin: frame,
+          actions: [`${frame}/${state.page}`],
           methods: ["post"],
           editable: true,
           control: "text" as const,
           empty: !(state.page === "login" && state.loginError),
-        };
+        });
+        const frame = framed?.submit ?? at;
         return {
           url: `${at}/${state.page}`,
           page: `${at}/${state.page}`,
-          targets: { fields: step.fields.map(() => target), submit: step.submit === undefined ? null : target },
+          targets: {
+            fields: step.fields.map(() => target(framed?.fields ?? at)),
+            submit: step.submit === undefined ? null : target(frame),
+          },
           siteOrigin: origin,
           authenticationOrigins: [],
           screen: {
-            origin: at,
+            origin: frame,
             fields: step.fields.map((field) => ({
               tag: "input",
               role: null,
@@ -720,6 +727,32 @@ it("fails RecipeFailed when a recorded screen shows on another origin than the r
   );
   expect(fake.fills).toEqual([]);
   expect(kinds(asked)).toEqual(["credential:missing_credentials"]);
+});
+
+const identity = `https://identity.${site}`;
+
+it("runs a screen recorded on the site's sign-in host where the site's page shows it in a frame from there", async () => {
+  // The screen was recorded with the sign-in host's page on top. The run opens the site's page,
+  // which shows the same form in a frame from that host.
+  const fake = fakeSite({ loginFrame: { fields: identity, submit: identity } });
+  const recipe = { ...recipeOf(), steps: [{ ...loginStep, page: `${identity}/login` }] };
+  const { ask } = owner();
+  expect(await signIn(recipe, fake, ask)).toEqual(Either.right({ alreadySignedIn: false }));
+  expect(fake.fills).toEqual([{ page: "login", values: [account.username, account.password] }]);
+});
+
+it.each([
+  ["recorded off the site, in a frame from there", "https://id.example-sign-in.test", "https://id.example-sign-in.test", undefined],
+  ["whose fields sit on the page itself, with only its submit in the frame", origin, identity, undefined],
+  ["in the frame on another origin of the site than the site's own", identity, identity, `https://tenant.${site}`],
+] as const)("refuses a screen %s", async (_case, fields, submit, loginOrigin) => {
+  const fake = fakeSite({ loginFrame: { fields, submit }, ...(loginOrigin === undefined ? {} : { loginOrigin }) });
+  const recipe = { ...recipeOf(), steps: [{ ...loginStep, page: `${submit}/login` }] };
+  const { ask } = owner();
+  expect(await signIn(recipe, fake, ask)).toEqual(
+    Either.left(new SignInRunFailed({ code: "RecipeFailed", reason: "screen_origin_changed" })),
+  );
+  expect(fake.fills).toEqual([]);
 });
 
 it.each([

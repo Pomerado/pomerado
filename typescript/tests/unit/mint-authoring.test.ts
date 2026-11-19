@@ -399,7 +399,7 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   // Every field is read from the page on every run and typed as the page states it.
   [
     "core",
-    "Then, for every field: - Prefer parsing what the page shows into typed fields over returning a result row, card or itinerary as one text blob or summary, and keep every result row of the main list the page shows, up to the call's `limit` (pagination skill). - A new tool's build sees only some of a list's rows, so type each row field that is neither the row's key nor a needed value as `Schema.NullOr(...)` and pass it to `waitForRows` as `optional`; a row that lacks one stays in the list with that field null. - Read every output from the page or response on every run, so every returned field has observable support: never a literal, a default you invented, or a constant `null`, `[]`, `false`, `0` or fixed label where the page can show the value. - Return `null` for a field that is not a needed value only when this record's page lacks it, and an empty list only when the page shows none; never throw for either. When the code cannot read a value the request needs, throw `OperationFailure` naming it; never return a placeholder, a label or another record's value in its place. - One field per fact, as the page states it, and variants as the dimensions and values the page lists. - Prefer numbers for amounts and counts, ISO 8601 for dates and times and minutes for durations; type a date-only value as the runtime's `CalendarDate` (forms skill) and name its zone in its description. A value that does not parse cleanly may be the site's own text; return each time it holds as a timestamp too. Compare a site's date or time with today or now only in the site's or the place's zone, never UTC's: `todayIn` and `zonedTime` from `pomerado/runtime` give both. - Never return a clock time with no zone, such as \"7:45 PM\" or \"12:38-12:59 AM\" alone: a caller cannot tell which moment it is. Return each time as a timestamp with its offset, with `zonedClock` from `pomerado/runtime` for a clock time the page shows, and name the IANA zone the site's text is in,",
+    "Then, for every field: - Prefer parsing what the page shows into typed fields over returning a result row, card or itinerary as one text blob or summary, and keep every result row of the main list the page shows, up to the call's `limit` (pagination skill). - A new tool's build sees only some of a list's rows, so type each row field that is neither the row's key nor a needed value as `Schema.NullOr(...)` and pass it to `waitForRows` as `optional`; a row that lacks one stays in the list with that field null. - Read every output from the page or response on every run, so every returned field has observable support: never a literal, a default you invented, or a constant `null`, `[]`, `false`, `0` or fixed label where the page can show the value. - Return `null` for a field that is not a needed value only when this record's page lacks it, and an empty list only when the page shows none; never throw for either. When the code cannot read a value the request needs, throw `OperationFailure` naming it; never return a placeholder, a label or another record's value in its place. - One field per fact, as the page states it, and variants as the dimensions and values the page lists. - Prefer numbers for amounts and counts, ISO 8601 for dates and times and minutes for durations; type a date-only value as the runtime's `CalendarDate` (forms skill) and name its zone in its description. A value that does not parse cleanly may be the site's own text; return each time it holds as a timestamp too. Compare a site's date or time with today or now only in the site's or the place's zone, never UTC's: `todayIn` and `zonedTime` from `pomerado/runtime` give both. - Give each time its zone when you can: with a clock time alone, such as \"7:45 PM\" or \"12:38-12:59 AM\", a caller cannot tell which moment it is. Return it as a timestamp with its offset, with `zonedClock` from `pomerado/runtime` for a clock time the page shows, and name the IANA zone the site's text is in,",
   ],
   // Output a caller can filter and compare on is parsed into typed fields.
   [
@@ -1041,13 +1041,15 @@ it("has a write's last question before a commit that pays pass order, in any cha
  * A checkout's final confirm folded each line's quantity into its name, passed the line total as
  * the price each, and listed its fees and tip as items. The writes and caller-input skills name
  * the order's own fields for those, and the cart skill suggests the same parts for a checkout's
- * output, apart from the confirm's fixed fields.
+ * output, apart from the confirm's fixed fields. A confirm also left out a credit the checkout
+ * applied, so its lines added up to more than its total: the writes skill lists every line, credits
+ * in the discount, and makes the total what the caller will be charged.
  */
 it("has a purchase confirm's order and a checkout's output give lines, fees and tip their own fields", async () => {
   const texts = await renderedTexts("typescript/authoring");
   const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
   expect(text("writes")).toContain(
-    "Fill `order` as the checkout shows it: each item's real quantity, its `unit` when sold by weight or measure, and its price each, its line total or both; fees, a tip and a discount go in their own fields. When an item's measure is in a unit `unit` does not list, give it quantity 1 and its line total, with the measure as the checkout shows it in its name.",
+    "Fill `order` as the checkout shows it, every charge and credit line included: each item's real quantity, its `unit` when sold by weight or measure, and its price each, its line total or both; fees and a tip go in their own fields, and every discount, credit and promotion, summed, in `discount`. When an item's measure is in a unit `unit` does not list, give it quantity 1 and its line total, with the measure as the checkout shows it in its name. `total` is what the commit will charge the caller, and the lines add up to it.",
   );
   expect(text("caller-input")).toContain(
     "its `items` (each `name`, `quantity`, `unit` for an item sold by weight or measure, and `price` each, `lineTotal` or both), `fees` (each `name` and `amount`), `discount`, `shipping`, `tax`, `tip` and `total`",
@@ -1716,17 +1718,17 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["633ffd15bb19d5c93cf72c6a28e0f4597fbb39d5eaab2cd02db8e20337789a0f", "core"],
-    ["7c3be765ee7c1c62b13a4876cc5453bbeb8acc7948b51511574f36f2aed09c4a", "search"],
+    ["07fee5f5459ac9115a4afaf93da50054c750253c269a79ecea4683a98b5ea6f8", "core"],
+    ["97e3b5ebdbe8d5fca43790729084de4eef4fbcf5fdf71ad645e679fd72f4e804", "search"],
     ["5918d38595593c4dfbf5028322c5b678c3082d6c473573f454f53f511b2f5f53", "auth"],
     ["539abe36b602c8e2eff8745dd0462aea41837a20cc0b90cbef7a01cbad6fb89a", "testing"],
-    ["d524204c6ed2dc0fa773d6e5cf0aef993e2b48ee9db3fcbf291e40ebe8c9913d", "pagination"],
-    ["900781cc6ee191709070976f8595694757c9dd0fa0eeac7152817bd42da37fae", "forms"],
-    ["a155a41f4b3f359946b2d9917a97587d255d79b01ae226a5a5a0194da34f587a", "writes"],
-    ["a1dff3822c5ab9823e003168d484aff0411e6be9e3eae398cc80f1ea9b3dfc8d", "cart"],
-    ["c405a6acd56bd9c0b813443e7ee6b1c01dddb9226a63524aac860331d9ef5435", "caller-input"],
+    ["ca80679c4488dec4ee85052fb39f1493b6d5f8ca4a5df9b56d10a2e96078e848", "pagination"],
+    ["b0220727e7f21e1c5d10101e74996ddb3d2d4e18061ac85c807203ed4ab0f695", "forms"],
+    ["3cd1434cdea838aee3b06589f685812620c48d2aba277f86622d6bb45282cb40", "writes"],
+    ["8287515976be8d5dbebd929d0550822c15fe2f4e8b8fe59a47ebed7d40b996fa", "cart"],
+    ["2f00649d366ef6ae4250700f9c79c27d5e5328ff72190581a39ccaff23a6c795", "caller-input"],
     ["d47486fdd08e7a7ff6ab8f38ee03e6a3e8e2287eb67f2412f1fe996543ea1857", "publication"],
-    ["092d416c498b1398b744a83aa92a8193ed4cba8fb2223534ae27c7e47e629eaa", "workspace/AGENTS.md"],
+    ["6745f230da3802f1f0dbe8990098de01895e5ca42e2c58efbb83b0c423a282ea", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);
 });
@@ -1846,8 +1848,8 @@ it("renders the search URL fast path only when a host turns it on", async () => 
     ...on.digests.filter(([, name]) => name === "search"),
     [sha256(on.agents), "workspace/AGENTS.md"],
   ]).toStrictEqual([
-    ["e3c82530af60da937a450bd94be81e1fefea6ef2324d9cd54379a52fc1d7c930", "search"],
-    ["fdba47c3b8ac22b356e74212ff901c626141d118b7fd62f1ac494741a91201cd", "workspace/AGENTS.md"],
+    ["de172ebf03d92a8782f5abbdd8444d90104634da28f4e21ad444dcbde0734e1f", "search"],
+    ["542fcf56e25db343d985026424e7d263c139508da6ac6b1715f6c55b67ba9c6d", "workspace/AGENTS.md"],
   ]);
   expect(on.digests.filter(([, name]) => name !== "search")).toStrictEqual(
     off.digests.filter(([, name]) => name !== "search"),

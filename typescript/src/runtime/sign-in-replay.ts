@@ -136,12 +136,15 @@ type ReplayFailure<E> = SignInRunFailed | ReplayBrowserFailed<E>;
  * waits for a marker drawn late (`settledMarkerCheck`), and a read's sign-in may end on a page that
  * can't tell (`confirmCantTell`). An entry page that does not load fails `entry_page_unavailable`.
  * Every sign-in sets `startedEmpty`, so a check without values never ends on a login entry that
- * can't tell. The engine reads `pageState` only for that, so none is given.
+ * can't tell. The engine reads `pageState` only for that, so none is given. A browser this host
+ * already signed in sets `signedInBefore`, so its landing before a password or code went in may
+ * still end the wait.
  */
 const replayHooks = <E>(
   browser: SignInReplayBrowser<E>,
   allowCantTell: boolean,
   settle: MarkerSettle | undefined,
+  signedInBefore: boolean,
 ): AutofillHooks<ReplayFailure<E>> => {
   const failed = (error: E) => new ReplayBrowserFailed({ error });
   const checkOn: AutofillHooks<ReplayFailure<E>>["confirm"] = (
@@ -189,6 +192,7 @@ const replayHooks = <E>(
         }),
     ...(allowCantTell ? { confirmCantTell: () => Effect.void } : {}),
     startedEmpty: true,
+    ...(signedInBefore ? { signedInBefore } : {}),
   };
 };
 
@@ -351,6 +355,8 @@ export const signInForRun = <E>(input: {
   readonly onWorkspaceEvent?: (event: WorkspaceOriginEvent) => void;
   /** Whether a page that can't tell signs it in, as a read's may. */
   readonly allowCantTell?: boolean;
+  /** Whether this host already signed in on this browser; false unless a caller says so. */
+  readonly signedInBefore?: boolean;
   /**
    * The values the site rejected and the corrections asked, kept across the sign-ins of one run;
    * a new one by default. A verified sign-in clears it.
@@ -381,7 +387,12 @@ export const signInForRun = <E>(input: {
     const correct = (field: CredentialRejectedField, held: WebsiteCredentials, triesLeft: number) =>
       input.login.correct(field, held, triesLeft).pipe(Effect.mapError(loginUnanswered));
     const retryState = input.retryState ?? makeAutofillRetryState();
-    const hooks = replayHooks(input.browser, input.allowCantTell === true, input.markerSettle);
+    const hooks = replayHooks(
+      input.browser,
+      input.allowCantTell === true,
+      input.markerSettle,
+      input.signedInBefore === true,
+    );
     const broker = localSecretBroker(input.secrets);
     const given = { current: {} };
     let held = runLogin.held();

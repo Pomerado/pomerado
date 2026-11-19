@@ -29,6 +29,7 @@ import { Context, Data, Schema, type Effect } from "effect";
 import { commitMarkMaxLength, commitMarkPattern } from "../runtime/operation.js";
 import { cardFillFields } from "../runtime/script-card-fill.js";
 import { DownloadCap } from "../runtime/files.js";
+import type { RefusalValue } from "../runtime/operation-failure.js";
 import type { SiteAccessDiagnostic } from "./site-access-contracts.js";
 import type { SignInVersionFinding } from "./sign-in-version.js";
 import {
@@ -247,7 +248,10 @@ export type HostRefusalSource = typeof HostRefusalSource.Type;
  * What a `host_refused` ending stood on, in the blocked diagnostic: the source that set the
  * attempt's host refusal (`HostRefusalSource`), a sign-in screen the host refused because the
  * password's fills are spent (`sign_in_refill`), one it refused at its destination check
- * (`sign_in_destination`), live tests the host refuses with no batch left (`live_tests_spent`), a
+ * (`sign_in_destination`), a `signedIn` on a page showing the signed-in marker that the host
+ * would not verify because the sign-in, after sending a screen, submitted no identifier with a
+ * password or code (`sign_in_check`), live tests the host refuses with no batch left
+ * (`live_tests_spent`), a
  * challenge on the site the host recorded and could not get past (`challenge`), and a refusal an
  * older worker's checkpoint kept without its source (`unrecorded`).
  */
@@ -257,6 +261,7 @@ export type HostRefusalBasis =
       readonly source:
         | "sign_in_refill"
         | "sign_in_destination"
+        | "sign_in_check"
         | "live_tests_spent"
         | "challenge"
         | "unrecorded";
@@ -544,6 +549,12 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
     | "write_path_undeclared"
     /** The session step named for publication did not record the confirmation the script declares. */
     | "confirmation_unrecorded"
+    /**
+     * The session step named for publication read back through a file other than the one
+     * published, and the write session is closed with no act step left to run that file, so
+     * nothing left in the attempt can prove it. A host sends it alone, with no `alsoRefused`.
+     */
+    | "read_back_unrepeatable"
     /**
      * The composed write's output schema lists a `refused` status the host cannot read as a
      * declared refusal (`unreadableRefusal`), so a run that returns one would end as an unknown
@@ -1240,7 +1251,9 @@ export type ScriptQuestionOutcome =
 export const ExecutionRefusal: Schema.Schema<NonNullable<ExecutionEvidence["refusal"]>> =
   Schema.Struct({
     field: Schema.optionalWith(Schema.String, { exact: true }),
-    available: Schema.Array(Schema.String),
+    available: Schema.Array(
+      Schema.Union(Schema.String, Schema.Number.pipe(Schema.finite()), Schema.Boolean),
+    ),
   });
 
 export interface ExecutionEvidence {
@@ -1286,6 +1299,13 @@ export interface ExecutionEvidence {
    * agent's result carries it; the execution ledger and checkpoints never hold it.
    */
   readonly scriptQuestion?: ScriptQuestionOutcome;
+  /**
+   * Trusted host marker: the caller said no to a question this execution's script asked, with a
+   * confirm's no or an option marked `declines`. An `owner_declined` block stands on it, as on a no
+   * to the minter's own confirm question. `proof`: the host takes that no as the proof of the
+   * build's change, and the minter is told to keep its edits and call finish_build.
+   */
+  readonly ownerDeclined?: { readonly proof: boolean };
   /** Emitted only by the harness when capability preflight rejects before a claim. */
   readonly preflight?: "rejected_before_claim";
   /**
@@ -1293,7 +1313,7 @@ export interface ExecutionEvidence {
    * input and listing every choice the page offers for it. A read repair's example that ends
    * this way is its publication receipt, since maintenance cannot change the caller's input.
    */
-  readonly refusal?: { readonly field?: string; readonly available: readonly string[] };
+  readonly refusal?: { readonly field?: string; readonly available: readonly RefusalValue[] };
   /**
    * Trusted host marker on a failed execution whose failure is the host's refusal of a download
    * over its own file caps, with the cap (`RunFiles.overCap`). No change to the source makes that
@@ -1375,6 +1395,7 @@ export const ExecutionEvidence: Schema.Schema<ExecutionEvidence> = Schema.Struct
     ),
     { exact: true },
   ),
+  ownerDeclined: Schema.optionalWith(Schema.Struct({ proof: Schema.Boolean }), { exact: true }),
   preflight: Schema.optionalWith(Schema.Literal("rejected_before_claim"), { exact: true }),
   refusal: Schema.optionalWith(ExecutionRefusal, { exact: true }),
   fileCap: Schema.optionalWith(DownloadCap, { exact: true }),
@@ -1938,7 +1959,8 @@ export type MintOutcome = {
    * its blocked report's explanation when the harness ended that report as sign-in unavailable
    * instead (`sign_in_failed` beside `recoveryReason: "sign_in_unavailable"`). Either is screened
    * for credentials and host-private values and kept only when Guardian's question review allowed
-   * its caller to read it, as a blocked explanation is. A blocked report's explanation Guardian
+   * its caller to read it, as a blocked explanation is, or, for the minter's last answer, asked
+   * only for other words (a reword labelled `unclear`). A blocked report's explanation Guardian
    * asked to reword goes back to the minter once, and the revision is kept when Guardian allows it.
    */
   readonly stopExplanation?: string;
@@ -3259,6 +3281,18 @@ export interface MintDependencies {
    * it when the minter reports `host_refused`. Absent, the harness knows only its own refusals.
    */
   readonly hostChallengeRefused?: () => boolean;
+  /**
+   * Whether the host refused the sign-in's latest `signedIn` although the page showed the
+   * signed-in marker, because no screen of that sign-in submitted the login's identifier with a
+   * password or code (`credentials_not_submitted`), and that sign-in had sent at least one screen,
+   * as when the site went on signed in past screens it skipped; and no sign-in verified and no
+   * sign-in screen was sent since. A `signedIn` before any screen of the sign-in, or on a page that
+   * doesn't show the marker, never counts: the minter can still send the site's sign-in screens. A
+   * `host_refused` block stands on it, named as the source `sign_in_check`, as on any host refusal
+   * of a sign-in. The harness reads it when the minter reports `host_refused`. Absent, the harness
+   * knows only the refusals it was handed as failures.
+   */
+  readonly signInCheckRefused?: () => boolean;
   /** The host's own descriptions of its optional tools, in place of the generic ones. */
   readonly hostToolDescriptions?: HostToolDescriptions;
   /**
@@ -3356,6 +3390,16 @@ export interface MintDependencies {
     request: ExecutionRequest,
     repeats: readonly string[],
   ) => Effect.Effect<boolean>;
+  /**
+   * Whether a write build's closed session may run this act step anyway. A host that knows the
+   * session saved nothing may let one more step run the file it publishes, when the read-back
+   * that closed the session ran another file. It is asked for every act step a closed session
+   * would refuse, a session that starts closed on an earlier attempt's claim included, and before
+   * the repeat check, the host's preflight and review, any of which may still refuse the step, so a
+   * host that allows a bounded number counts the steps its session recorded, not its answers.
+   * Absent, or false, a closed session runs no act step, as before.
+   */
+  readonly closedSessionAct?: (request: ExecutionRequest) => boolean;
   /** Host evidence of each publication decision; absent, reviews get none. */
   readonly publicationDecisions?: PublicationDecisionLog;
 }

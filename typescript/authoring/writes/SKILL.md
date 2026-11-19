@@ -421,6 +421,8 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   with each request's response status, and any autosave or draft save. That is the
   evidence for the `http` version; any other write is unintended and must not be in
   the script.
+- Confirm a write from the first proof the site gives that it took it, such as the new record's
+  id. Read other details if they show, and never wait for them.
 - Prefer confirming the write from its commit request. Keep the click on the final commit
   control, such as Save, Send, Submit, Book or Pay, in its own step, except a pay press after
   the host's card fill, which goes in the fill's step (caller-input skill). In the same call as
@@ -683,7 +685,9 @@ to add them.
 
 Every option the session met on its path is an input of the script, add-ons and
 pre-selected defaults included: required only when the site requires a choice that neither
-the request nor an answer settled, optional otherwise. The script sets each option from its
+the request nor an answer settled, optional otherwise. When the site offers choices for a write,
+such as delivery speed or a time window, make each an optional input; the rules below set its
+default. The script sets each option from its
 input. An unset optional input leaves the page's default, as in a read. An option the request
 or the owner's answer states for every call, such as which kind of record it
 creates, which line type a free-text line takes or whether a save runs the site's automation,
@@ -717,10 +721,12 @@ skill). When you change a script whose last such question passes none, add it, w
 is for. When a step between that question and the commit can change the total, prefer naming the
 total after that step in `order`; when you can't, re-read the total after that step and ask again
 before the commit when it rose above what the caller approved.
-Fill `order` as the checkout shows it: each item's real quantity, its `unit` when sold by
-weight or measure, and its price each, its line total or both; fees, a tip and a discount go in
-their own fields. When an item's measure is in a unit `unit` does not list, give
+Fill `order` as the checkout shows it, every charge and credit line included: each item's real
+quantity, its `unit` when sold by weight or measure, and its price each, its line total or both;
+fees and a tip go in their own fields, and every discount, credit and promotion, summed, in
+`discount`. When an item's measure is in a unit `unit` does not list, give
 it quantity 1 and its line total, with the measure as the checkout shows it in its name.
+`total` is what the commit will charge the caller, and the lines add up to it.
 
 The composed script publishes without ever running end to end, so it ends with a check that
 tells whether its action succeeded: its commit response checked as above, the site's

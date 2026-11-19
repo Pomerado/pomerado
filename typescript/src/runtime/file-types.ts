@@ -141,6 +141,13 @@ const extensionTypes: Readonly<Record<string, string>> = {
   vcf: "text/vcard",
 };
 
+/** Each media type's usual extension, the first `extensionTypes` names for it. */
+export const typeExtensions: Readonly<Record<string, string>> = Object.fromEntries(
+  Object.entries(extensionTypes)
+    .reverse()
+    .map(([extension, type]) => [type, extension]),
+);
+
 const matches = (bytes: Uint8Array, [offset, expected]: Signature) =>
   bytes.length >= offset + expected.length &&
   expected.every((byte, index) => byte === undefined || bytes[offset + index] === byte);
@@ -181,6 +188,89 @@ export const bytesMatchType = (bytes: Uint8Array, declared: string) => {
   );
   if (sniffed !== undefined) return sniffed.type === type || sniffed.carries.includes(type);
   return !knownTypes.some((known) => known.type === type || known.carries.includes(type));
+};
+
+/** Whether a type has a signature its bytes must carry, as a PDF's `%PDF-` or a PNG's. */
+const hasSignature = (type: string) =>
+  knownTypes.some((known) => known.type === type || known.carries.includes(type));
+
+/**
+ * Legacy Office types that sites commonly send for HTML or text tables, such as an export a
+ * spreadsheet still opens, so a download claiming one is never refused for its bytes.
+ */
+const looselyClaimedTypes = new Set([
+  "application/msword",
+  "application/vnd.ms-excel",
+  "application/vnd.ms-powerpoint",
+]);
+
+/** How far from the start a PDF's header, and a linearized PDF's dictionary, may sit. */
+const pdfMarkerWindow = 1024;
+
+/**
+ * A PDF's shape: `none` without a `%PDF-` header near the start; `unended` with no `%%EOF`
+ * marker after the header; `short` when a linearized PDF's dictionary declares a length (`/L`)
+ * above its byte count and the file holds one `%%EOF`, its first page's, as when a download stops
+ * after the first page; else `whole`. A whole file under a stale or wrong `/L` still has its
+ * final `%%EOF` too, so it is `whole`, and so is one with data after its last `%%EOF`, such as
+ * page markup a server wrote after the file, as PDF readers open both.
+ */
+const pdfShape = (bytes: Uint8Array) => {
+  const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const start = buffer.subarray(0, pdfMarkerWindow);
+  const header = start.indexOf("%PDF-");
+  if (header === -1) return "none";
+  const declared = /\/Linearized\s[^>]*?\/L\s+(\d+)/u.exec(start.toString("latin1", header))?.[1];
+  const end = buffer.indexOf("%%EOF", header + 5);
+  if (end === -1) return "unended";
+  const oneEnd = buffer.indexOf("%%EOF", end + 5) === -1;
+  return declared !== undefined && Number(declared) > bytes.byteLength && oneEnd ? "short" : "whole";
+};
+
+/** Whether the bytes prove a binary type: a known signature, or an ISO media `ftyp` box. */
+const provenBinary = (bytes: Uint8Array) =>
+  sniffedType(bytes) !== undefined || matches(bytes, [4, ascii("ftyp")]);
+
+/** What the bytes look like, for a refusal that says so: a page, JSON or nothing known. */
+const lookOf = (bytes: Uint8Array) => {
+  const start = new TextDecoder().decode(bytes.subarray(0, 512)).replace(/^[\s\uFEFF]+/u, "");
+  if (start.startsWith("<")) return "they look like an HTML or XML page";
+  if (start.startsWith("{") || start.startsWith("[")) return "they look like JSON";
+  return "they carry no sign of that type";
+};
+
+/**
+ * Why a download's bytes contradict what it claims, else undefined. A claim is the type its server
+ * sent or its name's extension implies, and only a type with a signature claims anything. Under
+ * such a claim a download is refused when it is empty, or when its bytes prove no binary type, such
+ * as an HTML sign-in page sent as `application/pdf` or named `.pdf`; bytes that prove another type
+ * are a real file, kept under their own type. A PDF is also refused when it has no `%%EOF` marker,
+ * or is linearized, shorter than the length it declares and holds only its first page's `%%EOF`.
+ * The answer names the claim, the size and what the bytes look like, never their contents.
+ */
+export const downloadContradiction = (
+  bytes: Uint8Array,
+  claims: { readonly name: string; readonly contentType?: string | undefined },
+): string | undefined => {
+  const extension = extensionOf(claims.name);
+  const claimed = [
+    ...(claims.contentType === undefined
+      ? []
+      : [[essence(claims.contentType), `The server sent it as ${essence(claims.contentType)}`] as const]),
+    ...(extension === "" ? [] : [[typeOfName(claims.name), `Its name ends in .${extension}`] as const]),
+  ].filter(([type]) => hasSignature(type) && !looselyClaimedTypes.has(type));
+  for (const [type, by] of claimed) {
+    if (bytes.byteLength === 0) return `${by}, but the download is empty.`;
+    const size = `its ${bytes.byteLength} bytes`;
+    const pdf = type === "application/pdf" ? pdfShape(bytes) : undefined;
+    if (pdf === "unended")
+      return `${by}, but ${size} have no %%EOF end marker, so the PDF is cut short or damaged.`;
+    if (pdf === "short")
+      return `${by}, but ${size} are fewer than its linearized header declares, so the PDF is cut short.`;
+    if (pdf === "whole" || provenBinary(bytes)) continue;
+    return `${by}, but ${size} are not ${pdf === "none" ? "a PDF" : type}: ${lookOf(bytes)}.`;
+  }
+  return undefined;
 };
 
 /**

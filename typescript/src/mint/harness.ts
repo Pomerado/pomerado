@@ -509,6 +509,7 @@ const writeCompletionReasons: ReadonlySet<string> = new Set([
   "write_path_undeclared",
   "confirmation_undeclared",
   "confirmation_unrecorded",
+  "read_back_unrepeatable",
   // A read's execution after the build became a write: the write itself is still to do.
   "example_before_effect_change",
 ]);
@@ -920,6 +921,10 @@ const siteAccessDiagnostic = (evidence: ExecutionEvidence): SiteAccessDiagnostic
   return undefined;
 };
 
+/** What the minter reads when the host takes the caller's no to the script's question as proof. */
+const declineProofInstruction =
+  "The caller declined at the tool's own confirm, so nothing was placed, and that decline is your change's proof: keep your edits and call finish_build.";
+
 /**
  * What the agent does after a write step whose confirmation the host withheld with its result:
  * the write went out, so it is never repeated; a step that only reads the confirmation back
@@ -961,6 +966,7 @@ const safeExecutionEvidence = (evidence: ExecutionEvidence): ExecutionEvidence =
       ? {}
       : { terminalFailure: evidence.terminalFailure }),
     ...(evidence.noResponse === undefined ? {} : { noResponse: evidence.noResponse }),
+    ...(evidence.ownerDeclined === undefined ? {} : { ownerDeclined: evidence.ownerDeclined }),
     ...(evidence.preflight === undefined ? {} : { preflight: evidence.preflight }),
     ...(evidence.resultRef === undefined ? {} : { resultRef: evidence.resultRef }),
     ...(evidence.confirmation === undefined ? {} : { confirmation: evidence.confirmation }),
@@ -2001,6 +2007,16 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               (entry.confirmation !== undefined || entry.withheldConfirmation !== undefined)) ||
             dependencies.canPublishRepair?.(entry.executionId) === true,
         );
+      // A read build's latest example that passed: a site-blocked report goes back once while it
+      // can still publish, so the host may publish what that example ran.
+      let examplePublishOffered = false;
+      const passedExample = () =>
+        executions.findLast(
+          (entry) =>
+            purposes.get(entry.executionId) === "example" &&
+            entry.status === "completed" &&
+            entry.resultRef !== undefined,
+        );
       const hostIsUnavailable = () => dependencies.executionAvailability?.() === "host_unavailable";
       /** Ends live execution; the attempt itself ends only without a publishable receipt. */
       const closeExecution = () => {
@@ -2358,6 +2374,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           return JSON.stringify({
             ...receipt,
             ...(withheld === undefined ? {} : { instruction: withheldConfirmationInstruction }),
+            ...(evidence.ownerDeclined?.proof === true
+              ? { instruction: declineProofInstruction }
+              : {}),
             ...(fileCap === undefined
               ? {}
               : { fileCap: { ...fileCap, instruction: fileCapInstruction(fileCap) } }),
@@ -4419,7 +4438,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         // the latest host refusal names a step that fixes it, in core's instruction
         // (`namedStepReasons`) or a host's rationale (`rationaleStepReasons`), the first report on
         // its reason goes back with that step, and the next is taken. The owner's no to a
-        // confirm question, or to a login, is `owner_declined`; a question handed back unanswered
+        // confirm question, to a question a step's script asked (`ownerDeclined`), or to a login,
+        // is `owner_declined`; a question handed back unanswered
         // is `question_unanswered`: no answer is no consent, so the minter may end the build
         // safely instead of going on past what it asked. A policy report that stands only on
         // one of those takes its name, so neither ever ends as policy. `owner_ended` needs the
@@ -4436,7 +4456,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               "confirmed" in answer &&
               !answer.confirmed,
           );
-        const ownerRefused = loginDeclined !== undefined || declined(false);
+        const ownerRefused =
+          loginDeclined !== undefined ||
+          declined(false) ||
+          executions.some((entry) => entry.ownerDeclined !== undefined);
         const stopDeclined = declined(true);
         const keptGoing = (ending: "owner_declined" | "owner_ended") =>
           refused(
@@ -4448,8 +4471,15 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         // A challenge the host recorded and could not get past is read only for host_refused.
         const challengeRefused =
           reason === "host_refused" && dependencies.hostChallengeRefused?.() === true;
+        // So is the host's refusal to verify a sign-in that submitted no identifier with a secret.
+        const signInCheckRefused =
+          reason === "host_refused" && dependencies.signInCheckRefused?.() === true;
         const hostCheckRefusing =
-          hostRefused || refillRefused || signInDestinationRefused || challengeRefused;
+          hostRefused ||
+          refillRefused ||
+          signInDestinationRefused ||
+          challengeRefused ||
+          signInCheckRefused;
         const liveTestsSpent = liveTestsRefusal !== undefined && !liveTestsRefusal.reserveOpen;
         const hostRefusing = hostCheckRefusing || liveTestsSpent;
         if (reason === "owner_declined" && !ownerRefused && stopDeclined)
@@ -4538,7 +4568,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           !namedStepsOffered.has(namedStep) &&
           !refillRefused &&
           !signInDestinationRefused &&
-          !challengeRefused
+          !challengeRefused &&
+          !signInCheckRefused
         ) {
           namedStepsOffered.add(namedStep);
           const told = namedStepInstructions.get(namedStep);
@@ -4580,6 +4611,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         const others: HostRefusalBasis[] = [
           ...(refillRefused ? [{ source: "sign_in_refill" as const }] : []),
           ...(signInDestinationRefused ? [{ source: "sign_in_destination" as const }] : []),
+          ...(signInCheckRefused ? [{ source: "sign_in_check" as const }] : []),
           ...(liveTestsSpent ? [{ source: "live_tests_spent" as const }] : []),
           ...(challengeRefused ? [{ source: "challenge" as const }] : []),
         ];
@@ -4705,13 +4737,17 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         );
       /**
        * The minter's last final answer as its caller may read it, when it stopped without a tool
-       * call: kept only when Guardian allowed it. The model is gone, so nothing is offered back:
-       * any other outcome or failure keeps nothing.
+       * call: kept when Guardian allowed it, or asked only for other words (`unclear`), since the
+       * model is gone and can't reword it, and the caller should still hear why. Any other
+       * outcome, label or failure keeps nothing.
        */
       const reviewedStopExplanation = (text: string | undefined) =>
         reviewStopExplanation(text).pipe(
           Effect.map((review) =>
-            review?.decision.outcome === "allow_business" ? review.screened : undefined,
+            review?.decision.outcome === "allow_business" ||
+            (review?.decision.outcome === "reword" && review.decision.label === "unclear")
+              ? review.screened
+              : undefined,
           ),
         );
       /**
@@ -6381,7 +6417,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 return yield* new MintFailure({ code: "AlreadyExecuted" });
               if (
                 submitted.purpose === "act" &&
-                (writeSession === "closed" || (writeSession === "none" && exampleClaimed))
+                ((writeSession === "closed" &&
+                  dependencies.closedSessionAct?.(submitted) !== true) ||
+                  (writeSession === "none" && exampleClaimed))
               )
                 return yield* new MintFailure({ code: "AlreadyExecuted" });
               const repeated = yield* repeatedWriteRefusal(submitted);
@@ -7436,6 +7474,13 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 }
                 const fixable = fixableRefusal(error, notPublished, review);
                 if (fixable !== undefined) return fixable;
+                if (error.reason === "read_back_unrepeatable")
+                  return notPublished(
+                    error.code,
+                    error.reason,
+                    {},
+                    "Not published: the step named for publication read back through a file other than the one you publish, and the write session is closed with no act step left to run that file, so nothing left in this attempt can show the published file works. End the build with report_blocked, reason host_refused.",
+                  );
                 if (error.reason === "destination_validation") {
                   // Publication uses the route evidence the host recorded while the example ran.
                   // Source edits and another finish_build on the same receipt cannot change it,
@@ -7852,6 +7897,28 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                           "The build ended because the host has no live execution for what it still needs. It ends as the host's failure, not as blocked; nothing more runs in this attempt.",
                       });
                     }
+                    const passed =
+                      !examplePublishOffered &&
+                      request.mode !== "maintenance" &&
+                      buildEffect !== "write" &&
+                      (report.reason === "site_declined" || report.reason === "site_unavailable")
+                        ? passedExample()
+                        : undefined;
+                    if (passed !== undefined) {
+                      examplePublishOffered = true;
+                      yield* diagnose({
+                        phase: "blocked",
+                        reason: "example_publishable",
+                        reported: report.reason,
+                      });
+                      return JSON.stringify({
+                        status: "blocked_refused",
+                        reason: "example_publishable",
+                        executionId: passed.executionId,
+                        userInputRequired: false,
+                        instruction: `Not ended: execution ${passed.executionId} passed the example and can still be published. Call finish_build with that executionId. If publication is refused, call report_blocked again to end the build.`,
+                      });
+                    }
                     // Sign-in is unavailable in this build, and a retained receipt held its
                     // ending back: the minter stops, and the build ends with the sign-in's own
                     // result, which names the cause better than any blocked reason.
@@ -7957,8 +8024,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       loginDeclined === undefined &&
                       !signInAbandoned
                     ) {
-                      // The minter's explanation still says why, kept only as a last answer is:
-                      // once Guardian's review of a blocked outcome allows its caller to read it.
+                      // The minter's explanation still says why, kept only once Guardian's review
+                      // of a blocked outcome allows its caller to read it: any reword drops it.
                       const stopReview =
                         terminal === undefined
                           ? yield* reviewStopExplanation(explanation)
@@ -9069,7 +9136,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       // A sign-in stop handed back to revise its explanation that the minter never sent again,
       // with nothing run since, still ends as sign-in unavailable with the reason it reported,
       // while the sign-in is still unconfirmed and the minter neither gave it up nor had the
-      // owner decline the login. Its last answer may say why, kept only once Guardian allows it.
+      // owner decline the login. Its last answer may say why, kept as `reviewedStopExplanation`
+      // keeps one.
       if (
         terminal === undefined &&
         signInStopReworded !== undefined &&

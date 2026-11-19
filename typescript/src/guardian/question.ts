@@ -81,11 +81,28 @@ const QuestionReviewLabelFromString = Schema.transform(
   },
 );
 
+/**
+ * The answer a script's question reworded as a repeat gets from the owner's earlier answer: a
+ * choice's option by the label the review saw, or a confirm's yes or no.
+ */
+export const RepeatAnswer = Schema.Struct({
+  question: Schema.String,
+  option: Schema.NullOr(Schema.String),
+  confirmed: Schema.NullOr(Schema.Boolean),
+});
+export type RepeatAnswer = typeof RepeatAnswer.Type;
+
 export const QuestionDecision = Schema.Struct({
   outcome: Schema.Literal("allow_business", "authentication", "reword"),
   rationale: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(1000)),
   /** The rule that decided it; absent from an older reviewer. */
   label: Schema.optional(QuestionReviewLabelFromString),
+  /**
+   * On a script's question reworded as a repeat, the answer the owner's earlier answer gives each
+   * of its questions, and the ids of those answered questions (`repeatedScriptAnswers`).
+   */
+  answers: Schema.optional(Schema.Array(RepeatAnswer).pipe(Schema.maxItems(8))),
+  answeredBy: Schema.optional(Schema.Array(Schema.String).pipe(Schema.maxItems(16))),
 });
 export type QuestionDecision = typeof QuestionDecision.Type;
 

@@ -142,6 +142,48 @@ it.each([
   },
 );
 
+// The caller's no to a question the tool's own script asked during a step is the owner's no, as a
+// no to the minter's own confirm is, so owner_declined stands on it. When the host takes that no as
+// the proof of the build's change, the step's result tells the minter to keep its edits and finish.
+it.each([false, true])(
+  "ends owner_declined on the caller's no to the script's own question (proof %s)",
+  async (proof) => {
+    const explanation = "The caller declined the order at the tool's confirm, so this build stops.";
+    const f = await fixture(
+      (_request, index) =>
+        [
+          call("execute", { ...pureExample, target: "liveBrowser" }, "example"),
+          call("report_blocked", { reason: "owner_declined", explanation }, "report"),
+        ][index] ?? prose("Stopping."),
+      {
+        reviewAndExecute: (_submitted, beforeDispatch = () => Effect.void) =>
+          beforeDispatch(readAllow).pipe(
+            Effect.as({
+              executionId: "execution_declined",
+              status: "failed" as const,
+              effect: "not_sent" as const,
+              observations: { message: "The caller declined the order; nothing was placed." },
+              ownerDeclined: { proof },
+            }),
+          ),
+      },
+    );
+    const outcome = await f.run();
+    const result = resultOf(f.requests[1], "example");
+    if (proof)
+      expect(result).toMatchObject({
+        instruction:
+          "The caller declined at the tool's own confirm, so nothing was placed, and that decline is your change's proof: keep your edits and call finish_build.",
+      });
+    else expect(result).not.toHaveProperty("instruction");
+    expect(outcome).toMatchObject({
+      build: "incomplete",
+      blocked: { reason: "owner_declined", explanation },
+      stopReason: "owner_declined",
+    });
+  },
+);
+
 // A site that offers the task but declines the example's own facts ends under its own reason, with
 // the site's reason in the explanation its caller reads, not as a site that lacks the capability.
 it("ends a build the site declined for the example's own facts as site_declined", async () => {
@@ -374,6 +416,16 @@ it("hands a contradicted site-fault report back only once in an attempt", async 
         call("report_blocked", { reason: "site_unavailable", explanation }, "third"),
       ][index] ?? prose("Stopping."),
     {
+      // The new run failed, so no passed example holds the report back.
+      reviewAndExecute: (_submitted, beforeDispatch = () => Effect.void) =>
+        beforeDispatch(readAllow).pipe(
+          Effect.as({
+            executionId: "execution_one",
+            status: "failed" as const,
+            effect: "possible" as const,
+            observations: { message: "The list stayed empty." },
+          }),
+        ),
       reviewQuestion: () =>
         Effect.sync(() =>
           ++reviews <= 2 ? contradicted : { outcome: "allow_business" as const, rationale: "Plain." },
@@ -383,6 +435,29 @@ it("hands a contradicted site-fault report back only once in an attempt", async 
   const outcome = await f.run();
   expect(lastResult(f.requests[1])).toContain("report_contradicted");
   expect(lastResult(f.requests[3])).toContain("blocked_explanation_rejected");
+  expect(outcome).toMatchObject({
+    build: "incomplete",
+    blocked: { reason: "site_unavailable", explanation },
+    stopReason: "site_unavailable",
+  });
+});
+
+// A read build whose example passed and whose site then stopped it published nothing when its
+// minter reported the block instead of calling finish_build. The report goes back once, naming the
+// run that passed, so the host can publish what it ran; a second report ends the build.
+it("hands a site-blocked report back once while a passed example can still publish", async () => {
+  const explanation = "The site's bot check now refuses every request.";
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", pureExample),
+        call("report_blocked", { reason: "site_unavailable", explanation }, "first"),
+        call("report_blocked", { reason: "site_unavailable", explanation }, "second"),
+      ][index] ?? prose("Stopping."),
+  );
+  const outcome = await f.run();
+  expect(lastResult(f.requests[2])).toContain("example_publishable");
+  expect(lastResult(f.requests[2])).toContain("execution_one");
   expect(outcome).toMatchObject({
     build: "incomplete",
     blocked: { reason: "site_unavailable", explanation },
@@ -858,6 +933,38 @@ it.each([
       stopReason: "host_refused",
     });
     expect(blockedRecord(outcome)).toMatchObject({ hostRefusals: [{ source: "challenge" }] });
+  } else {
+    expect(outcome).not.toHaveProperty("blocked");
+    expect(lastResult(f.requests[1])).toContain("host_not_refused");
+  }
+});
+
+// The host would not take the page as signed in, although it showed the signed-in marker, because
+// the sign-in under way had sent screens but none submitted the identifier with a password or code.
+// The minter's host_refused report was refused as host_not_refused, so it could only stop without
+// a tool and the build ended unexplained. The report now stands on the host's record of that
+// refusal (`signInCheckRefused`), naming it as its basis. With none on record, as for a signedIn
+// sent before any screen, which the host never records, it is refused.
+it.each([
+  { recorded: true, ends: true },
+  { recorded: false, ends: false },
+])("ends as host_refused on a sign-in check the host refused: $ends", async ({ recorded, ends }) => {
+  const explanation = "The host would not verify the sign-in the site already shows.";
+  const f = await fixture(
+    (_request, index) =>
+      [call("report_blocked", { reason: "host_refused", explanation }, "report")][index] ??
+      prose("Stopping."),
+    { signInCheckRefused: () => recorded },
+  );
+  const outcome = await f.run();
+  if (ends) {
+    expect(f.requests).toHaveLength(1);
+    expect(outcome).toMatchObject({
+      build: "incomplete",
+      blocked: { reason: "host_refused", explanation },
+      stopReason: "host_refused",
+    });
+    expect(blockedRecord(outcome)).toMatchObject({ hostRefusals: [{ source: "sign_in_check" }] });
   } else {
     expect(outcome).not.toHaveProperty("blocked");
     expect(lastResult(f.requests[1])).toContain("host_not_refused");
@@ -1354,6 +1461,36 @@ it.each([
   expect(await f.run()).toMatchObject({ blocked: { reason: "host_refused", explanation } });
 });
 
+// A read-back that ran another file in a write session with no act step left names no step that
+// can fix it, so a host_refused report on it is taken at once and names it.
+it("takes host_refused at once after a read-back no step left can repeat", async () => {
+  const explanation = "A Pomerado check refused publication, so no tool was published.";
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", pureExample),
+        finishAs(0),
+        call("report_blocked", { reason: "host_refused", explanation }, "report"),
+      ][index] ?? prose("Stopping."),
+    {
+      publish: () =>
+        Effect.fail(
+          new MintFailure({ code: "PublicationUnavailable", reason: "read_back_unrepeatable" }),
+        ),
+    },
+  );
+  const outcome = await f.run();
+  expect(resultOf(f.requests[2], "finish_0")).toMatchObject({
+    status: "not_published",
+    reason: "read_back_unrepeatable",
+    instruction: expect.stringContaining("host_refused") as unknown,
+  });
+  expect(outcome).toMatchObject({ blocked: { reason: "host_refused", explanation } });
+  expect(blockedRecord(outcome)).toMatchObject({
+    hostRefusals: [{ source: "publication", reason: "read_back_unrepeatable" }],
+  });
+});
+
 // A tool another publication advanced is a fixable registry refusal whose instruction offers ending
 // the build, so it names no step: the report is taken at once.
 it("takes host_refused at once after a registry refusal that offers ending the build", async () => {
@@ -1770,18 +1907,38 @@ it("ends three tool-free answers as final_text_without_tool, with the reviewed l
   expect(reviewed).toEqual([expect.objectContaining({ blockedOutcome: true })]);
 });
 
-it("keeps no last answer Guardian did not allow", async () => {
-  const f = await fixture(() => prose("Call 555-0100 to finish this request."), {
+it.each(["unsafe", "misdescribed", undefined] as const)(
+  "keeps no last answer Guardian did not allow (reword labelled %s)",
+  async (label) => {
+    const f = await fixture(() => prose("Call 555-0100 to finish this request."), {
+      reviewQuestion: () =>
+        Effect.succeed({
+          outcome: "reword" as const,
+          rationale: "It passes on a phone number.",
+          ...(label === undefined ? {} : { label }),
+        }),
+    });
+    const outcome = await f.run();
+    expect(outcome.stopReason).toBe("final_text_without_tool");
+    expect(outcome).not.toHaveProperty("stopExplanation");
+    expect(JSON.stringify(outcome)).not.toContain("555-0100");
+  },
+);
+
+it("keeps a last answer Guardian asked only to word differently", async () => {
+  const f = await fixture(() => prose("The check page came back and the search never ran."), {
     reviewQuestion: () =>
       Effect.succeed({
         outcome: "reword" as const,
-        rationale: "It passes on a phone number.",
+        rationale: "Say it more plainly.",
+        label: "unclear" as const,
       }),
   });
   const outcome = await f.run();
-  expect(outcome.stopReason).toBe("final_text_without_tool");
-  expect(outcome).not.toHaveProperty("stopExplanation");
-  expect(JSON.stringify(outcome)).not.toContain("555-0100");
+  expect(outcome).toMatchObject({
+    stopReason: "final_text_without_tool",
+    stopExplanation: "The check page came back and the search never ran.",
+  });
 });
 
 // A last answer that says the host refused the build's steps is true only against the host's own

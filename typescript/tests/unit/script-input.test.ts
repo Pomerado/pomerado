@@ -67,6 +67,27 @@ describe("a script question's options", () => {
     expect(result).toEqual(Either.right({ pick: "first" }));
   });
 
+  // A masked label the script builds from the page, such as a saved payment profile's own wording,
+  // could run past 64 characters only on the live page, after the script already ran part of its
+  // write, and the question then failed instead of being asked. It is now left out whole, never
+  // cut, so a host that screens masked labels reads none of it and masks the option itself.
+  it("asks the question without a masked label over 64 characters, and keeps one at 64", () => {
+    const long = "Synthetic team profile, receipts to someone@example.com, card ending 0000";
+    const atLimit = "m".repeat(64);
+    const { result, offered } = ask([
+      { value: "place", label: "Place the order", accountSpecific: true, maskedLabel: long },
+      { value: "keep", label: "Keep the card", accountSpecific: true, maskedLabel: atLimit },
+      { value: "cancel", label: "Cancel" },
+    ]);
+    expect(long.length).toBeGreaterThan(64);
+    expect(offered).toEqual([
+      { id: "o1", label: "Place the order", accountSpecific: true },
+      { id: "o2", label: "Keep the card", accountSpecific: true, maskedLabel: atLimit },
+      { id: "o3", label: "Cancel" },
+    ]);
+    expect(result).toEqual(Either.right({ pick: "place" }));
+  });
+
   it("keeps a label of exactly 256 characters as it is", () => {
     const label = "x".repeat(256);
     expect(ask([{ value: "first", label }]).offered?.[0]?.label).toBe(label);
@@ -215,11 +236,6 @@ describe("a script question that can't be asked", () => {
 
   it.each([
     [
-      "a masked label over 64 characters",
-      [first, { ...second, accountSpecific: true, maskedLabel: "Masked 3e8f ".repeat(7).trim() }],
-      "Script question pick could not be asked because option 2's maskedLabel is 83 characters; the limit is 64.",
-    ],
-    [
       "an empty masked label",
       [{ ...first, accountSpecific: true, maskedLabel: "" }, second],
       "Script question pick could not be asked because option 1's maskedLabel is empty.",
@@ -263,10 +279,13 @@ describe("a script question that can't be asked", () => {
     expect(refusal(options)).toBe(message);
   });
 
-  it("never says a masked label, value or label it refuses", () => {
+  it("never says the masked label, value or label of an option it refuses", () => {
     const masked = "Masked label 8c1f ".repeat(5);
-    const message = refusal([first, { ...second, accountSpecific: true, maskedLabel: masked }]);
-    expect(message).toMatch(/maskedLabel is 90 characters; the limit is 64\.$/);
+    const message = refusal([
+      first,
+      { ...second, accountSpecific: true, maskedLabel: masked, declines: "yes" },
+    ]);
+    expect(message).toMatch(/option 2's declines must be true or false\.$/);
     for (const text of [masked, masked.trim(), "8c1f", second.value, second.label])
       expect(message).not.toContain(text);
   });

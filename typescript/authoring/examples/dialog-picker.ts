@@ -27,7 +27,7 @@ export default defineOperation(
   },
   async ({ kernel, sessionId, input, errors }) => {
     const answer = await kernel.browsers.playwright.execute(sessionId, {
-      timeout_sec: 60,
+      timeout_sec: 120,
       code: `
         ${waitCode}
         const query = ${JSON.stringify(input.query.trim())};
@@ -51,10 +51,10 @@ export default defineOperation(
           return { failure: "option_identity_mismatch" };
         await option.click({ timeout: waitLimits.action });
         // One click only. Missing commitment is reported, never clicked again. The value waits
-        // read text and attributes, not an input's current value, so this polls it for the
-        // no-progress budget.
+        // read text and attributes, not an input's current value, so this polls it for up to
+        // the answer cap.
         const committed = page.getByRole("textbox", { name: "Selected catalog key", exact: true });
-        const until = Date.now() + waitLimits.answer;
+        const until = Date.now() + waitLimits.answerCap;
         while (Date.now() < until) {
           if ((await committed.inputValue({ timeout: 1000 })) === key) return { selected_key: key };
           await page.waitForTimeout(100);

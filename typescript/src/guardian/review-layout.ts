@@ -72,7 +72,7 @@ export const outcomeAccepted = (pending: PendingExecution, raw: unknown): boolea
 const reviewFields: Record<ReviewKind, readonly string[]> = {
   execution: ["action", "refusal", "refusalGround", "advice"],
   recovery: ["advice"],
-  question: ["label"],
+  question: ["label", "answers", "answeredBy"],
   update: [],
   publication: ["reason", "findings", "publicReason", "responseRulings"],
   host: ["label"],
@@ -112,6 +112,30 @@ export const decisionFormatOf = (outcomes: readonly GuardianOutcome[]): AgentOut
       },
       // An execution or recovery allow's optional note for the agent, which never blocks the step.
       advice: { anyOf: [{ type: "null" }, { type: "string" }] },
+      // A script question's repeat: the answer the owner's earlier answer gives each question.
+      answers: {
+        anyOf: [
+          { type: "null" },
+          {
+            type: "array",
+            maxItems: 8,
+            items: {
+              type: "object",
+              properties: {
+                question: { type: "string" },
+                option: { anyOf: [{ type: "null" }, { type: "string" }] },
+                confirmed: { anyOf: [{ type: "null" }, { type: "boolean" }] },
+              },
+              required: ["question", "option", "confirmed"],
+              additionalProperties: false,
+            },
+          },
+        ],
+      },
+      // The ids of the owner's answered questions that settle that repeat.
+      answeredBy: {
+        anyOf: [{ type: "null" }, { type: "array", maxItems: 16, items: { type: "string" } }],
+      },
       // A publication review's ruling on each minter answer to a prior finding the request carries.
       responseRulings: {
         anyOf: [
@@ -187,6 +211,8 @@ export const decisionFormatOf = (outcomes: readonly GuardianOutcome[]): AgentOut
       "refusal",
       "refusalGround",
       "advice",
+      "answers",
+      "answeredBy",
     ],
     additionalProperties: false,
   },

@@ -60,7 +60,13 @@ import {
   returnedRefusal,
   type CommitEvidence,
 } from "../runtime/run-outcome.js";
-import { InputRequestFailure, type InputAsker } from "../runtime/input-request.js";
+import {
+  InputRequestFailure,
+  pickedOption,
+  type InputAsker,
+  type InputRequest,
+  type ValidAnswers,
+} from "../runtime/input-request.js";
 import { siteDomain } from "../runtime/same-site.js";
 import { probeCallCode } from "../runtime/host-execute.js";
 import type { BrowserExecute } from "../runtime/browser-execution.js";
@@ -70,6 +76,7 @@ import type { MintState } from "./mint-state.js";
 import {
   forgetOrderAnswers,
   keptScriptAnswers,
+  repeatedScriptAnswers,
   reusedScriptAnswers,
   scriptQuestionKeys,
 } from "../mint/script-answer-reuse.js";
@@ -193,6 +200,16 @@ const executeAuthentication = (
     };
   });
 
+/** Whether the caller said no in these answers: a confirm's no, or an option marked `declines`. */
+const saidNo = (candidate: InputRequest, answers: ValidAnswers) =>
+  candidate.questions.some((question) => {
+    const answer = answers[question.id];
+    if (answer?.type === "confirm") return !answer.value.confirmed;
+    if (answer?.type !== "choice" || question.type !== "choice") return false;
+    const picked = pickedOption(answer.value);
+    return question.options.some((option) => option.id === picked && option.declines === true);
+  });
+
 const scriptQuestions = (
   state: MintState,
   entrypoint: string,
@@ -203,6 +220,7 @@ const scriptQuestions = (
   const { projection } = state.session;
   let scriptQuestion: ScriptQuestionOutcome | undefined;
   let unanswered = false;
+  let declined = false;
   const scriptAsk: InputAsker = (candidate, bounds) =>
     Effect.gen(function* () {
       // The same question asked again reuses the owner's answer before Guardian reviews it, which
@@ -216,6 +234,7 @@ const scriptQuestions = (
       // for the commit fence; Guardian's source review looks for one. The reused answer reaches
       // later reviews as a fresh one does. It is always the owner's latest answer to its prompt
       // (`forgetScriptAnswers`), so it never replaces a newer one in Guardian's list.
+      let repeat = false;
       const keys = yield* scriptQuestionKeys(candidate, (text) => projection.text(text));
       const kept =
         bounds?.commitsUnsent === true
@@ -233,6 +252,27 @@ const scriptQuestions = (
             { entrypoint: `operation/${entrypoint}`, sources: sourceMap, input },
             question,
           );
+          // A repeat that names the owner's earlier answers answers a question with no order from
+          // them, never over an answer to the same prompt it didn't name. This host records no
+          // order a yes was for, so a purchase goes as the review says.
+          const named = review.decision.answeredBy ?? [];
+          const unnamed = context.answeredQuestions.some(
+            (entry) =>
+              (entry.id === undefined || !named.includes(entry.id)) &&
+              keys.some((key) => key?.prompt === entry.question),
+          );
+          const repeated = unnamed
+            ? undefined
+            : repeatedScriptAnswers(
+                candidate,
+                review.decision,
+                context.answeredQuestions,
+                () => false,
+              );
+          if (repeated !== undefined) {
+            repeat = true;
+            return repeated;
+          }
           if (review.decision.outcome !== "allow_business") {
             scriptQuestion = {
               requestId: candidate.id,
@@ -246,9 +286,15 @@ const scriptQuestions = (
           scriptAnswers.kept = keptScriptAnswers(scriptAnswers.kept, keys, fresh, candidate.order);
           return fresh;
         }));
-      yield* context.answered(candidate, answers);
+      // A repeat's answers are no owner's own: the answers that settle it are trusted already.
+      if (!repeat) yield* context.answered(candidate, answers);
       return answers;
     }).pipe(
+      Effect.tap((answers) =>
+        Effect.sync(() => {
+          declined ||= saidNo(candidate, answers);
+        }),
+      ),
       Effect.mapError((cause) =>
         cause instanceof InputRequestFailure
           ? cause
@@ -267,6 +313,10 @@ const scriptQuestions = (
     },
     get unanswered() {
       return unanswered;
+    },
+    /** The caller said no to a question the script asked (`ExecutionEvidence.ownerDeclined`). */
+    get declined() {
+      return declined;
     },
   };
 };
@@ -387,6 +437,8 @@ interface ReceiptInput {
   readonly afterUnverifiedSignIn?: true;
   /** The latest download the step's files refused over the host's caps (`RunFiles.overCap`). */
   readonly fileCap?: DownloadCap;
+  /** The caller said no to a question the step's script asked; this host never takes it as proof. */
+  readonly ownerDeclined?: ExecutionEvidence["ownerDeclined"];
   /** The commit steps this act step ran settled, with the steps that may have sent each. */
   readonly fenced?: ReadonlyMap<string, readonly string[]>;
 }
@@ -476,6 +528,7 @@ const failedReceipt = (
       },
       review: reviewFeedback(reviewed),
       ...(receipt.fileCap === undefined ? {} : { fileCap: receipt.fileCap }),
+      ...(receipt.ownerDeclined === undefined ? {} : { ownerDeclined: receipt.ownerDeclined }),
       ...(scriptQuestion === undefined ? {} : { scriptQuestion }),
       ...(unanswered || (failure instanceof LocalOperationFailure && failure.code === "NoResponse")
         ? { noResponse: { possibleCommit: execution.purpose === "act" } }
@@ -529,6 +582,7 @@ const completedReceipt = (receipt: ReceiptInput, result: LocalOperationOutput) =
         ...(outputChecks === undefined ? {} : { outputChecks }),
       }),
       review: reviewFeedback(reviewed),
+      ...(receipt.ownerDeclined === undefined ? {} : { ownerDeclined: receipt.ownerDeclined }),
     };
     runs.set(id, {
       sources,
@@ -798,6 +852,7 @@ const authoredExecution = (
           ...(afterUnverifiedSignIn ? { afterUnverifiedSignIn: true as const } : {}),
           ...(fileCap === undefined ? {} : { fileCap }),
           ...(fenced.size === 0 ? {} : { fenced }),
+          ...(questions.declined ? { ownerDeclined: { proof: false } } : {}),
         };
         const evidence = yield* executed._tag === "Left"
           ? failedReceipt(receipt, executed.left, questions)

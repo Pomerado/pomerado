@@ -1041,11 +1041,15 @@ describe("the publication policy", () => {
   // returns its quote, may publish signed out, as the cart skill lets it build: no later call needs
   // that cart. A cart a later call must find still needs
   // a verified sign-in, and the same-run guest checkout keeps its own clause. Hosts with their own
-  // publication policy get it with publicationCartPolicy.
+  // publication policy get it with publicationCartPolicy. A site notice in another container than
+  // the tool's controls never makes that finding, even when the accessibility snapshot hides the
+  // divider between them.
   it("lets a cart tool whose own guest cart lives only inside one run publish signed out", () => {
     const rule =
       "A cart tool (one that reads, adds to, changes or checks out a cart) runs signed in, unless it fills the cart and places the order in the same run through the site's guest checkout and its description says so, or its description says it starts its own guest cart that lives only inside one run, which no later call or person must find, as a tool that fills a cart and returns its quote before checkout may, and the source and trusted evidence agree; without a verified sign-in in trusted_execution_context, any other cart tool is a cart_sign_in finding with reason evidence at the description.";
-    expect(publicationCartPolicy.startsWith(`${rule} `)).toBe(true);
+    const notice =
+      "A site notice applies only to the controls in its own container in the captured page's structure, not by its place in the accessibility snapshot, which can hide dividers, so a cart_sign_in finding never rests on a notice whose container holds no control the tool uses.";
+    expect(publicationCartPolicy.startsWith(`${rule} ${notice} `)).toBe(true);
     expect(guardianPublicationPolicy.split(rule)).toHaveLength(2);
     expect(publicationFindingCategories).toContain("cart_sign_in");
   });
@@ -1324,15 +1328,16 @@ describe("the publication policy", () => {
   });
 
   // Matching a record by today's date, or turning the site's "Tomorrow" into a date, picks the
-  // wrong day as surely as refusing a past date does when today is UTC's. A time with no offset
-  // names no moment, but a repair or change is judged only on the times it adds or changes, so
-  // the many tools that return one today still repair.
-  it("finds a comparison with today in UTC, and an output time with no offset that a build adds", () => {
+  // wrong day as surely as refusing a past date does when today is UTC's. A time's zone is best
+  // effort: a site may show local times and name no zone, so a time without one never blocks a
+  // build, repair or change.
+  it("finds a comparison with today in UTC, and never an output time with no offset on its own", () => {
     expect(publicationOutputPolicy).toContain(
       "Date in UTC: source that compares a site's date or time with today's date or the time in UTC, such as new Date().toISOString().slice(0, 10), rather than with today in the site's time zone or in that of the place the date is at,",
     );
+    expect(publicationOutputPolicy).not.toContain("Zone-less time:");
     expect(publicationOutputPolicy).toContain(
-      "Zone-less time: an output time with no UTC offset, unless the output also returns that time with one. In a repair or change, only for an output time it adds or changes.",
+      "An output time with no UTC offset or time zone is never a finding on its own; the rationale may note it.",
     );
     expect(guardianPublicationPolicy).not.toContain("Past date in UTC");
     expect(guardianPublicationPolicy).toContain(publicationOutputPolicy);

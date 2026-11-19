@@ -219,6 +219,10 @@ export const keyboardSubmitNotice =
 export const clickLayerSubmitNotice =
   "The site lays its own control, with the same name as the submit, over the submit inside the sign-in form, so the host clicked that control as the submit. Explore read-only to read the next screen (never read a field the host filled), then send its signInStep, or signedIn.";
 
+/** After a step with no fields whose submit the host clicked. */
+export const fieldlessClickNotice =
+  "The host typed nothing and only clicked the submit. Explore read-only to read the next screen (never read a field the host filled), then send its signInStep, or signInStep.signedIn with what shows the site signed in.";
+
 /** After a step whose submit key the host pressed. */
 const keyNotices = {
   failed:
@@ -244,5 +248,7 @@ export const stepNotice = (
     return keyNotices[stepReport.submit];
   if (stepReport.via === "keyboard") return keyboardSubmitNotice;
   if (stepReport.via === "click_layer") return clickLayerSubmitNotice;
+  if (stepReport.submit === "clicked" && stepReport.fields.length === 0)
+    return fieldlessClickNotice;
   return filledNotices[stepReport.submit];
 };

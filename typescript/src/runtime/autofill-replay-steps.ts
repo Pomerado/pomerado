@@ -172,8 +172,23 @@ export const isTwoFactorOption = (
  * - `refuseShownAnswer`: after a failed check, a saved answer whose question shows again;
  * - `resubmit`: the challenge look at a screen's deadline, which may send the last screen again;
  * - `allowedChoices`: the recorded screens' choices this run's caller allowed, whose submits the
- *   replay presses. None when absent, so the replay stops before any screen that names a choice.
+ *   replay presses. None when absent, so the replay stops before any screen that names a choice;
+ * - `siteAnswer`: what the site's own answer to the credential screen the replay submitted last
+ *   says, as the host reads it, for a replay whose submitted screen came back (`SiteAnswer`): read
+ *   right after a submit that sent the password while a recorded screen remains after it, and when
+ *   the replay would end on that screen. The first read may come before the site answered, and a
+ *   read with no answer is read again later, so a host never keeps an empty answer for the submit.
+ *   None when absent, so that replay goes on, or ends there, as the screens decide.
  */
+/**
+ * What a site's own answer to a submitted credential screen that came back says, as a host reads
+ * it: `link`, that it emailed a sign-in link the owner opens, and the replay then asks the owner to
+ * paste it, opens it in its own browser and goes on; `refused`, that it refused the login, as a
+ * wrong password or a locked account, and the replay then ends right after the password's submit as
+ * the returned screen does (`credential_screen_returned`), for the host's own verdict on it.
+ */
+export type SiteAnswer = "link" | "refused";
+
 export interface HostedSignIn<
   E extends YieldableError,
   V extends string = string,
@@ -200,6 +215,7 @@ export interface HostedSignIn<
     | undefined;
   readonly resubmit?: ((session: ReplaySession<E, V, L>) => ClearThenResubmit<E, V>) | undefined;
   readonly allowedChoices?: readonly SignInChoice[] | undefined;
+  readonly siteAnswer?: (() => Effect.Effect<SiteAnswer | undefined>) | undefined;
 }
 
 export interface AutofillReplayInput<

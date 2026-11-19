@@ -8,10 +8,16 @@ export const statementSha256 = createHash("sha256").update(statement).digest("he
 /** The statement for one month, which `/statement.csv?month=<month>` serves. */
 export const monthStatement = (month: string) => `${statement}month,${month}\n`;
 
+/** A synthetic one-page PDF, which `/report.pdf` shows inline, as a browser's viewer opens. */
+export const report =
+  "%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\ntrailer << /Root 1 0 R >>\n%%EOF\n";
+
 /**
  * A site with a file input that uploads the chosen file and shows what the server received (its
  * name, size and sha256), a link that downloads a statement and one for each of two months'
- * statements. `received` lists each upload,
+ * statements, and documents served inline: `/report.pdf` a PDF, `/expired.pdf` a sign-in
+ * page in its place, `/mislabelled.pdf` that page sent as a PDF, `/public.pdf` the PDF that any
+ * site may read without cookies, `/moved?to=<address>` a redirect there and `/missing.pdf` a 404. `received` lists each upload,
  * and `requested` the path of every request the site answered. Its `/drop` page uploads a file the moment its input holds one; with `frame`, the main page
  * embeds that address in an iframe. `/shadow-drop` does the same with its input inside an open
  * shadow root.
@@ -47,7 +53,30 @@ export const startFileSite = async (options: { readonly frame?: string } = {}) =
         response.end(month === null ? statement : monthStatement(month));
         return;
       }
+      const signIn = "<!doctype html><title>Sign in</title><form><input name=user></form>";
+      if (["/report.pdf", "/mislabelled.pdf", "/public.pdf"].includes(url.pathname)) {
+        response.setHeader("Content-Type", "application/pdf");
+        response.setHeader("Content-Disposition", "inline");
+        if (url.pathname === "/public.pdf") response.setHeader("Access-Control-Allow-Origin", "*");
+        response.end(url.pathname === "/mislabelled.pdf" ? signIn : report);
+        return;
+      }
+      if (url.pathname === "/moved") {
+        response.statusCode = 302;
+        response.setHeader("Location", url.searchParams.get("to") ?? "/");
+        response.end();
+        return;
+      }
+      if (url.pathname === "/missing.pdf") {
+        response.statusCode = 404;
+        response.end("Not found");
+        return;
+      }
       response.setHeader("Content-Type", "text/html");
+      if (url.pathname === "/expired.pdf") {
+        response.end(signIn);
+        return;
+      }
       if (url.pathname === "/drop") {
         response.end(`<title>Drop</title>
 <label>Drop <input type="file"></label>

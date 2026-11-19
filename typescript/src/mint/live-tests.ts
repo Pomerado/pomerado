@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { Ajv } from "@modelcontextprotocol/server/validators/ajv";
 import { Clock, Effect, Either, Schema } from "effect";
 import { outputCheckMeaning, outputChecks, type OutputCheck } from "../runtime/output-lint.js";
+import type { RefusalValue } from "../runtime/operation-failure.js";
 
 /**
  * Live tests of a read: the cases the minting agent designs in `test/cases.json`, each case's
@@ -381,7 +382,7 @@ export type LiveTestOutcome =
       readonly status: "invalid_input";
       readonly message?: string;
       readonly field?: string;
-      readonly available?: readonly string[];
+      readonly available?: readonly RefusalValue[];
     }
   | {
       readonly status: "failed";
@@ -450,7 +451,7 @@ export interface JudgedCase {
   readonly errorClass?: string;
   readonly message?: string;
   readonly frame?: string;
-  readonly refusal?: { readonly field?: string; readonly available?: readonly string[] };
+  readonly refusal?: { readonly field?: string; readonly available?: readonly RefusalValue[] };
   /** The output the verdict judged, for an excerpt; absent when the run returned none. */
   readonly output?: unknown;
 }
@@ -709,7 +710,7 @@ export interface LiveTestRecord {
   readonly errorClass?: string;
   readonly message?: string;
   readonly frame?: string;
-  readonly refusal?: { readonly field?: string; readonly available?: readonly string[] };
+  readonly refusal?: { readonly field?: string; readonly available?: readonly RefusalValue[] };
   /** A short screened excerpt of the output. */
   readonly excerpt?: string;
   /** The output check's findings on the output the verdict judged. */
@@ -750,7 +751,12 @@ export const LiveTestRecord: Schema.Schema<LiveTestRecord> = Schema.Struct({
   refusal: Schema.optionalWith(
     Schema.Struct({
       field: Schema.optionalWith(Schema.String, { exact: true }),
-      available: Schema.optionalWith(Schema.Array(Schema.String), { exact: true }),
+      available: Schema.optionalWith(
+        Schema.Array(
+          Schema.Union(Schema.String, Schema.Number.pipe(Schema.finite()), Schema.Boolean),
+        ),
+        { exact: true },
+      ),
     }),
     { exact: true },
   ),
