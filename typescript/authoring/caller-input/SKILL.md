@@ -52,7 +52,9 @@ separately are both applied as given, even when they're far apart.
    - `InvalidInput`: the caller's value is wrong or the site does not offer it. It breaks a rule
      above, or is not among the options the page lists, such as a store missing from its
      picker. Pass `field`, and `available`, every option the page offers
-     as selectable, exactly as shown, whenever the page lists them. `available` lists only values
+     as selectable, exactly as shown, whenever the page lists them, and `available: []` when it
+     lists none, the refusal has no `kind` and its message doesn't start "Caller input error:".
+     `available` lists only values
      the caller could send back in that field, and a range goes in the message. When a refusal
      lists choices, list the site's standalone named options before entries from a broader list
      or picker. An option taken from the
