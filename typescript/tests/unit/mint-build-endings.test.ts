@@ -713,6 +713,23 @@ it("ends a build its minter declined itself as agent_declined, while policy stil
   expect(reviewed).toEqual([true]);
 });
 
+// An example that can't reach the part the build must prove, such as a control the site shows
+// for other records only, had no ending but site_declined, which reads as the site's refusal. It
+// ends as example_unreachable, so a host can ask its caller for another example.
+it("ends a build whose example can't reach the part it needs as example_unreachable", async () => {
+  const explanation = "The site doesn't show the needed control for this example.";
+  const f = await fixture(
+    (_request, index) =>
+      [call("report_blocked", { reason: "example_unreachable", explanation })][index] ??
+      prose("Stopping."),
+  );
+  await expect(f.run()).resolves.toMatchObject({
+    build: "incomplete",
+    blocked: { reason: "example_unreachable", explanation },
+    stopReason: "example_unreachable",
+  });
+});
+
 const finishBuild = {
   entrypoint: "src/tool.ts",
   executionId: "execution_one",
