@@ -40,15 +40,16 @@ const ${name} = await (async () => {
  * the groups that open between them. It goes nowhere when that anchor shares a line with the one
  * before, when an open shadow root comes first, or when an anchor is not found.
  *
- * A form outermost among forms, with no role or name of its own, is found by such anchors too: up
- * to three before it, all its own, and the first after it. Its first anchor is the first found
- * past the forms marked before it with the anchors before it each shortly before the next, the
- * last on an earlier line. Each of its own follows shortly after the one before, and the one after
- * it on a later line, past what holds its last. Its `- form:` line goes over the lines from its
- * first anchor's to the end of what holds its last, at the outermost level between the two. A
- * form gets none when nothing anchored is outside it, such as one that holds the whole page, or
- * when its first or last anchor, or the one after it, is not found that way; an anchor of its own
- * between those that is not found is passed over.
+ * A form outermost among forms, with no role or name of its own, is found by such anchors too: all
+ * its own, up to three before it, and the first after it; a select's options count. Its first
+ * anchor is found at one of the next few places past the forms before it, with the anchors before
+ * it each shortly before the next, the last on an earlier line. Each of its own follows shortly
+ * after the one before, and the one after it on a later line, past what holds its last. A line's
+ * own `- ` is never part of an anchor. Its `- form:` line goes over the lines from its first
+ * anchor's to the end of what holds its last, at the outermost level between the two. A form gets
+ * none when it is not rendered, when nothing anchored is outside it, such as one that holds the
+ * whole page, or when its first or last anchor, or the one after it, is not found that way; an
+ * anchor of its own between those that is not found is passed over.
  */
 export const markedAriaSnapshotCode = `
 const markedAriaSnapshot = async (locator, options) => {
@@ -83,10 +84,13 @@ const markedAriaSnapshot = async (locator, options) => {
             .split(/["'\\\\]/)
             .map((run) => run.replace(/\\s+/g, " ").trim())
             .reduce((longest, run) => (run.length > longest.length ? run : longest), "");
-        // An element shown as its children only has no box of its own.
+        // An element shown as its children only has no box of its own, nor has a select's option.
         const rendered = (element) => {
           const style = getComputedStyle(element);
-          const box = style.display === "contents" ? element.parentElement : element;
+          const box =
+            style.display === "contents"
+              ? element.parentElement
+              : (element.closest("select") ?? element);
           return style.visibility === "visible" && box?.checkVisibility() === true;
         };
         const control = (element) =>
@@ -136,8 +140,8 @@ const markedAriaSnapshot = async (locator, options) => {
           while (node.lastChild !== null) node = node.lastChild;
           return node;
         };
-        // Up to \`count\` anchors in \`scope\` next to \`node\`, after it or (\`back\`) before it, in
-        // document order, past aria-hidden subtrees.
+        // Up to \`count\` anchors in \`scope\` next to \`node\`, after it or (\`back\`) before
+        // it, in document order, past aria-hidden subtrees.
         const anchorsBeside = (scope, node, back, count) => {
           const walk = document.createTreeWalker(
             scope,
@@ -162,14 +166,18 @@ const markedAriaSnapshot = async (locator, options) => {
           }
           return anchors;
         };
-        // Each form's anchors: up to three before it, all its own, and the first after it. A form
-        // with nothing anchored outside it, such as one holding the whole page, is left out.
+        // Each form's anchors: all its own, up to three before it, and the first after it. A form
+        // with none of its own, such as a hidden one, is left out before its neighbours are
+        // walked, and so is one with nothing anchored outside it, such as one holding the page.
         const edges = forms.flatMap((form) => {
+          if (!rendered(form)) return [];
+          const inside = anchorsBeside(form, form, false, Infinity);
+          if (inside.length === 0) return [];
           const before = anchorsBeside(root, form, true, 3);
           const after = anchorsBeside(root, lastOf(form), false, 1);
-          if (before.length === 0 && after.length === 0) return [];
-          const inside = anchorsBeside(form, form, false, Infinity);
-          return inside.length === 0 ? [] : [[before, inside, after[0] ?? null]];
+          return before.length === 0 && after.length === 0
+            ? []
+            : [[before, inside, after[0] ?? null]];
         });
         if (holders.size === 0) return JSON.stringify([[], edges]);
         const walker = document.createTreeWalker(
@@ -227,36 +235,45 @@ const markedAriaSnapshot = async (locator, options) => {
   };
   // How far past one anchor's line the next is looked for.
   const lookahead = 50;
+  const indent = (line) => line.length - line.trimStart().length;
   // Where \`text\` ends, as [line, column], next from \`at\` and before line \`to\`, or undefined.
+  // A line's own \`- \` is never part of an anchor.
   const seek = (text, [line, column], to) => {
     for (let index = line; index < Math.min(to, lines.length); index++) {
-      const found = lines[index].indexOf(text, index === line ? column : 0);
+      const start = Math.max(index === line ? column : 0, indent(lines[index]) + 2);
+      const found = lines[index].indexOf(text, start);
       if (found !== -1) return [index, found + text.length];
     }
   };
-  // Where \`text\` starts, as [line, column], last before \`at\` and after line \`to\`, or undefined.
+  // Where \`text\` starts, as [line, column], last before \`at\` and after line \`to\`, or
+  // undefined.
   const seekBack = (text, [line, column], to) => {
     for (let index = line; index > Math.max(to, -1); index--) {
       const end = index === line ? column - text.length : Infinity;
       const found = end < 0 ? -1 : lines[index].lastIndexOf(text, end);
-      if (found !== -1) return [index, found];
+      if (found >= indent(lines[index]) + 2) return [index, found];
     }
   };
-  const indent = (line) => line.length - line.trimStart().length;
   // The last line of the last form marked: a form's own lines come after it.
   let done = -1;
+  // Where the next form's first anchor is looked for: past the last form's first anchor.
+  let resume = [0, 0];
   for (const [before, inside, after] of forms) {
-    // Its first anchor, with the anchors before it each shortly before the next, the last of
-    // them on an earlier line, so the form starts on a line of its own.
-    let first = seek(inside[0], [done + 1, 0], lines.length);
+    // Its first anchor, at one of the next \`lookahead\` places its text is found, with the
+    // anchors before it each shortly before the next, the last of them on an earlier line, so
+    // the form starts on a line of its own.
+    let first = seek(inside[0], resume, lines.length);
+    if (first === undefined) continue;
+    resume = first;
     let previous;
-    for (; first !== undefined; first = seek(inside[0], first, lines.length)) {
+    for (let tries = 1; first !== undefined; tries++) {
       let at = [first[0], first[1] - inside[0].length];
       for (const [index, anchor] of [...before].reverse().entries()) {
         at = at && seekBack(anchor, at, at[0] - 1 - lookahead);
         if (index === 0) previous = at;
       }
       if (before.length === 0 || (at !== undefined && previous[0] < first[0])) break;
+      first = tries < lookahead ? seek(inside[0], first, lines.length) : undefined;
     }
     if (first === undefined) continue;
     // Its own anchors in turn: one not found is passed over, but not its last.
@@ -285,6 +302,7 @@ const markedAriaSnapshot = async (locator, options) => {
     lines.splice(top, 0, " ".repeat(level) + "- form:");
     for (let index = top + 1; index <= end + 1; index++) lines[index] = "  " + lines[index];
     done = end + 1;
+    resume = [done + 1, 0];
   }
   const marked = new Set();
   let from = 0;
