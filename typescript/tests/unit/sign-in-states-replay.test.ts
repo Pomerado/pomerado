@@ -569,6 +569,23 @@ it("never signs in on a page that can't tell before the password went in", { tim
   expect(await replay({ ...chooser, hooks: fresh }, library)).toMatchObject({ outcome: "unsent", reason: "unknown_state" });
 });
 
+it("never presses a look-alike of a state acted in that names the same control by another selector", async () => {
+  const send: Screen = { path: "/send", boxes: [], buttons: ["#send", "button.send"], texts: ["we will text you a code"] };
+  const sendState = { fingerprint: arrival(send), step: stepAt("/send", [], "#send") };
+  const library = libraryOf(
+    [
+      { fingerprint: arrival(emailScreen), step: stepAt("/sign-in", [email], "#continue") },
+      sendState,
+      { fingerprint: arrival(codeScreen), step: stepAt("/verify", [code], "#verify") },
+    ],
+    [{ ...sendState, step: stepAt("/send", [], "button.send") }],
+  );
+  const next: Readonly<Record<string, string>> = { "#continue": "send", "#send": "code", "#verify": "send" };
+  const site = scriptedSite({ start: emailScreen, send, code: codeScreen }, (_at, clicked) => next[clicked]);
+  expect(await replay(site, library)).toMatchObject({ outcome: "unclear", reason: "state_repeated" });
+  expect(site.clicks).toEqual(["#continue", "#send", "#verify"]);
+});
+
 it("acts in a text-only state that reads like one acted in before but presses another control", async () => {
   const notice: Screen = { path: "/notice", boxes: [], buttons: ["#next"], texts: ["~"] };
   const remember: Screen = { path: "/remember", boxes: [], buttons: ["#yes"], texts: ["~"] };

@@ -224,31 +224,23 @@ const preferred = <E extends YieldableError, V extends string, L extends Autofil
 };
 
 /**
- * What acting in a state does: the boxes it types, or with none, the control it presses, the
- * methods it picks from and the approval it asks.
+ * Whether the page shows again, after something went out, a state acted in: `state` itself, or
+ * a look-alike of one acted in whose own recorded controls show now, as a recording that names the
+ * same control by another selector or picks another method does. It is never acted in again.
  */
-const actionOf = (step: StateEntry["step"]) =>
-  JSON.stringify(
-    step.fields.length > 0
-      ? step.fields.map((field) => field.selector).sort()
-      : [step.submit, step.methods?.map((method) => method.selector), step.approval],
-  );
-
-/**
- * Whether a state, or a look-alike that does the same there, was acted in before something went
- * out: it is never acted in again, whichever of a library's recordings of it the page would match.
- */
-const actedBefore = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+const returnedTo = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
   state: StateEntry,
 ) =>
-  (run.replay.progress.anythingSent || run.replay.sent.maySent.size > 0) &&
-  run.input.library.states.some(
-    (other) =>
-      run.visited.includes(other.key) &&
-      sameFingerprint(other.fingerprint, state.fingerprint) &&
-      actionOf(other.step) === actionOf(state.step),
-  );
+  Effect.gen(function* () {
+    if (!run.replay.progress.anythingSent && run.replay.sent.maySent.size === 0) return false;
+    for (const other of run.input.library.states) {
+      if (!run.visited.includes(other.key) || !sameFingerprint(other.fingerprint, state.fingerprint)) continue;
+      if (other === state) return true;
+      if (typeof (yield* shownOn(run, other, resolved(run, other.step))) !== "string") return true;
+    }
+    return false;
+  });
 
 /**
  * The known state the page shows: one whose fingerprint it is and whose recorded controls show,
@@ -278,7 +270,7 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
       ...alike.filter((state) => next.has(state.key)),
       ...alike.filter((state) => !next.has(state.key)),
     ]) {
-      if (actedBefore(run, state)) {
+      if (yield* returnedTo(run, state)) {
         returned ??= state;
         continue;
       }
@@ -398,7 +390,7 @@ const endCheck = <E extends YieldableError, V extends string, L extends Autofill
       return undefined;
     for (const marker of run.markers) if (yield* replay.verify(marker)) return signedIn(run, marker);
     const marker = run.markers[0];
-    if (marker === undefined || run.input.hooks.confirmCantTell === undefined || !mayCantTell(run, last))
+    if (marker === undefined || run.input.hooks.confirmCantTell === undefined || !mayCantTell(run, last, false))
       return undefined;
     if (!replay.progress.anythingSent) {
       const already = yield* alreadySignedIn(run.as, replay, undefined);
@@ -412,12 +404,14 @@ const endCheck = <E extends YieldableError, V extends string, L extends Autofill
 /**
  * Whether a page that can't tell may sign in, as the recipe replay's screen wait decides
  * (`landedCantTell`): never on a browser that started empty before a password or code of the
- * library went in (`loginUnproved`), nor after a state whose press leads to a code or an approval,
- * as a code screen's wait never ends so.
+ * library went in (`loginUnproved`), nor `early`, before the step wait ends, after a state whose
+ * press leads to a code or an approval, as a code screen's wait never ends so; at its end a site
+ * may have skipped its code, as the recipe replay's settle allows.
  */
 const mayCantTell = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
   last: StateEntry | undefined,
+  early: boolean,
 ) => {
   const { hooks, library } = run.input;
   const unproved =
@@ -425,7 +419,7 @@ const mayCantTell = <E extends YieldableError, V extends string, L extends Autof
     hooks.signedInBefore !== true &&
     !run.replay.progress.ran.some((step) => step.fields.some((field) => provesLogin(field.slot))) &&
     library.states.some((state) => state.step.fields.some((field) => "slot" in field && provesLogin(field.slot)));
-  return !unproved && (last === undefined || !sendsOnPress(run, last));
+  return !unproved && (!early || last === undefined || !sendsOnPress(run, last));
 };
 
 /** Signed in on a page that can't tell, as the host confirmed (`endedCantTell`). */
@@ -545,7 +539,6 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
     let challenged = false;
     let answerRead = false;
     let cantTellRead: string | undefined;
-    let back: StateEntry | undefined;
     for (;;) {
       const signed = yield* signedInHere(run);
       if (signed !== undefined) return signed;
@@ -562,6 +555,7 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
       const at = yield* now;
       stood = false;
       if (read !== undefined) {
+        let back: StateEntry | undefined;
         observed = read;
         shape = acted === undefined ? read.fingerprint : stateAfter(acted.reached, read);
         const text = fingerprintText(shape);
@@ -612,7 +606,7 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
             marker !== undefined &&
             at - held.since >= landingSettleMs &&
             cantTellRead !== held.text &&
-            mayCantTell(run, after)
+            mayCantTell(run, after, true)
           ) {
             cantTellRead = held.text;
             if (yield* replay.endedCantTell(undefined)) return cantTellEnd(run, marker);
@@ -666,10 +660,10 @@ const lookAgain = <E extends YieldableError, V extends string, L extends Autofil
     for (const other of preferred(
       run,
       run.input.library.states.filter(
-        (known) =>
-          known !== state && !actedBefore(run, known) && sameFingerprint(known.fingerprint, shape),
+        (known) => known !== state && sameFingerprint(known.fingerprint, shape),
       ),
     )) {
+      if (yield* returnedTo(run, other)) continue;
       const shown = yield* shownOn(run, other, resolved(run, other.step));
       if (typeof shown !== "string") return { kind: "fuller" as const, state: other, observed };
     }
