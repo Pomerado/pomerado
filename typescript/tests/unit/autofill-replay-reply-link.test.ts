@@ -78,6 +78,21 @@ const markedThenButton = signInRecipe(
   ],
   { selector: "#account" },
 );
+// A password screen, then an emailed link the site sends, recorded on its own page.
+const passwordThenLink = signInRecipe(
+  [
+    {
+      page: login,
+      fields: [
+        { selector: "#user", slot: "username", accepts: ["username"] },
+        { selector: "#password", slot: "password" },
+      ],
+      submit: "#sign-in",
+    },
+    { page: `${origin}/check-email`, fields: [], approval: "email_link", delivery: "paste" },
+  ],
+  { selector: "#account" },
+);
 // An identifier screen alone, as a site that only ever signs in by an emailed link records.
 const identifierOnly = signInRecipe(
   [
@@ -318,4 +333,14 @@ it("ends on a recorded marker that shows, never the host's read of the site's an
   });
   expect(marked.reads).toBe(0);
   expect(marked.outcome).toMatchObject({ reason: "password_rejected", rejectedFields: ["password"] });
+});
+
+// A link the site's answer to the password asks for is asked right there, in the place of an
+// emailed link recorded after the password, whose screen the returned password screen never is.
+it("asks for the link the site's answer asked for in the place of a recorded emailed link", async () => {
+  const asked = await replay({ recipe: passwordThenLink, siteAnswer: "link" });
+  expect(asked.asked).toEqual(["sign_in_link"]);
+  expect(asked.opened).toEqual([login, link]);
+  expect(asked.outcome).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(asked.reads).toBe(1);
 });

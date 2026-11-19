@@ -550,9 +550,11 @@ const runScreen = <E extends YieldableError, V extends string, L extends Autofil
     // password field: a link it emailed is asked for, and a refused login ends as that returned
     // screen does. A recorded marker that shows decides first, as the next screen's wait has it.
     if (step.fields.some((field) => field.slot === "password") && later.length > 0) {
-      const marked = yield* replay.observeRejections;
-      const answer =
-        marked === "unavailable" || marked.length > 0 ? undefined : yield* readAnswer(input, replay);
+      const unmarked = Effect.map(
+        replay.observeRejections,
+        (marked) => marked !== "unavailable" && marked.length === 0,
+      );
+      const answer = yield* readAnswer(input, replay, unmarked);
       if (answer?.said === "link")
         return yield* openAnsweredLink(input, replay, answer.returned.inspection);
       if (answer?.said === "refused") return replay.outcome("credential_screen_returned");
@@ -944,12 +946,13 @@ const walkScreens = <E extends YieldableError, V extends string, L extends Autof
  * The site's own answer to the credential screen the replay submitted last, come back, password or
  * identifier alike (`returnedScreen`), as the host reads it (`hosted.siteAnswer`), with that screen.
  * None without the host's read, once an emailed link went in or was asked for, when no screen came
- * back, as after a submit the site signed in on, which never asks the host, or once the host gave
- * its answer for that screen.
+ * back, as after a submit the site signed in on, which never asks the host, once the host gave its
+ * answer for that screen, or when the screen that came back fails `unmarked`.
  */
 const readAnswer = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   input: AutofillReplayInput<E, V, L>,
   replay: Replay<E, V, L>,
+  unmarked: Effect.Effect<boolean> = Effect.succeed(true),
 ) =>
   Effect.gen(function* () {
     const read = input.hosted?.siteAnswer;
@@ -960,7 +963,12 @@ const readAnswer = <E extends YieldableError, V extends string, L extends Autofi
     )
       return undefined;
     const returned = yield* replay.returnedScreen;
-    if (returned === undefined || replay.progress.answered === returned.step) return undefined;
+    if (
+      returned === undefined ||
+      replay.progress.answered === returned.step ||
+      !(yield* unmarked)
+    )
+      return undefined;
     const said = yield* read();
     if (said === undefined) return undefined;
     replay.progress.answered = returned.step;
