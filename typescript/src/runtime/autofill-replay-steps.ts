@@ -170,7 +170,8 @@ export const isTwoFactorOption = (
  *   given back;
  * - `identifierConflict`: whether the host refuses the identifiers a step would type;
  * - `refuseShownAnswer`: after a failed check, a saved answer whose question shows again;
- * - `resubmit`: the challenge look at a screen's deadline, which may send the last screen again;
+ * - `resubmit`: the challenge look at a screen that has not shown, once the page settled without
+ *   it and at its deadline, which may send the last screen again after a clear;
  * - `allowedChoices`: the recorded screens' choices this run's caller allowed, whose submits the
  *   replay presses. None when absent, so the replay stops before any screen that names a choice;
  * - `siteAnswer`: what the site's own answer to the credential screen the replay submitted last

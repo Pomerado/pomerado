@@ -518,8 +518,12 @@ const returnedReason = <E extends YieldableError, V extends string, L extends Au
  * as nothing is sent twice. A box that sent itself counts as sent first (`settleCarried`). A page
  * with boxes no known state has or holds ends the replay once it held still `quietMs`; a page of
  * text alone, one a known state may still grow into, or one a known state's controls have not
- * shown on, gets the whole step wait, as a slow page is no unknown state, and at its end the
- * host's challenge look runs once, as at a recipe screen's deadline. Once the login went out, a
+ * shown on, gets the whole step wait, as a slow page is no unknown state. The host's challenge
+ * look runs on such a page once it held still `quietMs`, and `landingSettleMs` at least, once for
+ * each page it holds, and always at the step wait's end, as at a recipe screen (`challengeLook`):
+ * never early for a host that reads no page state, or where a known state sits in a pop-up. A look
+ * that cleared a challenge gives the page the whole step wait again, with no look after it, and
+ * each look is heard (`challenge_look`). Once the login went out, a
  * page of text alone that held still `landingSettleMs` and can't tell signs in, as at the recipe
  * replay's marker wait. Before an unknown state, or none, the recipe replay's last check runs
  * (`endCheck`).
@@ -539,6 +543,12 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
     let refused: string | undefined;
     let stood = false;
     let challenged = false;
+    const looked = new Set<string>();
+    // Early looks as at a recipe screen: never for a host that reads no page state, nor where a
+    // state sits in a pop-up, as the page is read on its primary tab alone.
+    const lookEarly =
+      run.input.hooks.pageState !== undefined &&
+      !run.input.library.states.some((state) => state.step.popup !== undefined);
     let answerRead = false;
     let cantTellRead: string | undefined;
     let waitedOut = false;
@@ -621,18 +631,35 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
         )
           break;
       }
-      if (at - start >= replay.timing.stepWaitMs) {
-        const challenge = challenged ? undefined : yield* run.input.hooks.challenge ?? Effect.succeed(undefined);
-        challenged = true;
+      const waited = at - start >= replay.timing.stepWaitMs;
+      // Held as long as a page that can't tell is before it signs in, so that check goes first.
+      const settled =
+        lookEarly &&
+        read !== undefined &&
+        !stood &&
+        held !== undefined &&
+        at - held.since >= Math.max(quiet.quietMs, landingSettleMs) &&
+        !looked.has(held.text);
+      const gate = challenged ? undefined : run.input.hooks.challenge;
+      const look = waited ? "deadline" : settled ? "early" : undefined;
+      if (gate !== undefined && look !== undefined) {
+        if (held !== undefined) looked.add(held.text);
+        const challenge = yield* gate;
+        yield* run.input.emit({ stage: "challenge_look", look, outcome: challenge?.outcome ?? "none" });
         if (challenge?.outcome === "failed") {
           replay.progress.challenge = challenge.vendor;
           return stopped(run, "challenge_unsolved", { challenge: challenge.vendor });
         }
-        if (challenge === undefined) {
+        if (challenge !== undefined) {
+          challenged = true;
+          start = yield* now;
+        } else if (waited) {
           waitedOut = true;
           break;
         }
-        start = yield* now;
+      } else if (waited) {
+        waitedOut = true;
+        break;
       }
       yield* pause(run);
     }

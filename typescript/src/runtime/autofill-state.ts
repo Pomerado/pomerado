@@ -128,8 +128,9 @@ export interface AutofillHooks<E = unknown, V extends string = string> {
   /** Hears each same-site load that failed, as it fails; returns the removal. */
   readonly onLoadFailure?: (listener: (failure: unknown) => void) => () => void;
   /**
-   * A recorded screen that never showed: the host's look for a challenge on the page and its work
-   * on one it confirms there; undefined when none shows.
+   * A recorded screen that has not shown, once the page settled without it and at its wait's
+   * deadline: the host's look for a challenge on the page and its work on one it confirms there;
+   * undefined when none shows.
    */
   readonly challenge?: Effect.Effect<
     { readonly outcome: "cleared" | "failed"; readonly vendor: V } | undefined
