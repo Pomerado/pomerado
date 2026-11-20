@@ -846,3 +846,16 @@ it("ends at the step wait as before on a host with no challenge look", async () 
   expect(endedAt).toBeGreaterThanOrEqual(30_000);
   expect(lookEvents(events)).toEqual([]);
 });
+
+it("looks only at the step wait's end when a known state sits in a pop-up", async () => {
+  const popup = { opener: "primary", origin: "https://accounts.example.test" } as const;
+  const library = libraryOf([{ fingerprint: arrival(emailScreen), step: stepAt("/sign-in", [email], "#continue", { popup }) }]);
+  const still: Screen = { path: "/sign-in", boxes: [], texts: ["one moment"] };
+  const site = scriptedSite({ start: still }, () => undefined);
+  const { looks, challenge } = lookingAt(site, "none", "none");
+  const { ended, events } = await replayOnClock(site, library, challenge);
+  expect(ended).toMatchObject({ outcome: "unsent", reason: "unknown_state" });
+  expect(looks).toHaveLength(1);
+  expect(looks[0]).toBeGreaterThanOrEqual(30_000);
+  expect(lookEvents(events)).toEqual([{ stage: "challenge_look", look: "deadline", outcome: "none" }]);
+});

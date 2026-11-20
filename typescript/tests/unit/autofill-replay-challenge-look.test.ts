@@ -37,8 +37,11 @@ type Showing = "checkpoint" | "still" | "changing" | "form";
  */
 const waitOn = async (
   showing: (now: number) => Showing,
-  host: { readonly challenge?: boolean; readonly pageState?: boolean } = {},
+  host: { readonly challenge?: boolean; readonly pageState?: boolean; readonly popup?: boolean } = {},
 ) => {
+  const step: AutofillStep = host.popup
+    ? { ...form, popup: { opener: "primary", origin: "https://accounts.example.test" } }
+    : form;
   let cleared = false;
   const looks: number[] = [];
   const events: Readonly<Record<string, unknown>>[] = [];
@@ -84,18 +87,18 @@ const waitOn = async (
     {
       hooks,
       entryUrl: page,
-      recipe: { version: 1, steps: [{ ...form, page }], signedIn: { selector: "#identity" } },
+      recipe: { version: 1, steps: [{ ...step, page }], signedIn: { selector: "#identity" } },
       emit: (details) => Effect.sync(() => void events.push(details)),
       correlation: { jobId: "job", attemptId: "attempt" },
       credentials: { username: "user", password: "secret" },
     },
     { anythingSent: false, ran: [] },
     { stepWaitMs, pollMs: 250 },
-    () => form,
+    () => step,
   );
   return Effect.runPromise(
     Effect.gen(function* () {
-      const waiting = yield* Effect.fork(wait(form, stepWaitMs, page));
+      const waiting = yield* Effect.fork(wait(step, stepWaitMs, page));
       for (let polls = 0; polls < 1_000; polls++) {
         if (Option.isSome(yield* Fiber.poll(waiting))) break;
         yield* TestClock.adjust(Duration.millis(250));
@@ -181,4 +184,12 @@ it("ends at the deadline as before on a host with no challenge look", async () =
   expect(result).toEqual({ found: { outcome: "refused", reason: "not_found" } });
   expect(endedAt).toBeGreaterThanOrEqual(stepWaitMs);
   expect(lookEvents(events)).toEqual([]);
+});
+
+it("looks only at the deadline for a screen in a pop-up, whose page the host's state does not read", async () => {
+  const { result, looks } = await waitOn(() => "checkpoint", { popup: true });
+
+  expect(result).toEqual({ found: shown });
+  expect(looks).toHaveLength(1);
+  expect(looks[0]).toBeGreaterThanOrEqual(stepWaitMs);
 });

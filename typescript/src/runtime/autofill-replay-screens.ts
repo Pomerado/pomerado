@@ -281,8 +281,8 @@ type LookedPage = { held?: OffScreens | undefined; looked?: string | undefined }
  * past: a host with a challenge look (`challenge`) looks at the page and works a challenge it
  * confirms there. It looks once the page settled without the screen, its shape unchanged
  * `landingSettleMs` (`heldShape`), once for each shape, and at the wait's deadline (`due`) unless
- * the page is still the one it looked at; a host that reads no page state looks at the deadline
- * alone. A slow page keeps the whole wait. A cleared challenge may first let the screen the replay
+ * the page is still the one it looked at; a host that reads no page state, or a screen in a pop-up,
+ * looks at the deadline alone. A slow page keeps the whole wait. A cleared challenge may first let the screen the replay
  * last submitted be sent again (`resubmit`), before the wait's next deadline would read that screen
  * showing again as the site's answer (`credential_screen_returned`), then gives the awaited screen
  * its own wait again; one the host could not clear ends the replay as `challenge_unsolved`, its
@@ -308,7 +308,8 @@ const challengeLook =
       const gate = missing.reason === "not_found" ? hooks.challenge : undefined;
       const missed = due ? ({ end: { found: missing } } as const) : ({ until } as const);
       if (gate === undefined) return missed;
-      page.held = yield* heldShape(hooks, page.held);
+      // The host reads the primary tab's state alone, which says nothing of a pop-up's screen.
+      page.held = awaited.popup === undefined ? yield* heldShape(hooks, page.held) : undefined;
       const settled =
         page.held !== undefined &&
         (yield* Clock.currentTimeMillis) - page.held.since >= landingSettleMs;

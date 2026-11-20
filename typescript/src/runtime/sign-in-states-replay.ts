@@ -519,8 +519,9 @@ const returnedReason = <E extends YieldableError, V extends string, L extends Au
  * with boxes no known state has or holds ends the replay once it held still `quietMs`; a page of
  * text alone, one a known state may still grow into, or one a known state's controls have not
  * shown on, gets the whole step wait, as a slow page is no unknown state. The host's challenge
- * look runs on such a page once it held still `quietMs`, once for each page it holds, and at the
- * step wait's end unless the page is still the one it looked at, as at a recipe screen
+ * look runs on such a page once it held still `quietMs`, once for each page it holds, unless a
+ * known state sits in a pop-up, and at the step wait's end unless the page is still the one it
+ * looked at, as at a recipe screen
  * (`challengeLook`); a look that cleared a challenge gives the page the whole step wait again, with
  * no look after it, and each look is heard (`challenge_look`). Once the login went out, a
  * page of text alone that held still `landingSettleMs` and can't tell signs in, as at the recipe
@@ -543,6 +544,8 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
     let stood = false;
     let challenged = false;
     let looked: string | undefined;
+    // The page is read on its primary tab alone, which says nothing of a pop-up's state.
+    const popups = run.input.library.states.some((state) => state.step.popup !== undefined);
     let answerRead = false;
     let cantTellRead: string | undefined;
     let waitedOut = false;
@@ -627,7 +630,7 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
       }
       const waited = at - start >= replay.timing.stepWaitMs;
       const settled =
-        read !== undefined && !stood && held !== undefined && at - held.since >= quiet.quietMs
+        read !== undefined && !stood && !popups && held !== undefined && at - held.since >= quiet.quietMs
           ? held.text
           : undefined;
       const gate = challenged ? undefined : run.input.hooks.challenge;
