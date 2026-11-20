@@ -121,19 +121,18 @@ const nowSlackMs = 60_000;
 export type ClockDay = `${number}-${number}-${number}` | "next" | "last" | "nearest";
 
 /**
- * The ISO 8601 timestamp, with its zone's offset, of a clock time a site shows in `timeZone`,
- * such as `2026-11-15T19:45:00-08:00` for `7:45 PM` in `America/Los_Angeles`, so a tool never
- * returns a bare clock time. `clock` is one clock time (`7:45 PM`, `19:45`, `19h45`); strip the
- * text around it first, and give each end of a range its own call, adding the AM or PM the site
- * wrote only once, as in `12:38-12:59 AM`. `day` is the date the site states, `YYYY-MM-DD`, or
+ * The ISO 8601 timestamp, with its zone's offset, of a clock time a site shows in `timeZone`, such
+ * as `2026-11-15T19:45:00-08:00` for `7:45 PM` in `America/Los_Angeles`, so a tool never returns a
+ * bare clock time. `clock` is one clock time (`7:45 PM`, `19:45`, `19h45`); strip the text around
+ * it first, and for a range, use `zonedWindow`. `day` is the date the site states, `YYYY-MM-DD`, or
  * the rule that picks one from yesterday, today and tomorrow in the zone (`ClockDay`). `timeZone`
- * is the zone the site wrote the time in: the zone the page names beside it, or else the
- * browser's own zone, a script context's `browserTimeZone`, since a page writes most times it shows
- * in its browser's zone. `now` is the instant `day`'s rule counts from, by default the current
- * time. Across a daylight-saving change, a time the change skips moves forward by the change; one
- * it repeats takes the earlier of the two on a stated date, while a rule weighs both, so `next`
- * at 1:10 AM in the repeated hour finds the second 1:30 AM. Anything else as `clock`, an
- * impossible date or an unknown zone throws `RangeError`.
+ * is the zone the site wrote the time in: the zone the page names beside it, or else the browser's
+ * own zone, a script context's `browserTimeZone`, since a page writes most times it shows in its
+ * browser's zone. `now` is the instant `day`'s rule counts from, by default the current time.
+ * Across a daylight-saving change, a time the change skips moves forward by the change; one it
+ * repeats takes the earlier of the two on a stated date, while a rule weighs both, so `next` at
+ * 1:10 AM in the repeated hour finds the second 1:30 AM. Anything else as `clock`, an impossible
+ * date or an unknown zone throws `RangeError`.
  */
 export const zonedClock = (
   day: ClockDay,
@@ -156,6 +155,40 @@ export const zonedClock = (
         : candidates.reduce((best, next) => (Math.abs(next.from) < Math.abs(best.from) ? next : best));
   if (chosen === undefined) throw new RangeError("zonedClock found no day for the clock time");
   return stampAt(chosen.instant, timeZone);
+};
+
+/**
+ * A range end's clock for `zonedClock`: Midnight and Noon on the 24-hour clock, and the AM or PM
+ * of the other end when this one wrote none.
+ */
+const windowClock = (clock: string, other: string): string => {
+  if (/^\s*midnight\s*$/iu.test(clock)) return "00:00";
+  if (/^\s*noon\s*$/iu.test(clock)) return "12:00";
+  const meridiem = (text: string) => clockText.exec(text.trim())?.[5];
+  const theirs = meridiem(other);
+  return meridiem(clock) === undefined && theirs !== undefined
+    ? `${clock.trim()} ${theirs}m`
+    : clock;
+};
+
+/**
+ * The ISO 8601 timestamps, with their zone's offset, of a range a site shows in `timeZone`:
+ * `start` on `day` as `zonedClock` reads it, and `end` on the same day, or the next when it is at
+ * or before `start`. Each clock takes what `zonedClock` takes, or Midnight or Noon; an AM or PM
+ * written once applies to both.
+ */
+export const zonedWindow = (
+  day: ClockDay,
+  start: string,
+  end: string,
+  timeZone: string,
+  now: number = Date.now(),
+): { start: string; end: string } => {
+  const from = zonedClock(day, windowClock(start, end), timeZone, now);
+  // `next` counts a time within a minute of now as now, so from a minute on it finds the first
+  // time after `start`, in the same pass of an hour a daylight-saving change repeats.
+  const to = zonedClock("next", windowClock(end, start), timeZone, Date.parse(from) + nowSlackMs);
+  return { start: from, end: to };
 };
 
 /**

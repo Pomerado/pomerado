@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { todayIn, zonedClock, zonedTime } from "../../src/browser/index.js";
+import { todayIn, zonedClock, zonedTime, zonedWindow } from "../../src/browser/index.js";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -170,5 +170,56 @@ describe("zonedClock", () => {
     // A context's `browserTimeZone` the host gave none, never the script's own zone.
     expect(() => zonedClock("nearest", "7:45 PM", undefined as unknown as string)).toThrow(RangeError);
     expect(() => zonedClock("2026-02-30", "7:45 PM", "America/Los_Angeles")).toThrow(RangeError);
+  });
+});
+
+// A range a site shows, such as a delivery window, ends after it starts, on the next day when its
+// end's clock is at or before its start's.
+describe("zonedWindow", () => {
+  const la = "America/Los_Angeles";
+  const ms = (iso: string) => Date.parse(iso);
+
+  it("puts an end at or before its start on the next day", () => {
+    expect(zonedWindow("2026-11-17", "10:30pm", "Midnight", la)).toEqual({
+      start: "2026-11-17T22:30:00-08:00",
+      end: "2026-11-18T00:00:00-08:00",
+    });
+    expect(zonedWindow("2026-11-17", "11 PM", "1 AM", la).end).toBe("2026-11-18T01:00:00-08:00");
+    expect(zonedWindow("2026-11-17", "22:00", "22:00", la).end).toBe("2026-11-18T22:00:00-08:00");
+    expect(zonedWindow("2026-11-17", "9:00 AM", "Noon", la)).toEqual({
+      start: "2026-11-17T09:00:00-08:00",
+      end: "2026-11-17T12:00:00-08:00",
+    });
+    expect(zonedWindow("2026-11-17", "MIDNIGHT", "6 am", la).end).toBe("2026-11-17T06:00:00-08:00");
+  });
+
+  it("applies an AM or PM written once to both ends", () => {
+    expect(zonedWindow("2026-11-16", "12:38", "12:59 AM", la)).toEqual({
+      start: "2026-11-16T00:38:00-08:00",
+      end: "2026-11-16T00:59:00-08:00",
+    });
+    expect(zonedWindow("2026-11-16", "7 pm", "9", la).end).toBe("2026-11-16T21:00:00-08:00");
+  });
+
+  it("picks the start's day by the rule, then the end after it", () => {
+    const lateEvening = ms("2026-11-16T07:30:00Z"); // 11:30 PM Nov 15 in Los Angeles
+    expect(zonedWindow("next", "11:45 PM", "Midnight", la, lateEvening)).toEqual({
+      start: "2026-11-15T23:45:00-08:00",
+      end: "2026-11-16T00:00:00-08:00",
+    });
+    // Los Angeles repeats 1:00 to 2:00 AM on Nov 1, 2026; the end follows the start's pass.
+    expect(zonedWindow("next", "1:30 AM", "1:45 AM", la, ms("2026-11-01T09:10:00Z"))).toEqual({
+      start: "2026-11-01T01:30:00-08:00",
+      end: "2026-11-01T01:45:00-08:00",
+    });
+  });
+
+  it("refuses an end that is not one clock time", () => {
+    for (const [start, end] of [
+      ["10:30pm", "Midnight tonight"],
+      ["Today 10:30pm", "11pm"],
+      ["10:30-11:30 PM", "11:30 PM"],
+    ] as const)
+      expect(() => zonedWindow("2026-11-17", start, end, la), `${start}-${end}`).toThrow(RangeError);
   });
 });
