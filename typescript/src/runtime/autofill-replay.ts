@@ -439,7 +439,8 @@ const runScreen = <E extends YieldableError, V extends string, L extends Autofil
       !(input.hosted?.allowedChoices ?? []).includes(recorded.choice)
     )
       return yield* choiceNotAllowed(input, replay, recorded.choice);
-    // The host hears the screen once it is the one the replay acts on, before anything it does.
+    // The host hears the screen once it is the one the replay acts on, before its fill, press or
+    // approval question.
     const { onScreen } = input;
     const heard =
       replay.valueFree || onScreen === undefined

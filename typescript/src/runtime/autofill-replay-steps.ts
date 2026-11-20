@@ -281,10 +281,13 @@ export interface AutofillReplayInput<
   /**
    * Hears each recorded screen the replay acts on, once its checks passed and just before its
    * fill, press or approval question, so a host can read the page as that screen's state, as a
-   * build's recorded sign-in does. An approval that finds the page signed in, or a code box where
-   * an emailed link's screen was, is not heard; nor is a hand-off screen or any screen of a
-   * value-free replay. It runs on the replay's error channel, between the screen's checks and its
-   * fill, so a host keeps it short.
+   * build's recorded sign-in does. A screen is heard once each time the replay comes to it, and
+   * its fill may still refuse after. Not heard: an approval that finds the page signed in, a
+   * hand-off screen, any screen of a value-free replay, and an emailed link's screen whose code box
+   * took a code or ended the replay. When nobody gives that code, the link's screen is heard after
+   * the code question, before the link's. It runs on the replay's error channel: its failure ends
+   * the replay with that error, and its time counts in the screen's wait, so a host that only
+   * records keeps it short and handles its own failures.
    */
   readonly onScreen?: ((recorded: SignInRecipeStep) => Effect.Effect<void, E>) | undefined;
 }

@@ -1,6 +1,7 @@
 import { Data, Effect, TestContext } from "effect";
 import { expect, it } from "vitest";
 import type { AutofillRecipe } from "../../src/destinations/autofill-recipe.js";
+import type { AutofillStep } from "../../src/destinations/autofill-step.js";
 import type { WebsiteCredentials } from "../../src/runtime/authentication.js";
 import { makeInputAsker } from "../../src/inputs/callback.js";
 import { replayAutofillRecipe } from "../../src/runtime/autofill-replay.js";
@@ -15,54 +16,73 @@ const origin = "https://example.test";
 const page = `${origin}/login`;
 const signedIn = { selector: "#identity" };
 const username = { page, fields: [{ selector: "#username", accepts: ["username" as const] }], submit: "#next" };
+const target = {
+  ownerUrl: null,
+  documentOrigin: origin,
+  actions: [`${origin}/session`],
+  methods: ["post"],
+  editable: true,
+  control: "text" as const,
+};
 
 /**
  * A replay of `recipe` on a site that signs in once `clicksToSignIn` fills clicked; the order the
- * host heard screens, fills and questions in.
+ * host heard screens, fills and questions in. With `codeBox`, a code box shows in place of the
+ * login once it was pressed, and the owner gives that code, or none for null. With
+ * `disabledSubmit`, the first press of that submit finds it disabled.
  */
 const replay = async (
   recipe: AutofillRecipe,
-  options: { readonly credentials?: WebsiteCredentials; readonly clicksToSignIn?: number } = {},
+  options: {
+    readonly credentials?: WebsiteCredentials;
+    readonly clicksToSignIn?: number;
+    readonly codeBox?: string | null;
+    readonly disabledSubmit?: string;
+  } = {},
 ) => {
   const heard: string[] = [];
   let clicks = 0;
-  const target = {
-    ownerUrl: null,
-    documentOrigin: origin,
-    actions: [`${origin}/session`],
-    methods: ["post"],
-    editable: true,
-    control: "text" as const,
-  };
+  let disabled = options.disabledSubmit;
+  const signsIn = () => clicks >= (options.clicksToSignIn ?? 2);
+  // The page moves to the account once the site signed in, as an approval it skipped does.
+  const inspection = (inspected: AutofillStep) => ({
+    page: signsIn() ? `${origin}/account` : page,
+    siteOrigin: origin,
+    authenticationOrigins: [],
+    targets: {
+      fields: inspected.fields.map(() => target),
+      submit: { ...target, control: "other" as const },
+    },
+    screen: { origin, fields: [], submit: null, buttons: ["Continue"] },
+  });
   const hooks: AutofillHooks<TestFailure> = {
     open: () => Effect.void,
     check: () =>
       Effect.sync(() =>
-        clicks >= (options.clicksToSignIn ?? 2)
+        signsIn()
           ? { signedIn: true as const, url: `${origin}/account` }
           : { signedIn: false as const, failed: "indicator_not_visible" as const, url: page },
       ),
     confirm: () => Effect.succeed({ signedIn: true as const, url: `${origin}/account` }),
-    // The page moves to the account once the site signed in, as an approval it skipped does.
     inspect: (inspected) =>
-      Effect.sync(() => ({
-        page: clicks >= (options.clicksToSignIn ?? 2) ? `${origin}/account` : page,
-        siteOrigin: origin,
-        authenticationOrigins: [],
-        targets: {
-          fields: inspected.fields.map(() => target),
-          submit: { ...target, control: "other" as const },
-        },
-        screen: { origin, fields: [], submit: null, buttons: ["Continue"] },
-      })),
+      Effect.sync(() =>
+        options.codeBox !== undefined &&
+        clicks >= 1 &&
+        inspected.fields.some((field) => field.selector === "#username")
+          ? { outcome: "refused" as const, reason: "not_found" as const, target: 0 }
+          : inspection(inspected),
+      ),
     fill: ({ step }) =>
       Effect.sync(() => {
-        heard.push(`fill ${step.submit ?? ""}`);
-        clicks += 1;
+        const code = step.fields.some((field) => field.slot === "code");
+        heard.push(`fill ${code ? "code" : (step.submit ?? "")}`);
+        const stayedDisabled = disabled !== undefined && step.submit === disabled;
+        if (stayedDisabled) disabled = undefined;
+        else clicks += 1;
         return {
           outcome: "filled" as const,
           fields: step.fields.map((field) => ({ slot: field.slot, status: "filled" as const })),
-          submit: "clicked" as const,
+          submit: stayedDisabled ? ("stayed_disabled" as const) : ("clicked" as const),
           url: page,
         };
       }),
@@ -74,15 +94,19 @@ const replay = async (
       entryUrl: page,
       credentials: options.credentials,
       ask: makeInputAsker((request) =>
-        Effect.sync(() => {
-          clicks += 1;
-          return Object.fromEntries(
-            request.questions.map((question) => {
+        Effect.sync(() =>
+          Object.fromEntries(
+            request.questions.flatMap((question): [string, unknown][] => {
               heard.push(`ask ${question.type}`);
-              return [question.id, { confirmed: true }];
+              if (question.id === "code")
+                return options.codeBox === null || options.codeBox === undefined
+                  ? []
+                  : [[question.id, options.codeBox]];
+              clicks += 1;
+              return [[question.id, { confirmed: true }]];
             }),
-          );
-        }),
+          ),
+        ),
       ),
       broker: {
         register: () => Effect.void,
@@ -133,6 +157,48 @@ it("tells the host an approval screen just before its question, and none the pag
   );
   expect(passed.outcome).toMatchObject({ outcome: "signed_in" });
   expect(passed.heard).toEqual(["screen #next", "fill #next"]);
+});
+
+// A code box where an emailed link's screen was recorded is a code screen the recipe never
+// recorded: the host hears no link screen when its code goes in, and hears it once nobody gave
+// the code, before the replay asks for the link there.
+it("tells the host of an emailed link's screen only when its code box got no code", async () => {
+  const approval = { page, fields: [], approval: "email_link" as const };
+  const typed = await replay(
+    { version: 2, steps: [username, approval], signedIn },
+    { credentials: login, codeBox: "123456" },
+  );
+  expect(typed.outcome).toMatchObject({ outcome: "signed_in" });
+  expect(typed.heard).toEqual(["screen #next", "fill #next", "ask secret", "fill code"]);
+
+  const unanswered = await replay(
+    { version: 2, steps: [username, approval], signedIn },
+    { credentials: login, codeBox: null },
+  );
+  expect(unanswered.outcome).toMatchObject({ outcome: "signed_in" });
+  expect(unanswered.heard).toEqual([
+    "screen #next",
+    "fill #next",
+    "ask secret",
+    "screen email_link",
+    "ask confirm",
+  ]);
+});
+
+it("tells the host a screen once, though its submit stayed disabled on the first press", async () => {
+  const { outcome, heard } = await replay(
+    { version: 2, steps: [username, { page, fields: [], submit: "#confirm" }], signedIn },
+    { credentials: login, disabledSubmit: "#confirm" },
+  );
+
+  expect(outcome).toMatchObject({ outcome: "signed_in" });
+  expect(heard).toEqual([
+    "screen #next",
+    "fill #next",
+    "screen #confirm",
+    "fill #confirm",
+    "fill #confirm",
+  ]);
 });
 
 it("tells the host nothing in a value-free replay", async () => {
