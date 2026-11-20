@@ -157,13 +157,17 @@ export const zonedClock = (
   return stampAt(chosen.instant, timeZone);
 };
 
-/** The AM or PM a clock time writes, as its first letter, or undefined for none. */
-const halfOf = (clock: string) => clockText.exec(clock.trim())?.[5];
+const midnight = /^\s*midnight\s*$/iu;
+const noon = /^\s*noon\s*$/iu;
+
+/** The AM or PM a clock time writes, as its first letter, Midnight's AM and Noon's PM included. */
+const halfOf = (clock: string) =>
+  midnight.test(clock) ? "a" : noon.test(clock) ? "p" : clockText.exec(clock.trim())?.[5];
 
 /** A range end's clock as `HH:MM:SS`: Midnight, Noon, or `clock` with `half` (`am`, `pm`) added. */
 const windowClock = (clock: string, half = ""): string => {
-  if (/^\s*midnight\s*$/iu.test(clock)) return "00:00:00";
-  if (/^\s*noon\s*$/iu.test(clock)) return "12:00:00";
+  if (midnight.test(clock)) return "00:00:00";
+  if (noon.test(clock)) return "12:00:00";
   return clockOf(`${clock.trim()} ${half}`);
 };
 
@@ -171,7 +175,13 @@ const windowClock = (clock: string, half = ""): string => {
 const windowClocks = (start: string, end: string): [string, string] => {
   const [startHalf, endHalf] = [halfOf(start), halfOf(end)];
   const written = startHalf ?? endHalf;
-  if (written === undefined || (startHalf !== undefined && endHalf !== undefined))
+  // Only a clock that can be on the 12-hour clock, its hour from 1 to 12, takes a half.
+  const bare = Number(clockText.exec((startHalf === undefined ? start : end).trim())?.[1]);
+  if (
+    written === undefined ||
+    (startHalf !== undefined && endHalf !== undefined) ||
+    !(bare >= 1 && bare <= 12)
+  )
     return [windowClock(start), windowClock(end)];
   // The clock that wrote none takes `half`; the other keeps its own.
   const read = (half: string): [string, string] =>
@@ -179,15 +189,15 @@ const windowClocks = (start: string, end: string): [string, string] => {
       ? [windowClock(start, half), windowClock(end)]
       : [windowClock(start), windowClock(end, half)];
   const same = read(`${written}m`);
-  return same[0] <= same[1] ? same : read(/^[aA]$/u.test(written) ? "pm" : "am");
+  return same[0] < same[1] ? same : read(/^[aA]$/u.test(written) ? "pm" : "am");
 };
 
 /**
  * The ISO 8601 timestamps, with their zone's offset, of a range a site shows in `timeZone`:
  * `start` on `day` as `zonedClock` reads it, and `end` on the same day, or the next when it is at
- * or before `start`. Each clock takes what `zonedClock` takes, or Midnight or Noon; an AM or PM
- * written once applies to both, unless that puts the start after the end, when the clock that
- * wrote none takes the other.
+ * or before `start`. Each clock takes what `zonedClock` takes, or Midnight or Noon, which count
+ * as AM and PM; an AM or PM written once applies to both, unless that puts the start at or after
+ * the end, when the clock that wrote none takes the other.
  */
 export const zonedWindow = (
   day: ClockDay,
