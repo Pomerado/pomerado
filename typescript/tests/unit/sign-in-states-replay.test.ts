@@ -962,7 +962,7 @@ it("goes on in a learned look-alike of the state just acted in, once the page he
   const next: Readonly<Record<string, string>> = { "#continue": "p", "#text-me": "p2", "#verify": "home" };
   const pages = { start: emailScreen, p: codePage, p2: codePage };
   const learned = scriptedSite(pages, (_at, clicked) => next[clicked]);
-  const ended = await replay(learned, libraryOf([emailState, askText, textCode]));
+  const ended = await replay(learned, libraryOf([emailState, askText, textCode]), { stepWaitMs: 3_000 });
   expect(ended).toMatchObject({ outcome: "signed_in", loginProved: true });
   expect(learned.clicks).toEqual(["#continue", "#text-me", "#verify"]);
   expect(learned.fills).toEqual(["email", "code"]);
@@ -1036,6 +1036,50 @@ it("stops where a page that typed its value comes back fresh, whatever look-alik
   }
 });
 
+it("never takes a learned look-alike that presses alone on the page of the state just acted in", async () => {
+  // A page slow to answer a press, where a sign-in learned another press alone that the library
+  // knows sends nothing: the first press may still be under way.
+  const sendPage: Screen = { path: "/send", boxes: [], buttons: ["#send", "#other"], texts: ["one moment"] };
+  let sentAt: number | undefined;
+  const sending = (looks: number) => {
+    sentAt ??= looks;
+    return looks - sentAt < 12 ? sendPage : passwordScreen;
+  };
+  const next: Readonly<Record<string, string>> = { "#continue": "send", "#send": "sending", "#other": "sending", "#go": "home" };
+  const site = scriptedSite({ start: emailScreen, send: sendPage, sending }, (_at, clicked) => next[clicked]);
+  const send = { fingerprint: arrival(sendPage), step: stepAt("/send", [], "#send") };
+  const library = libraryOf(
+    [emailState, send, { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") }],
+    [emailState, send, { fingerprint: arrival(sendPage), step: stepAt("/send", [], "#other") }],
+  );
+  expect((await replayOnClock(site, library)).ended).toMatchObject({ outcome: "signed_in" });
+  expect(site.clicks).toEqual(["#continue", "#send", "#go"]);
+});
+
+it("never takes a learned look-alike that asks for an approval or picks a method", async () => {
+  // The identifier's page comes back fresh after a state between, where a sign-in learned an
+  // approval, or a method choice, with its look after that state.
+  const idPage: Screen = { path: "/sign-in", boxes: [{ selector: "#email", kind: "identifier" }], buttons: ["#continue", "#sso"] };
+  const between: Screen = { path: "/next", boxes: [], buttons: ["#next"], texts: ["one more step"] };
+  for (const alike of [
+    stepAt("/sign-in", [], undefined, { approval: "device" }),
+    stepAt("/sign-in", [], "#sso", { methods: [{ method: "sms", selector: "#sso" }] }),
+  ]) {
+    const site = scriptedSite({ start: idPage, between, back: idPage }, (_at, clicked) =>
+      clicked === "#continue" ? "between" : clicked === "#next" ? "back" : "home",
+    );
+    const library = libraryOf([
+      { fingerprint: arrival(idPage), step: stepAt("/sign-in", [email], "#continue") },
+      { fingerprint: arrival(between), step: stepAt("/next", [], "#next") },
+      { fingerprint: arrival(idPage), step: alike },
+    ]);
+    const ended = await replay(site, library);
+    expect(ended).toMatchObject({ outcome: "unclear", reason: "state_repeated" });
+    expect(ended.asked).toEqual([]);
+    expect(site.clicks).toEqual(["#continue", "#next"]);
+  }
+});
+
 it("never takes a learned look-alike that presses alone and may have a code sent again, on a slow page", async () => {
   const sendPage: Screen = { path: "/send", boxes: [], buttons: ["#send", "#resend"], texts: ["we will text you a code"] };
   let sentAt: number | undefined;
@@ -1099,6 +1143,37 @@ it("looks for a challenge before it goes on in a learned look-alike, and stops a
   expect(blocked.fills).toEqual(["email"]);
 });
 
+it("takes a learned look-alike only once the page settled as for an early look, and again after a challenge it cleared", async () => {
+  const choice: Screen = { path: "/password", boxes: [{ selector: "#password", kind: "password" }], buttons: ["#use-password", "#go"] };
+  const library = libraryOf([
+    emailState,
+    { fingerprint: arrival(choice), step: stepAt("/password", [], "#use-password") },
+    { fingerprint: arrival(choice), step: stepAt("/password", [password], "#go") },
+  ]);
+  const next: Readonly<Record<string, string>> = { "#continue": "choice", "#use-password": "again", "#go": "home" };
+  // When each press and each box went, on the test clock.
+  const timed = (site: ReturnType<typeof scriptedSite>) => {
+    const at = new Map<string, number>();
+    const fill: AutofillHooks<TestFailure>["fill"] = (request) =>
+      Effect.flatMap(Clock.currentTimeMillis, (ms) => {
+        at.set(request.step.submit ?? request.step.fields.map((field) => field.selector).join(), ms);
+        return site.hooks.fill(request);
+      });
+    return { timedSite: { ...site, hooks: { ...site.hooks, fill } }, at };
+  };
+  const site = scriptedSite({ start: emailScreen, choice, again: choice }, (_at, clicked) => next[clicked]);
+  const { timedSite, at } = timed(site);
+  expect((await replayOnClock(timedSite, library, Effect.succeed(undefined))).ended).toMatchObject({ outcome: "signed_in" });
+  expect((at.get("#password") ?? 0) - (at.get("#use-password") ?? 0)).toBeGreaterThanOrEqual(1_500);
+  const cleared = scriptedSite({ start: emailScreen, choice, again: choice, past: choice }, (_at, clicked) => next[clicked]);
+  const { looks, challenge } = lookingAt(cleared, "again", "past");
+  const clearedTimed = timed(cleared);
+  const { ended, events } = await replayOnClock(clearedTimed.timedSite, library, challenge);
+  expect(ended).toMatchObject({ outcome: "signed_in", loginProved: true });
+  expect(lookEvents(events)).toEqual([{ stage: "challenge_look", look: "early", outcome: "cleared" }]);
+  expect((clearedTimed.at.get("#password") ?? 0) - (looks[0] ?? Number.POSITIVE_INFINITY)).toBeGreaterThanOrEqual(1_500);
+});
+
 // A repair that went on from a known state the replay stopped at appends what it walked from there
 // (`from`): a look-alike of a known state, and the states after it.
 type Recorded = { readonly fingerprint: StateFingerprint; readonly step: AutofillRecipeStep };
@@ -1131,7 +1206,7 @@ it("goes on in the look-alike a repair walked from a press that left the page as
         : clicked === "#verify" ? "home" : undefined,
   );
   const library = repairedFrom([identifier, pressOnly], pressOnly, [typesPassword, codeState]);
-  const ended = await replay(site, library);
+  const ended = await replay(site, library, { stepWaitMs: 3_000 });
   expect(ended).toMatchObject({ outcome: "signed_in", loginProved: true });
   expect(site.clicks).toEqual(["#next", "#continue", "#continue", "#verify"]);
   expect(site.fills).toEqual(["email", "password", "code"]);

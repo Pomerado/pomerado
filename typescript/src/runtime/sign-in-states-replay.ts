@@ -296,7 +296,11 @@ const lookForChallenge = <E extends YieldableError, V extends string, L extends 
     return stopped(run, "challenge_unsolved", { challenge: challenge.vendor });
   });
 
-/** The first learned look-alike after `after` (`learnedNext`) the page is and whose controls show. */
+/**
+ * The first learned look-alike of the state just acted in (`learnedNext`) that the page is, that
+ * types something, as a press alone there may answer a press of its own that is still under way,
+ * and whose controls show.
+ */
 const learnedAlike = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
   after: StateEntry,
@@ -304,7 +308,7 @@ const learnedAlike = <E extends YieldableError, V extends string, L extends Auto
 ) =>
   Effect.gen(function* () {
     for (const next of preferred(run, learnedNext(run, after))) {
-      if (!sameFingerprint(fingerprint, next.fingerprint)) continue;
+      if (!sameFingerprint(fingerprint, next.fingerprint) || resolved(run, next.step).fields.length === 0) continue;
       const shown = yield* shownOn(run, next, resolved(run, next.step));
       if (typeof shown !== "string") return { state: next, inspection: shown } satisfies Shown;
     }
@@ -580,8 +584,10 @@ const returnedReason = <E extends YieldableError, V extends string, L extends Au
  * screen, a code state whose code went asks for a new one at its code marker or at the step wait
  * (`code`); the site's own answer, read once it held still and again at the step wait, opens an
  * emailed link (`link`) or ends a refused login; a page of a state that typed nothing, held still
- * with every box empty and no code marker, is a look-alike learned after it, once its controls show
- * (`learnedNext`) and the host's challenge look found none there; at
+ * `quietMs`, and `landingSettleMs` at least, with every box empty and no code marker, is a
+ * look-alike learned after it that types something, once its controls show (`learnedAlike`) and
+ * the host's challenge look found none there, for any host, the page settling again after a look
+ * that cleared one; at
  * the step wait, a new text no known state has is an unknown state, else a press that typed nothing
  * and sends no code or link is made once more (`repress`), and otherwise it stops
  * (`returnedReason`), as nothing is sent twice. A box that sent itself counts as sent first
@@ -675,12 +681,13 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
             if (said === "link") return { again: "link" } satisfies Again;
             if (said === "refused") return stopped(run, "credential_screen_returned");
           }
-          // A fresh page that held still looking like the state just acted in, a press that typed
+          // A fresh page that settled looking like the state just acted in, a press that typed
           // nothing, with no answer of the site's to explain it, is a look-alike a sign-in learned
-          // to come after it, if one shows and the host's look finds no challenge there.
+          // to come after it, if one shows and the host's look finds no challenge there. It settles
+          // as for an early look, so a challenge drawn late shows first.
           if (
             again &&
-            still &&
+            at - held.since >= Math.max(quiet.quietMs, landingSettleMs) &&
             !codeMarked &&
             resolved(run, state.step).fields.length === 0 &&
             state.step.approval === undefined &&
@@ -692,8 +699,11 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
               alike === undefined || gate === undefined ? "none" : yield* lookForChallenge(run, gate, "early");
             if (typeof challenge === "object") return challenge;
             if (challenge === "cleared") {
+              // The page settles again before a look-alike is taken, as the site may still be
+              // acting on what the challenge held.
               challenged = true;
               start = yield* now;
+              held = undefined;
               yield* pause(run);
               continue;
             }
