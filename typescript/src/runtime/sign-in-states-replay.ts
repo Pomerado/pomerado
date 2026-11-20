@@ -325,8 +325,9 @@ const lookForChallenge = <E extends YieldableError, V extends string, L extends 
 /**
  * The first learned look-alike of the state just acted in (`learnedNext`) that the page is and
  * whose controls show: one that types something once the page settled (`typing`), and a press
- * alone only at the step wait (`pressing`), in place of pressing the state just acted in once
- * more, as before then it may answer that press, still under way.
+ * alone only at the step wait where that state's own press would be made once more (`pressing`),
+ * in its place, as before then it may answer that press, still under way; never one that presses
+ * that state's own control, as that press would go out once more after it.
  */
 const learnedAlike = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -338,7 +339,11 @@ const learnedAlike = <E extends YieldableError, V extends string, L extends Auto
     const learned = learnedNext(run, after).filter((state) => sameFingerprint(fingerprint, state.fingerprint));
     for (const next of ranked(run, learned, fingerprint)) {
       const types = resolved(run, next.step).fields.length > 0;
-      if (!sameFingerprint(fingerprint, next.fingerprint) || !(types ? allowed.typing : allowed.pressing)) continue;
+      if (
+        !sameFingerprint(fingerprint, next.fingerprint) ||
+        !(types ? allowed.typing : allowed.pressing && next.step.submit !== after.step.submit)
+      )
+        continue;
       const shown = yield* shownOn(run, next, resolved(run, next.step));
       if (typeof shown !== "string") return { state: next, inspection: shown } satisfies Shown;
     }
@@ -618,9 +623,10 @@ const returnedReason = <E extends YieldableError, V extends string, L extends Au
  * (`code`); the site's own answer, read once it held still and again at the step wait, opens an
  * emailed link (`link`) or ends a refused login; a page of a state that typed nothing, held still
  * `quietMs`, and `landingSettleMs` at least, with every box empty and no code marker, is a
- * look-alike learned after it that types something, or at the step wait one that presses alone
- * in place of pressing again, once its controls show (`learnedAlike`) and the host's challenge look
- * found none there, for any host, the page settling again after a look that cleared one; at
+ * look-alike learned after it that types something, or at the step wait one that presses another
+ * control alone in place of the press made once more, once its controls show (`learnedAlike`) and
+ * the host's challenge look found none there, for any host, the page settling again after a look
+ * that cleared one; at
  * the step wait, a new text no known state has is an unknown state, else a press that typed nothing
  * and sends no code or link is made once more (`repress`), and otherwise it stops
  * (`returnedReason`), as nothing is sent twice. A box that sent itself counts as sent first
@@ -728,10 +734,15 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
             state.step.approval === undefined &&
             read.boxes.every((box) => box.empty)
           ) {
-            const alike = yield* learnedAlike(run, state, shape, { typing: settledHere, pressing: capped });
+            const alike = yield* learnedAlike(run, state, shape, {
+              typing: settledHere,
+              pressing: capped && acted.press !== undefined,
+            });
             const gate = challenged ? undefined : run.input.hooks.challenge;
             const challenge =
-              alike === undefined || gate === undefined ? "none" : yield* lookForChallenge(run, gate, "early");
+              alike === undefined || gate === undefined
+                ? "none"
+                : yield* lookForChallenge(run, gate, capped ? "deadline" : "early");
             if (typeof challenge === "object") return challenge;
             if (challenge === "cleared") {
               // The page settles again before a look-alike is taken, as the site may still be
