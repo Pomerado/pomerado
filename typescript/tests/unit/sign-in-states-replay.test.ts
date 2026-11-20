@@ -1,5 +1,5 @@
 import { inspect } from "node:util";
-import { Data, Effect, Either } from "effect";
+import { Clock, Data, Duration, Effect, Either, Fiber, Option, TestClock, TestContext } from "effect";
 import { expect, it } from "vitest";
 import type { AutofillRecipeStep } from "../../src/destinations/autofill-recipe.js";
 import type {
@@ -720,4 +720,129 @@ it("fails loudly when a recorded step carries no state", () => {
   expect(observedSignInOf(signIn.steps, recipe)).toMatchObject({
     states: [{ fingerprint: arrival(emailScreen) }, { fingerprint: arrival(passwordScreen) }],
   });
+});
+
+/**
+ * A replay on the test clock from 0, with the default 30 s step wait and quiet, the host's challenge
+ * look `challenge` (none when absent), and `meanwhile` beside it, as a page that changes on its own.
+ */
+const replayOnClock = (
+  site: ReturnType<typeof scriptedSite>,
+  library: SignInStates,
+  challenge?: AutofillHooks<TestFailure>["challenge"],
+  meanwhile: Effect.Effect<void> = Effect.void,
+) => {
+  const events: Readonly<Record<string, unknown>>[] = [];
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      yield* Effect.fork(meanwhile);
+      const running = yield* Effect.fork(
+        replaySignInStates({
+          library,
+          observe: site.observe,
+          hooks: { ...site.hooks, ...(challenge === undefined ? {} : { challenge }) },
+          entryUrl: `${origin}/sign-in`,
+          credentials: { username: "owner@example.test", password: "secret-1" },
+          ask: makeInputAsker(() => Effect.dieMessage("Unexpected question")),
+          broker: { register: () => Effect.void, registeredSecretMatches: () => Effect.succeed([]) },
+          site: "example.test",
+          correlation: undefined,
+          emit: (details) => Effect.sync(() => void events.push(details)),
+          failures: {
+            unanswered: (cause) => new TestFailure({ code: `unanswered:${String(cause)}` }),
+            unavailable: () => new TestFailure({ code: "unavailable" }),
+          },
+          timing: { stepWaitMs: 30_000, pollMs: 250 },
+          sent: { current: false },
+        }),
+      );
+      for (let polls = 0; polls < 1_000; polls++) {
+        if (Option.isSome(yield* Fiber.poll(running))) break;
+        yield* TestClock.adjust(Duration.millis(250));
+      }
+      const ended = yield* Fiber.join(running);
+      return { ended, endedAt: yield* Clock.currentTimeMillis, events };
+    }).pipe(Effect.provide(TestContext.TestContext)),
+  );
+};
+
+const checkpoint: Screen = { path: "/sign-in", boxes: [], buttons: ["#go-on"], texts: ["press the button to go on"] };
+const twoStates = libraryOf([
+  { fingerprint: arrival(emailScreen), step: stepAt("/sign-in", [email], "#continue") },
+  { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") },
+]);
+const toPassword = (_at: string, clicked: string) => (clicked === "#continue" ? "password" : "home");
+
+/** The host's look: when the page shows `on`, it clears it into `to`; the time of each look. */
+const lookingAt = (site: ReturnType<typeof scriptedSite>, on: string, to: string) => {
+  const looks: number[] = [];
+  const challenge = Effect.gen(function* () {
+    looks.push(yield* Clock.currentTimeMillis);
+    if (site.site.screen !== on) return undefined;
+    site.site.screen = to;
+    return { outcome: "cleared" as const, vendor: "first_party" };
+  });
+  return { looks, challenge };
+};
+const lookEvents = (events: readonly Readonly<Record<string, unknown>>[]) =>
+  events.filter((event) => event.stage === "challenge_look");
+
+it("looks at a checkpoint page once it held still, long before the step wait, and signs in", async () => {
+  const site = scriptedSite({ start: checkpoint, email: emailScreen, password: passwordScreen }, toPassword);
+  const { looks, challenge } = lookingAt(site, "start", "email");
+  const { ended, endedAt, events } = await replayOnClock(site, twoStates, challenge);
+  expect(ended).toMatchObject({ outcome: "signed_in", loginProved: true });
+  expect(looks).toHaveLength(1);
+  // The page held still 1 s (`quietMs`), then the next look ran.
+  expect(looks[0]).toBeGreaterThanOrEqual(1_000);
+  expect(looks[0]).toBeLessThan(3_000);
+  expect(endedAt).toBeLessThan(5_000);
+  expect(lookEvents(events)).toEqual([{ stage: "challenge_look", look: "early", outcome: "cleared" }]);
+});
+
+it("keeps waiting for a slow page whose first state shows at 20 s after a look found nothing", async () => {
+  const loading: Screen = { path: "/sign-in", boxes: [], texts: ["loading"] };
+  const site = scriptedSite({ start: loading, email: emailScreen, password: passwordScreen }, toPassword);
+  const { looks, challenge } = lookingAt(site, "none", "none");
+  const drawn = Effect.sleep(Duration.seconds(20)).pipe(Effect.andThen(() => (site.site.screen = "email")));
+  const { ended, endedAt, events } = await replayOnClock(site, twoStates, challenge, drawn);
+  expect(ended).toMatchObject({ outcome: "signed_in", loginProved: true });
+  expect(endedAt).toBeGreaterThanOrEqual(20_000);
+  expect(endedAt).toBeLessThan(30_000);
+  expect(looks).toHaveLength(1);
+  expect(looks[0]).toBeLessThan(3_000);
+  expect(lookEvents(events)).toEqual([{ stage: "challenge_look", look: "early", outcome: "none" }]);
+});
+
+it("ends at the step wait on a page with no challenge, with no second look at a page unchanged", async () => {
+  const still: Screen = { path: "/sign-in", boxes: [], texts: ["one moment"] };
+  const site = scriptedSite({ start: still }, () => undefined);
+  const { looks, challenge } = lookingAt(site, "none", "none");
+  const { ended, endedAt, events } = await replayOnClock(site, twoStates, challenge);
+  expect(ended).toMatchObject({ outcome: "unsent", reason: "unknown_state" });
+  expect(endedAt).toBeGreaterThanOrEqual(30_000);
+  expect(looks).toHaveLength(1);
+  expect(looks[0]).toBeLessThan(3_000);
+  expect(lookEvents(events)).toEqual([{ stage: "challenge_look", look: "early", outcome: "none" }]);
+});
+
+it("looks early at a page whose known state's controls have not shown", async () => {
+  // The code state's fingerprint, with its box under another control than the one recorded.
+  const drawnElsewhere: Screen = { path: "/verify", boxes: [{ selector: "#other-code", kind: "code" }] };
+  const library = libraryOf([{ fingerprint: arrival(codeScreen), step: stepAt("/verify", [code], "#verify") }]);
+  const site = scriptedSite({ start: drawnElsewhere }, () => undefined);
+  const { looks, challenge } = lookingAt(site, "none", "none");
+  const { ended, endedAt } = await replayOnClock(site, library, challenge);
+  expect(ended).toMatchObject({ outcome: "unsent", reason: "not_found" });
+  expect(endedAt).toBeGreaterThanOrEqual(30_000);
+  expect(looks).toHaveLength(1);
+  expect(looks[0]).toBeLessThan(3_000);
+});
+
+it("ends at the step wait as before on a host with no challenge look", async () => {
+  const site = scriptedSite({ start: checkpoint, email: emailScreen }, toPassword);
+  const { ended, endedAt, events } = await replayOnClock(site, twoStates);
+  expect(ended).toMatchObject({ outcome: "unsent", reason: "unknown_state" });
+  expect(endedAt).toBeGreaterThanOrEqual(30_000);
+  expect(lookEvents(events)).toEqual([]);
 });
