@@ -252,22 +252,64 @@ const typesSent = <E extends YieldableError, V extends string, L extends Autofil
   );
 
 /**
- * The states a sign-in learned to come after `after` that this replay has not acted in, none of
- * which would type again a password or identifier that went out (`typesSent`): a page that looks
- * like one acted in, where a sign-in learned another step, is that state, not the one acted in
- * come back.
+ * The states a sign-in learned to come after `after` that this replay has not acted in: a page
+ * that looks like one acted in, where a sign-in learned another step, is that state, not the one
+ * acted in come back. Never one that would type again a password or identifier that went out
+ * (`typesSent`), nor one that may have the site send something again: a press alone that may send
+ * a code or link (`sendsOnPress`), a method choice or an approval; and none after an approval,
+ * whose page stays while the owner answers.
  */
 const learnedNext = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
   after: StateEntry | undefined,
 ) => {
+  if (after?.step.approval !== undefined) return [];
   const next = new Set(
     run.input.library.transitions.filter((t) => t.from === after?.key).map((t) => t.to),
   );
   return run.input.library.states.filter(
-    (state) => next.has(state.key) && !run.visited.includes(state.key) && !typesSent(run, state),
+    (state) =>
+      next.has(state.key) &&
+      !run.visited.includes(state.key) &&
+      !typesSent(run, state) &&
+      state.step.approval === undefined &&
+      state.step.methods === undefined &&
+      (resolved(run, state.step).fields.length > 0 || !sendsOnPress(run, state)),
   );
 };
+
+/**
+ * The host's challenge look (`gate`), heard as `challenge_look`: `cleared`, `none`, or the
+ * replay's end at a challenge the host can't clear (`challenge_unsolved`).
+ */
+const lookForChallenge = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  gate: NonNullable<SignInStatesReplayInput<E, V, L>["hooks"]["challenge"]>,
+  look: "early" | "deadline",
+) =>
+  Effect.gen(function* () {
+    const challenge = yield* gate;
+    yield* run.input.emit({ stage: "challenge_look", look, outcome: challenge?.outcome ?? "none" });
+    if (challenge === undefined) return "none" as const;
+    if (challenge.outcome === "cleared") return "cleared" as const;
+    run.replay.progress.challenge = challenge.vendor;
+    return stopped(run, "challenge_unsolved", { challenge: challenge.vendor });
+  });
+
+/** The first learned look-alike after `after` (`learnedNext`) the page is and whose controls show. */
+const learnedAlike = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  after: StateEntry,
+  fingerprint: StateFingerprint,
+) =>
+  Effect.gen(function* () {
+    for (const next of preferred(run, learnedNext(run, after))) {
+      if (!sameFingerprint(fingerprint, next.fingerprint)) continue;
+      const shown = yield* shownOn(run, next, resolved(run, next.step));
+      if (typeof shown !== "string") return { state: next, inspection: shown } satisfies Shown;
+    }
+    return undefined;
+  });
 
 /**
  * The known state the page shows: one whose fingerprint it is and whose recorded controls show,
@@ -537,8 +579,9 @@ const returnedReason = <E extends YieldableError, V extends string, L extends Au
  * state's boxes beside its text; through the step wait, as the recipe replay waits for its next
  * screen, a code state whose code went asks for a new one at its code marker or at the step wait
  * (`code`); the site's own answer, read once it held still and again at the step wait, opens an
- * emailed link (`link`) or ends a refused login; a page of it that held still with every box empty
- * and no code marker is a look-alike learned after it, once its controls show (`learnedNext`); at
+ * emailed link (`link`) or ends a refused login; a page of a state that typed nothing, held still
+ * with every box empty and no code marker, is a look-alike learned after it, once its controls show
+ * (`learnedNext`) and the host's challenge look found none there; at
  * the step wait, a new text no known state has is an unknown state, else a press that typed nothing
  * and sends no code or link is made once more (`repress`), and otherwise it stops
  * (`returnedReason`), as nothing is sent twice. A box that sent itself counts as sent first
@@ -632,14 +675,29 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
             if (said === "link") return { again: "link" } satisfies Again;
             if (said === "refused") return stopped(run, "credential_screen_returned");
           }
-          // A fresh page that held still looking like the state just acted in, with no answer of the
-          // site's to explain it, is a look-alike a sign-in learned to come after it, if one shows.
-          if (again && still && !codeMarked && read.boxes.every((box) => box.empty)) {
-            for (const next of preferred(run, learnedNext(run, state))) {
-              if (!sameFingerprint(shape, next.fingerprint)) continue;
-              const shown = yield* shownOn(run, next, resolved(run, next.step));
-              if (typeof shown !== "string") return { state: next, inspection: shown, observed: read };
+          // A fresh page that held still looking like the state just acted in, a press that typed
+          // nothing, with no answer of the site's to explain it, is a look-alike a sign-in learned
+          // to come after it, if one shows and the host's look finds no challenge there.
+          if (
+            again &&
+            still &&
+            !codeMarked &&
+            resolved(run, state.step).fields.length === 0 &&
+            state.step.approval === undefined &&
+            read.boxes.every((box) => box.empty)
+          ) {
+            const alike = yield* learnedAlike(run, state, shape);
+            const gate = challenged ? undefined : run.input.hooks.challenge;
+            const challenge =
+              alike === undefined || gate === undefined ? "none" : yield* lookForChallenge(run, gate, "early");
+            if (typeof challenge === "object") return challenge;
+            if (challenge === "cleared") {
+              challenged = true;
+              start = yield* now;
+              yield* pause(run);
+              continue;
             }
+            if (alike !== undefined) return { ...alike, observed: read };
           }
           if (capped) {
             if (!again && back !== undefined) return stopped(run, returnedReason(run, back));
@@ -680,13 +738,9 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
       const look = waited ? "deadline" : settled ? "early" : undefined;
       if (gate !== undefined && look !== undefined) {
         if (held !== undefined) looked.add(held.text);
-        const challenge = yield* gate;
-        yield* run.input.emit({ stage: "challenge_look", look, outcome: challenge?.outcome ?? "none" });
-        if (challenge?.outcome === "failed") {
-          replay.progress.challenge = challenge.vendor;
-          return stopped(run, "challenge_unsolved", { challenge: challenge.vendor });
-        }
-        if (challenge !== undefined) {
+        const challenge = yield* lookForChallenge(run, gate, look);
+        if (typeof challenge === "object") return challenge;
+        if (challenge === "cleared") {
           challenged = true;
           start = yield* now;
         } else if (waited) {
