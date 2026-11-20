@@ -241,6 +241,17 @@ describe("zonedWindow", () => {
     });
   });
 
+  it("reads a clock on the 24-hour clock, or a 12 that ties, beside Midnight or Noon", () => {
+    expect(zonedWindow("2026-11-16", "22:30", "Midnight", la).start).toBe("2026-11-16T22:30:00-08:00");
+    expect(zonedWindow("2026-11-16", "08:00", "Midnight", la).start).toBe("2026-11-16T08:00:00-08:00");
+    expect(zonedWindow("2026-11-16", "Noon", "14:00", la).end).toBe("2026-11-16T14:00:00-08:00");
+    expect(zonedWindow("2026-11-16", "12", "Midnight", la)).toEqual({
+      start: "2026-11-16T12:00:00-08:00",
+      end: "2026-11-17T00:00:00-08:00",
+    });
+    expect(zonedWindow("2026-11-16", "Midnight", "12", la).end).toBe("2026-11-16T12:00:00-08:00");
+  });
+
   it("picks the start's day by the rule, then the end after it", () => {
     const lateEvening = ms("2026-11-16T07:30:00Z"); // 11:30 PM Nov 15 in Los Angeles
     expect(zonedWindow("next", "11:45 PM", "Midnight", la, lateEvening)).toEqual({
