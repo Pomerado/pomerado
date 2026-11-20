@@ -45,7 +45,7 @@ import {
   type CredentialTypingMode,
   type InsertionRefusal,
 } from "./credential-keyboard.js";
-import { DateOfBirthFormat, IdentifierKinds } from "./autofill-contracts.js";
+import { choicePicks, DateOfBirthFormat, IdentifierKinds } from "./autofill-contracts.js";
 import { PageControls } from "./page-controls.js";
 import { PageNavigation, reportedNavigation } from "./sign-in-redirect.js";
 
@@ -103,6 +103,12 @@ const FillAnswer = Schema.Union(
   }),
   Schema.Struct({
     dated: Schema.Boolean,
+    url: Schema.String,
+    document: Schema.optional(Schema.Number),
+  }),
+  /** A `choose` call: whether the code's choices ended picked as it names them, and only those. */
+  Schema.Struct({
+    chosen: Schema.Boolean,
     url: Schema.String,
     document: Schema.optional(Schema.Number),
   }),
@@ -877,17 +883,23 @@ const fillField = (
     const kept = tracked
       ? progress.earlier.findLast((box) => box.slot === field?.slot && box.value === value)
       : undefined;
+    // A code picked from named choices: the choices it names (Alan, about 2:58 PM PT Nov 20, 2026,
+    // "go for code entry").
+    const choices = input.inspection.screen.fields[index]?.codeChoices;
+    const picked = choices === undefined ? undefined : (choicePicks(value, choices) ?? []);
     const call: AutofillFillCall =
-      format === undefined
-        ? {
-            kind: "focus",
-            index,
-            bindingKey,
-            ...(index === boxes[0] ? { emptyBoxes: boxes } : {}),
-            ...(mark === undefined ? {} : { mark }),
-            ...(kept === undefined ? {} : { kept: kept.mark }),
-          }
-        : { kind: "date", index, iso: value, format };
+      picked !== undefined
+        ? { kind: "choose", index, names: picked }
+        : format === undefined
+          ? {
+              kind: "focus",
+              index,
+              bindingKey,
+              ...(index === boxes[0] ? { emptyBoxes: boxes } : {}),
+              ...(mark === undefined ? {} : { mark }),
+              ...(kept === undefined ? {} : { kept: kept.mark }),
+            }
+          : { kind: "date", index, iso: value, format };
     const changes = { count: 0 };
     const started = Date.now();
     let answered = yield* fillCall(input, progress, changes)(call);
@@ -897,8 +909,10 @@ const fillField = (
     }
     if (answered._tag === "Left")
       return failedCall(progress, answered.left, {
-        ...(format === undefined ? {} : { held: input.values }),
-        mayMutate: format !== undefined,
+        ...(format === undefined && picked === undefined
+          ? {}
+          : { held: [...input.values, ...(picked ?? [])] }),
+        mayMutate: format !== undefined || picked !== undefined,
       });
     const answer = answered.right;
     if ("refusal" in answer || "checked" in answer)
@@ -1132,14 +1146,13 @@ const afterFieldCall = (
       progress.check = [index];
       return undefined;
     }
-    if ("dated" in answer) {
-      // A date's call may have changed the field even when it failed.
+    if ("dated" in answer || "chosen" in answer) {
+      // A date's or choice's call may have changed the field even when it failed.
+      const done = "dated" in answer ? answer.dated : answer.chosen;
       progress.typed = true;
       progress.typedIn = answer.document;
-      progress.statuses.push(answer.dated ? "filled" : "failed");
-      return answer.dated
-        ? undefined
-        : filledReport(input.step, progress, "not_attempted", answer.url);
+      progress.statuses.push(done ? "filled" : "failed");
+      return done ? undefined : filledReport(input.step, progress, "not_attempted", answer.url);
     }
     if (!("focused" in answer)) return refused("page_unavailable");
     let insertion: InsertionRefusal | undefined;
@@ -1203,7 +1216,10 @@ const afterFieldCall = (
  * the host clicked, each key into the box the page moved the focus to (`fillRow`), else one key per
  * box, and inserts at once a code whose one
  * field hands the focus on once a key went in, binding that field again first (`codeAtOnce`), so no value but a
- * date of birth ever enters a Kernel call's script text or its request to Kernel's REST API. It reports per-field outcomes and never a
+ * date of birth, and the selected choices of a sign-in code picked from named choices, ever enters a
+ * Kernel call's script text or its request to Kernel's REST API. Such a code's call ticks or presses
+ * the choices its code names (`choose`), and is no typed field a submit checks again. It reports
+ * per-field outcomes and never a
  * value. Once anything was typed, a call that fails or finds a control refused can no longer say
  * nothing reached the site: a lost answer is `uncertain`, a control refused before a field's typing
  * fails that field, and one refused before the click, or a submission refused as it fires, refuses
@@ -1314,11 +1330,11 @@ export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepRe
     if (
       report.outcome === "filled" &&
       report.submit === "stayed_disabled" &&
-      typedFields(step, progress).length > 0
+      typedFields(input, progress).length > 0
     )
       return yield* typeAgain({ ...input, keyboard: byKeys(input.keyboard) });
     if (isBlocked(report) && (yield* closeFieldList(input, progress))) {
-      progress.check = typedFields(step, progress);
+      progress.check = typedFields(input, progress);
       return yield* submitStep(input, progress, boxes, typed, true);
     }
     if (!isBlocked(report) || step.dismiss === undefined) return report;
@@ -1326,7 +1342,7 @@ export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepRe
     // The dismiss emptied the fields before its click: the host types them all again.
     if (again.emptied) return yield* typeAgain(input);
     if (!again.dismissed) return report;
-    progress.check = typedFields(step, progress);
+    progress.check = typedFields(input, progress);
     return yield* submitStep(input, progress, boxes, typed);
   });
 
@@ -1368,7 +1384,7 @@ export const resubmitAutofillStep = (input: CallInput): Effect.Effect<AutofillSt
     };
     const notice = yield* dismissNotice(input, progress);
     if (notice.refusal !== undefined) return notice.refusal;
-    progress.check = typedFields(step, progress);
+    progress.check = typedFields(input, progress);
     // Nothing typed is left to send: the first typed field fails as the submit's check would find
     // it, with no call for the page's own navigation after the dismiss to lose.
     const [emptiedField] = progress.check;
@@ -1437,11 +1453,15 @@ const isBlocked = (report: AutofillStepReport) =>
 /**
  * The fields the host typed itself and that still count as filled, which a submit it clicks again
  * checks still hold something: never a date, which the authoring library fills into the page's
- * own controls.
+ * own controls, nor a code picked from named choices, which holds no value.
  */
-const typedFields = (step: AutofillStep<FillSlot>, progress: FillProgress) =>
-  step.fields.flatMap((field, index) =>
-    field.slot !== "date_of_birth" && progress.statuses[index] === "filled" ? [index] : [],
+const typedFields = (input: CallInput, progress: FillProgress) =>
+  input.step.fields.flatMap((field, index) =>
+    field.slot !== "date_of_birth" &&
+    input.inspection.screen.fields[index]?.codeChoices === undefined &&
+    progress.statuses[index] === "filled"
+      ? [index]
+      : [],
   );
 
 /**
@@ -1551,7 +1571,7 @@ return { closed: unchanged && clear };`;
  * types and clicks nothing.
  */
 const closeFieldList = (input: CallInput, progress: FillProgress): Effect.Effect<boolean> => {
-  const index = typedFields(input.step, progress).at(-1);
+  const index = typedFields(input, progress).at(-1);
   return index === undefined || input.step.submit === undefined
     ? Effect.succeed(false)
     : input.page.execute(closeFieldListCode(input, index), 30).pipe(
