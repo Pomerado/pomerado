@@ -279,9 +279,12 @@ export interface AutofillReplayInput<
   /** What the host adds from what it keeps besides the login's record; see `HostedSignIn`. */
   readonly hosted?: HostedSignIn<E, V, L> | undefined;
   /**
-   * Hears each recorded screen once it shows, just before the replay acts on it, so a host can
-   * read the page as that screen's state, as a build's recorded sign-in does. A value-free replay
-   * stops before it.
+   * Hears each recorded screen the replay acts on, once its checks passed and just before its
+   * fill, press or approval question, so a host can read the page as that screen's state, as a
+   * build's recorded sign-in does. An approval that finds the page signed in, or a code box where
+   * an emailed link's screen was, is not heard; nor is a hand-off screen or any screen of a
+   * value-free replay. It runs on the replay's error channel, between the screen's checks and its
+   * fill, so a host keeps it short.
    */
   readonly onScreen?: ((recorded: SignInRecipeStep) => Effect.Effect<void, E>) | undefined;
 }

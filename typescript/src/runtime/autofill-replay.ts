@@ -439,7 +439,12 @@ const runScreen = <E extends YieldableError, V extends string, L extends Autofil
       !(input.hosted?.allowedChoices ?? []).includes(recorded.choice)
     )
       return yield* choiceNotAllowed(input, replay, recorded.choice);
-    if (input.onScreen !== undefined) yield* input.onScreen(recorded);
+    // The host hears the screen once it is the one the replay acts on, before anything it does.
+    const { onScreen } = input;
+    const heard =
+      replay.valueFree || onScreen === undefined
+        ? Effect.void
+        : Effect.suspend(() => onScreen(recorded));
     if (recorded.approval !== undefined) {
       settleCarried(replay);
       if (![...replay.state.submittedSlots].some(isIdentifier))
@@ -465,6 +470,7 @@ const runScreen = <E extends YieldableError, V extends string, L extends Autofil
         if (code === "ran") return "continue" as const;
         if (code !== "none") return replay.outcome(code);
       }
+      yield* heard;
       // A site whose emailed link signs in only the browser that opens it: the owner pastes the
       // link, and the replay opens it itself (`openPastedLink`).
       if (recorded.approval === "email_link" && recorded.delivery === "paste") {
@@ -511,6 +517,7 @@ const runScreen = <E extends YieldableError, V extends string, L extends Autofil
       });
       return "continue" as const;
     }
+    yield* heard;
     for (;;) {
       const ranBefore = replay.progress.ran.length;
       const failed = yield* replay.runStep(
