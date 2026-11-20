@@ -324,10 +324,11 @@ const lookForChallenge = <E extends YieldableError, V extends string, L extends 
 
 /**
  * The first learned look-alike of the state just acted in (`learnedNext`) that the page is and
- * whose controls show: one that types something once the page settled (`typing`), and a press
- * alone only at the step wait where that state's own press would be made once more (`pressing`),
- * in its place, as before then it may answer that press, still under way; never one that presses
- * that state's own control, as that press would go out once more after it.
+ * whose controls show, in the order this login takes them (`ranked`): one that types something
+ * once the page settled (`typing`), and a press alone only at the step wait where that state's own
+ * press would be made once more (`pressing`), in its place, as before then it may answer that
+ * press, still under way; never one that presses that state's own control, as that press would go
+ * out once more after it.
  */
 const learnedAlike = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -339,11 +340,7 @@ const learnedAlike = <E extends YieldableError, V extends string, L extends Auto
     const learned = learnedNext(run, after).filter((state) => sameFingerprint(fingerprint, state.fingerprint));
     for (const next of ranked(run, learned, fingerprint)) {
       const types = resolved(run, next.step).fields.length > 0;
-      if (
-        !sameFingerprint(fingerprint, next.fingerprint) ||
-        !(types ? allowed.typing : allowed.pressing && next.step.submit !== after.step.submit)
-      )
-        continue;
+      if (!(types ? allowed.typing : allowed.pressing && next.step.submit !== after.step.submit)) continue;
       const shown = yield* shownOn(run, next, resolved(run, next.step));
       if (typeof shown !== "string") return { state: next, inspection: shown } satisfies Shown;
     }

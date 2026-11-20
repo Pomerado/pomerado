@@ -1257,10 +1257,14 @@ it("presses a learned look-alike's other control at the step wait, in place of p
   const typesPassword = { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") };
   const next: Readonly<Record<string, string>> = { "#continue": "pick", "#a": "pick", "#b": "password", "#go": "home" };
   const { timedSite, at } = timed(scriptedSite({ start: emailScreen, pick, password: passwordScreen }, (_at, clicked) => next[clicked]));
-  const { ended } = await replayOnClock(timedSite, libraryOf([emailState, pickA, pickB, typesPassword]));
+  const { looks, challenge } = lookingAt(timedSite, "none", "none");
+  const { ended, events } = await replayOnClock(timedSite, libraryOf([emailState, pickA, pickB, typesPassword]), challenge);
   expect(ended).toMatchObject({ outcome: "signed_in", loginProved: true });
   expect(timedSite.clicks).toEqual(["#continue", "#a", "#b", "#go"]);
   expect((at.get("#b") ?? 0) - (at.get("#a") ?? 0)).toBeGreaterThanOrEqual(30_000);
+  // The look before the press-only look-alike runs at the step wait, and is heard so.
+  expect(looks).toHaveLength(1);
+  expect(lookEvents(events)).toEqual([{ stage: "challenge_look", look: "deadline", outcome: "none" }]);
 });
 
 it("takes no learned look-alike after an approval, as on a page like an earlier state's", async () => {
