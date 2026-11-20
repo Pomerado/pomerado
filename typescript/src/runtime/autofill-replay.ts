@@ -439,6 +439,7 @@ const runScreen = <E extends YieldableError, V extends string, L extends Autofil
       !(input.hosted?.allowedChoices ?? []).includes(recorded.choice)
     )
       return yield* choiceNotAllowed(input, replay, recorded.choice);
+    if (input.onScreen !== undefined) yield* input.onScreen(recorded);
     if (recorded.approval !== undefined) {
       settleCarried(replay);
       if (![...replay.state.submittedSlots].some(isIdentifier))

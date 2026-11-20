@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Effect, Schema } from "effect";
 import type { YieldableError } from "effect/Cause";
 import type { MarkerSettle } from "../destinations/marker-settle.js";
-import type { SignInRecipe } from "../destinations/sign-in-recipe.js";
+import type { SignInRecipe, SignInRecipeStep } from "../destinations/sign-in-recipe.js";
 import type { CheckedWorkspace, ReplayWorkspace } from "./autofill-replay-workspace.js";
 import {
   type AutofillRecipeStep,
@@ -278,6 +278,12 @@ export interface AutofillReplayInput<
   readonly sent: { current: boolean };
   /** What the host adds from what it keeps besides the login's record; see `HostedSignIn`. */
   readonly hosted?: HostedSignIn<E, V, L> | undefined;
+  /**
+   * Hears each recorded screen once it shows, just before the replay acts on it, so a host can
+   * read the page as that screen's state, as a build's recorded sign-in does. A value-free replay
+   * stops before it.
+   */
+  readonly onScreen?: ((recorded: SignInRecipeStep) => Effect.Effect<void, E>) | undefined;
 }
 
 /** Asks the caller one host-written question and returns its answer. */
