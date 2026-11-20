@@ -39,8 +39,8 @@ const waitOn = async (
   showing: (now: number) => Showing,
   host: { readonly challenge?: boolean; readonly pageState?: boolean; readonly popup?: boolean } = {},
 ) => {
-  const step: AutofillStep = host.popup
-    ? { ...form, popup: { opener: "primary", origin: "https://accounts.example.test" } }
+  const step = host.popup
+    ? { ...form, popup: { opener: "primary" as const, origin: "https://accounts.example.test" } }
     : form;
   let cleared = false;
   const looks: number[] = [];
