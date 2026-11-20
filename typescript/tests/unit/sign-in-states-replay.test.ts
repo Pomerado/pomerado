@@ -1282,3 +1282,35 @@ it("takes no learned look-alike after an approval, as on a page like an earlier 
   expect(ended.asked).toEqual(["approved"]);
   expect(site.clicks).toEqual(["#continue"]);
 });
+
+it("presses a learned look-alike alone only where the press would go once more, and never the same control", async () => {
+  const sendPage: Screen = { path: "/send", boxes: [], buttons: ["#send"], texts: ["get a code"] };
+  const goPage: Screen = { path: "/go", boxes: [], buttons: ["#go"], texts: ["go on"] };
+  // A press the library knows may have a code sent goes once; a learned look-alike pressing the
+  // same control from another page is never pressed in its place.
+  const send = { fingerprint: arrival(sendPage), step: stepAt("/send", [], "#send") };
+  const sendElsewhere = { fingerprint: arrival(sendPage), step: stepAt("/send/again", [], "#send") };
+  const codeState = { fingerprint: arrival(codeScreen), step: stepAt("/verify", [code], "#verify") };
+  const typesPassword = { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") };
+  const sends = scriptedSite({ start: emailScreen, send: sendPage }, (at, clicked) => (clicked === "#continue" ? "send" : at));
+  const sent = await replayOnClock(sends, repairedFrom([emailState, send, codeState], send, [sendElsewhere, typesPassword]));
+  expect(sent.ended).toMatchObject({ reason: "state_repeated" });
+  expect(sends.clicks).toEqual(["#continue", "#send"]);
+  // Nor one pressing another control there, as no press goes once more after one that may send.
+  const sendOrOther: Screen = { ...sendPage, buttons: ["#send", "#other"] };
+  const sendFirst = { fingerprint: arrival(sendOrOther), step: stepAt("/send", [], "#send") };
+  const other = { fingerprint: arrival(sendOrOther), step: stepAt("/send", [], "#other") };
+  const others = scriptedSite({ start: emailScreen, send: sendOrOther, password: passwordScreen }, (at, clicked) =>
+    clicked === "#continue" ? "send" : clicked === "#other" ? "password" : clicked === "#go" ? "home" : at,
+  );
+  const otherEnded = await replayOnClock(others, repairedFrom([emailState, sendFirst, codeState], sendFirst, [other, typesPassword]));
+  expect(otherEnded.ended).toMatchObject({ reason: "state_repeated" });
+  expect(others.clicks).toEqual(["#continue", "#send"]);
+  // A press made once more stays the state's own, never a look-alike's of the same control.
+  const go = { fingerprint: arrival(goPage), step: stepAt("/go", [], "#go") };
+  const goElsewhere = { fingerprint: arrival(goPage), step: stepAt("/go/again", [], "#go") };
+  const goes = scriptedSite({ start: emailScreen, go: goPage }, (at, clicked) => (clicked === "#continue" ? "go" : at));
+  const went = await replayOnClock(goes, repairedFrom([emailState, go, typesPassword], go, [goElsewhere, typesPassword]));
+  expect(went.ended).toMatchObject({ reason: "state_repeated" });
+  expect(goes.clicks).toEqual(["#continue", "#go", "#go"]);
+});
