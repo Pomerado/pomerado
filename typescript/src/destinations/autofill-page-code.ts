@@ -112,7 +112,8 @@ for (const [index, codeBox] of codeBoxes.entries())
  * code picked from checkboxes drawn as digits and pictures does: each checkbox, and each button
  * that submits no form, inside it that the accessibility tree shows and that is enabled, with its
  * accessible name (`accessibleNames`), trimmed, in page order. Null unless it holds 2 to 30 of
- * them, each named in 1 to 30 characters, and no text field. Names only, never a state; `choices` are the elements the choose call clicks.
+ * them, each named in 1 to 30 characters, and no text field. Names only, never a state; `choices`
+ * are the elements the choose call clicks.
  */
 const choicesCode = `(element) => {
   if (element.matches(":read-write, select") || element.querySelector(":read-write, select") !== null) return null;
