@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Effect, Schema } from "effect";
 import type { YieldableError } from "effect/Cause";
 import type { MarkerSettle } from "../destinations/marker-settle.js";
-import type { SignInRecipe } from "../destinations/sign-in-recipe.js";
+import type { SignInRecipe, SignInRecipeStep } from "../destinations/sign-in-recipe.js";
 import type { CheckedWorkspace, ReplayWorkspace } from "./autofill-replay-workspace.js";
 import {
   type AutofillRecipeStep,
@@ -278,6 +278,19 @@ export interface AutofillReplayInput<
   readonly sent: { current: boolean };
   /** What the host adds from what it keeps besides the login's record; see `HostedSignIn`. */
   readonly hosted?: HostedSignIn<E, V, L> | undefined;
+  /**
+   * Hears each recorded screen the replay acts on, once its checks passed and just before its
+   * fill, press or approval question, so a host can read the page as that screen's state, as a
+   * build's recorded sign-in does; a method screen's method question comes before it. A screen is
+   * heard once each time the replay comes to it, and its fill may still refuse after. Not heard:
+   * an approval that finds the page signed in, a hand-off screen, a screen whose choice the caller
+   * did not allow, any screen of a value-free replay, and an emailed link's screen whose code box
+   * took a code or ended the replay. When nobody gives that code, the link's screen is heard after
+   * the code question, before the link's. It runs on the replay's error channel: its failure ends
+   * the replay with that error, and its time counts in the screen's wait, so a host that only
+   * records keeps it short and handles its own failures.
+   */
+  readonly onScreen?: ((recorded: SignInRecipeStep) => Effect.Effect<void, E>) | undefined;
 }
 
 /** Asks the caller one host-written question and returns its answer. */

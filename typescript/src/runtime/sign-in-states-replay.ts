@@ -64,7 +64,7 @@ export interface SignInStatesReplayInput<
   E extends YieldableError = YieldableError,
   V extends string = string,
   L extends AutofillLogin = AutofillLogin,
-> extends Omit<AutofillReplayInput<E, V, L>, "recipe"> {
+> extends Omit<AutofillReplayInput<E, V, L>, "recipe" | "onScreen"> {
   readonly library: SignInStates;
   /** The login's own picks as its last replay gave them back (`choices` of a signed-in outcome). */
   readonly choices?: SignInStatesChoices | undefined;
