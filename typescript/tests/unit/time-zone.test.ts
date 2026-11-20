@@ -201,6 +201,27 @@ describe("zonedWindow", () => {
     expect(zonedWindow("2026-11-16", "7 pm", "9", la).end).toBe("2026-11-16T21:00:00-08:00");
   });
 
+  it("gives the clock with no AM or PM the other half when the same would put the start after the end", () => {
+    expect(zonedWindow("2026-11-16", "11", "1 PM", la)).toEqual({
+      start: "2026-11-16T11:00:00-08:00",
+      end: "2026-11-16T13:00:00-08:00",
+    });
+    expect(zonedWindow("2026-11-16", "11:30", "1 PM", la)).toEqual({
+      start: "2026-11-16T11:30:00-08:00",
+      end: "2026-11-16T13:00:00-08:00",
+    });
+    expect(zonedWindow("2026-11-16", "11:30", "12:30 AM", la)).toEqual({
+      start: "2026-11-16T23:30:00-08:00",
+      end: "2026-11-17T00:30:00-08:00",
+    });
+    expect(zonedWindow("2026-11-16", "11 AM", "1", la).end).toBe("2026-11-16T13:00:00-08:00");
+    // Both written: an end before its start is on the next day.
+    expect(zonedWindow("2026-11-16", "11:30 PM", "12:15 AM", la)).toEqual({
+      start: "2026-11-16T23:30:00-08:00",
+      end: "2026-11-17T00:15:00-08:00",
+    });
+  });
+
   it("picks the start's day by the rule, then the end after it", () => {
     const lateEvening = ms("2026-11-16T07:30:00Z"); // 11:30 PM Nov 15 in Los Angeles
     expect(zonedWindow("next", "11:45 PM", "Midnight", la, lateEvening)).toEqual({

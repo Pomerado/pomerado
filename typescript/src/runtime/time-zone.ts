@@ -157,25 +157,37 @@ export const zonedClock = (
   return stampAt(chosen.instant, timeZone);
 };
 
-/**
- * A range end's clock for `zonedClock`: Midnight and Noon on the 24-hour clock, and the AM or PM
- * of the other end when this one wrote none.
- */
-const windowClock = (clock: string, other: string): string => {
-  if (/^\s*midnight\s*$/iu.test(clock)) return "00:00";
-  if (/^\s*noon\s*$/iu.test(clock)) return "12:00";
-  const meridiem = (text: string) => clockText.exec(text.trim())?.[5];
-  const theirs = meridiem(other);
-  return meridiem(clock) === undefined && theirs !== undefined
-    ? `${clock.trim()} ${theirs}m`
-    : clock;
+/** The AM or PM a clock time writes, as its first letter, or undefined for none. */
+const halfOf = (clock: string) => clockText.exec(clock.trim())?.[5];
+
+/** A range end's clock as `HH:MM:SS`: Midnight, Noon, or `clock` with `half` (`am`, `pm`) added. */
+const windowClock = (clock: string, half = ""): string => {
+  if (/^\s*midnight\s*$/iu.test(clock)) return "00:00:00";
+  if (/^\s*noon\s*$/iu.test(clock)) return "12:00:00";
+  return clockOf(`${clock.trim()} ${half}`);
+};
+
+/** A range's two clocks as `HH:MM:SS`, with an AM or PM written once read as `zonedWindow` says. */
+const windowClocks = (start: string, end: string): [string, string] => {
+  const [startHalf, endHalf] = [halfOf(start), halfOf(end)];
+  const written = startHalf ?? endHalf;
+  if (written === undefined || (startHalf !== undefined && endHalf !== undefined))
+    return [windowClock(start), windowClock(end)];
+  // The clock that wrote none takes `half`; the other keeps its own.
+  const read = (half: string): [string, string] =>
+    startHalf === undefined
+      ? [windowClock(start, half), windowClock(end)]
+      : [windowClock(start), windowClock(end, half)];
+  const same = read(`${written}m`);
+  return same[0] <= same[1] ? same : read(/^[aA]$/u.test(written) ? "pm" : "am");
 };
 
 /**
  * The ISO 8601 timestamps, with their zone's offset, of a range a site shows in `timeZone`:
  * `start` on `day` as `zonedClock` reads it, and `end` on the same day, or the next when it is at
  * or before `start`. Each clock takes what `zonedClock` takes, or Midnight or Noon; an AM or PM
- * written once applies to both.
+ * written once applies to both, unless that puts the start after the end, when the clock that
+ * wrote none takes the other.
  */
 export const zonedWindow = (
   day: ClockDay,
@@ -184,10 +196,11 @@ export const zonedWindow = (
   timeZone: string,
   now: number = Date.now(),
 ): { start: string; end: string } => {
-  const from = zonedClock(day, windowClock(start, end), timeZone, now);
+  const [first, last] = windowClocks(start, end);
+  const from = zonedClock(day, first, timeZone, now);
   // `next` counts a time within a minute of now as now, so from a minute on it finds the first
   // time after `start`, in the same pass of an hour a daylight-saving change repeats.
-  const to = zonedClock("next", windowClock(end, start), timeZone, Date.parse(from) + nowSlackMs);
+  const to = zonedClock("next", last, timeZone, Date.parse(from) + nowSlackMs);
   return { start: from, end: to };
 };
 
