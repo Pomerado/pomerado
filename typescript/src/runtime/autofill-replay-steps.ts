@@ -281,9 +281,10 @@ export interface AutofillReplayInput<
   /**
    * Hears each recorded screen the replay acts on, once its checks passed and just before its
    * fill, press or approval question, so a host can read the page as that screen's state, as a
-   * build's recorded sign-in does. A screen is heard once each time the replay comes to it, and
-   * its fill may still refuse after. Not heard: an approval that finds the page signed in, a
-   * hand-off screen, any screen of a value-free replay, and an emailed link's screen whose code box
+   * build's recorded sign-in does; a method screen's method question comes before it. A screen is
+   * heard once each time the replay comes to it, and its fill may still refuse after. Not heard:
+   * an approval that finds the page signed in, a hand-off screen, a screen whose choice the caller
+   * did not allow, any screen of a value-free replay, and an emailed link's screen whose code box
    * took a code or ended the replay. When nobody gives that code, the link's screen is heard after
    * the code question, before the link's. It runs on the replay's error channel: its failure ends
    * the replay with that error, and its time counts in the screen's wait, so a host that only

@@ -1,4 +1,4 @@
-import { Data, Effect, TestContext } from "effect";
+import { Data, Duration, Effect, Either, Fiber, TestClock, TestContext } from "effect";
 import { expect, it } from "vitest";
 import type { AutofillRecipe } from "../../src/destinations/autofill-recipe.js";
 import type { AutofillStep } from "../../src/destinations/autofill-step.js";
@@ -38,6 +38,9 @@ const replay = async (
     readonly clicksToSignIn?: number;
     readonly codeBox?: string | null;
     readonly disabledSubmit?: string;
+    readonly handOff?: true;
+    /** The host's hook fails. */
+    readonly hookFails?: true;
   } = {},
 ) => {
   const heard: string[] = [];
@@ -87,12 +90,13 @@ const replay = async (
         };
       }),
   };
-  const outcome = await Effect.runPromise(
+  const ended = await Effect.runPromise(
     replayAutofillRecipe({
       recipe,
       hooks,
       entryUrl: page,
       credentials: options.credentials,
+      ...(options.handOff === undefined ? {} : { handOff: options.handOff }),
       ask: makeInputAsker((request) =>
         Effect.sync(() =>
           Object.fromEntries(
@@ -122,12 +126,27 @@ const replay = async (
       timing: { stepWaitMs: 1_000, pollMs: 250 },
       sent: { current: false },
       onScreen: (recorded) =>
-        Effect.sync(() => {
-          heard.push(`screen ${recorded.submit ?? recorded.approval ?? ""}`);
-        }),
-    }).pipe(Effect.scoped, Effect.provide(TestContext.TestContext)),
+        options.hookFails === true
+          ? Effect.fail(new TestFailure({ code: "HookFailed" }))
+          : Effect.sync(() => {
+              heard.push(`screen ${recorded.submit ?? recorded.approval ?? ""}`);
+            }),
+    }).pipe(
+      Effect.scoped,
+      Effect.either,
+      // A hand-off screen waits for its page to settle, on the test's clock.
+      (replayed) =>
+        options.handOff === undefined
+          ? replayed
+          : Effect.gen(function* () {
+              const fiber = yield* Effect.fork(replayed);
+              yield* TestClock.adjust(Duration.minutes(1));
+              return yield* Fiber.join(fiber);
+            }),
+      Effect.provide(TestContext.TestContext),
+    ),
   );
-  return { outcome, heard };
+  return { outcome: Either.isRight(ended) ? ended.right : ended.left, heard };
 };
 
 const login = { username: "synthetic-user" };
@@ -183,6 +202,43 @@ it("tells the host of an emailed link's screen only when its code box got no cod
     "screen email_link",
     "ask confirm",
   ]);
+});
+
+it("tells the host of an emailed link's screen it pastes just before the link's question", async () => {
+  const pasted = { page, fields: [], approval: "email_link" as const, delivery: "paste" as const };
+  const { heard } = await replay(
+    { version: 2, steps: [username, pasted], signedIn },
+    { credentials: login },
+  );
+  expect(heard).toEqual(["screen #next", "fill #next", "screen email_link", "ask secret"]);
+});
+
+it("tells the host of no hand-off screen", async () => {
+  const handedOff = await replay(
+    { version: 2, steps: [username, { page, fields: [], approval: "handoff" as const }], signedIn },
+    { credentials: login, handOff: true },
+  );
+  // The page settled off the recipe's screens, and the full check found the account there.
+  expect(handedOff.outcome).toMatchObject({ outcome: "signed_in" });
+  expect(handedOff.heard).toEqual(["screen #next", "fill #next"]);
+});
+
+it("tells the host of no screen whose choice the caller did not allow", async () => {
+  const trusted = { page, fields: [], submit: "#trust", choice: "trust_this_device" as const };
+  const refused = await replay(
+    { version: 2, steps: [username, trusted], signedIn },
+    { credentials: login },
+  );
+  expect(refused.heard).toEqual(["screen #next", "fill #next"]);
+});
+
+it("ends the replay with the hook's failure, before the screen's fill", async () => {
+  const { outcome, heard } = await replay(
+    { version: 2, steps: [username], signedIn },
+    { credentials: login, hookFails: true },
+  );
+  expect(outcome).toMatchObject({ _tag: "TestFailure", code: "HookFailed" });
+  expect(heard).toEqual([]);
 });
 
 it("tells the host a screen once, though its submit stayed disabled on the first press", async () => {
