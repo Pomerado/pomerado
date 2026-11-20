@@ -242,11 +242,39 @@ const returnedTo = <E extends YieldableError, V extends string, L extends Autofi
     return false;
   });
 
+/** Whether a state's step types a password or identifier this replay saw go out. */
+const typesSent = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  state: StateEntry,
+) =>
+  resolved(run, state.step).fields.some(
+    (field) => (field.slot === "password" || isIdentifier(field.slot)) && run.replay.sent.seenSent(field.slot),
+  );
+
+/**
+ * The states a sign-in learned to come after `after` that this replay has not acted in, none of
+ * which would type again a password or identifier that went out (`typesSent`): a page that looks
+ * like one acted in, where a sign-in learned another step, is that state, not the one acted in
+ * come back.
+ */
+const learnedNext = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  after: StateEntry | undefined,
+) => {
+  const next = new Set(
+    run.input.library.transitions.filter((t) => t.from === after?.key).map((t) => t.to),
+  );
+  return run.input.library.states.filter(
+    (state) => next.has(state.key) && !run.visited.includes(state.key) && !typesSent(run, state),
+  );
+};
+
 /**
  * The known state the page shows: one whose fingerprint it is and whose recorded controls show,
  * one match each, on its recorded origin. The states the last one led to come first, then the
  * rest; never the state just acted in again. A state acted in before something went out that the
- * page shows again, with no other, is `returned`.
+ * page shows again, with no other, is `returned`, unless a sign-in learned it after the last one
+ * (`learnedNext`).
  */
 const matchState = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -258,6 +286,7 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
     const next = new Set(
       run.input.library.transitions.filter((t) => t.from === after?.key).map((t) => t.to),
     );
+    const learned = learnedNext(run, after);
     const alike = preferred(
       run,
       run.input.library.states.filter(
@@ -270,7 +299,7 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
       ...alike.filter((state) => next.has(state.key)),
       ...alike.filter((state) => !next.has(state.key)),
     ]) {
-      if (yield* returnedTo(run, state)) {
+      if (!learned.includes(state) && (yield* returnedTo(run, state))) {
         returned ??= state;
         continue;
       }
@@ -495,12 +524,7 @@ const markedNow = <E extends YieldableError, V extends string, L extends Autofil
 const returnedReason = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
   state: StateEntry,
-) =>
-  resolved(run, state.step).fields.some(
-    (field) => (field.slot === "password" || isIdentifier(field.slot)) && run.replay.sent.seenSent(field.slot),
-  )
-    ? "credential_screen_returned"
-    : "state_repeated";
+) => (typesSent(run, state) ? "credential_screen_returned" : "state_repeated");
 
 /**
  * Waits for the page to show a known state after `last`, or at the start, as the recipe replay
@@ -508,15 +532,18 @@ const returnedReason = <E extends YieldableError, V extends string, L extends Au
  * of a state acted in stops the replay as that rejection, whatever else the page shows. A known
  * state is taken once its controls show and pass its origin rule, the states the last led to
  * first; one acted in before something went out showing again stops it (`returnedReason`), unless
- * the state just acted in stands. It stands while the page shows its boxes as they were, with or
- * without a new text, or a notice state's boxes beside its text; through the step wait, as the
- * recipe replay waits for its next screen, a code state whose code went asks for a new one at its
- * code marker or at the step wait (`code`); the site's own answer, read once it held still and
- * again at the step wait, opens an emailed link (`link`) or ends a refused login; at the step
- * wait, a new text no known state has is an unknown state, else a press that typed nothing and
- * sends no code or link is made once more (`repress`), and otherwise it stops (`returnedReason`),
- * as nothing is sent twice. A box that sent itself counts as sent first (`settleCarried`). A page
- * with boxes no known state has or holds ends the replay once it held still `quietMs`; a page of
+ * a sign-in learned a look-alike after the last (`learnedNext`) or the state just acted in stands.
+ * It stands while the page shows its boxes as they were, with or without a new text, or a notice
+ * state's boxes beside its text; through the step wait, as the recipe replay waits for its next
+ * screen, a code state whose code went asks for a new one at its code marker or at the step wait
+ * (`code`); the site's own answer, read once it held still and again at the step wait, opens an
+ * emailed link (`link`) or ends a refused login; a page of it that held still with every box empty
+ * and no code marker is a look-alike learned after it, once its controls show (`learnedNext`); at
+ * the step wait, a new text no known state has is an unknown state, else a press that typed nothing
+ * and sends no code or link is made once more (`repress`), and otherwise it stops
+ * (`returnedReason`), as nothing is sent twice. A box that sent itself counts as sent first
+ * (`settleCarried`). A page with boxes no known state has or holds ends the replay once it held
+ * still `quietMs`; a page of
  * text alone, one a known state may still grow into, or one a known state's controls have not
  * shown on, gets the whole step wait, as a slow page is no unknown state. The host's challenge
  * look runs on such a page once it held still `quietMs`, and `landingSettleMs` at least, once for
@@ -604,6 +631,15 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
             const said = yield* siteAnswer(run, state);
             if (said === "link") return { again: "link" } satisfies Again;
             if (said === "refused") return stopped(run, "credential_screen_returned");
+          }
+          // A fresh page that held still looking like the state just acted in, with no answer of the
+          // site's to explain it, is a look-alike a sign-in learned to come after it, if one shows.
+          if (again && still && !codeMarked && read.boxes.every((box) => box.empty)) {
+            for (const next of preferred(run, learnedNext(run, state))) {
+              if (!sameFingerprint(shape, next.fingerprint)) continue;
+              const shown = yield* shownOn(run, next, resolved(run, next.step));
+              if (typeof shown !== "string") return { state: next, inspection: shown, observed: read };
+            }
           }
           if (capped) {
             if (!again && back !== undefined) return stopped(run, returnedReason(run, back));
