@@ -724,13 +724,15 @@ it("fails loudly when a recorded step carries no state", () => {
 
 /**
  * A replay on the test clock from 0, with the default 30 s step wait and quiet, the host's challenge
- * look `challenge` (none when absent), and `meanwhile` beside it, as a page that changes on its own.
+ * look `challenge` (none when absent), a host that reads a page state unless `pageState` is false,
+ * and `meanwhile` beside it, as a page that changes on its own.
  */
 const replayOnClock = (
   site: ReturnType<typeof scriptedSite>,
   library: SignInStates,
   challenge?: AutofillHooks<TestFailure>["challenge"],
   meanwhile: Effect.Effect<void> = Effect.void,
+  pageState = true,
 ) => {
   const events: Readonly<Record<string, unknown>>[] = [];
   return Effect.runPromise(
@@ -740,7 +742,11 @@ const replayOnClock = (
         replaySignInStates({
           library,
           observe: site.observe,
-          hooks: { ...site.hooks, ...(challenge === undefined ? {} : { challenge }) },
+          hooks: {
+            ...site.hooks,
+            ...(challenge === undefined ? {} : { challenge }),
+            ...(pageState ? { pageState: () => Effect.succeed({ parsed: true, shape: site.site.screen }) } : {}),
+          },
           entryUrl: `${origin}/sign-in`,
           credentials: { username: "owner@example.test", password: "secret-1" },
           ask: makeInputAsker(() => Effect.dieMessage("Unexpected question")),
@@ -793,8 +799,8 @@ it("looks at a checkpoint page once it held still, long before the step wait, an
   const { ended, endedAt, events } = await replayOnClock(site, twoStates, challenge);
   expect(ended).toMatchObject({ outcome: "signed_in", loginProved: true });
   expect(looks).toHaveLength(1);
-  // The page held still 1 s (`quietMs`), then the next look ran.
-  expect(looks[0]).toBeGreaterThanOrEqual(1_000);
+  // The page held still 1.5 s (`landingSettleMs`, past `quietMs`), then the next look ran.
+  expect(looks[0]).toBeGreaterThanOrEqual(1_500);
   expect(looks[0]).toBeLessThan(3_000);
   expect(endedAt).toBeLessThan(5_000);
   expect(lookEvents(events)).toEqual([{ stage: "challenge_look", look: "early", outcome: "cleared" }]);
@@ -814,16 +820,42 @@ it("keeps waiting for a slow page whose first state shows at 20 s after a look f
   expect(lookEvents(events)).toEqual([{ stage: "challenge_look", look: "early", outcome: "none" }]);
 });
 
-it("ends at the step wait on a page with no challenge, with no second look at a page unchanged", async () => {
+it("ends at the step wait on a page with no challenge, looking there again", async () => {
   const still: Screen = { path: "/sign-in", boxes: [], texts: ["one moment"] };
   const site = scriptedSite({ start: still }, () => undefined);
   const { looks, challenge } = lookingAt(site, "none", "none");
   const { ended, endedAt, events } = await replayOnClock(site, twoStates, challenge);
   expect(ended).toMatchObject({ outcome: "unsent", reason: "unknown_state" });
   expect(endedAt).toBeGreaterThanOrEqual(30_000);
-  expect(looks).toHaveLength(1);
+  expect(looks).toHaveLength(2);
   expect(looks[0]).toBeLessThan(3_000);
-  expect(lookEvents(events)).toEqual([{ stage: "challenge_look", look: "early", outcome: "none" }]);
+  expect(looks[1]).toBeGreaterThanOrEqual(30_000);
+  expect(lookEvents(events)).toEqual([
+    { stage: "challenge_look", look: "early", outcome: "none" },
+    { stage: "challenge_look", look: "deadline", outcome: "none" },
+  ]);
+});
+
+it("clears at the step wait's end a challenge revealed after the early look on a page that held", async () => {
+  const still: Screen = { path: "/sign-in", boxes: [], texts: ["one moment"] };
+  const site = scriptedSite({ start: still, email: emailScreen, password: passwordScreen }, toPassword);
+  // A widget revealed in a frame from 10 s, which changes none of the page's text.
+  const looks: number[] = [];
+  const challenge = Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    looks.push(now);
+    if (now < 10_000 || site.site.screen !== "start") return undefined;
+    site.site.screen = "email";
+    return { outcome: "cleared" as const, vendor: "first_party" };
+  });
+  const { ended, events } = await replayOnClock(site, twoStates, challenge);
+  expect(ended).toMatchObject({ outcome: "signed_in", loginProved: true });
+  expect(looks).toHaveLength(2);
+  expect(looks[1]).toBeGreaterThanOrEqual(30_000);
+  expect(lookEvents(events)).toEqual([
+    { stage: "challenge_look", look: "early", outcome: "none" },
+    { stage: "challenge_look", look: "deadline", outcome: "cleared" },
+  ]);
 });
 
 it("looks early at a page whose known state's controls have not shown", async () => {
@@ -835,7 +867,7 @@ it("looks early at a page whose known state's controls have not shown", async ()
   const { ended, endedAt } = await replayOnClock(site, library, challenge);
   expect(ended).toMatchObject({ outcome: "unsent", reason: "not_found" });
   expect(endedAt).toBeGreaterThanOrEqual(30_000);
-  expect(looks).toHaveLength(1);
+  expect(looks).toHaveLength(2);
   expect(looks[0]).toBeLessThan(3_000);
 });
 
@@ -858,4 +890,35 @@ it("looks only at the step wait's end when a known state sits in a pop-up", asyn
   expect(looks).toHaveLength(1);
   expect(looks[0]).toBeGreaterThanOrEqual(30_000);
   expect(lookEvents(events)).toEqual([{ stage: "challenge_look", look: "deadline", outcome: "none" }]);
+});
+
+it("never looks early while the state just acted in still stands", async () => {
+  const library = libraryOf([{ fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") }]);
+  const site = scriptedSite({ start: passwordScreen }, () => "start");
+  const { looks, challenge } = lookingAt(site, "none", "none");
+  const { ended } = await replayOnClock(site, library, challenge);
+  expect(ended).toMatchObject({ outcome: "unclear", reason: "credential_screen_returned" });
+  expect(looks).toEqual([]);
+});
+
+it("ends challenge_unsolved when the early look finds a challenge the host can't clear", async () => {
+  const site = scriptedSite({ start: checkpoint, email: emailScreen }, toPassword);
+  const looks: number[] = [];
+  const challenge = Effect.gen(function* () {
+    looks.push(yield* Clock.currentTimeMillis);
+    return { outcome: "failed" as const, vendor: "first_party" };
+  });
+  const { ended, endedAt, events } = await replayOnClock(site, twoStates, challenge);
+  expect(ended).toMatchObject({ outcome: "unsent", reason: "challenge_unsolved", challenge: "first_party" });
+  expect(endedAt).toBeLessThan(3_000);
+  expect(lookEvents(events)).toEqual([{ stage: "challenge_look", look: "early", outcome: "failed" }]);
+});
+
+it("looks only at the step wait's end on a host that reads no page state, as before", async () => {
+  const site = scriptedSite({ start: checkpoint, email: emailScreen, password: passwordScreen }, toPassword);
+  const { looks, challenge } = lookingAt(site, "start", "email");
+  const { ended } = await replayOnClock(site, twoStates, challenge, Effect.void, false);
+  expect(ended).toMatchObject({ outcome: "signed_in" });
+  expect(looks).toHaveLength(1);
+  expect(looks[0]).toBeGreaterThanOrEqual(30_000);
 });

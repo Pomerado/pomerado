@@ -32,23 +32,33 @@ type Showing = "checkpoint" | "still" | "changing" | "form";
 
 /**
  * One screen wait on a scripted page, on the test clock from 0: `showing` says what the page shows
- * at a time, and the host's look clears a checkpoint page into the form. `challenge: false` is a
- * host with no challenge look, `pageState: false` one that reads no page state.
+ * at a time, and the host's look clears a checkpoint page into the form (`clearsInto`), or fails
+ * on it (`unsolved`). `revealedAt` shows a challenge from then in a frame of the page, which
+ * changes none of its shape. `challenge: false` is a host with no challenge look, `pageState:
+ * false` one that reads no page state, and `popup` puts the screen in a pop-up.
  */
 const waitOn = async (
   showing: (now: number) => Showing,
-  host: { readonly challenge?: boolean; readonly pageState?: boolean; readonly popup?: boolean } = {},
+  host: {
+    readonly challenge?: boolean;
+    readonly pageState?: boolean;
+    readonly popup?: boolean;
+    readonly revealedAt?: number;
+    readonly clearsInto?: Showing;
+    readonly unsolved?: boolean;
+  } = {},
 ) => {
   const step = host.popup
     ? { ...form, popup: { opener: "primary" as const, origin: "https://accounts.example.test" } }
     : form;
   let cleared = false;
+  let resubmitted = 0;
   const looks: number[] = [];
   const events: Readonly<Record<string, unknown>>[] = [];
-  const at = (now: number) => {
-    const shows = showing(now);
-    return cleared && shows === "checkpoint" ? "form" : shows;
-  };
+  const at = (now: number) => (cleared ? (host.clearsInto ?? "form") : showing(now));
+  const challenged = (now: number) =>
+    !cleared &&
+    (showing(now) === "checkpoint" || (host.revealedAt !== undefined && now >= host.revealedAt));
   const hooks: AutofillHooks<TestFailure, "first_party"> = {
     inspect: () =>
       Clock.currentTimeMillis.pipe(
@@ -74,7 +84,8 @@ const waitOn = async (
           challenge: Effect.gen(function* () {
             const now = yield* Clock.currentTimeMillis;
             looks.push(now);
-            if (at(now) !== "checkpoint") return undefined;
+            if (!challenged(now)) return undefined;
+            if (host.unsolved) return { outcome: "failed" as const, vendor: "first_party" as const };
             cleared = true;
             return { outcome: "cleared" as const, vendor: "first_party" as const };
           }),
@@ -82,6 +93,10 @@ const waitOn = async (
     fill: () => Effect.dieMessage("Unexpected fill"),
     confirm: () => Effect.dieMessage("Unexpected confirm"),
     open: () => Effect.dieMessage("Unexpected open"),
+  };
+  const progress: { anythingSent: boolean; ran: []; challenge?: string } = {
+    anythingSent: false,
+    ran: [],
   };
   const wait = makeReplayScreenWait(
     {
@@ -92,9 +107,19 @@ const waitOn = async (
       correlation: { jobId: "job", attemptId: "attempt" },
       credentials: { username: "user", password: "secret" },
     },
-    { anythingSent: false, ran: [] },
+    progress,
     { stepWaitMs, pollMs: 250 },
     () => step,
+    undefined,
+    // The host's resubmit after a clear, counted.
+    (gate) =>
+      gate.pipe(
+        Effect.tap((found) =>
+          Effect.sync(() => {
+            if (found?.outcome === "cleared") resubmitted += 1;
+          }),
+        ),
+      ),
   );
   return Effect.runPromise(
     Effect.gen(function* () {
@@ -105,7 +130,7 @@ const waitOn = async (
       }
       const result = yield* Fiber.join(waiting);
       const endedAt = yield* Clock.currentTimeMillis;
-      return { result, endedAt, looks, events };
+      return { result, endedAt, looks, events, resubmitted, progress };
     }).pipe(Effect.provide(TestContext.TestContext)),
   );
 };
@@ -114,9 +139,10 @@ const lookEvents = (events: readonly Readonly<Record<string, unknown>>[]) =>
   events.filter((event) => event.stage === "challenge_look");
 
 it("looks at a checkpoint page once it settled, long before the deadline, and goes on to the screen", async () => {
-  const { result, endedAt, looks, events } = await waitOn(() => "checkpoint");
+  const { result, endedAt, looks, events, resubmitted } = await waitOn(() => "checkpoint");
 
   expect(result).toEqual({ found: shown });
+  expect(resubmitted).toBe(1);
   expect(looks).toHaveLength(1);
   // The page held still 1.5 s (`landingSettleMs`), then the next poll looked.
   expect(looks[0]).toBeGreaterThanOrEqual(1_500);
@@ -140,22 +166,61 @@ it("keeps waiting for a slow page whose screen shows at 20 s after a look found 
   expect(lookEvents(events)).toEqual([{ stage: "challenge_look", look: "early", outcome: "none" }]);
 });
 
-it("ends at the deadline on a page with no challenge, with no second look at a page unchanged", async () => {
+it("ends at the deadline on a page with no challenge, looking there again", async () => {
   const { result, endedAt, looks, events } = await waitOn(() => "still");
 
   expect(result).toEqual({ found: { outcome: "refused", reason: "not_found" } });
   expect(endedAt).toBeGreaterThanOrEqual(stepWaitMs);
-  expect(looks).toHaveLength(1);
+  expect(looks).toHaveLength(2);
   expect(looks[0]).toBeLessThan(3_000);
-  expect(lookEvents(events)).toEqual([{ stage: "challenge_look", look: "early", outcome: "none" }]);
+  expect(looks[1]).toBeGreaterThanOrEqual(stepWaitMs);
+  expect(lookEvents(events)).toEqual([
+    { stage: "challenge_look", look: "early", outcome: "none" },
+    { stage: "challenge_look", look: "deadline", outcome: "none" },
+  ]);
 });
 
-it("looks at the deadline at a page that changed since its early look", async () => {
-  const { result, looks, events } = await waitOn((now) => (now >= 29_000 ? "changing" : "still"));
+it("clears at the deadline a challenge revealed after the early look on a page whose shape held", async () => {
+  const { result, looks, events } = await waitOn(() => "still", { revealedAt: 10_000 });
+
+  expect(result).toEqual({ found: shown });
+  expect(looks).toHaveLength(2);
+  expect(looks[1]).toBeGreaterThanOrEqual(stepWaitMs);
+  expect(lookEvents(events)).toEqual([
+    { stage: "challenge_look", look: "early", outcome: "none" },
+    { stage: "challenge_look", look: "deadline", outcome: "cleared" },
+  ]);
+});
+
+it("ends challenge_unsolved at once when the early look finds a challenge the host can't clear", async () => {
+  const { result, endedAt, events, progress } = await waitOn(() => "checkpoint", { unsolved: true });
+
+  expect(result).toBe("challenge_unsolved");
+  expect(progress.challenge).toBe("first_party");
+  expect(endedAt).toBeLessThan(3_000);
+  expect(lookEvents(events)).toEqual([
+    { stage: "challenge_look", look: "early", outcome: "failed" },
+  ]);
+});
+
+it("gives the screen a whole wait again after an early clear, and looks at the new page", async () => {
+  const { result, endedAt, looks, events, resubmitted } = await waitOn(() => "checkpoint", {
+    clearsInto: "still",
+  });
+
+  expect(result).toEqual({ found: { outcome: "refused", reason: "not_found" } });
+  expect(resubmitted).toBe(1);
+  expect(endedAt).toBeGreaterThanOrEqual((looks[0] ?? 0) + stepWaitMs);
+  expect(lookEvents(events).map((event) => event.look)).toEqual(["early", "early", "deadline"]);
+});
+
+it("waits for the page to settle again after a clear before another early look", async () => {
+  // The look reports a clear, and the page keeps its shape.
+  const { result, looks, events } = await waitOn(() => "checkpoint", { clearsInto: "checkpoint" });
 
   expect(result).toEqual({ found: { outcome: "refused", reason: "not_found" } });
   expect(looks).toHaveLength(2);
-  expect(looks[1]).toBeGreaterThanOrEqual(stepWaitMs);
+  expect(looks[1]).toBeGreaterThanOrEqual((looks[0] ?? 0) + stepWaitMs);
   expect(lookEvents(events).map((event) => event.look)).toEqual(["early", "deadline"]);
 });
 

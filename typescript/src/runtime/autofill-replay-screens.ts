@@ -272,22 +272,23 @@ const heldShape = <E, V extends string>(
     return stillOff(held, shape, yield* Clock.currentTimeMillis);
   });
 
-/** What a screen's wait read of the page for its challenge look, and the shape it looked at last. */
-type LookedPage = { held?: OffScreens | undefined; looked?: string | undefined };
+/** What a screen's wait read of the page for its challenge look, and the shapes it looked at. */
+type LookedPage = { held?: OffScreens | undefined; readonly looked: Set<string> };
 
 /**
  * A screen's challenge look. A screen still missing may sit behind a challenge the site put up,
  * such as after the last submit, or its own checkpoint page, which no change to the recipe gets
  * past: a host with a challenge look (`challenge`) looks at the page and works a challenge it
  * confirms there. It looks once the page settled without the screen, its shape unchanged
- * `landingSettleMs` (`heldShape`), once for each shape, and at the wait's deadline (`due`) unless
- * the page is still the one it looked at; a host that reads no page state, or a screen in a pop-up,
- * looks at the deadline alone. A slow page keeps the whole wait. A cleared challenge may first let the screen the replay
- * last submitted be sent again (`resubmit`), before the wait's next deadline would read that screen
- * showing again as the site's answer (`credential_screen_returned`), then gives the awaited screen
- * its own wait again; one the host could not clear ends the replay as `challenge_unsolved`, its
- * vendor kept in `progress`. Each look is heard (`challenge_look`): early or at the deadline, and
- * what it found.
+ * `landingSettleMs` (`heldShape`), once for each shape, and always at the wait's deadline (`due`),
+ * as a widget a page reveals in its frame changes no shape. A host that reads no page state, or a
+ * sign-in with a screen in a pop-up, whose page the primary tab's state does not show (`popups`),
+ * looks at the deadline alone. A slow page keeps the whole wait. A cleared challenge may first let
+ * the screen the replay last submitted be sent again (`resubmit`), before the wait's next deadline
+ * would read that screen showing again as the site's answer (`credential_screen_returned`), then
+ * gives the awaited screen its own wait again, where the page settles again before another early
+ * look; one the host could not clear ends the replay as `challenge_unsolved`, its vendor kept in
+ * `progress`. Each look is heard (`challenge_look`): early or at the deadline, and what it found.
  */
 const challengeLook =
   <E, V extends string>(
@@ -296,6 +297,7 @@ const challengeLook =
     stepWaitMs: number,
     resubmit: ClearThenResubmit<E, V>,
     emit: (details: Readonly<Record<string, unknown>>) => Effect.Effect<void>,
+    popups: boolean,
   ) =>
   (
     missing: AutofillRefusal,
@@ -307,22 +309,19 @@ const challengeLook =
     Effect.gen(function* () {
       const gate = missing.reason === "not_found" ? hooks.challenge : undefined;
       const missed = due ? ({ end: { found: missing } } as const) : ({ until } as const);
-      if (gate === undefined) return missed;
-      // The host reads the primary tab's state alone, which says nothing of a pop-up's screen.
-      page.held = awaited.popup === undefined ? yield* heldShape(hooks, page.held) : undefined;
+      if (gate === undefined) {
+        page.held = undefined;
+        return missed;
+      }
+      page.held = popups ? undefined : yield* heldShape(hooks, page.held);
+      const shape = page.held?.url;
       const settled =
         page.held !== undefined &&
         (yield* Clock.currentTimeMillis) - page.held.since >= landingSettleMs;
-      const shape = page.held?.url;
-      const look = due
-        ? shape === undefined || shape !== page.looked
-          ? "deadline"
-          : undefined
-        : settled && shape !== page.looked
-          ? "early"
-          : undefined;
+      const fresh = settled && shape !== undefined && !page.looked.has(shape);
+      const look = due ? "deadline" : fresh ? "early" : undefined;
       if (look === undefined) return missed;
-      page.looked = shape;
+      if (shape !== undefined) page.looked.add(shape);
       const challenge = yield* resubmit(gate, awaited);
       yield* emit({ stage: "challenge_look", look, outcome: challenge?.outcome ?? "none" });
       if (challenge === undefined) return missed;
@@ -330,7 +329,7 @@ const challengeLook =
         progress.challenge = challenge.vendor;
         return { end: "challenge_unsolved" as const } as const;
       }
-      page.looked = undefined;
+      page.held = undefined;
       return { until: (yield* Clock.currentTimeMillis) + stepWaitMs } as const;
     });
 
@@ -630,7 +629,14 @@ export const makeReplayScreenWait = <
   const leftSignIn = (url?: string) => leftSignInScreens(screens.onScreens, input.entryUrl, url);
   const checkHere = markerHere(input);
   const now = Clock.currentTimeMillis;
-  const deadline = challengeLook(hooks, progress, timing.stepWaitMs, resubmit, input.emit);
+  const deadline = challengeLook(
+    hooks,
+    progress,
+    timing.stepWaitMs,
+    resubmit,
+    input.emit,
+    recipe.steps.some((recorded) => resolve(recorded).popup !== undefined),
+  );
   // The screens waits passed over as gone, and how many steps had run then: while none ran since,
   // they are screens just before the next wait's, beside the step that last ran.
   const passed: { steps: AutofillStep[]; ran: number } = { steps: [], ran: 0 };
@@ -728,7 +734,7 @@ export const makeReplayScreenWait = <
       let waitUntil = until;
       const held = holdShown(input, progress, timing);
       const look: { since?: number | undefined } = {};
-      const page: LookedPage = {};
+      const page: LookedPage = { looked: new Set() };
       const fuller = fullerScreens(step, current, later, resolve).length > 0;
       while (true) {
         const due = (yield* now) >= waitUntil;
