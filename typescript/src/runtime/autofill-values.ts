@@ -7,6 +7,7 @@ import type {
   FillSlot,
   IdentifierKind,
 } from "../destinations/autofill-step.js";
+import { choicePicks } from "../destinations/autofill-contracts.js";
 import { nationalDigits, wholeDateLayouts } from "../destinations/login-field-formats.js";
 import type { WebsiteCredentials } from "./authentication.js";
 import { correctionTriesLeft } from "./credential-prompts.js";
@@ -155,12 +156,16 @@ const valuesInOrder =
     // read once. A screen that asked for two different codes would get the first in both.
     const boxes = step.fields.filter((field) => field.slot === "code").length;
     const instruction = codeInstruction(step, screen);
+    const choices = step.fields
+      .map((field, index) => (field.slot === "code" ? screen?.[index]?.codeChoices : undefined))
+      .find((names) => names !== undefined);
     const codeLogin =
-      boxes > 1 || instruction !== undefined
+      boxes > 1 || instruction !== undefined || choices !== undefined
         ? {
             ...login,
             ...(boxes > 1 ? { codeBoxes: boxes } : {}),
             ...(instruction === undefined ? {} : { codeInstruction: instruction }),
+            ...(choices === undefined ? {} : { codeChoices: choices }),
           }
         : login;
     return Effect.gen(function* () {
@@ -176,7 +181,11 @@ const valuesInOrder =
         const found =
           field.slot === "code"
             ? (code ??
-              boxedCode(yield* valueFor(field, codeLogin, screen?.[index], passwordShown), boxes))
+              boxedCode(
+                yield* valueFor(field, codeLogin, screen?.[index], passwordShown),
+                boxes,
+                choices,
+              ))
             : yield* valueFor(field, login, screen?.[index], passwordShown);
         if (found instanceof Unanswered) {
           yield* giveBack;
@@ -198,10 +207,14 @@ const valuesInOrder =
  * does not fit them is never typed, since a box keeps only its first character and a widget that
  * sends itself would spend the site's try on it: an owner's answer was asked again already
  * (`codeBoxes`), and one the host gave ends the step (`codeDoesNotFit`). One code field takes the
- * code as given.
+ * code as given, unless it has the code picked from named choices (`choices`), which a code that
+ * does not name them one for one ends the same way (`choicePicks`).
  */
-const boxedCode = (found: Found, boxes: number): Found => {
-  if (found instanceof Unanswered || boxes < 2) return found;
+const boxedCode = (found: Found, boxes: number, choices?: readonly string[]): Found => {
+  if (found instanceof Unanswered) return found;
+  if (choices !== undefined)
+    return choicePicks(found.value, choices) === undefined ? new Unanswered(codeDoesNotFit) : found;
+  if (boxes < 2) return found;
   return fitsCodeBoxes(found.value, boxes)
     ? { ...found, value: bareCode(found.value) }
     : new Unanswered(codeDoesNotFit);
@@ -271,6 +284,11 @@ export interface AutofillLogin {
    * which the owner is asked for the code with.
    */
   readonly codeInstruction?: string;
+  /**
+   * The names of the choices the code screen has the code picked from: an owner's answer that does
+   * not name them one for one is asked again.
+   */
+  readonly codeChoices?: readonly string[];
   /** Whether an asked field may be kept with the login, with the owner's yes (`SaveOffer`). */
   readonly offerSave?: boolean;
   /** Whether a corrected answer to a rejected field may be kept, with the owner's yes. */

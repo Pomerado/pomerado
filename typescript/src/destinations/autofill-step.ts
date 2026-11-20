@@ -262,6 +262,8 @@ const Target = Schema.Struct({
   editable: Schema.Boolean,
   control: Schema.Literal("date", "text", "select", "combobox", "other"),
   empty: Schema.optional(Schema.Boolean),
+  /** A code field that takes no typing and holds the named choices the code is picked from. */
+  choices: Schema.optional(Schema.Literal(true)),
 });
 type Target = typeof Target.Type;
 /** A step's controls as the host judges them: each field's target and its submit's. */
@@ -415,6 +417,12 @@ const Described = Schema.Struct({
    * a recipe value; see `codeBoxesRefusal`.
    */
   codeBox: Schema.optional(Schema.Struct({ box: Schema.Number, of: Schema.Number })),
+  /**
+   * A code field that is a set of named choices the code is picked from, such as checkboxes drawn
+   * as digits and pictures: each choice's name, in page order. Inspection-only, never a recipe
+   * value.
+   */
+  codeChoices: Schema.optional(Schema.Array(Schema.String)),
 });
 
 /** A control a step call could not find, or found moved to where the host refuses it. */
@@ -869,14 +877,15 @@ export const untrustedTarget = (
       const { part: cardCheck, ...evidence } = carded;
       return refusedAt(index, target, cardCheck, evidence);
     }
-    // A date also goes into an enabled select or dropdown, which takes a choice, not typing.
+    // A date also goes into an enabled select or dropdown, which takes a choice, not typing, and a
+    // code into the named choices it is picked from (`choices`).
     const choosable =
       step.fields[index]?.slot === "date_of_birth" &&
       (target.control === "select" || target.control === "combobox");
     const toType = splitCode ? index === from : index >= from;
     const later =
       trust.postalCodeAfterCard === true && step.fields[index]?.slot === "billing_postal_code";
-    if (toType && !target.editable && !choosable && !later)
+    if (toType && !target.editable && !choosable && !later && target.choices !== true)
       return withCheck(refused("not_editable", index), "not_editable", {
         control: target.control,
         ...targetEvidence(target, named),

@@ -108,6 +108,45 @@ for (const [index, codeBox] of codeBoxes.entries())
     codeBox === null || (codeBox.limit === "script" && !scriptAgree) ? null : { box: codeBox.box, of: codeBox.of };`;
 
 /**
+ * Page code: the named choices a code field holds when it takes no typing, as a screen that has the
+ * code picked from checkboxes drawn as digits and pictures does: each checkbox, and each button
+ * that submits no form, inside it that the accessibility tree shows and that is enabled, with its
+ * accessible name (`accessibleNames`), trimmed, in page order. Null unless it holds 2 to 30 of
+ * them, each named in 1 to 30 characters, and no text field. Names only, never a state; `choices` are the elements the choose call clicks.
+ */
+const choicesCode = `(element) => {
+  if (element.matches(":read-write, select") || element.querySelector(":read-write, select") !== null) return null;
+  const name = (${String(accessibleNames)})();
+  const choices = Array.from(
+    element.querySelectorAll('input[type="checkbox"], [role="checkbox"], button, input[type="button"], [role="button"]'),
+  ).filter(
+    (choice) =>
+      choice.checkVisibility({ visibilityProperty: true }) &&
+      choice.closest('[aria-hidden="true"]') === null &&
+      !choice.matches(":disabled") &&
+      choice.closest('[aria-disabled="true"]') === null &&
+      !(choice instanceof HTMLButtonElement && choice.type !== "button" && choice.form !== null),
+  );
+  const names = choices.map((choice) => name(choice).trim().replace(/\\s+/g, " "));
+  return choices.length >= 2 && choices.length <= 30 && names.every((each) => each.length > 0 && each.length <= 30)
+    ? { choices, names }
+    : null;
+}`;
+
+/**
+ * Page code: each code field that takes no typing, read for the named choices its code is picked
+ * from (`choicesCode`): their names, else null, and its target marked `choices` when it has them.
+ */
+const codeChoicesCode = `const codeChoices = [];
+for (const [index, field] of fields.entries()) {
+  const names = codeSlots[index] && !field.target.editable
+    ? await field.locator.evaluate((element) => (${choicesCode})(element)?.names ?? null, undefined, { timeout: ${elementReadMs} }).catch(() => null)
+    : null;
+  if (names !== null) field.target.choices = true;
+  codeChoices.push(names);
+}`;
+
+/**
  * Page code: the step's controls and visible native and ARIA actions, for the host and Guardian.
  * The page keeps the controls as found, with every form destination as found, under `observed`.
  * With `hostFillChecked`, it also answers the first field `hostFillSelectorsCode` found unsupported.
@@ -140,7 +179,11 @@ ${codeBoxesCode}
 return {
   fields: fields.map(({ target, described }, index) => ({
     target,
-    described: codeBoxes[index] === null ? described : { ...described, codeBox: codeBoxes[index] },
+    described: {
+      ...described,
+      ...(codeBoxes[index] === null ? {} : { codeBox: codeBoxes[index] }),
+      ...(codeChoices[index] === null ? {} : { codeChoices: codeChoices[index] }),
+    },
   })),
   submit: submit === null ? null : { target: submit.target, described: submit.described },
   located,
@@ -153,7 +196,8 @@ return {
 };`;
 
 /**
- * One call of a step's fill, after its inspection. None carries a value but a date's: the host
+ * One call of a step's fill, after its inspection. None carries a value but a date's and the
+ * selected choices of a sign-in code picked from named choices: the host
  * types every other value itself over its own DevTools socket, into the field `focus` left focused. `check` names the field the host typed just before, which must now hold
  * something, so typing that went to another element never leads to a click.
  * - `focus`: empties the field when it holds something and focuses it, or clicks it with the
@@ -165,6 +209,8 @@ return {
  *   holds something (`kept`).
  * - `date`: fills a date of birth with the authoring library's `fillDate`, which needs the page's
  *   own options, so this call's code holds the date (`iso`).
+ * - `choose`: ticks or presses the choices a sign-in code names among the named choices of its
+ *   field (`choicesCode`), so this call's code holds those choices' names (`names`).
  * - `dismiss`: clicks a covering notice's own control (`dismissCode`).
  * - `submit`: first reads whether the page sent what was typed itself (`pageSentCode`). Otherwise
  *   it guards the submission as it fires (`submissionGuardCode`, under the host's
@@ -231,6 +277,16 @@ export type AutofillFillCall =
       readonly index: number;
       readonly iso: string;
       readonly format: DateOfBirthFormat;
+    }
+  | {
+      /**
+       * Picks a code from the named choices a code field holds (`choicesCode`): `names`, the
+       * choices the code names, in its order. This call's code holds them, as a date's call holds
+       * its date, and nothing else of the code.
+       */
+      readonly kind: "choose";
+      readonly index: number;
+      readonly names: readonly string[];
     }
   | {
       readonly kind: "submit";
@@ -870,6 +926,36 @@ ${
     delete element.ownerDocument.defaultView[key];
   }, ${JSON.stringify(call.bindingKey)}, { timeout: 1000 }, true).catch(() => undefined);
 }`;
+  if (call.kind === "choose")
+    return `try {
+  // The choices as found now, each picked by its own name; a name no choice or several hold picks
+  // nothing. A checkbox ends ticked when the code names it and unticked otherwise, and a button is
+  // pressed each time the code names it, in the code's order. A checkbox with a label is clicked
+  // through it, as a person clicks the picture over a hidden box. Its failure says nothing more.
+  const found = await fields[${call.index}].locator.evaluateHandle(${choicesCode}, undefined, { timeout: ${elementReadMs} });
+  const names = await found.evaluate((read) => read?.names ?? null);
+  const picked = ${JSON.stringify(call.names)};
+  const at = picked.map((pick) => (names?.indexOf(pick) === names?.lastIndexOf(pick) ? (names?.indexOf(pick) ?? -1) : -1));
+  if (at.length === 0 || at.includes(-1)) return { chosen: false, url: primary.url() };
+  const boxes = await found.evaluate((read) => read.choices.map((choice) => choice.matches('input[type="checkbox"], [role="checkbox"]')));
+  const ticked = () => found.evaluate((read) => read.choices.map((choice) => choice instanceof HTMLInputElement ? choice.checked : choice.getAttribute("aria-checked") === "true"));
+  const click = async (place) => {
+    const target = await found.evaluateHandle((read, place) => {
+      const choice = read.choices[place];
+      return choice instanceof HTMLInputElement && choice.labels?.length ? choice.labels[0] : choice;
+    }, place);
+    await target.asElement().click({ timeout: 5000 });
+  };
+  const wanted = names.map((_, place) => at.includes(place));
+  const before = await ticked();
+  for (const [place, box] of boxes.entries()) if (box && before[place] && !wanted[place]) await click(place);
+  for (const place of at) if (!boxes[place] || !(await ticked())[place]) await click(place);
+  const after = await ticked();
+  if (boxes.some((box, place) => box && after[place] !== wanted[place])) return { chosen: false, url: primary.url() };
+  return { chosen: true, url: primary.url(), document: await documentStart() };
+} catch {
+  return { chosen: false, url: primary.url() };
+}`;
   if (call.kind === "date")
     return `try {
   // A date goes into whatever date control the page has, in the format the field takes.
@@ -1304,6 +1390,7 @@ if (foundSubmit !== null && "error" in foundSubmit) {
 }
 const readFound = await readControls(foundSubmit === null ? foundFields : [...foundFields, foundSubmit]);
 const fields = readFound.slice(0, foundFields.length);
+${codeChoicesCode}
 ${keySubmitCode}
 const submit =
   submitKey !== null && fields.length > 0

@@ -61,7 +61,8 @@ export const makeFreshAutofillValues = <E extends YieldableError>({
     });
   /**
    * Caller-provided codes consume the existing shared two-correction budget. An answer must fit
-   * `codeBoxes` code fields one character each, when the screen has several. The question quotes
+   * `codeBoxes` code fields one character each, when the screen has several, or name the screen's
+   * choices one for one (`codeChoices`), when it has the code picked from them. The question quotes
    * the screen's own instruction for the code when the step named one (`codeInstruction`).
    */
   const askedCode = (login: AutofillLogin, codeBoxes: number | undefined) =>
@@ -77,7 +78,7 @@ export const makeFreshAutofillValues = <E extends YieldableError>({
           login.codeAgain === undefined ? undefined : codeNotices[login.codeAgain],
           false,
           0,
-          codeBoxes,
+          codeBoxes ?? login.codeChoices,
           login.codeInstruction,
         );
         if (answered instanceof Unanswered || !refusedBefore(login, answered.value))

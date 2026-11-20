@@ -215,6 +215,8 @@ attribute.
     and which ones the step named; send the step again with all of them. When a code screen asks
     the person to do something, such as call a number or approve in an app, prefer naming the
     element with that instruction as the code field's `questionSelector`.
+    A code screen with no text box that has the code picked from named checkboxes or buttons is
+    one `code` field whose selector is the element holding only those choices.
   - `slot: "date_of_birth"` for a date of birth, with `format`, how the field takes it, read from
     its placeholder, label, input mask or hint: `MM/DD/YYYY`, `DD/MM/YYYY`, `M/D/YYYY`,
     `D/M/YYYY`, `MM-DD-YYYY`, `DD-MM-YYYY`, `DD.MM.YYYY`, `YYYY-MM-DD`, `YYYY/MM/DD`, `MMDDYYYY`,
