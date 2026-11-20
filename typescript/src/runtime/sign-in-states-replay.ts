@@ -212,15 +212,41 @@ const shownWithin = <E extends YieldableError, V extends string, L extends Autof
     }
   });
 
-/** Known states first in the order a login prefers them: its last-used, then the older. */
-const preferred = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+/**
+ * Known states that share one look (`fingerprint`), in the order this login takes them. Where its
+ * own route, the states it last signed in through (`choices.states`), holds a state with that look,
+ * only its own are taken, in their order there: a login never goes on along another login's route,
+ * so one whose own state no longer shows stops there, for a repair of its own. Otherwise first a
+ * state whose picked method is the login's (`choices.method`), then one the last state led to, or
+ * at the start one no state leads to (`next`), then the most recently learned, as a library holds
+ * its states in the order learned.
+ */
+const ranked = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
-  states: readonly StateEntry[],
+  candidates: readonly StateEntry[],
+  fingerprint: StateFingerprint,
+  next: ReadonlySet<string> = new Set(),
 ) => {
-  const used = run.input.choices?.states ?? [];
-  return [...states].sort(
-    (a, b) => Number(!used.includes(a.key)) - Number(!used.includes(b.key)),
-  );
+  const route = run.input.choices?.states ?? [];
+  const method = run.input.choices?.method;
+  const { states } = run.input.library;
+  const own = states.some((state) => route.includes(state.key) && sameFingerprint(state.fingerprint, fingerprint));
+  const picks = (state: StateEntry) =>
+    method !== undefined && state.step.methods?.find((option) => option.selector === state.step.submit)?.method === method;
+  const order = (state: StateEntry) => [
+    own ? route.indexOf(state.key) : 0,
+    Number(!picks(state)),
+    Number(!next.has(state.key)),
+    -states.indexOf(state),
+  ];
+  return candidates
+    .filter((state) => !own || route.includes(state.key))
+    .map((state) => ({ state, by: order(state) }))
+    .sort((a, b) => {
+      const at = a.by.findIndex((value, index) => value !== b.by[index]);
+      return at < 0 ? 0 : (a.by[at] ?? 0) - (b.by[at] ?? 0);
+    })
+    .map(({ state }) => state);
 };
 
 /**
@@ -309,7 +335,8 @@ const learnedAlike = <E extends YieldableError, V extends string, L extends Auto
   allowed: { readonly typing: boolean; readonly pressing: boolean },
 ) =>
   Effect.gen(function* () {
-    for (const next of preferred(run, learnedNext(run, after))) {
+    const learned = learnedNext(run, after).filter((state) => sameFingerprint(fingerprint, state.fingerprint));
+    for (const next of ranked(run, learned, fingerprint)) {
       const types = resolved(run, next.step).fields.length > 0;
       if (!sameFingerprint(fingerprint, next.fingerprint) || !(types ? allowed.typing : allowed.pressing)) continue;
       const shown = yield* shownOn(run, next, resolved(run, next.step));
@@ -320,8 +347,8 @@ const learnedAlike = <E extends YieldableError, V extends string, L extends Auto
 
 /**
  * The known state the page shows: one whose fingerprint it is and whose recorded controls show,
- * one match each, on its recorded origin. The states the last one led to come first, then the
- * rest; never the state just acted in again. A state acted in before something went out that the
+ * one match each, on its recorded origin, in the order this login takes them (`ranked`), never
+ * the state just acted in again. A state acted in before something went out that the
  * page shows again, with no other, is `returned`, unless a sign-in learned it after the last one
  * (`learnedNext`).
  */
@@ -332,22 +359,25 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
   skip: StateEntry | undefined,
 ) =>
   Effect.gen(function* () {
+    const { states, transitions } = run.input.library;
+    // At the start, the states no state leads to, as a recorded sign-in's first.
     const next = new Set(
-      run.input.library.transitions.filter((t) => t.from === after?.key).map((t) => t.to),
+      after === undefined
+        ? states.filter((state) => !transitions.some((t) => t.to === state.key)).map((state) => state.key)
+        : transitions.filter((t) => t.from === after.key).map((t) => t.to),
     );
     const learned = learnedNext(run, after);
-    const alike = preferred(
+    const alike = ranked(
       run,
       run.input.library.states.filter(
         (state) => state !== skip && sameFingerprint(state.fingerprint, fingerprint),
       ),
+      fingerprint,
+      next,
     );
     let refused: string | undefined;
     let returned: StateEntry | undefined;
-    for (const state of [
-      ...alike.filter((state) => next.has(state.key)),
-      ...alike.filter((state) => !next.has(state.key)),
-    ]) {
+    for (const state of alike) {
       if (!learned.includes(state) && (yield* returnedTo(run, state))) {
         returned ??= state;
         continue;
@@ -795,11 +825,12 @@ const lookAgain = <E extends YieldableError, V extends string, L extends Autofil
     const notice = state.fingerprint.message !== undefined && state.fingerprint.boxes.length > 0;
     if (sameFingerprint(shape, state.fingerprint) || (notice && sameBoxes(shape, state.fingerprint)))
       return { kind: "same" as const, text };
-    for (const other of preferred(
+    for (const other of ranked(
       run,
       run.input.library.states.filter(
         (known) => known !== state && sameFingerprint(known.fingerprint, shape),
       ),
+      shape,
     )) {
       if (yield* returnedTo(run, other)) continue;
       const shown = yield* shownOn(run, other, resolved(run, other.step));
