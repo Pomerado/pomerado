@@ -175,13 +175,12 @@ const windowClock = (clock: string, half = ""): string => {
 const windowClocks = (start: string, end: string): [string, string] => {
   const [startHalf, endHalf] = [halfOf(start), halfOf(end)];
   const written = startHalf ?? endHalf;
-  // Only a clock that can be on the 12-hour clock takes a half: an hour from 1 to 12, with no
-  // leading zero, which marks a 24-hour clock.
-  const bare = clockText.exec((startHalf === undefined ? start : end).trim())?.[1] ?? "";
+  // Only a clock that can be on the 12-hour clock, its hour from 1 to 12, takes a half.
+  const bare = Number(clockText.exec((startHalf === undefined ? start : end).trim())?.[1]);
   if (
     written === undefined ||
     (startHalf !== undefined && endHalf !== undefined) ||
-    !/^(?:[1-9]|1[0-2])$/u.test(bare)
+    !(bare >= 1 && bare <= 12)
   )
     return [windowClock(start), windowClock(end)];
   // The clock that wrote none takes `half`; the other keeps its own.

@@ -241,9 +241,9 @@ describe("zonedWindow", () => {
     });
   });
 
-  it("reads a clock on the 24-hour clock, or a 12 that ties, beside Midnight or Noon", () => {
+  it("reads a clock on the 24-hour clock as written, and a 12 that ties in the other half", () => {
     expect(zonedWindow("2026-11-16", "22:30", "Midnight", la).start).toBe("2026-11-16T22:30:00-08:00");
-    expect(zonedWindow("2026-11-16", "08:00", "Midnight", la).start).toBe("2026-11-16T08:00:00-08:00");
+    expect(zonedWindow("2026-11-16", "07:00", "09:00 PM", la).start).toBe("2026-11-16T19:00:00-08:00");
     expect(zonedWindow("2026-11-16", "Noon", "14:00", la).end).toBe("2026-11-16T14:00:00-08:00");
     expect(zonedWindow("2026-11-16", "12", "Midnight", la)).toEqual({
       start: "2026-11-16T12:00:00-08:00",
