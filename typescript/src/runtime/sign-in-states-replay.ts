@@ -427,14 +427,14 @@ const hashless = (url: string) => URL.parse(url)?.hash === "";
 /**
  * Where no known state has the page's whole look, the known state a page with no box is by the
  * control it presses, as one page shows other labels in another browser or place, while nothing
- * this sign-in typed may have reached the site: a state that presses only
- * (`pressesOnly`), with the page's top origin and main message, at the host and path the last
- * marker check read (`page`), neither address with a hash, and, on the page of the state just
- * acted in, one that state led to; never the state just acted in nor one acted in that came back (`returnedTo`). They are
- * taken in the order this login takes states of one look (`ranked`), so a route that holds one
- * there besides the state last acted in takes only its own: the first whose control shows, one
- * match on its recorded origin, on a page at its recorded host and path. With no address read,
- * none.
+ * this sign-in typed may have reached the site: a state that presses only (`pressesOnly`), with
+ * the page's top origin and main message, at the host and path the last marker check read
+ * (`page`), neither address with a hash, and, on the page of the state just acted in, one that
+ * state led to; never the state just acted in nor one acted in that came back (`returnedTo`).
+ * They are taken in the order this login takes states of one look (`ranked`), so a route that
+ * holds one there besides the state last acted in takes only its own: the first whose control
+ * shows, one match on its recorded origin, on a page at its recorded host and path whose live
+ * address, as the inspection read it, has no hash either. With no address read, none.
  */
 const byControl = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -468,7 +468,13 @@ const byControl = <E extends YieldableError, V extends string, L extends Autofil
       if (state !== skip && here(state) && !(yield* returnedTo(run, state))) pressing.push(state);
     for (const state of ranked(run, pressing, here, next)) {
       const inspection = yield* shownOn(run, state, resolved(run, state.step));
-      if (typeof inspection !== "string" && sameAddress(inspection.page, state.step.page))
+      // The live address as the inspection read it, whose hash a host's marker check may leave out.
+      if (
+        typeof inspection !== "string" &&
+        inspection.url !== undefined &&
+        hashless(inspection.url) &&
+        sameAddress(inspection.page, state.step.page)
+      )
         return { state, inspection, by: "control" } satisfies Shown;
     }
     return undefined;
@@ -841,7 +847,9 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
         const again =
           fingerprint !== undefined &&
           (sameFingerprint(shape, fingerprint) ||
-            (acted !== undefined && fingerprint.boxes.length === 0 && sameFingerprint(shape, acted.reached.fingerprint)) ||
+            (acted !== undefined &&
+              fingerprint.boxes.length === 0 &&
+              sameFingerprint(shape, acted.reached.fingerprint)) ||
             (fingerprint.message !== undefined &&
               fingerprint.boxes.length > 0 &&
               sameBoxes(shape, fingerprint) &&

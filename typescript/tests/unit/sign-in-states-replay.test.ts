@@ -555,11 +555,24 @@ it("never takes a state by its control where the page's main message differs or 
     [plain, { ...relabeled, path: "/app#/reset" }],
     [routed, { ...relabeled, path: "/app#/reset" }],
     [routed, { ...relabeled, path: "/app#/stay" }],
+    [routed, relabeled],
   ] as const) {
     const site = scriptedSite({ start, password: passwordScreen }, () => "password");
     expect(await replay(site, library)).toMatchObject({ outcome: "unsent", reason: "unknown_state" });
     expect(site.clicks).toEqual([]);
   }
+  // Nor where the host's marker check reads the address without its hash: the control's own
+  // inspection reads the live address too.
+  const unhashed = scriptedSite({ start: { ...relabeled, path: "/app#/reset" }, password: passwordScreen }, () => "password");
+  const hooks: AutofillHooks<TestFailure> = {
+    ...unhashed.hooks,
+    check: (...args) =>
+      Effect.map(unhashed.hooks.check(...args), (checked) =>
+        checked.url === undefined ? checked : ({ ...checked, url: checked.url.split("#")[0] ?? "" } as AutofillSignedInCheck),
+      ),
+  };
+  expect(await replay({ ...unhashed, hooks }, plain)).toMatchObject({ outcome: "unsent", reason: "unknown_state" });
+  expect(unhashed.clicks).toEqual([]);
   // The same page with one label otherwise is still that state.
   const site = scriptedSite({ start: relabeled, password: passwordScreen }, (_at, clicked) =>
     clicked === "button.go" ? "password" : "home",
