@@ -1397,6 +1397,38 @@ it("goes on in the look-alike a repair walked from a press that left the page as
   expect(before.clicks).toEqual(["#next", "#continue", "#continue"]);
 });
 
+it("takes no look-alike whose press may have a code sent after a press that may have had one sent", async () => {
+  // A press that may have had the site send a code leaves the page as it was, where a repair
+  // learned to type the password and go on to the code: the site could send a second code. The
+  // library knows the press sends one, or it picks a method.
+  const pwPage: Screen = { path: "/password", boxes: [{ selector: "#password", kind: "password" }], buttons: ["#send-code", "#go"] };
+  const verify: Screen = { path: "/verify", boxes: [{ selector: "#code", kind: "code" }], buttons: ["#verify"] };
+  const typesPassword = { fingerprint: arrival(pwPage), step: stepAt("/password", [password], "#go") };
+  const codeState = { fingerprint: arrival(verify), step: stepAt("/verify", [code], "#verify") };
+  const sendCode = { fingerprint: arrival(pwPage), step: stepAt("/password", [], "#send-code") };
+  const picksText = {
+    fingerprint: arrival(pwPage),
+    step: stepAt("/password", [], "#send-code", { methods: [{ method: "sms" as const, selector: "#send-code" }] }),
+  };
+  for (const [press, built, choices] of [
+    [sendCode, [emailState, sendCode, codeState], undefined],
+    [picksText, [emailState, picksText], { method: "sms" as const }],
+  ] as const) {
+    const site = scriptedSite({ start: emailScreen, password: pwPage, verify }, (at, clicked) =>
+      clicked === "#continue"
+        ? "password"
+        : clicked === "#send-code"
+          ? at
+          : clicked === "#go" ? "verify" : clicked === "#verify" ? "home" : undefined,
+    );
+    const library = repairedFrom(built, press, [typesPassword, codeState]);
+    const { ended } = await replayOnClock(site, library, undefined, Effect.void, true, true, choices);
+    expect(ended).toMatchObject({ reason: "state_repeated" });
+    expect(site.clicks).toEqual(["#continue", "#send-code"]);
+    expect(site.fills).toEqual(["email"]);
+  }
+});
+
 it("goes on in the look-alike of an earlier state a repair walked from the state just acted in", async () => {
   const pwPage: Screen = { path: "/password", boxes: [{ selector: "#password", kind: "password" }], buttons: ["#skip", "#go"] };
   const notice: Screen = { path: "/notice", boxes: [], buttons: ["#ok"], texts: ["one more thing"] };
