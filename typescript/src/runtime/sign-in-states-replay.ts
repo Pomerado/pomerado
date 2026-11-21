@@ -82,8 +82,9 @@ export interface SignInStatesReplayInput<
  * and `unknownState`: the state's fingerprint and value-free description, the known state it came
  * from (`after`), whether anything may have been sent (`sent`), the replay's own sign-in
  * (`signIn`), which a repair on the same browser goes on from: a call, so the outcome itself holds
- * no typed value and logs none; and, for a log, the page's shape and those of the stored states on
- * its origin with or without boxes as it is, at most eight, the newest first (`shapes`).
+ * no typed value and logs none; and, for a log, the page's shape, a part of its path only where a
+ * stored page's path has it, and those of the stored states on its origin with or without boxes as
+ * it is, at most eight, the newest first (`shapes`).
  */
 export type SignInStatesOutcome<V extends string = string> = AutofillReplayOutcome<V> & {
   readonly visited: readonly string[];
@@ -397,12 +398,13 @@ const sameAddress = (a: string, b: string) => {
 };
 
 /**
- * Where no known state's whole look shows, the known state a page with no box is by the control
- * it presses, as one page shows other labels in another browser or place: a state that presses
- * only (`pressesOnly`), on the page's top origin, whose control shows, one match on its recorded
- * origin, at its recorded page's host and path; never the state just acted in, nor one acted in
- * that came back (`returnedTo`). Of several, the first this login takes as states of one look
- * (`ranked`), its own route's first.
+ * Where no known state has the page's whole look, the known state a page with no box is by the
+ * control it presses, as one page shows other labels in another browser or place: a state that
+ * presses only (`pressesOnly`), on the page's top origin and at the host and path the last marker
+ * check read (`page`), never the state just acted in nor one acted in that came back
+ * (`returnedTo`), taken in the order this login takes states of one look (`ranked`), so a route
+ * that holds one takes only its own; the first whose control shows, one match on its recorded
+ * origin, at its recorded page's host and path. With no address read, none.
  */
 const byControl = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -411,24 +413,24 @@ const byControl = <E extends YieldableError, V extends string, L extends Autofil
   next: ReadonlySet<string>,
 ) =>
   Effect.gen(function* () {
-    if (fingerprint.boxes.length > 0) return undefined;
-    const shown: Shown[] = [];
-    for (const state of run.input.library.states) {
+    const { page } = run;
+    if (fingerprint.boxes.length > 0 || page === undefined) return undefined;
+    const pressing: StateEntry[] = [];
+    for (const state of run.input.library.states)
       if (
-        state === skip ||
-        state.fingerprint.top !== fingerprint.top ||
-        sameFingerprint(state.fingerprint, fingerprint) ||
-        !pressesOnly(run, state) ||
-        (yield* returnedTo(run, state))
+        state !== skip &&
+        state.fingerprint.top === fingerprint.top &&
+        pressesOnly(run, state) &&
+        sameAddress(page, state.step.page) &&
+        !(yield* returnedTo(run, state))
       )
-        continue;
+        pressing.push(state);
+    for (const state of ranked(run, pressing, (state) => pressing.includes(state), next)) {
       const inspection = yield* shownOn(run, state, resolved(run, state.step));
       if (typeof inspection !== "string" && sameAddress(inspection.page, state.step.page))
-        shown.push({ state, inspection, by: "control" });
+        return { state, inspection, by: "control" } satisfies Shown;
     }
-    const states = shown.map(({ state }) => state);
-    const [first] = ranked(run, states, (state) => states.includes(state), next);
-    return shown.find(({ state }) => state === first);
+    return undefined;
   });
 
 /**
@@ -436,15 +438,16 @@ const byControl = <E extends YieldableError, V extends string, L extends Autofil
  * one match each, on its recorded origin, in the order this login takes them (`ranked`), never
  * the state just acted in again. A state acted in before something went out that the
  * page shows again, with no other, is `returned`, unless a sign-in learned it after the last one
- * (`learnedNext`). With neither, a page with no box may be a state told by its control and
- * address alone (`byControl`); its refusals count for nothing, so a page no state is still ends
- * as an unknown state.
+ * (`learnedNext`). With no state of its whole look, and `loose`, a page with no box may be a
+ * state told by its control and address alone (`byControl`); its refusals count for nothing, so a
+ * page no state is still ends as an unknown state.
  */
 const matchState = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
   fingerprint: StateFingerprint,
   after: StateEntry | undefined,
   skip: StateEntry | undefined,
+  loose: boolean,
 ) =>
   Effect.gen(function* () {
     const { states, transitions } = run.input.library;
@@ -475,7 +478,7 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
       refused ??= shown;
     }
     if (returned !== undefined) return { returned: returned as StateEntry };
-    return (yield* byControl(run, fingerprint, skip, next)) ?? refused;
+    return alike.length > 0 || !loose ? refused : yield* byControl(run, fingerprint, skip, next);
   });
 
 const signedIn = <E extends YieldableError, V extends string, L extends AutofillLogin>(
@@ -551,7 +554,10 @@ const unknownState = <E extends YieldableError, V extends string, L extends Auto
         ...(after === undefined ? {} : { after: after.key }),
         sent,
         signIn: () => run.replay.state,
-        shapes: { observed: fingerprintShape(fingerprint, run.page), stored },
+        shapes: {
+          observed: fingerprintShape(fingerprint, run.page, run.input.library.states.map((state) => state.step.page)),
+          stored,
+        },
       },
     },
   };
@@ -762,6 +768,8 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
     let answerRead = false;
     let cantTellRead: string | undefined;
     let waitedOut = false;
+    // The last look a state was looked for by its control alone (`byControl`).
+    let byControlRead: string | undefined;
     for (;;) {
       const signed = yield* signedInHere(run);
       if (signed !== undefined) return signed;
@@ -800,7 +808,12 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
           fingerprint !== undefined &&
           (again || (fingerprint.boxes.length > 0 && sameBoxes(shape, fingerprint)));
         if (!again && !blankFingerprint(shape)) {
-          const shown = yield* matchState(run, shape, after, acted?.acted);
+          // A state by its control alone, once for each look that settled as for an early look,
+          // and at the step wait, as a whole look may still draw.
+          const loose =
+            capped || (at - held.since >= Math.max(quiet.quietMs, landingSettleMs) && byControlRead !== text);
+          if (loose) byControlRead = text;
+          const shown = yield* matchState(run, shape, after, acted?.acted, loose);
           refused = typeof shown === "object" ? undefined : shown;
           if (typeof shown === "object") {
             if (!("returned" in shown)) return { ...shown, observed: read };
@@ -1327,7 +1340,7 @@ export const replaySignInStates = <
       yield* input.emit({
         stage: "state",
         state: arrived.state.key,
-        ...(arrived.by === undefined ? {} : { reason: "same_control" }),
+        ...("by" in arrived ? { reason: "same_control" } : {}),
       });
       const done = yield* actIn(run, arrived, arrived.observed);
       if ("ended" in done) return done.ended;

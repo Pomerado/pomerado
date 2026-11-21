@@ -458,8 +458,10 @@ const twoStorefronts = libraryOf(
 
 it("takes a state whose whole look the page shows before one told by its control alone", async () => {
   const site = scriptedSite({ start: both, ...toSignIn }, (_at, clicked) => storefrontNext[clicked]);
-  expect(await replay(site, twoStorefronts)).toMatchObject({ outcome: "signed_in" });
+  const events: Readonly<Record<string, unknown>>[] = [];
+  expect(await replay(site, twoStorefronts, { events })).toMatchObject({ outcome: "signed_in" });
   expect(site.clicks).toEqual(["#log-in", "#continue", "#go"]);
+  expect(events).not.toContainEqual(expect.objectContaining({ reason: "same_control" }));
 });
 
 it("orders states told by their control alone as states of one look, the login's own first", async () => {
@@ -473,15 +475,53 @@ it("orders states told by their control alone as states of one look, the login's
   expect(own.clicks).toEqual(["#log-in", "#continue", "#go"]);
 });
 
+it("takes a state by its control alone only once the page held still, as a whole look may still draw", async () => {
+  // The header's control draws first, then the rest of the storefront.
+  const header: Screen = { ...both, buttons: ["#sign-in"], labels: ["~"] };
+  const drawing = scriptedSite({ start: (looks) => (looks < 4 ? header : both), ...toSignIn }, (_at, clicked) => storefrontNext[clicked]);
+  expect(await replay(drawing, twoStorefronts)).toMatchObject({ outcome: "signed_in" });
+  expect(drawing.clicks).toEqual(["#log-in", "#continue", "#go"]);
+  // A page passing by after a press, with another state's control on it, is no state to press.
+  const passing: Screen = { path: "/", boxes: [], buttons: ["#sign-in"], texts: ["one moment"], labels: ["~"] };
+  let pressedAt = 0;
+  const moving = scriptedSite(
+    { start: both, loading: (looks) => (looks < pressedAt + 4 ? passing : emailScreen), password: passwordScreen },
+    (_at, clicked) => {
+      if (clicked !== "#log-in") return storefrontNext[clicked];
+      pressedAt = moving.site.looks;
+      return "loading";
+    },
+  );
+  expect(await replay(moving, twoStorefronts)).toMatchObject({ outcome: "signed_in" });
+  expect(moving.clicks).toEqual(["#log-in", "#continue", "#go"]);
+});
+
+it("never takes another login's state by its control where the login's own state should show", async () => {
+  const route = twoStorefronts.states.filter((state) => state.step.submit !== "#sign-in").map((state) => state.key);
+  // The page has the login's own state's whole look, but only the other state's control.
+  const ownLook = scriptedSite({ start: { ...storefront, buttons: ["#sign-in"] }, ...toSignIn }, (_at, clicked) => storefrontNext[clicked]);
+  expect(await replay(ownLook, twoStorefronts, { choices: { states: route } })).toMatchObject({ reason: "not_found" });
+  expect(ownLook.clicks).toEqual([]);
+  // No state has the page's whole look, and the login's own state's control is gone.
+  const relabeled = scriptedSite({ start: { ...both, labels: ["~"], buttons: ["#sign-in"] }, ...toSignIn }, (_at, clicked) => storefrontNext[clicked]);
+  expect(await replay(relabeled, twoStorefronts, { choices: { states: route } })).toMatchObject({ reason: "unknown_state" });
+  expect(relabeled.clicks).toEqual([]);
+});
+
 it("tells, at a state no one knows, its shape and the stored ones it was told from, value-free", async () => {
-  const elsewhere: Screen = { ...storefront, path: "/deals/42", texts: ["fresh groceries in 30 minutes"], labels: ["~ in", "~ ~"] };
+  const elsewhere: Screen = {
+    ...storefront,
+    path: "/sign-in/owner@example.test/42/AbCd",
+    texts: ["fresh groceries in 30 minutes"],
+    labels: ["~ in", "~ ~"],
+  };
   const site = scriptedSite({ start: elsewhere, ...toSignIn }, (_at, clicked) => storefrontNext[clicked]);
   const ended = await replay(site, viaStorefront);
   expect(ended).toMatchObject({ outcome: "unsent", reason: "unknown_state" });
   expect(ended.unknownState?.shapes).toEqual({
     observed: {
       host: "example.test",
-      path: "/deals/#",
+      path: "/sign-in/~/#/~",
       boxes: [],
       submit: false,
       message: "~ ~ ~ # ~",
