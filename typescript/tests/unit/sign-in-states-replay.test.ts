@@ -573,6 +573,19 @@ it("never takes a state by its control where the page's main message differs or 
   };
   expect(await replay({ ...unhashed, hooks }, plain)).toMatchObject({ outcome: "unsent", reason: "unknown_state" });
   expect(unhashed.clicks).toEqual([]);
+  // Nor where the inspection reads no live address at all.
+  const unread = scriptedSite({ start: relabeled, password: passwordScreen }, () => "password");
+  const blind: AutofillHooks<TestFailure> = {
+    ...unread.hooks,
+    inspect: (...args) =>
+      Effect.map(unread.hooks.inspect(...args), (inspection) => {
+        if (!("targets" in inspection)) return inspection;
+        const { url: _url, ...rest } = inspection;
+        return rest;
+      }),
+  };
+  expect(await replay({ ...unread, hooks: blind }, plain)).toMatchObject({ outcome: "unsent", reason: "unknown_state" });
+  expect(unread.clicks).toEqual([]);
   // The same page with one label otherwise is still that state.
   const site = scriptedSite({ start: relabeled, password: passwordScreen }, (_at, clicked) =>
     clicked === "button.go" ? "password" : "home",
