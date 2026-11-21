@@ -208,6 +208,9 @@ const replay = (
     readonly siteAnswer?: "link" | "refused";
     readonly stepWaitMs?: number;
     readonly choices?: SignInStatesChoices;
+    readonly rankMethod?: SignInStatesChoices["method"];
+    /** The method the host picks at a method choice. */
+    readonly hostMethod?: SignInStatesChoices["method"];
   } = {},
 ) => {
   const asked: string[] = [];
@@ -248,10 +251,16 @@ const replay = (
           unanswered: (cause) => new TestFailure({ code: `unanswered:${String(cause)}` }),
           unavailable: () => new TestFailure({ code: "unavailable" }),
         },
-        ...(options.siteAnswer === undefined
+        ...(options.siteAnswer === undefined && options.hostMethod === undefined
           ? {}
-          : { hosted: { siteAnswer: () => Effect.succeed(options.siteAnswer) } }),
+          : {
+              hosted: {
+                ...(options.siteAnswer === undefined ? {} : { siteAnswer: () => Effect.succeed(options.siteAnswer) }),
+                method: (offered) => Effect.succeed(offered.find((option) => option.method === options.hostMethod)),
+              },
+            }),
         ...(options.choices === undefined ? {} : { choices: options.choices }),
+        ...(options.rankMethod === undefined ? {} : { rankMethod: options.rankMethod }),
         timing: { stepWaitMs: options.stepWaitMs ?? 300, pollMs: 2 },
         quiet: { quietMs: 20, capMs: 120 },
         sent: { current: false },
@@ -1468,6 +1477,42 @@ it("reads no other press on the page, a way in, or a code page after the code as
   const library = repairedFrom([emailState, askText, textCode], textCode, [secondCode]);
   expect((await replayOnClock(texted, library, undefined, Effect.void, true, true)).ended).toMatchObject({ outcome: "signed_in" });
   expect(texted.clicks).toEqual(["#continue", "#text-me", "#verify"]);
+});
+
+it("orders states sharing a look by a host's method where the login names none, and picks nothing by it", async () => {
+  const methods = [
+    { method: "sms" as const, selector: "#text" },
+    { method: "email" as const, selector: "#email" },
+  ];
+  const textMethod = { fingerprint: arrival(pick), step: stepAt("/pick", [], "#text", { methods }) };
+  const emailMethod = { fingerprint: arrival(pick), step: stepAt("/pick", [], "#email", { methods }) };
+  const library = libraryOf([emailState, emailMethod], [emailState, textMethod]);
+  const ended = await replay(picked(), library, { rankMethod: "email", hostMethod: "email" });
+  expect(ended).toMatchObject({ outcome: "signed_in" });
+  expect(ended.visited).toContain(keyOf(emailMethod));
+  // Without it, the state learned last.
+  const unranked = await replay(picked(), library, { hostMethod: "email" });
+  expect(unranked.visited).toContain(keyOf(textMethod));
+  // The login's own method comes first.
+  const own = await replay(picked(), library, { rankMethod: "email", choices: { method: "sms" } });
+  expect(own.visited).toContain(keyOf(textMethod));
+  // At a method choice, the recorded way in is pressed, not the host's method.
+  const choose: Screen = { path: "/choose", boxes: [], buttons: ["#use-password", "#email-code"], texts: ["how do you want to sign in"] };
+  const wayIn = {
+    fingerprint: arrival(choose),
+    step: stepAt("/choose", [], "#use-password", {
+      methods: [
+        { method: "password" as const, selector: "#use-password" },
+        { method: "email" as const, selector: "#email-code" },
+      ],
+    }),
+  };
+  const typesPassword = { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") };
+  const way = scriptedSite({ start: emailScreen, choose, password: passwordScreen }, (_at, clicked) =>
+    clicked === "#continue" ? "choose" : clicked === "#use-password" ? "password" : clicked === "#go" ? "home" : undefined,
+  );
+  expect(await replay(way, libraryOf([emailState, wayIn, typesPassword]), { rankMethod: "email" })).toMatchObject({ outcome: "signed_in" });
+  expect(way.clicks).toEqual(["#continue", "#use-password", "#go"]);
 });
 
 it("goes on in a learned look-alike along the login's own route, or after a state its route goes no further from", async () => {

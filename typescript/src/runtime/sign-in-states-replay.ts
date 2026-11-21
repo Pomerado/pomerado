@@ -1,6 +1,7 @@
 import { Clock, Duration, Effect } from "effect";
 import type { YieldableError } from "effect/Cause";
 import type { AutofillRecipeStep } from "../destinations/autofill-recipe.js";
+import type { SignInMethodChoice } from "../destinations/autofill-contracts.js";
 import { urlOrigin } from "../destinations/autofill-refusal.js";
 import {
   type AutofillInspection,
@@ -68,6 +69,11 @@ export interface SignInStatesReplayInput<
   readonly library: SignInStates;
   /** The login's own picks as its last replay gave them back (`choices` of a signed-in outcome). */
   readonly choices?: SignInStatesChoices | undefined;
+  /**
+   * The method that orders known states sharing a look where the login's own picks name none, such
+   * as the one its caller asked for or the one it saved; it picks nothing at a method choice.
+   */
+  readonly rankMethod?: SignInMethodChoice | undefined;
   /** The page as a state, as `observeSignInState` reads it. */
   readonly observe: Effect.Effect<ObservedState | undefined, E>;
   readonly quiet?: StatesQuiet | undefined;
@@ -223,10 +229,10 @@ const ownStateNotShown = "own_state_not_shown";
  * besides the one it last acted in, unless that one is looked for again, only its own are taken,
  * in their order there from the last state it acted in that the route holds, then the earlier ones:
  * a login never goes on along another login's route, so one whose own state no longer shows stops
- * there, for a repair of its own. Otherwise first a
- * state whose picked method is the login's (`choices.method`), then one the last state led to, or
- * at the start one no state leads to (`next`), then the most recently learned, as a library holds
- * its states in the order learned.
+ * there, for a repair of its own. Otherwise first a state whose picked method is the login's
+ * (`choices.method`, else `rankMethod`), then one the last state led to, or at the start one no
+ * state leads to (`next`), then the most recently learned, as a library holds its states in the
+ * order learned.
  */
 const ranked = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -235,7 +241,7 @@ const ranked = <E extends YieldableError, V extends string, L extends AutofillLo
   next: ReadonlySet<string> = new Set(),
 ) => {
   const route = run.input.choices?.states ?? [];
-  const method = run.input.choices?.method;
+  const method = run.input.choices?.method ?? run.input.rankMethod;
   const { states } = run.input.library;
   // The state last acted in, when it is not looked for again, leaves the route no say: where its
   // page stays, the route goes no further there, so a look-alike a repair learned after it may go on.
