@@ -935,7 +935,7 @@ const replayOnClock = (
   extra: {
     readonly valueFree?: boolean;
     readonly from?: SignInStatesStop;
-    readonly choices?: SignInStatesChoices;
+    readonly choices?: SignInStatesChoices | undefined;
   } = {},
 ) => {
   const events: Readonly<Record<string, unknown>>[] = [];
