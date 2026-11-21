@@ -1974,6 +1974,14 @@ it("goes on from a stop only in a state the login's own route takes, else from t
   if (anyStop === undefined) throw new Error("no stop");
   expect(await replay(routeless, library, { from: anyStop })).toMatchObject({ fromStop: { continued: true } });
   expect(routeless.clicks).toEqual(["#next", "#go"]);
+  // So does a login whose route holds no state with that look, only others.
+  const elsewhere = site();
+  const otherStop = (await replay(elsewhere, library, { valueFree: true })).stop?.();
+  if (otherStop === undefined) throw new Error("no stop");
+  expect(await replay(elsewhere, library, { from: otherStop, choices: { states: [keyOf(typesPassword)] } })).toMatchObject({
+    fromStop: { continued: true },
+  });
+  expect(elsewhere.clicks).toEqual(["#next", "#go"]);
 });
 
 it("orders states sharing a look by a host's method where the login names none, and picks nothing by it", async () => {
@@ -2014,7 +2022,9 @@ it("orders states sharing a look by a host's method where the login names none, 
   const way = scriptedSite({ start: emailScreen, choose, password: passwordScreen }, (_at, clicked) =>
     clicked === "#continue" ? "choose" : clicked === "#use-password" ? "password" : clicked === "#go" ? "home" : undefined,
   );
-  expect(await replay(way, libraryOf([emailState, wayIn, typesPassword]), { rankMethod: "email" })).toMatchObject({ outcome: "signed_in" });
+  const wentIn = await replay(way, libraryOf([emailState, wayIn, typesPassword]), { rankMethod: "email" });
+  expect(wentIn).toMatchObject({ outcome: "signed_in" });
+  expect(wentIn.choices).not.toHaveProperty("method");
   expect(way.clicks).toEqual(["#continue", "#use-password", "#go"]);
 });
 
