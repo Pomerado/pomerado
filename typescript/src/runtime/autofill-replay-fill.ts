@@ -222,7 +222,7 @@ const closedInPlace = <E extends YieldableError, V extends string, L extends Aut
  * undefined. `planned` is the recorded screen's `refills`, and `next` the recorded screen after it.
  * A code screen that closed in place counts as sent only once the marker or `next` shows
  * (`closedInPlace`). A code asked again after one that didn't sign in (`returned`) may be that
- * same code: only codes the site refused are ruled out for it.
+ * same code: only the codes typed before the site last showed it refused one are ruled out.
  */
 export const runReplayStep = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   session: ReplaySession<E, V, L>,
@@ -291,24 +291,37 @@ export const runReplayStep = <E extends YieldableError, V extends string, L exte
     const onLinkScreen =
       progress.linkCodeScreen !== undefined && codeScreenOf(inspection) === progress.linkCodeScreen;
     const returned = codeAgain === "returned" && takesCode(asked);
+    const resolveValues = () =>
+      valuesFor(
+        input,
+        values,
+        progress.chosen,
+        asked,
+        codeAgain,
+        {
+          rejectedCodes: returned ? new Set(session.refusedCodes) : rejectedCodes,
+          codeRequests,
+          rejectedValues: retryState.rejectedValues,
+          correctionRequests: retryState.correctionRequests,
+        },
+        inspection.screen.fields,
+        // A code screen the recipe never recorded that refused a code may want one the site sent
+        // rather than the host's generator's, so its retries never spend a try on that.
+        !onLinkScreen && (codeAgain === undefined || progress.unrecordedCodeScreen === undefined),
+      );
     if (returned) codeRequests.current += 1;
-    const resolved = yield* valuesFor(
-      input,
-      values,
-      progress.chosen,
-      asked,
-      codeAgain,
-      {
-        rejectedCodes: returned ? new Set(retryState.rejectedValues.code ?? []) : rejectedCodes,
-        codeRequests,
-        rejectedValues: retryState.rejectedValues,
-        correctionRequests: retryState.correctionRequests,
-      },
-      inspection.screen.fields,
-      // A code screen the recipe never recorded that refused a code may want one the site sent
-      // rather than the host's generator's, so its retries never spend a try on that.
-      !onLinkScreen && (codeAgain === undefined || progress.unrecordedCodeScreen === undefined),
-    );
+    let resolved = yield* resolveValues();
+    // A code the site refused before, given again, is asked for once more within the two re-asks,
+    // as after a refusal (`askedCode`).
+    while (
+      returned &&
+      resolved instanceof Unanswered &&
+      resolved.cause === "code_already_rejected" &&
+      codeRequests.current < 2
+    ) {
+      codeRequests.current += 1;
+      resolved = yield* resolveValues();
+    }
     if (resolved instanceof Unanswered)
       if (corrected.size > 0) return "extra_rejected";
       // Nothing was typed, so the link's own question still stands.

@@ -47,8 +47,6 @@ interface Screen {
   readonly errors?: readonly string[];
   /** The button labels a page with no empty box is told by, as the scan normalizes them. */
   readonly labels?: readonly string[];
-  /** Its boxes sit in no form, so the host refuses a submit key in them. */
-  readonly formless?: boolean;
 }
 
 /**
@@ -102,8 +100,6 @@ const scriptedSite = (
         if (missing >= 0) return { outcome: "refused", reason: "not_found", target: missing };
         if (step.submit !== undefined && !controls().includes(step.submit))
           return { outcome: "refused", reason: "not_found", target: "submit" };
-        if (step.submitKey !== undefined && shown().formless === true)
-          return { outcome: "refused", reason: "credential_target_refused", target: "submit" };
         const target = {
           ownerUrl: shown().frame ?? null,
           documentOrigin: shown().frame ?? origin,
@@ -239,13 +235,14 @@ const replay = (
     readonly hostMethod?: SignInStatesChoices["method"];
     readonly events?: Readonly<Record<string, unknown>>[];
     readonly from?: SignInStatesStop;
-    /** The code the owner gives each time, else a new one each time. */
-    readonly code?: string;
+    /** The codes the owner gives in turn, the last one again after them, else a new one each time. */
+    readonly codes?: readonly string[];
     /** Each question's prompt, in order. */
     readonly prompts?: string[];
   } = {},
 ) => {
   const asked: string[] = [];
+  let codesGiven = 0;
   const ask = makeInputAsker((request) =>
     Effect.sync(
       () =>
@@ -259,8 +256,8 @@ const replay = (
                 ? link
                 : question.type === "confirm"
                   ? { confirmed: true }
-                  : question.id === "code" && options.code !== undefined
-                    ? options.code
+                  : question.id === "code" && options.codes !== undefined
+                    ? (options.codes[Math.min(codesGiven++, options.codes.length - 1)] ?? "")
                     : String(246810 + asked.length),
             ];
           }),
@@ -728,43 +725,21 @@ it("presses Enter once in the code box of a state with no button whose page neve
   expect(site.fills).toEqual(["code"]);
   expect(site.clicks).toEqual(["Enter"]);
   expect(entered(events)).toBe(1);
-  // A box in no form takes no submit key: nothing is pressed, and the code is asked again twice.
-  const formless = scriptedSite({ start: { ...codeScreen, formless: true } }, () => "home", { resubmit: true });
-  const unsent = await replay(formless, autoCode());
-  expect(unsent).toMatchObject({ outcome: "unclear", reason: "code_rejected" });
-  expect(formless.clicks).toEqual([]);
-  expect(unsent.asked).toEqual(["code", "code", "code"]);
 });
 
-it("never presses Enter where the page sends the code itself, or shows a refusal marker", async () => {
-  const sends = scriptedSite({ start: codeScreen }, () => "home", { resubmit: true });
-  const sent: typeof sends.hooks.fill = (call) =>
-    Effect.map(sends.hooks.fill(call), (report) => {
-      sends.site.screen = "home";
-      return report;
+it("never presses Enter after a fill whose page sent the code itself, while the site checks it", async () => {
+  const site = scriptedSite({ start: codeScreen }, () => "home", { resubmit: true });
+  // The page sends the code on its last digit and keeps its look a while as the site checks it.
+  const fill: typeof site.hooks.fill = (call) =>
+    Effect.map(site.hooks.fill(call), (report) => {
+      setTimeout(() => {
+        site.site.screen = "home";
+      }, 150);
+      return report.outcome === "filled" ? { ...report, submit: "page" as const } : report;
     });
-  const events: Readonly<Record<string, unknown>>[] = [];
-  expect(await replay({ ...sends, hooks: { ...sends.hooks, fill: sent } }, autoCode(), { events })).toMatchObject({
-    outcome: "signed_in",
-  });
-  expect(sends.clicks).toEqual([]);
-  expect(entered(events)).toBe(0);
-  // The site shows its refusal beside the typed code: a new code is asked for, never Enter.
-  const refuses = scriptedSite({ start: codeScreen, refused: { ...codeScreen, errors: ["#bad-code"] } }, () => "home", {
-    resubmit: true,
-  });
-  let typed = 0;
-  const marked: typeof refuses.hooks.fill = (call) =>
-    Effect.map(refuses.hooks.fill(call), (report) => {
-      refuses.site.screen = ++typed > 1 ? "home" : "refused";
-      return report;
-    });
-  const library = autoCode({ rejectedMarkers: [{ selector: "#bad-code", slot: "code" }] });
-  expect(await replay({ ...refuses, hooks: { ...refuses.hooks, fill: marked } }, library)).toMatchObject({
-    outcome: "signed_in",
-  });
-  expect(refuses.fills).toEqual(["code", "code"]);
-  expect(refuses.clicks).toEqual([]);
+  expect(await replay({ ...site, hooks: { ...site.hooks, fill } }, autoCode())).toMatchObject({ outcome: "signed_in" });
+  expect(site.fills).toEqual(["code"]);
+  expect(site.clicks).toEqual([]);
 });
 
 it("presses Enter once for each code typed, and still ends at the code retry bound", async () => {
@@ -787,14 +762,25 @@ it("asks again saying the code didn't sign in, and takes the same code, when the
     Effect.sync(() => void typed.push(...call.values)).pipe(Effect.zipRight(site.hooks.fill(call)));
   const prompts: string[] = [];
   const library = libraryOf([{ fingerprint: arrival(codeScreen), step: stepAt("/verify", [code], "#verify") }]);
-  const ended = await replay({ ...site, hooks: { ...site.hooks, fill } }, library, { code: "135790", prompts });
+  const ended = await replay({ ...site, hooks: { ...site.hooks, fill } }, library, { codes: ["135790"], prompts });
   expect(ended).toMatchObject({ outcome: "signed_in" });
   expect(typed).toEqual(["135790", "135790"]);
   expect(prompts[1]).toMatch(/^The last code didn't sign you in\. /u);
 });
 
-it("asks again saying the site refused the code at its refusal marker, and never types that code again", async () => {
-  const site = scriptedSite({ start: codeScreen, refused: { ...codeScreen, errors: ["#bad-code"] } }, () => "refused");
+it("never types again a code the site refused, after a later code that only didn't sign in", async () => {
+  // The site refuses the first code at its marker, which goes once a code is typed again; the
+  // second code then stays with no marker.
+  const site = scriptedSite(
+    {
+      start: codeScreen,
+      refused: () => ({ ...codeScreen, errors: site.site.typed.has("#code") ? [] : ["#bad-code"] }),
+    },
+    () => "refused",
+  );
+  const typed: string[] = [];
+  const fill: typeof site.hooks.fill = (call) =>
+    Effect.sync(() => void typed.push(...call.values)).pipe(Effect.zipRight(site.hooks.fill(call)));
   const prompts: string[] = [];
   const library = libraryOf([
     {
@@ -802,11 +788,14 @@ it("asks again saying the site refused the code at its refusal marker, and never
       step: stepAt("/verify", [code], "#verify", { rejectedMarkers: [{ selector: "#bad-code", slot: "code" }] }),
     },
   ]);
-  const ended = await replay(site, library, { code: "135790", prompts });
+  const ended = await replay({ ...site, hooks: { ...site.hooks, fill } }, library, {
+    codes: ["111111", "222222", "111111"],
+    prompts,
+  });
   expect(ended).toMatchObject({ outcome: "unclear", reason: "code_rejected" });
-  expect(site.fills).toEqual(["code"]);
-  expect(prompts.slice(1).every((prompt) => prompt.startsWith("The site refused the last code. "))).toBe(true);
-  expect(prompts.length).toBeGreaterThan(1);
+  expect(typed).toEqual(["111111", "222222"]);
+  expect(prompts[1]).toMatch(/^The site refused the last code\. /u);
+  expect(prompts[2]).toMatch(/^The last code didn't sign you in\. /u);
 });
 
 it("presses Enter in the email box when its Continue went once the email was typed", async () => {

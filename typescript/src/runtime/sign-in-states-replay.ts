@@ -1368,15 +1368,17 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
 
 /**
  * After typing a state that names no submit nor submit key, whose page was to send what was typed
- * itself, as a code box that sends on its last digit: once the page held, `enterMs` from the
- * typing, the look it had then (`stateAfter`), with the state's boxes and every box it typed still
- * holding something, and no recorded error marker of a state acted in shows, Enter in the last
- * field, once, by the host's click again, which types nothing (`resubmit`), as a keyed step's
- * would. A page that moved, or could not be read, gets none, at once. Never where the host
- * refuses the key, as for a field in no form, nor where that form shows a submit control, nor on
- * a host with no click again. A press that may have gone out sends what was typed, and after a
- * code typed again (`retry`) counts as one try of the code retry bound, as a submit would. The
- * replay then waits for the next state as after any typing.
+ * itself, as a code box that sends on its last digit, while what it typed is still held unsent:
+ * once the page held, `enterMs` from the typing, the look it had then (`stateAfter`), with the
+ * state's boxes and every box it typed still holding something, and no recorded error marker of a
+ * state acted in shows, Enter in the last field, once, by the host's click again, which types
+ * nothing (`resubmit`), as a keyed step's would. A fill that may have sent what it typed, as when
+ * the page sent the code itself, gets none, however long the site takes to answer it; nor does a
+ * page that moved, or could not be read, at once. Never where the host refuses the key, as for a
+ * field in no form, nor where that form shows a submit control, nor on a host with no click again.
+ * A press that may have gone out, and only such a press, is heard as `retried`, sends what was
+ * typed, and after a code typed again (`retry`) counts as one try of the code retry bound, as a
+ * submit would. The replay then waits for the next state as after any typing.
  */
 const enterAfterTyping = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -1389,6 +1391,7 @@ const enterAfterTyping = <E extends YieldableError, V extends string, L extends 
     const { replay, input } = run;
     const { resubmit } = input.hooks;
     if (resubmit === undefined || hostSubmits(step) || step.fields.length === 0) return;
+    if (!step.fields.some((field) => replay.state.filled.has(field.slot))) return;
     const since = yield* now;
     const typed = (read: ObservedState) => read.boxes.filter((box) => !box.empty).length;
     const first = yield* input.observe;
@@ -1411,10 +1414,11 @@ const enterAfterTyping = <E extends YieldableError, V extends string, L extends 
     };
     const here = yield* shownOn(run, state, keyed);
     if (typeof here === "string" || (here.screen.submitKey?.submitControls ?? 0) > 0) return;
-    yield* input.emit({ stage: "retried", reason: "enter_after_typing" });
     const pressed = yield* resubmit({ step: keyed, inspection: here });
+    const sent = maySend(pressed);
+    if (sent) yield* input.emit({ stage: "retried", reason: "enter_after_typing" });
     yield* input.emit(stepDiagnostic(keyed, pressed));
-    if (!maySend(pressed)) return;
+    if (!sent) return;
     settleCarried(replay);
     replay.progress.anythingSent = true;
     input.sent.current = true;
