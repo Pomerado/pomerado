@@ -1680,6 +1680,41 @@ it("reads no other press on the page, a way in, or a code page after the code as
   expect(texted.clicks).toEqual(["#continue", "#text-me", "#verify"]);
 });
 
+it("goes on from a stop only in a state the login's own route takes, else from the entry URL", async () => {
+  const idPage: Screen = { path: "/sign-in", boxes: [{ selector: "#email", kind: "identifier" }], buttons: ["#continue", "#next"] };
+  const own = { fingerprint: arrival(idPage), step: stepAt("/sign-in", [email], "#continue") };
+  const other = { fingerprint: arrival(idPage), step: stepAt("/sign-in", [email], "#next") };
+  const typesPassword = { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") };
+  // Another login learned its own step there later, so a check given no choices takes it.
+  const library = libraryOf([own, typesPassword], [other, typesPassword]);
+  const choices = { states: [keyOf(own), keyOf(typesPassword)] };
+  const site = () =>
+    scriptedSite({ start: idPage, password: passwordScreen }, (_at, clicked) =>
+      clicked === "#continue" || clicked === "#next" ? "password" : clicked === "#go" ? "home" : undefined,
+    );
+  const unchosen = site();
+  const from = (await replay(unchosen, library, { valueFree: true })).stop?.();
+  expect(from?.state).toBe(keyOf(other));
+  if (from === undefined) throw new Error("no stop");
+  const ended = await replay(unchosen, library, { from, choices });
+  expect(ended).toMatchObject({ outcome: "signed_in", fromStop: { continued: false, reason: "state_not_own" } });
+  expect(unchosen.clicks).toEqual(["#continue", "#go"]);
+  expect(ended.visited).toEqual(choices.states);
+  // A check given the login's choices stops in its own state, and the replay goes on there.
+  const chosen = site();
+  const ownStop = (await replay(chosen, library, { valueFree: true, choices })).stop?.();
+  expect(ownStop?.state).toBe(keyOf(own));
+  if (ownStop === undefined) throw new Error("no stop");
+  expect(await replay(chosen, library, { from: ownStop, choices })).toMatchObject({ fromStop: { continued: true } });
+  expect(chosen.clicks).toEqual(["#continue", "#go"]);
+  // A login with no route there goes on in whichever it stopped in, as before.
+  const routeless = site();
+  const anyStop = (await replay(routeless, library, { valueFree: true })).stop?.();
+  if (anyStop === undefined) throw new Error("no stop");
+  expect(await replay(routeless, library, { from: anyStop })).toMatchObject({ fromStop: { continued: true } });
+  expect(routeless.clicks).toEqual(["#next", "#go"]);
+});
+
 it("orders states sharing a look by a host's method where the login names none, and picks nothing by it", async () => {
   const methods = [
     { method: "sms" as const, selector: "#text" },

@@ -79,8 +79,9 @@ export interface SignInStatesReplayInput<
   readonly quiet?: StatesQuiet | undefined;
   /**
    * Where a value-free replay on this browser stopped for the login's values (`stop`), for this
-   * replay with them to go on from: it opens no entry URL when the page still shows that state
-   * (`stillShown`), and otherwise opens it as any replay does. Absent, the replay opens it.
+   * replay with them to go on from: it opens no entry URL when the page still shows that state, one
+   * the login's own route takes (`stillShown`), and otherwise opens it as any replay does. Absent,
+   * the replay opens it.
    */
   readonly from?: SignInStatesStop | undefined;
 }
@@ -1244,7 +1245,8 @@ const actAgain = <E extends YieldableError, V extends string, L extends Autofill
  * (`stateAfter`), its top origin included, and its controls shown on its origin (`shownOn`), at
  * one look; else why not. Never a state that looks like one the replay acted in before it, as a
  * learned look-alike does (`state_alike`): a page gone back to that state reads the same, and only
- * `arrive`'s wait tells them apart.
+ * `arrive`'s wait tells them apart. Nor one the login's own route leaves out where it holds a state
+ * with that look (`state_not_own`), as a stop of a value-free replay given no `choices` may be.
  */
 const stillShown = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -1257,6 +1259,7 @@ const stillShown = <E extends YieldableError, V extends string, L extends Autofi
     const before = from.visited.slice(0, -1);
     if (states.some((known) => before.includes(known.key) && sameFingerprint(known.fingerprint, state.fingerprint)))
       return "state_alike";
+    if (ranked({ ...run, visited: before }, [state], state.fingerprint).length === 0) return "state_not_own";
     const read = yield* run.input.observe;
     if (read === undefined) return "page_unread";
     if (!sameFingerprint(stateAfter(from.before, read), state.fingerprint)) return "page_changed";
