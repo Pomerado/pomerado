@@ -36,7 +36,9 @@ const code = ["seven", "three", "kite"];
  * The code screen: the grid of `names`, as checkboxes or as buttons, and an Authenticate button
  * that a ticked box enables, unless it stays disabled (`stuck`) or a banner covers it (`covered`).
  * The first tick may have the page cover the grid with an overlay (`cover`), also hiding the dialog
- * from the accessibility tree (`hide`), or disable every box (`disable`).
+ * from the accessibility tree (`hide`), or disable every box (`disable`). The grid may hold a
+ * hidden box to remember the device, ticked (`remember`), and the site may hide its submit once
+ * clicked while it checks the code in place (`checking`).
  */
 const gridPage = ({
   names = choices,
@@ -44,12 +46,16 @@ const gridPage = ({
   stuck = false,
   covered = false,
   afterTick,
+  remember = false,
+  checking = false,
 }: {
   names?: readonly string[];
   buttons?: boolean;
   stuck?: boolean;
   covered?: boolean;
   afterTick?: "cover" | "hide" | "disable";
+  remember?: boolean;
+  checking?: boolean;
 } = {}) =>
   `<style>.tile { position: absolute; opacity: 0; width: 1px; height: 1px; } #otp-choices li { display: inline-block; }
 #authenticate { position: fixed; left: 0; bottom: 0; width: 160px; height: 40px; }
@@ -64,7 +70,7 @@ const gridPage = ({
       ? `<li><button type="button" aria-label="${name}"><img alt="" width="40" height="40" src="${picture}"></button></li>`
       : `<li><input type="checkbox" class="tile" id="c-${index}" name="otp" value="${key(name)}"><label for="c-${index}"><img alt="${name}" width="40" height="40" src="${picture}"></label></li>`,
   )
-  .join("")}</ul>
+  .join("")}${remember ? '<li style="display: none"><input type="checkbox" id="remember" checked><label for="remember">Remember this device</label></li>' : ""}</ul>
 <button id="authenticate" disabled>Authenticate</button>
 </form>
 </div>
@@ -72,6 +78,11 @@ ${covered ? '<div id="banner">This site uses cookies</div>' : ""}
 <script>
 const tiles = [...document.querySelectorAll(".tile")];
 const authenticate = document.getElementById("authenticate");
+${checking ? `document.querySelector("form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  authenticate.hidden = true;
+  document.getElementById("title").insertAdjacentText("afterend", "Checking your code…");
+});` : ""}
 let struck = false;
 for (const tile of tiles)
   tile.addEventListener("change", () => {
@@ -273,6 +284,16 @@ test("a choice step whose page covers, hides or disables the grid after its firs
     });
     await expectUnticked(page);
   }
+});
+
+test("a choice step whose site hides its submit once clicked, to check the code in place, still unticks every choice, and no box that is none", async ({
+  page,
+}) => {
+  const { report } = await fillChoices(page, await codeScreen(page, { checking: true, remember: true }));
+  expect(report).toMatchObject({ outcome: "filled", submit: "clicked" });
+  await expect(page.locator("#authenticate")).toBeHidden();
+  await expectUnticked(page);
+  expect(await page.locator("#remember").isChecked()).toBe(true);
 });
 
 test("a grid whose choices are named in more than one word, or that holds a box to remember the device, is no code's choices", async ({
