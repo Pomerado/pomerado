@@ -73,7 +73,8 @@ export interface SignInStatesReplayInput<
   readonly choices?: SignInStatesChoices | undefined;
   /**
    * The method that orders known states sharing a look where the login's own picks name none, such
-   * as the one its caller asked for or the one it saved; it picks nothing at a method choice.
+   * as the one its caller asked for or the one it saved. It picks nothing among a page's methods
+   * itself, though a state it ranks first may press its recorded method there.
    */
   readonly rankMethod?: SignInMethodChoice | undefined;
   /** The page as a state, as `observeSignInState` reads it. */
@@ -148,8 +149,8 @@ interface Run<E extends YieldableError, V extends string, L extends AutofillLogi
   page: string | undefined;
   /**
    * Whether the method picked last is the host's hint (`rankMethod`) as a lone method beside a way
-   * in, in a state the hint may have ranked first: it is never stored as a pick (`choices.method`)
-   * unless the login named it; the route that signed in is kept as any route is.
+   * in, for a login that names no method of its own, in a state the hint may have ranked first: it
+   * is never stored as a pick (`choices.method`); the route that signed in is kept as any route is.
    */
   hinted: boolean;
 }
@@ -1117,7 +1118,8 @@ const methodFor = <E extends YieldableError, V extends string, L extends Autofil
       (yield* run.replay.pickMethod(twoFactor));
     if (isTwoFactorOption(picked)) {
       run.replay.progress.chosen = picked.method;
-      run.hinted = picked === lone && picked.method === run.input.rankMethod;
+      run.hinted =
+        picked === lone && run.input.choices?.method === undefined && picked.method === run.input.rankMethod;
     }
     return picked;
   });

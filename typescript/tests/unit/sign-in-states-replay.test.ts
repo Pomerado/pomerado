@@ -2070,6 +2070,63 @@ it("takes by a host's method only a state whose recorded press is that method, a
   expect(unwalked.clicks).toEqual(["#continue", "#use-password", "#go"]);
 });
 
+it("keeps a lone method no hint led to, and a real pick on a later page after one the hint led to", async () => {
+  const choose: Screen = { path: "/choose", boxes: [], buttons: ["#use-password", "#email-code"], texts: ["how do you want to sign in"] };
+  const byEmailCode = {
+    fingerprint: arrival(choose),
+    step: stepAt("/choose", [], "#email-code", {
+      methods: [
+        { method: "password" as const, selector: "#use-password" },
+        { method: "email" as const, selector: "#email-code" },
+      ],
+    }),
+  };
+  const codeState = { fingerprint: arrival(codeScreen), step: stepAt("/verify", [code], "#verify") };
+  const flow = (pages: Readonly<Record<string, Screen>>, next: Readonly<Record<string, string>>) =>
+    scriptedSite({ start: emailScreen, choose, ...pages }, (_at, clicked) => next[clicked]);
+  const toCode = { "#continue": "choose", "#email-code": "code", "#verify": "home" };
+  const alone = libraryOf([emailState, byEmailCode, codeState]);
+  // With no hint, a lone method is kept as before.
+  expect((await replay(flow({ code: codeScreen }, toCode), alone)).choices?.method).toBe("email");
+  // A login whose own method the page does not offer keeps the one the page took, hint or not.
+  const named = await replay(flow({ code: codeScreen }, toCode), alone, { choices: { method: "sms" }, rankMethod: "email" });
+  expect(named.choices?.method).toBe("email");
+  // A host's pick on a later page, after a lone method the hint led to, is kept.
+  const send: Screen = { path: "/send", boxes: [], buttons: ["#text", "#mail"], texts: ["where should we send your code"] };
+  const sendState = {
+    fingerprint: arrival(send),
+    step: stepAt("/send", [], "#text", {
+      methods: [
+        { method: "sms" as const, selector: "#text" },
+        { method: "email" as const, selector: "#mail" },
+      ],
+    }),
+  };
+  const sent = flow({ send }, { "#continue": "choose", "#email-code": "send", "#text": "home", "#mail": "home" });
+  const picked = await replay(sent, libraryOf([emailState, byEmailCode, sendState]), { rankMethod: "email", hostMethod: "sms" });
+  expect(sent.clicks).toEqual(["#continue", "#email-code", "#text"]);
+  expect(picked.choices?.method).toBe("sms");
+  // A way in on a later page leaves the method the hint led to unkept; with no hint, it is kept.
+  const way: Screen = { path: "/way", boxes: [], buttons: ["#password-instead", "#mail-instead"], texts: ["one more step"] };
+  const wayIn = {
+    fingerprint: arrival(way),
+    step: stepAt("/way", [], "#password-instead", {
+      methods: [
+        { method: "password" as const, selector: "#password-instead" },
+        { method: "email" as const, selector: "#mail-instead" },
+      ],
+    }),
+  };
+  const typesPassword = { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") };
+  const toWay = { "#continue": "choose", "#email-code": "way", "#password-instead": "password", "#go": "home" };
+  const wayLibrary = libraryOf([emailState, byEmailCode, wayIn, typesPassword]);
+  const hintedWay = flow({ way, password: passwordScreen }, toWay);
+  const wentIn = await replay(hintedWay, wayLibrary, { rankMethod: "email" });
+  expect(hintedWay.clicks).toEqual(["#continue", "#email-code", "#password-instead", "#go"]);
+  expect(wentIn.choices).not.toHaveProperty("method");
+  expect((await replay(flow({ way, password: passwordScreen }, toWay), wayLibrary)).choices?.method).toBe("email");
+});
+
 it("goes on in a learned look-alike along the login's own route, or after a state its route goes no further from", async () => {
   const idPage: Screen = { path: "/sign-in", boxes: [{ selector: "#username", kind: "identifier" }], buttons: ["#next"] };
   const pwPage: Screen = { path: "/password", boxes: [{ selector: "#password", kind: "password" }], buttons: ["#continue", "#go"] };
