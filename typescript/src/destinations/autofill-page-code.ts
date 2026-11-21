@@ -146,6 +146,16 @@ const choicesCode = `(element) => {
 }`;
 
 /**
+ * Page code: the checkboxes in a code field named as one of `choices`, by their accessible names
+ * (`accessibleNames`), trimmed, however the page shows them: hidden, disabled or covered too. A box
+ * named as no choice, such as one to remember the device, is never among them.
+ */
+const choiceBoxesCode = `(element, choices) => {
+  const name = (${String(accessibleNames)})();
+  return Array.from(element.querySelectorAll('input[type="checkbox"], [role="checkbox"]')).filter((box) => choices.includes(name(box).trim()));
+}`;
+
+/**
  * Page code: each code field that takes no typing, read for the named choices its code is picked
  * from (`choicesCode`): their names, else null, and its target marked `choices` when it has them.
  */
@@ -223,6 +233,8 @@ return {
  *   own options, so this call's code holds the date (`iso`).
  * - `choose`: ticks the checkboxes a sign-in code names among the named checkboxes of its field
  *   (`choicesCode`) and unticks the rest, so this call's code holds those choices' names (`names`).
+ * - `untick`: unticks the checkboxes of a field that has a code picked from them, over a step that
+ *   holds that field alone (`choiceBoxesCode`).
  * - `dismiss`: clicks a covering notice's own control (`dismissCode`).
  * - `submit`: first reads whether the page sent what was typed itself (`pageSentCode`). Otherwise
  *   it guards the submission as it fires (`submissionGuardCode`, under the host's
@@ -293,13 +305,22 @@ export type AutofillFillCall =
   | {
       /**
        * Picks a code from the named checkboxes a code field holds (`choicesCode`): `names`, the
-       * choices the code names, in its order, and none to untick every checkbox in the field,
-       * however the page shows it. This call's code holds them, as a date's call holds its date,
-       * and nothing else of the code.
+       * choices the code names, in its order. This call's code holds them, as a date's call holds
+       * its date, and nothing else of the code.
        */
       readonly kind: "choose";
       readonly index: number;
       readonly names: readonly string[];
+    }
+  | {
+      /**
+       * Unticks the checkboxes named as one of `choices`, every name the inspection read, of the
+       * code field at `index` in the step's judgment, which the call's step holds alone, with no
+       * submit: it acts only while that field is as judged.
+       */
+      readonly kind: "untick";
+      readonly index: number;
+      readonly choices: readonly string[];
     }
   | {
       readonly kind: "submit";
@@ -394,7 +415,12 @@ const same = (found, expected, editable = true) =>
       JSON.stringify(found.methods) === JSON.stringify(expected.methods) &&
       found.submitMethod === expected.submitMethod;
 const found = { fields: fields.map(({ target }) => target), submit: submit === null ? null : submit.target };
-if (
+${
+  call.kind === "untick"
+    ? `// An untick's step holds its field alone, judged at its own place in the step's judgment.
+if (judged === null || !same(found.fields[0], judged.fields[${call.index}] ?? null))
+  return { error: "target_changed", target: 0, url: primary.url() };`
+    : `if (
   judged === null ||
   found.fields.some((target, index) => !same(target, judged.fields[index] ?? null)) ||
   // A submit the page enables is no change: the submit call reads whether it is disabled itself.
@@ -402,6 +428,7 @@ if (
 ) {
   await keep(observed, { targets: found, questions });
   return { changed: found, located, url: primary.url() };
+}`
 }
 // Where the page was as the host typed each field, kept in the page under the fill's id, so the
 // submit call compares against it with no address in its code.
@@ -412,7 +439,7 @@ const readsOnly = ${JSON.stringify(call.kind === "submit")} && fields.length > 0
 // emptied every box itself.
 const looking = ${JSON.stringify(call.kind === "submit" && call.look === true)};
 const codeLook = looking && ${JSON.stringify(call.kind === "submit" && call.pressCovered !== true)} && fields.length > 0 && codeSlots.every(Boolean);
-${call.kind === "submit" ? pageSentCode : call.kind === "dismiss" ? "" : "await keep(typedAt, primary.url());"}
+${call.kind === "submit" ? pageSentCode : call.kind === "dismiss" || call.kind === "untick" ? "" : "await keep(typedAt, primary.url());"}
 for (const check of ${JSON.stringify(check)}) {
   // Its length only, never its value.
   const holding = fields[check].locator.evaluate(
@@ -939,13 +966,13 @@ ${
     delete element.ownerDocument.defaultView[key];
   }, ${JSON.stringify(call.bindingKey)}, { timeout: 1000 }, true).catch(() => undefined);
 }`;
-  if (call.kind === "choose" && call.names.length === 0)
+  if (call.kind === "untick")
     return `try {
-  // Every checkbox in the field ends unticked, however the page shows it now: under an overlay,
-  // hidden from the accessibility tree or disabled. One still ticked is clicked through its label,
-  // as a person clicks the picture over a hidden box, else clicked in the page, which no overlay
-  // catches, and a disabled box is unticked in place with the events a click fires.
-  const boxes = await fields[${call.index}].locator.evaluateHandle((element) => Array.from(element.querySelectorAll('input[type="checkbox"], [role="checkbox"]')), undefined, { timeout: ${elementReadMs} });
+  // Each checkbox named as one of the choices ends unticked, however the page shows it now: under
+  // an overlay, hidden from the accessibility tree or disabled. One still ticked is clicked through
+  // its label, as a person clicks the picture over a hidden box, else clicked in the page, which no
+  // overlay catches, and a disabled box is unticked in place with the events a click fires.
+  const boxes = await fields[0].locator.evaluateHandle(${choiceBoxesCode}, ${JSON.stringify(call.choices)}, { timeout: ${elementReadMs} });
   const ticked = () => boxes.evaluate((all) => all.map((box) => box instanceof HTMLInputElement ? box.checked : box.getAttribute("aria-checked") === "true"));
   for (const [place, on] of (await ticked()).entries()) {
     if (!on) continue;

@@ -1223,9 +1223,9 @@ const afterFieldCall = (
  * date of birth, and the selected choices of a sign-in code picked from named checkboxes, ever
  * enters a Kernel call's script text or its request to Kernel's REST API. Such a code's call ticks
  * the checkboxes its code names (`choose`), and is no typed field a submit checks again. Whatever
- * the fill comes to, it unticks them all before it returns while the page still holds them,
- * however the page shows them (`untickChoices`), and a click again of its screen clicks nothing:
- * the screen is filled again.
+ * the fill comes to, it unticks them before it returns while the page still holds them, however
+ * the page shows them (`untickChoices`), and a click again of its screen clicks nothing: the screen
+ * is filled again.
  * It reports per-field outcomes and never a
  * value. Once anything was typed, a call that fails or finds a control refused can no longer say
  * nothing reached the site: a lost answer is `uncertain`, a control refused before a field's typing
@@ -1302,27 +1302,38 @@ export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepRe
     return yield* fillScreen(input, progress).pipe(Effect.ensuring(untickChoices(input, progress)));
   });
 
-/** How long the host gives the unticking of a step's choices once its fill ends. */
+/**
+ * How long the host waits on the unticking of a step's choices once its fill ends, after which it
+ * stops waiting and goes on, while a call still running in the page may go on to its own limit.
+ */
 const untickMs = 15_000;
 
 /**
- * Unticks every checkbox of the step's code fields that have the code picked from them
- * (`codeChoices`) while the page still holds them, whatever the fill came to, a failure or an
- * interruption of it too: a code's ticks never stay on the page for its snapshot to read, nor for
- * a click again to send. Its answers are not read, it ends within `untickMs`, and a page that went
- * on finds no field and changes nothing.
+ * Unticks the checkboxes of the step's code fields that have the code picked from them
+ * (`codeChoices`), each named as one of those choices, while the page still holds them, whatever
+ * the fill came to, a failure or an interruption of it too: a code's ticks never stay on the page
+ * for its snapshot to read, nor for a click again to send. Each call's step holds that field
+ * alone, with no submit, so a site that hides its submit once clicked is unticked too, and acts
+ * only while the field is as judged. Its answers are not read, the host waits on it `untickMs` at
+ * most, interrupting it then, and a page that went on finds no field and changes nothing.
  */
 const untickChoices = (input: FillInput, progress: FillProgress) =>
   Effect.suspend(() => {
     progress.check = [];
+    const { popup } = input.step;
     return Effect.forEach(
-      input.inspection.screen.fields.flatMap((field, index) =>
-        field.codeChoices === undefined ? [] : [index],
-      ),
-      (index) => fillCall(input, progress)({ kind: "choose", index, names: [] }),
+      input.step.fields.flatMap((field, index) => {
+        const choices = input.inspection.screen.fields[index]?.codeChoices;
+        return choices === undefined ? [] : [{ field, index, choices }];
+      }),
+      ({ field, index, choices }) =>
+        fillCall(
+          { ...input, step: { fields: [field], ...(popup === undefined ? {} : { popup }) } },
+          progress,
+        )({ kind: "untick", index, choices }),
       { discard: true },
     );
-  }).pipe(Effect.timeout(untickMs), Effect.ignore);
+  }).pipe(Effect.interruptible, Effect.timeout(untickMs), Effect.ignore);
 
 /** The fill of `fillAutofillStep`, before its choices are unticked. */
 const fillScreen = (input: FillInput, progress: FillProgress): Effect.Effect<AutofillStepReport> =>
