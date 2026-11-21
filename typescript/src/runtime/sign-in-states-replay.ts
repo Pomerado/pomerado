@@ -407,8 +407,8 @@ const sameAddress = (a: string, b: string) => {
  * presses only (`pressesOnly`), on the page's top origin and at the host and path the last marker
  * check read (`page`), never the state just acted in nor one acted in that came back
  * (`returnedTo`), taken in the order this login takes states of one look (`ranked`), so a route
- * that holds one takes only its own; the first whose control shows, one match on its recorded
- * origin, at its recorded page's host and path. With no address read, none.
+ * that holds one there, even that one, takes only its own; the first whose control shows, one
+ * match on its recorded origin, at its recorded page's host and path. With no address read, none.
  */
 const byControl = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -419,17 +419,14 @@ const byControl = <E extends YieldableError, V extends string, L extends Autofil
   Effect.gen(function* () {
     const { page } = run;
     if (fingerprint.boxes.length > 0 || page === undefined) return undefined;
+    // The route's own state here counts even when just acted in or come back, so the login never
+    // goes on from it along another login's route.
+    const here = (state: StateEntry) =>
+      state.fingerprint.top === fingerprint.top && pressesOnly(run, state) && sameAddress(page, state.step.page);
     const pressing: StateEntry[] = [];
     for (const state of run.input.library.states)
-      if (
-        state !== skip &&
-        state.fingerprint.top === fingerprint.top &&
-        pressesOnly(run, state) &&
-        sameAddress(page, state.step.page) &&
-        !(yield* returnedTo(run, state))
-      )
-        pressing.push(state);
-    for (const state of ranked(run, pressing, (state) => pressing.includes(state), next)) {
+      if (state !== skip && here(state) && !(yield* returnedTo(run, state))) pressing.push(state);
+    for (const state of ranked(run, pressing, here, next)) {
       const inspection = yield* shownOn(run, state, resolved(run, state.step));
       if (typeof inspection !== "string" && sameAddress(inspection.page, state.step.page))
         return { state, inspection, by: "control" } satisfies Shown;

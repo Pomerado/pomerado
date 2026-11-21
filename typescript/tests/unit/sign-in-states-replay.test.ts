@@ -506,6 +506,13 @@ it("never takes another login's state by its control where the login's own state
   const relabeled = scriptedSite({ start: { ...both, labels: ["~"], buttons: ["#sign-in"] }, ...toSignIn }, (_at, clicked) => storefrontNext[clicked]);
   expect(await replay(relabeled, twoStorefronts, { choices: { states: route } })).toMatchObject({ reason: "unknown_state" });
   expect(relabeled.clicks).toEqual([]);
+  // The login's own state there was just pressed, and the page changed to show the other's control.
+  const changed: Screen = { path: "/", boxes: [], buttons: ["#sign-in"], texts: ["pick a store"], labels: ["~"] };
+  const pressed = scriptedSite({ start: both, changed, ...toSignIn }, (_at, clicked) =>
+    clicked === "#log-in" ? "changed" : storefrontNext[clicked],
+  );
+  expect(await replay(pressed, twoStorefronts, { choices: { states: route } })).toMatchObject({ reason: "unknown_state" });
+  expect(pressed.clicks).toEqual(["#log-in"]);
 });
 
 it("tells, at a state no one knows, its shape and the stored ones it was told from, value-free", async () => {
