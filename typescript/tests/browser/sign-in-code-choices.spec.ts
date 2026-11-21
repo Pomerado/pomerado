@@ -35,13 +35,22 @@ const code = ["seven", "three", "kite"];
 /**
  * The code screen: the grid of `names`, as checkboxes or as buttons, and an Authenticate button
  * that a ticked box enables, unless it stays disabled (`stuck`) or a banner covers it (`covered`).
+ * The first tick may have the page cover the grid with an overlay (`cover`), also hiding the dialog
+ * from the accessibility tree (`hide`), or disable every box (`disable`).
  */
 const gridPage = ({
   names = choices,
   buttons = false,
   stuck = false,
   covered = false,
-}: { names?: readonly string[]; buttons?: boolean; stuck?: boolean; covered?: boolean } = {}) =>
+  afterTick,
+}: {
+  names?: readonly string[];
+  buttons?: boolean;
+  stuck?: boolean;
+  covered?: boolean;
+  afterTick?: "cover" | "hide" | "disable";
+} = {}) =>
   `<style>.tile { position: absolute; opacity: 0; width: 1px; height: 1px; } #otp-choices li { display: inline-block; }
 #authenticate { position: fixed; left: 0; bottom: 0; width: 160px; height: 40px; }
 #banner { position: fixed; left: 0; bottom: 0; width: 100%; height: 80px; z-index: 10; background: #fff; }</style>
@@ -63,8 +72,16 @@ ${covered ? '<div id="banner">This site uses cookies</div>' : ""}
 <script>
 const tiles = [...document.querySelectorAll(".tile")];
 const authenticate = document.getElementById("authenticate");
+let struck = false;
 for (const tile of tiles)
-  tile.addEventListener("change", () => { authenticate.disabled = ${stuck ? "true" : "!tiles.some((each) => each.checked)"}; });
+  tile.addEventListener("change", () => {
+    authenticate.disabled = ${stuck ? "true" : "!tiles.some((each) => each.checked)"};
+    if (struck || ${JSON.stringify(afterTick ?? "")} === "") return;
+    struck = true;
+    if (${JSON.stringify(afterTick)} === "disable") for (const each of tiles) each.disabled = true;
+    else document.body.insertAdjacentHTML("beforeend", '<div id="overlay" style="position: fixed; inset: 0; z-index: 20; background: #0008"></div>');
+    if (${JSON.stringify(afterTick)} === "hide") document.querySelector('[role="dialog"]').setAttribute("aria-hidden", "true");
+  });
 </script>`;
 const grid = gridPage();
 
@@ -242,6 +259,22 @@ test("a choice step whose submit stays disabled, or whose click a banner catches
   await expectUnticked(page);
 });
 
+test("a choice step whose page covers, hides or disables the grid after its first tick still leaves no box ticked", async ({
+  page,
+}) => {
+  for (const afterTick of ["cover", "hide", "disable"] as const) {
+    await page.unrouteAll();
+    const { report } = await fillChoices(page, await codeScreen(page, { afterTick }));
+    expect(report).toMatchObject({ outcome: "filled", submit: "not_attempted" });
+    // The page's modal goes away, so the snapshot reads the grid again.
+    await page.evaluate(() => {
+      document.getElementById("overlay")?.remove();
+      document.querySelector('[role="dialog"]')?.removeAttribute("aria-hidden");
+    });
+    await expectUnticked(page);
+  }
+});
+
 test("a grid whose choices are named in more than one word, or that holds a box to remember the device, is no code's choices", async ({
   page,
 }) => {
@@ -250,6 +283,9 @@ test("a grid whose choices are named in more than one word, or that holds a box 
     ["x-ray", "kite", "seven", "three"],
     ["10", "kite", "seven", "three"],
     ["seven", "three", "kite", "Remember this device"],
+    // Choices some code could never pick: two of one name, or a digit beside its word.
+    ["kite", "Kite", "seven", "three"],
+    ["3", "three", "seven", "kite"],
   ]) {
     await page.unrouteAll();
     expect(await inspectChoices(await codeScreen(page, { names }))).toMatchObject({
