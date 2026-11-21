@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Effect } from "effect";
 import type { YieldableError } from "effect/Cause";
-import type { SignInMethodChoice } from "../destinations/autofill-contracts.js";
+import { choicePicks, type SignInMethodChoice } from "../destinations/autofill-contracts.js";
 import type { FailureContextValue } from "./failure-detail.js";
 import type { InputAsker, InputRequest, Question, ValidAnswers } from "./input-request.js";
 import {
@@ -43,9 +43,12 @@ const promptLimit = 2_000;
 const cutTo = (text: string, room: number) =>
   text.length <= room ? text : `${text.slice(0, room - 1).replace(/[\uD800-\uDBFF]$/u, "")}…`;
 
-/** A code screen's code fields when it has several, and whether the last answer did not fit them. */
+/**
+ * A code screen's code fields when it has several, or the names of the choices it has the code
+ * picked from, and whether the last answer did not fit them.
+ */
 interface CodeBoxes {
-  readonly count: number;
+  readonly count: number | readonly string[];
   readonly misfit: boolean;
 }
 
@@ -63,15 +66,23 @@ const codePrompt = (
   boxes: CodeBoxes | undefined,
 ) => {
   const misfit = boxes?.misfit === true;
-  const said = misfit
-    ? `That answer didn't fit the sign-in screen's ${boxes.count}-character code boxes. Nothing was typed, so the website's code still works.`
-    : notice;
+  const count = boxes?.count;
+  // A screen that has the code picked from named choices lists them each time it asks.
+  const choices =
+    count === undefined || typeof count === "number"
+      ? ""
+      : ` The sign-in screen takes the code as a pick of these choices, so enter the ones your code shows: ${count.join(", ")}.`;
+  const said = !misfit
+    ? notice
+    : choices === ""
+      ? `That answer didn't fit the sign-in screen's ${String(count)}-character code boxes. Nothing was typed, so the website's code still works.`
+      : "That answer didn't match the sign-in screen's choices one for one, so nothing was picked and the website's code still works.";
   const lead = said === undefined ? "" : `${said} `;
   const newest = notice === undefined || misfit ? "" : "newest ";
   const end =
-    boxes === undefined || misfit
-      ? ""
-      : ` The sign-in screen takes a ${boxes.count}-character code, one character per box.`;
+    typeof count !== "number" || misfit
+      ? choices
+      : ` The sign-in screen takes a ${count}-character code, one character per box.`;
   if (instruction === undefined)
     return `${lead}Enter the ${newest}sign-in code ${site} sent you.${end}`;
   const opening = `${lead}${site} shows this on its sign-in screen: “`;
@@ -223,11 +234,13 @@ const answerQuestion = (site: string, shown: ShownAnswerField | undefined): Ques
 
 /**
  * What the inspection read of a security answer's field: its question and its own words. A code
- * field's `questionText` is the screen's own instruction for the code.
+ * field's `questionText` is the screen's own instruction for the code, and its `codeChoices` the
+ * names of the choices the screen has the code picked from.
  */
 export interface ShownAnswerField {
   readonly questionText?: string | undefined;
   readonly questionUnread?: true | undefined;
+  readonly codeChoices?: readonly string[] | undefined;
   readonly label: string | null;
   readonly ariaLabel: string | null;
   readonly placeholder: string | null;
@@ -249,9 +262,19 @@ export const bareCode = (code: string) => code.replaceAll(/[\s-]/gu, "");
 export const fitsCodeBoxes = (code: string, boxes: number) =>
   Array.from(bareCode(code)).length === boxes;
 
-/** Whether a kept code answer does not fill its screen's code fields one character each. */
-const misfitCode = (kept: { readonly value: string } | undefined, codeBoxes?: number) =>
-  kept !== undefined && codeBoxes !== undefined && !fitsCodeBoxes(kept.value, codeBoxes);
+/**
+ * Whether a kept code answer does not fill its screen's code fields one character each, or does
+ * not name its screen's choices one for one (`choicePicks`).
+ */
+const misfitCode = (
+  kept: { readonly value: string } | undefined,
+  codeBoxes?: number | readonly string[],
+) =>
+  kept !== undefined &&
+  codeBoxes !== undefined &&
+  (typeof codeBoxes === "number"
+    ? !fitsCodeBoxes(kept.value, codeBoxes)
+    : choicePicks(kept.value, codeBoxes) === undefined);
 
 /**
  * Why a step of several code fields got no code: the code the owner or the host gave does not
@@ -264,8 +287,9 @@ export const codeDoesNotFit = "code_does_not_fit_boxes";
  * Asks the owner, in place, for a value the login does not hold, as the same `system` source as
  * every login ask, and registers the answer with the broker. An answer the field cannot take is
  * asked again, twice at most: for a code, also one that does not fill its screen's code fields one
- * character each (`codeBoxes`), whose third ends the step unanswered (`codeDoesNotFit`); such a
- * question names the code's length, and is asked again saying the answer did not fit. An
+ * character each (`codeBoxes`), or does not name the screen's choices one for one, whose third
+ * ends the step unanswered (`codeDoesNotFit`); such a question names the code's length or lists
+ * the choices, and is asked again saying the answer did not fit. An
  * identifier, date of birth or ZIP is kept for the attempt (`given`), and a host's save offer
  * (`saveOffer`) hears the answers; a code is not kept.
  */
@@ -309,8 +333,11 @@ export const makeLoginFieldAsk = <E extends YieldableError>(dependencies: {
     notice?: string,
     offerSave = false,
     attempt = 0,
-    /** A code's screen's code fields, when it has several, such as one-character boxes. */
-    codeBoxes?: number,
+    /**
+     * A code's screen's code fields, when it has several, such as one-character boxes, or the
+     * names of the choices it has the code picked from (`choicePicks`).
+     */
+    codeBoxes?: number | readonly string[],
     /** A code screen's own instruction for the code, as the host read it (`codeInstruction`). */
     instruction?: string,
     /** Whether the last answer did not fit `codeBoxes`, so the code is asked again saying so. */
