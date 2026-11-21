@@ -1,6 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
 import { Effect } from "effect";
-import type { AutofillStepReport } from "../../src/destinations/autofill-step.js";
+import { resubmitAutofillStep, fillAutofillStep } from "../../src/destinations/autofill-fill.js";
+import {
+  inspectAutofillStep,
+  type AutofillInspection,
+  type AutofillStep,
+  type AutofillStepReport,
+} from "../../src/destinations/autofill-step.js";
 import { localSignInLogin, makeSignInBrowser } from "../../src/standalone/authentication.js";
 import { makeInputAsker } from "../../src/inputs/callback.js";
 import { makeRunSecrets } from "../../src/inputs/secrets.js";
@@ -26,26 +32,41 @@ const picture = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAA
 const key = (name: string) => `t${choices.indexOf(name) + 10}`;
 const code = ["seven", "three", "kite"];
 
-const grid = `<style>.tile { position: absolute; opacity: 0; width: 1px; height: 1px; }</style>
+/**
+ * The code screen: the grid of `names`, as checkboxes or as buttons, and an Authenticate button
+ * that a ticked box enables, unless it stays disabled (`stuck`) or a banner covers it (`covered`).
+ */
+const gridPage = ({
+  names = choices,
+  buttons = false,
+  stuck = false,
+  covered = false,
+}: { names?: readonly string[]; buttons?: boolean; stuck?: boolean; covered?: boolean } = {}) =>
+  `<style>.tile { position: absolute; opacity: 0; width: 1px; height: 1px; } #otp-choices li { display: inline-block; }
+#authenticate { position: fixed; left: 0; bottom: 0; width: 160px; height: 40px; }
+#banner { position: fixed; left: 0; bottom: 0; width: 100%; height: 80px; z-index: 10; background: #fff; }</style>
 <div role="dialog" aria-labelledby="title">
 <h3 id="title">Enter your one-time password</h3>
 <p>Select the numbers and pictures in the one-time password we emailed you. They can be selected in any order.</p>
 <form method="post" action="/verify-code">
-<ul id="otp-choices">${choices
-  .map(
-    (name) =>
-      `<li><input type="checkbox" class="tile" id="c-${name}" name="otp" value="${key(name)}"><label for="c-${name}"><img alt="${name}" width="40" height="40" src="${picture}"></label></li>`,
+<ul id="otp-choices">${names
+  .map((name, index) =>
+    buttons
+      ? `<li><button type="button" aria-label="${name}"><img alt="" width="40" height="40" src="${picture}"></button></li>`
+      : `<li><input type="checkbox" class="tile" id="c-${index}" name="otp" value="${key(name)}"><label for="c-${index}"><img alt="${name}" width="40" height="40" src="${picture}"></label></li>`,
   )
   .join("")}</ul>
 <button id="authenticate" disabled>Authenticate</button>
 </form>
 </div>
+${covered ? '<div id="banner">This site uses cookies</div>' : ""}
 <script>
 const tiles = [...document.querySelectorAll(".tile")];
 const authenticate = document.getElementById("authenticate");
 for (const tile of tiles)
-  tile.addEventListener("change", () => { authenticate.disabled = !tiles.some((each) => each.checked); });
+  tile.addEventListener("change", () => { authenticate.disabled = ${stuck ? "true" : "!tiles.some((each) => each.checked)"}; });
 </script>`;
+const grid = gridPage();
 
 /** The site: a sign-in form, then the code screen, which keeps each set of choices it gets. */
 const serve = async (page: Page) => {
@@ -157,4 +178,92 @@ test("a run asks for a code picked from named checkboxes, asks again for an answ
     );
   });
   expect(leaks).toEqual([]);
+});
+
+const choiceStep: AutofillStep = {
+  fields: [{ selector: "#otp-choices", slot: "code" }],
+  submit: "#authenticate",
+};
+
+/** The code screen as `gridPage` draws it, opened on its own, with the host over the page. */
+const codeScreen = async (page: Page, options?: Parameters<typeof gridPage>[0]) => {
+  await page.route(`${site}/**`, (route) =>
+    route.fulfill({ contentType: "text/html", body: gridPage(options) }),
+  );
+  await page.goto(`${site}/verify`);
+  return hostPage(page);
+};
+
+const inspectChoices = (browser: Awaited<ReturnType<typeof hostPage>>) =>
+  Effect.runPromise(
+    inspectAutofillStep({ step: choiceStep, page: browser, siteOrigin: site, authenticationOrigins: [] }),
+  );
+
+const fillChoices = async (page: Page, browser: Awaited<ReturnType<typeof hostPage>>) => {
+  const inspection = (await inspectChoices(browser)) as AutofillInspection;
+  expect(inspection.screen.fields[0]?.codeChoices).toEqual(choices);
+  const report = await Effect.runPromise(
+    fillAutofillStep({
+      step: choiceStep,
+      values: ["7 3 kite"],
+      inspection,
+      page: browser,
+      keyboard: (await hostKeyboard(page)).keyboard,
+      settleMs: 500,
+    }),
+  );
+  return { inspection, report };
+};
+
+/** The page as Guardian's snapshot reads it: the grid still shows, and no choice in it is ticked. */
+const expectUnticked = async (page: Page) => {
+  const snapshot = await page.locator("body").ariaSnapshot();
+  expect(snapshot).toContain('checkbox "seven"');
+  expect(snapshot).not.toContain("[checked]");
+};
+
+test("a choice step whose submit stays disabled, or whose click a banner catches, unticks every choice before it returns, and a click again fills from the code", async ({
+  page,
+}) => {
+  const stuck = await fillChoices(page, await codeScreen(page, { stuck: true }));
+  expect(stuck.report).toMatchObject({ outcome: "filled", submit: "stayed_disabled" });
+  await expectUnticked(page);
+
+  await page.unrouteAll();
+  const browser = await codeScreen(page, { covered: true });
+  const covered = await fillChoices(page, browser);
+  expect(covered.report).toMatchObject({ outcome: "filled", submit: "blocked" });
+  await expectUnticked(page);
+  // The grid holds nothing now, so a click again clicks nothing and the screen is filled again.
+  const again = await Effect.runPromise(
+    resubmitAutofillStep({ step: choiceStep, inspection: covered.inspection, page: browser }),
+  );
+  expect(again).toMatchObject({ outcome: "filled", submit: "not_attempted" });
+  await expectUnticked(page);
+});
+
+test("a grid whose choices are named in more than one word, or that holds a box to remember the device, is no code's choices", async ({
+  page,
+}) => {
+  for (const names of [
+    ["hot air balloon", "kite", "seven", "three"],
+    ["x-ray", "kite", "seven", "three"],
+    ["10", "kite", "seven", "three"],
+    ["seven", "three", "kite", "Remember this device"],
+  ]) {
+    await page.unrouteAll();
+    expect(await inspectChoices(await codeScreen(page, { names }))).toMatchObject({
+      outcome: "refused",
+      reason: "not_editable",
+      target: 0,
+    });
+  }
+});
+
+test("a grid of buttons is no code's choices", async ({ page }) => {
+  expect(await inspectChoices(await codeScreen(page, { buttons: true }))).toMatchObject({
+    outcome: "refused",
+    reason: "not_editable",
+    target: 0,
+  });
 });
