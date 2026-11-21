@@ -31,6 +31,7 @@ import {
 } from "../destinations/autofill-recipe.js";
 import type { AutofillLogin } from "./autofill-values.js";
 import {
+  type CodeRetry,
   emptyReplayFields,
   refillRefused,
   noteMaySent,
@@ -53,7 +54,7 @@ const recordFilledValues = <E extends YieldableError, V extends string, L extend
   session: ReplaySession<E, V, L>,
   step: AutofillStep,
   filled: readonly string[],
-  codeAgain: "rejected" | undefined,
+  codeAgain: CodeRetry | undefined,
 ) => {
   const { retryState, input } = session;
   for (const [index, field] of step.fields.entries()) {
@@ -64,37 +65,43 @@ const recordFilledValues = <E extends YieldableError, V extends string, L extend
         logicalRejectedField(field.slot, input.credentials?.primaryIdentifierKind)
       ] = value;
   }
-  if (codeAgain === "rejected" && step.fields.some((field) => field.slot === "code"))
+  if (codeAgain !== undefined && step.fields.some((field) => field.slot === "code"))
     retryState.codeAttempts.current += 1;
 };
 /**
- * A code the step could not get after the site refused one ends as that refusal, unless the host
- * could not read a code it keeps for the login at all (`credentialUnavailable`), which is its own.
+ * A code the step could not get after the site refused one, or after one that didn't sign in, ends
+ * as that refusal, unless the host could not read a code it keeps for the login at all
+ * (`credentialUnavailable`), which is its own.
  */
-const codeRejectedAgain = (codeAgain: "rejected" | undefined, unanswered: Unanswered) =>
-  codeAgain === "rejected" && unanswered.cause !== credentialUnavailable;
+const codeRejectedAgain = (codeAgain: CodeRetry | undefined, unanswered: Unanswered) =>
+  codeAgain !== undefined && unanswered.cause !== credentialUnavailable;
 /** Whether a step fills a code. */
 const takesCode = (step: Pick<AutofillStep, "fields">) =>
   step.fields.some((field) => field.slot === "code");
 /**
- * Admission preserves each replay's unchanged-secret cap and the sign-in's code correction cap.
- * Once a recorded screen's planned code refill went out (`codeRefilled`), a code screen that came
- * back takes no third code unless the site showed it refused the code (`explicitCodeRejection`).
+ * Admission preserves each replay's unchanged-secret cap and the sign-in's code correction cap,
+ * which a code that didn't sign in (`returned`) shares with one the site refused. Once a recorded
+ * screen's planned code refill went out (`codeRefilled`), a code screen that came back takes no
+ * third code unless the site showed it refused the code (`explicitCodeRejection`).
  */
 const retryRefusal = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   session: ReplaySession<E, V, L>,
   asked: AutofillStep,
-  codeAgain: "rejected" | undefined,
+  codeAgain: CodeRetry | undefined,
   explicitCodeRejection: boolean,
   corrected: ReadonlySet<AutofillSlot>,
   planned: readonly AutofillSecret[],
   inspection: AutofillInspection,
 ) => {
   const { retryState, sent, progress, state } = session;
-  if (codeAgain === "rejected" && takesCode(asked) && retryState.codeAttempts.current >= 2)
+  if (codeAgain !== undefined && takesCode(asked) && retryState.codeAttempts.current >= 2)
+    return "code_rejected" as const;
+  // A code that didn't sign in is asked again within the owner's two re-asks, as a refused one is
+  // (`askedCode`), whoever gives it.
+  if (codeAgain === "returned" && takesCode(asked) && retryState.codeRequests.current >= 2)
     return "code_rejected" as const;
   if (
-    codeAgain === "rejected" &&
+    codeAgain !== undefined &&
     takesCode(asked) &&
     progress.codeRefilled &&
     !explicitCodeRejection
@@ -214,13 +221,14 @@ const closedInPlace = <E extends YieldableError, V extends string, L extends Aut
  * One observed screen: admitted by the host, filled and submitted. Why it did not complete, or
  * undefined. `planned` is the recorded screen's `refills`, and `next` the recorded screen after it.
  * A code screen that closed in place counts as sent only once the marker or `next` shows
- * (`closedInPlace`).
+ * (`closedInPlace`). A code asked again after one that didn't sign in (`returned`) may be that
+ * same code: only codes the site refused are ruled out for it.
  */
 export const runReplayStep = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   session: ReplaySession<E, V, L>,
   asked: AutofillStep,
   inspection: AutofillInspection,
-  codeAgain?: "rejected",
+  codeAgain?: CodeRetry,
   explicitCodeRejection = false,
   corrected: ReadonlySet<AutofillSlot> = new Set(),
   planned: readonly AutofillSecret[] = [],
@@ -282,6 +290,8 @@ export const runReplayStep = <E extends YieldableError, V extends string, L exte
     // A code box on a recorded emailed link's screen (`linkCodeScreen`).
     const onLinkScreen =
       progress.linkCodeScreen !== undefined && codeScreenOf(inspection) === progress.linkCodeScreen;
+    const returned = codeAgain === "returned" && takesCode(asked);
+    if (returned) codeRequests.current += 1;
     const resolved = yield* valuesFor(
       input,
       values,
@@ -289,7 +299,7 @@ export const runReplayStep = <E extends YieldableError, V extends string, L exte
       asked,
       codeAgain,
       {
-        rejectedCodes,
+        rejectedCodes: returned ? new Set(retryState.rejectedValues.code ?? []) : rejectedCodes,
         codeRequests,
         rejectedValues: retryState.rejectedValues,
         correctionRequests: retryState.correctionRequests,
@@ -297,7 +307,7 @@ export const runReplayStep = <E extends YieldableError, V extends string, L exte
       inspection.screen.fields,
       // A code screen the recipe never recorded that refused a code may want one the site sent
       // rather than the host's generator's, so its retries never spend a try on that.
-      !onLinkScreen && (codeAgain !== "rejected" || progress.unrecordedCodeScreen === undefined),
+      !onLinkScreen && (codeAgain === undefined || progress.unrecordedCodeScreen === undefined),
     );
     if (resolved instanceof Unanswered)
       if (corrected.size > 0) return "extra_rejected";
@@ -372,7 +382,7 @@ export const correctReplayExtras = <
   runStep: (
     asked: AutofillStep,
     inspection: AutofillInspection,
-    codeAgain?: "rejected",
+    codeAgain?: CodeRetry,
     explicitCodeRejection?: boolean,
     corrected?: ReadonlySet<AutofillSlot>,
   ) => ReturnType<typeof runReplayStep<E, V, L>>,

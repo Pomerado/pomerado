@@ -1393,8 +1393,9 @@ const fillScreen = (input: FillInput, progress: FillProgress): Effect.Effect<Aut
   });
 
 /**
- * Clicks again the submit of a step whose fill the host reported `blocked`, typing nothing: the
- * fields still hold what that fill typed. It clicks the step's `dismiss` first, when the page shows
+ * Clicks again the submit of a step whose fill the host reported `blocked`, or presses its submit
+ * key in its last field as a fill of a keyed step does, typing nothing: the fields still hold what
+ * that fill typed. It clicks the step's `dismiss` first, when the page shows
  * it, and refuses with nothing clicked when it is no covering notice's own control
  * (`dismissNotice`), or a control is gone or moved where the host refuses it. A dismiss that
  * emptied the fields before its click left nothing typed to send: the first field the fill typed
@@ -1413,7 +1414,7 @@ const fillScreen = (input: FillInput, progress: FillProgress): Effect.Effect<Aut
 export const resubmitAutofillStep = (input: CallInput): Effect.Effect<AutofillStepReport> =>
   Effect.gen(function* () {
     const { step } = input;
-    if (step.submit === undefined) return refused("not_found", "submit");
+    if (!hostSubmits(step)) return refused("not_found", "submit");
     const crossing = crossingSelector(step);
     if (crossing !== undefined)
       return withCheck(refused("selector_unsupported", crossing), "selector_unsupported");

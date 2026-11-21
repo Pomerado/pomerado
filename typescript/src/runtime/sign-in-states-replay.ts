@@ -29,6 +29,7 @@ import {
   type StateFingerprint,
 } from "../destinations/sign-in-states.js";
 import type { AutofillSignInState } from "./autofill-state.js";
+import { maySend } from "../destinations/autofill-refusal.js";
 import { recordedRejections } from "./autofill-rejection.js";
 import { approvalNumber, openPastedLink, withApprovalNumber } from "./autofill-replay-approval.js";
 import { settleCarried } from "./autofill-replay-fill.js";
@@ -39,6 +40,7 @@ import {
   type AutofillReplayInput,
   type AutofillReplayOutcome,
   isTwoFactorOption,
+  stepDiagnostic,
   valuesNeeded,
 } from "./autofill-replay-steps.js";
 import { admitScreen, noteExactSent } from "./autofill-replay-workspace.js";
@@ -53,13 +55,15 @@ import { workspaceHost } from "./workspace-origin.js";
 
 /**
  * How long a press waits for the page to hold still, and at most, when the state it is in may
- * still grow into another known state.
+ * still grow into another known state; and how long a page that was to send what was typed itself
+ * gets to move before Enter is pressed there (`enterMs`, `enterAfterTyping`).
  */
 export interface StatesQuiet {
   readonly quietMs: number;
   readonly capMs: number;
+  readonly enterMs?: number | undefined;
 }
-export const statesQuiet: StatesQuiet = { quietMs: 1_000, capMs: 15_000 };
+export const statesQuiet = { quietMs: 1_000, capMs: 15_000, enterMs: 3_000 } satisfies StatesQuiet;
 /** How many states one replay acts in at most. */
 export const maximumStateVisits = 12;
 
@@ -772,15 +776,22 @@ const markedNow = <E extends YieldableError, V extends string, L extends Autofil
   run: Run<E, V, L>,
 ) =>
   Effect.gen(function* () {
-    const { replay, input } = run;
-    const acted = new Set(run.visited);
-    const steps = replay
-      .resolvedSteps()
-      .filter((_, index) => acted.has(input.library.states[index]?.key ?? ""));
-    const marked = yield* recordedRejections(input.hooks, steps, input.correlation);
-    if (marked !== "unavailable" && marked.length > 0) replay.recordRejected(marked);
+    const marked = yield* markersShown(run);
+    if (marked !== "unavailable" && marked.length > 0) run.replay.recordRejected(marked);
     return marked;
   });
+
+/** The recorded error markers that show now of the states this replay acted in, read alone. */
+const markersShown = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+) => {
+  const { replay, input } = run;
+  const acted = new Set(run.visited);
+  const steps = replay
+    .resolvedSteps()
+    .filter((_, index) => acted.has(input.library.states[index]?.key ?? ""));
+  return recordedRejections(input.hooks, steps, input.correlation);
+};
 
 /**
  * Why a state acted in shows again with nothing to explain it: its password or identifier went out
@@ -1297,7 +1308,10 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
         run.visited.push(state.key);
         continue;
       }
-      if (!hostSubmits(full)) return acted();
+      if (!hostSubmits(full)) {
+        if (groups.length > 0) yield* enterAfterTyping(run, state, full, reached, false);
+        return acted();
+      }
       const method = step.methods === undefined ? undefined : yield* methodFor(run, step);
       const press: AutofillStep = {
         fields: [],
@@ -1353,10 +1367,68 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
   });
 
 /**
+ * After typing a state that names no submit nor submit key, whose page was to send what was typed
+ * itself, as a code box that sends on its last digit: once the page held, `enterMs` from the
+ * typing, the look it had then (`stateAfter`), with the state's boxes and every box it typed still
+ * holding something, and no recorded error marker of a state acted in shows, Enter in the last
+ * field, once, by the host's click again, which types nothing (`resubmit`), as a keyed step's
+ * would. A page that moved, or could not be read, gets none, at once. Never where the host
+ * refuses the key, as for a field in no form, nor where that form shows a submit control, nor on
+ * a host with no click again. A press that may have gone out sends what was typed, and after a
+ * code typed again (`retry`) counts as one try of the code retry bound, as a submit would. The
+ * replay then waits for the next state as after any typing.
+ */
+const enterAfterTyping = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  state: StateEntry,
+  step: AutofillStep,
+  reached: ObservedState,
+  retry: boolean,
+) =>
+  Effect.gen(function* () {
+    const { replay, input } = run;
+    const { resubmit } = input.hooks;
+    if (resubmit === undefined || hostSubmits(step) || step.fields.length === 0) return;
+    const since = yield* now;
+    const typed = (read: ObservedState) => read.boxes.filter((box) => !box.empty).length;
+    const first = yield* input.observe;
+    if (first === undefined) return;
+    const look = stateAfter(reached, first);
+    if (!sameBoxes(look, reached.fingerprint) || typed(first) === 0) return;
+    for (;;) {
+      const marked = yield* markersShown(run);
+      if (marked === "unavailable" || marked.length > 0) return;
+      if ((yield* now) - since >= (run.quiet.enterMs ?? statesQuiet.enterMs)) break;
+      yield* pause(run);
+      const read = yield* input.observe;
+      if (read === undefined || !sameFingerprint(stateAfter(reached, read), look) || typed(read) < typed(first))
+        return;
+    }
+    const keyed: AutofillStep = {
+      fields: step.fields,
+      ...(step.popup === undefined ? {} : { popup: step.popup }),
+      submitKey: "Enter",
+    };
+    const here = yield* shownOn(run, state, keyed);
+    if (typeof here === "string" || (here.screen.submitKey?.submitControls ?? 0) > 0) return;
+    yield* input.emit({ stage: "retried", reason: "enter_after_typing" });
+    const pressed = yield* resubmit({ step: keyed, inspection: here });
+    yield* input.emit(stepDiagnostic(keyed, pressed));
+    if (!maySend(pressed)) return;
+    settleCarried(replay);
+    replay.progress.anythingSent = true;
+    input.sent.current = true;
+    noteExactSent(replay, state.step, step, here);
+    if (retry && step.fields.some((field) => field.slot === "code")) replay.codeAttempts.current += 1;
+  });
+
+/**
  * What the state just acted in, showing again, asks (`Again`): its press once more, typing nothing;
  * a new code from the caller in its code boxes, with its submit, bounded as the recipe replay bounds
- * a refused code's retries (`runStep` with `rejected`); or the emailed link the site's answer
- * named, pasted and opened as an approval's (`openPastedLink`), once per sign-in.
+ * a refused code's retries (`runStep` with `rejected`), or, where the site showed no refusal, as a
+ * code that didn't sign in (`returned`), which is never counted refused, so the same code may go
+ * in again, and a state with no submit gets its Enter (`enterAfterTyping`); or the emailed link the
+ * site's answer named, pasted and opened as an approval's (`openPastedLink`), once per sign-in.
  */
 const actAgain = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -1381,12 +1453,13 @@ const actAgain = <E extends YieldableError, V extends string, L extends Autofill
       const opened = yield* openPastedLink(run.as, here);
       return opened === "opened" ? { acted: state, reached: last.reached } : stopped(run, opened);
     }
-    if (again.again === "code") replay.recordRejected(["code"]);
+    if (again.again === "code" && again.explicit) replay.recordRejected(["code"]);
     const failed =
       again.again === "code"
-        ? yield* replay.runStep(step, here, "rejected", again.explicit)
+        ? yield* replay.runStep(step, here, again.explicit ? "rejected" : "returned", again.explicit)
         : yield* replay.runStep(step, here);
     if (failed !== undefined) return stopped(run, failed);
+    if (again.again === "code") yield* enterAfterTyping(run, state, step, last.reached, true);
     return { acted: state, reached: last.reached } satisfies Acted;
   });
 
