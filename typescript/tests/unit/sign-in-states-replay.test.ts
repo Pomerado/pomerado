@@ -24,7 +24,7 @@ import {
 import { makeInputAsker } from "../../src/inputs/callback.js";
 import type { AutofillHooks } from "../../src/runtime/autofill-state.js";
 import type { InputAnswers } from "../../src/runtime/input-request.js";
-import { replaySignInStates } from "../../src/runtime/sign-in-states-replay.js";
+import { replaySignInStates, type SignInStatesStop } from "../../src/runtime/sign-in-states-replay.js";
 
 // A sign-in replayed from a library of states on a scripted site: the page is read as a state
 // after each action, matched to a known one and handled there.
@@ -206,6 +206,7 @@ const replay = (
     readonly valueFree?: boolean;
     readonly siteAnswer?: "link" | "refused";
     readonly stepWaitMs?: number;
+    readonly from?: SignInStatesStop;
   } = {},
 ) => {
   const asked: string[] = [];
@@ -252,6 +253,7 @@ const replay = (
         timing: { stepWaitMs: options.stepWaitMs ?? 300, pollMs: 2 },
         quiet: { quietMs: 20, capMs: 120 },
         sent: { current: false },
+        ...(options.from === undefined ? {} : { from: options.from }),
       }),
     ),
   ).then((outcome) => {
@@ -662,6 +664,114 @@ it("verifies the marker in full before a page it does not know, sent or not", as
       alreadySignedIn: start === landing,
     });
   }
+});
+
+/** A site whose sign-in opens from a home page's button, and the opens of its entry URL. */
+const openerSite = () => {
+  const home: Screen = { path: "/", boxes: [], buttons: ["#log-in"], texts: ["welcome"] };
+  const site = scriptedSite({ start: home, email: emailScreen, password: passwordScreen }, (at, clicked) =>
+    at === "start" && clicked === "#log-in"
+      ? "email"
+      : at === "email" && clicked === "#continue"
+        ? "password"
+        : at === "password" && clicked === "#go"
+          ? "home"
+          : undefined,
+  );
+  const opened: string[] = [];
+  const hooks = {
+    ...site.hooks,
+    open: (url: string) => Effect.zipRight(Effect.sync(() => opened.push(url)), site.hooks.open(url)),
+  };
+  const library = libraryOf([
+    { fingerprint: arrival(home), step: stepAt("/", [], "#log-in") },
+    { fingerprint: arrival(emailScreen), step: stepAt("/sign-in", [email], "#continue") },
+    { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") },
+  ]);
+  return { site: { ...site, hooks }, opened, library };
+};
+
+it("goes on with the login from where a value-free check stopped, with no open and no press again", async () => {
+  const { site, opened, library } = openerSite();
+  const checked = await replay(site, library, { valueFree: true });
+  expect(checked).toMatchObject({ outcome: "unsent", reason: "values_needed" });
+  expect(site.fills).toEqual([]);
+  expect(site.clicks).toEqual(["#log-in"]);
+  const from = checked.stop?.();
+  expect(from?.state).toBe(checked.visited.at(-1));
+  if (from === undefined) throw new Error("no stop");
+  const ended = await replay(site, library, { from });
+  expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false, fromStop: { continued: true } });
+  expect(opened).toEqual([`${origin}/sign-in`]);
+  expect(site.clicks).toEqual(["#log-in", "#continue", "#go"]);
+  expect(site.fills).toEqual(["email", "password"]);
+  // The states it acted in count from the check's, the opener once.
+  expect(ended.visited).toEqual(library.states.map((state) => state.key));
+  expect(ended.choices?.states).toEqual(ended.visited);
+});
+
+it("opens the entry URL again when the page changed while the login was read", async () => {
+  const { site, opened, library } = openerSite();
+  const checked = await replay(site, library, { valueFree: true });
+  const from = checked.stop?.();
+  if (from === undefined) throw new Error("no stop");
+  site.site.screen = "start";
+  const ended = await replay(site, library, { from });
+  expect(ended).toMatchObject({ outcome: "signed_in", fromStop: { continued: false, reason: "page_changed" } });
+  expect(opened).toEqual([`${origin}/sign-in`, `${origin}/sign-in`]);
+  expect(site.clicks).toEqual(["#log-in", "#log-in", "#continue", "#go"]);
+  expect(ended.visited).toEqual(library.states.map((state) => state.key));
+  // Its controls gone though the page reads the same, it opens the entry URL again too.
+  const again = openerSite();
+  const stop = (await replay(again.site, again.library, { valueFree: true })).stop?.();
+  if (stop === undefined) throw new Error("no stop");
+  const refused: AutofillRefusal = { outcome: "refused", reason: "not_found", target: 0 };
+  const hidden = { ...again.site, hooks: { ...again.site.hooks, inspect: () => Effect.succeed(refused) } };
+  const unseen = await replay(hidden, again.library, { from: stop, stepWaitMs: 20 });
+  expect(unseen).toMatchObject({ fromStop: { continued: false, reason: "not_found" } });
+  expect(again.opened).toHaveLength(2);
+  expect(again.site.fills).toEqual([]);
+  // The same boxes on another host are no longer the state: it opens the entry URL again.
+  const moved = openerSite();
+  const left = (await replay(moved.site, moved.library, { valueFree: true })).stop?.();
+  if (left === undefined) throw new Error("no stop");
+  const elsewhere = Effect.map(moved.site.observe, (observed) => ({
+    ...observed,
+    fingerprint: { ...observed.fingerprint, top: "https://example-login.test" },
+  }));
+  let looks = 0;
+  const once = Effect.flatMap(Effect.sync(() => ++looks), (look) => (look === 1 ? elsewhere : moved.site.observe));
+  expect(await replay({ ...moved.site, observe: once }, moved.library, { from: left })).toMatchObject({
+    outcome: "signed_in",
+    fromStop: { continued: false, reason: "page_changed" },
+  });
+  expect(moved.opened).toHaveLength(2);
+  expect(moved.site.clicks).toEqual(["#log-in", "#log-in", "#continue", "#go"]);
+});
+
+it("goes on in a first state that needs a value as it would after opening the entry URL", async () => {
+  const site = scriptedSite({ start: emailScreen, password: passwordScreen }, (at, clicked) =>
+    at === "start" && clicked === "#continue" ? "password" : clicked === "#go" ? "home" : undefined,
+  );
+  const library = libraryOf([
+    { fingerprint: arrival(emailScreen), step: stepAt("/sign-in", [email], "#continue") },
+    { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") },
+  ]);
+  const checked = await replay(site, library, { valueFree: true });
+  expect(checked).toMatchObject({ outcome: "unsent", reason: "values_needed", visited: [library.states[0]?.key] });
+  expect(site.clicks).toEqual([]);
+  const from = checked.stop?.();
+  if (from === undefined) throw new Error("no stop");
+  expect(await replay(site, library, { from })).toMatchObject({ outcome: "signed_in", fromStop: { continued: true } });
+  expect(site.fills).toEqual(["email", "password"]);
+  expect(site.clicks).toEqual(["#continue", "#go"]);
+  // A replay with the values hands back no stop, and one given none says nothing of one.
+  const valued = scriptedSite({ start: emailScreen, password: passwordScreen }, (at, clicked) =>
+    at === "start" && clicked === "#continue" ? "password" : "home",
+  );
+  const fresh = await replay(valued, library);
+  expect(fresh.stop).toBeUndefined();
+  expect(fresh).not.toHaveProperty("fromStop");
 });
 
 it("stops a value-free check before a press that has the site send a link", async () => {
