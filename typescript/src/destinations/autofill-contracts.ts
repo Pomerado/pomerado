@@ -104,6 +104,44 @@ export const stepFieldsFit = (fields: readonly object[]) => {
 };
 /** Why a step's fields do not fit (`stepFieldsFit`). */
 export const stepFieldsMessage = `a sign-in step names at most ${maximumStepFields} fields besides its code fields, and at most ${maximumCodeBoxes} code fields, one per box of a split code`;
+
+/** Each digit's word, which a code screen's choice may be named by in place of the digit. */
+export const digitNames = Object.freeze([
+  "zero",
+  "one",
+  "two",
+  "three",
+  "four",
+  "five",
+  "six",
+  "seven",
+  "eight",
+  "nine",
+] as const);
+
+/**
+ * The choices a code names, in its order, among the named choices a code screen has it picked from
+ * (`codeChoices`): each digit is a part, which matches a choice named by the digit or its word
+ * ("3" or "three"), and each run of letters a word, which matches a choice of that name, case
+ * aside. Undefined when the code has no part, a part matches no choice or more than one, or two
+ * parts match the same choice, so nothing is guessed.
+ */
+export const choicePicks = (code: string, choices: readonly string[]) => {
+  const parts = code.normalize("NFKC").toLowerCase().match(/[0-9]|[\p{L}\p{M}]+/gu) ?? [];
+  const picks = parts.map((part) => {
+    const named = choices.filter((choice) => {
+      const name = choice.normalize("NFKC").toLowerCase();
+      return name === part || name === digitNames[Number(part)];
+    });
+    return named.length === 1 ? named[0] : undefined;
+  });
+  return picks.length > 0 &&
+    picks.every((pick) => pick !== undefined) &&
+    new Set(picks).size === picks.length
+    ? picks
+    : undefined;
+};
+
 /**
  * Identifier kinds a field may accept. `private_identifier` is any other identity field a sign-in
  * asks for, such as a national identity number or a PIN that is itself the sign-in identifier,

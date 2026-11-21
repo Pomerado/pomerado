@@ -71,6 +71,23 @@ export interface SignInStatesReplayInput<
   /** The page as a state, as `observeSignInState` reads it. */
   readonly observe: Effect.Effect<ObservedState | undefined, E>;
   readonly quiet?: StatesQuiet | undefined;
+  /**
+   * Where a value-free replay on this browser stopped for the login's values (`stop`), for this
+   * replay with them to go on from: it opens no entry URL when the page still shows that state
+   * (`stillShown`), and otherwise opens it as any replay does. Absent, the replay opens it.
+   */
+  readonly from?: SignInStatesStop | undefined;
+}
+
+/**
+ * Where a value-free replay stopped for the login's values: the states it acted in, the last the
+ * one it stopped in (`state`), and the page as read when it reached the state before, if it acted
+ * in one, which the state's look was told against (`stateAfter`).
+ */
+export interface SignInStatesStop {
+  readonly visited: readonly string[];
+  readonly state: string;
+  readonly before?: ObservedState | undefined;
 }
 
 /**
@@ -80,11 +97,15 @@ export interface SignInStatesReplayInput<
  * and `unknownState`: the state's fingerprint and value-free description, the known state it came
  * from (`after`), whether anything may have been sent (`sent`), and the replay's own sign-in
  * (`signIn`), which a repair on the same browser goes on from: a call, so the outcome itself holds
- * no typed value and logs none.
+ * no typed value and logs none. A value-free replay that stopped in a state it reached, for the
+ * login's values, gives where (`stop`), a call too, as the page it read stays out of the outcome.
+ * A replay given `from` says whether it went on from there (`fromStop`), or why not.
  */
 export type SignInStatesOutcome<V extends string = string> = AutofillReplayOutcome<V> & {
   readonly visited: readonly string[];
   readonly choices?: SignInStatesChoices;
+  readonly stop?: () => SignInStatesStop;
+  readonly fromStop?: { readonly continued: true } | { readonly continued: false; readonly reason: string };
   readonly unknownState?: {
     readonly fingerprint: StateFingerprint;
     readonly description: string;
@@ -1147,6 +1168,32 @@ const actAgain = <E extends YieldableError, V extends string, L extends Autofill
   });
 
 /**
+ * The state a value-free replay stopped in for values (`from`), with the page as read now, when
+ * the page still shows it as that replay told it: the same look after the state before
+ * (`stateAfter`), its top origin included, and its controls shown on its origin (`shownOn`), at
+ * one look; else why not. Never a state that looks like one the replay acted in before it, as a
+ * learned look-alike does (`state_alike`): a page gone back to that state reads the same, and only
+ * `arrive`'s wait tells them apart.
+ */
+const stillShown = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  from: SignInStatesStop,
+) =>
+  Effect.gen(function* () {
+    const { states } = run.input.library;
+    const state = states.find((known) => known.key === from.state);
+    if (state === undefined || from.visited.at(-1) !== from.state) return "state_unknown";
+    const before = from.visited.slice(0, -1);
+    if (states.some((known) => before.includes(known.key) && sameFingerprint(known.fingerprint, state.fingerprint)))
+      return "state_alike";
+    const read = yield* run.input.observe;
+    if (read === undefined) return "page_unread";
+    if (!sameFingerprint(stateAfter(from.before, read), state.fingerprint)) return "page_changed";
+    const shown = yield* shownOn(run, state, resolved(run, state.step));
+    return typeof shown === "string" ? shown : { state, inspection: shown, observed: read };
+  });
+
+/**
  * Replays a sign-in from a library of states on the run's own browser with the host's fill, from
  * the entry URL: it matches the page to a known state, acts there one action at a time, and waits
  * for the next known state, until a signed-in marker verifies the login, a stop rule ends it, or
@@ -1168,7 +1215,12 @@ export const replaySignInStates = <
     const markers = [...picked, ...library.signedIn.filter((marker) => !picked.includes(marker)).reverse()];
     const recipe = signInStatesRecipe(library, input.choices);
     if (recipe === undefined)
-      return { outcome: "unsent", reason: "states_empty", visited: [] } as SignInStatesOutcome<V>;
+      return {
+        outcome: "unsent",
+        reason: "states_empty",
+        visited: [],
+        ...(input.from === undefined ? {} : { fromStop: { continued: false, reason: "states_empty" } }),
+      } as SignInStatesOutcome<V>;
     const as: AutofillReplayInput<E, V, L> = { ...input, recipe };
     const run: Run<E, V, L> = {
       input,
@@ -1180,10 +1232,34 @@ export const replaySignInStates = <
       gone: false,
       answered: new Set(),
     };
-    yield* input.hooks.open(input.entryUrl);
+    const from = input.from === undefined ? undefined : yield* stillShown(run, input.from);
+    if (from === undefined || typeof from === "string") yield* input.hooks.open(input.entryUrl);
+    else run.visited.push(...(input.from?.visited ?? []).slice(0, -1));
+    const ended = yield* walk(run, typeof from === "object" ? from : undefined);
+    return from === undefined
+      ? ended
+      : {
+          ...ended,
+          fromStop: typeof from === "string" ? { continued: false, reason: from } : { continued: true },
+        };
+  });
+
+/**
+ * The replay from the page it is on: each known state it shows in turn, from `first` when given,
+ * as the state the page shows now. A value-free replay that stopped for values in a state it
+ * reached gives where (`stop`).
+ */
+const walk = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  first: (Shown & { readonly observed: ObservedState }) | undefined,
+) =>
+  Effect.gen(function* () {
+    const { input } = run;
     let last: Acted | undefined;
+    let next = first;
     for (;;) {
-      const arrived = yield* arrive(run, last);
+      const arrived = next ?? (yield* arrive(run, last));
+      next = undefined;
       if (isAgain(arrived)) {
         if (last === undefined) return stopped(run, "state_repeated").ended;
         const again = yield* actAgain(run, last, arrived);
@@ -1196,7 +1272,30 @@ export const replaySignInStates = <
       run.visited.push(arrived.state.key);
       yield* input.emit({ stage: "state", state: arrived.state.key });
       const done = yield* actIn(run, arrived, arrived.observed);
-      if ("ended" in done) return done.ended;
+      if ("ended" in done) return withStop(run, done.ended, arrived.state, last);
       last = done;
     }
   });
+
+/**
+ * A value-free replay's stop for values in `state`, the state it reached last, with where it
+ * stopped (`stop`), the page read when it reached the state before kept unless that state's
+ * controls went (`gone`), as `arrive` told `state` from it; any other end as it is.
+ */
+const withStop = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  ended: SignInStatesOutcome<V>,
+  state: StateEntry,
+  last: Acted | undefined,
+): SignInStatesOutcome<V> => {
+  if (
+    !run.replay.valueFree ||
+    ended.outcome === "signed_in" ||
+    ended.reason !== valuesNeeded ||
+    run.visited.at(-1) !== state.key
+  )
+    return ended;
+  const visited = [...run.visited];
+  const before = last === undefined || last.gone === true ? undefined : last.reached;
+  return { ...ended, stop: () => ({ visited, state: state.key, ...(before === undefined ? {} : { before }) }) };
+};

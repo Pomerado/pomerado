@@ -45,7 +45,7 @@ import {
   type CredentialTypingMode,
   type InsertionRefusal,
 } from "./credential-keyboard.js";
-import { DateOfBirthFormat, IdentifierKinds } from "./autofill-contracts.js";
+import { choicePicks, DateOfBirthFormat, IdentifierKinds } from "./autofill-contracts.js";
 import { PageControls } from "./page-controls.js";
 import { PageNavigation, reportedNavigation } from "./sign-in-redirect.js";
 
@@ -103,6 +103,12 @@ const FillAnswer = Schema.Union(
   }),
   Schema.Struct({
     dated: Schema.Boolean,
+    url: Schema.String,
+    document: Schema.optional(Schema.Number),
+  }),
+  /** A `choose` call: whether the code's choices ended picked as it names them, and only those. */
+  Schema.Struct({
+    chosen: Schema.Boolean,
     url: Schema.String,
     document: Schema.optional(Schema.Number),
   }),
@@ -877,17 +883,27 @@ const fillField = (
     const kept = tracked
       ? progress.earlier.findLast((box) => box.slot === field?.slot && box.value === value)
       : undefined;
+    // A code picked from named choices: the choices it names. One that names them not one for one
+    // fails, with nothing picked.
+    const choices = input.inspection.screen.fields[index]?.codeChoices;
+    const picked = choices === undefined ? undefined : choicePicks(value, choices);
+    if (choices !== undefined && picked === undefined) {
+      progress.statuses.push("failed");
+      return filledReport(input.step, progress, "not_attempted", input.inspection.url ?? "");
+    }
     const call: AutofillFillCall =
-      format === undefined
-        ? {
-            kind: "focus",
-            index,
-            bindingKey,
-            ...(index === boxes[0] ? { emptyBoxes: boxes } : {}),
-            ...(mark === undefined ? {} : { mark }),
-            ...(kept === undefined ? {} : { kept: kept.mark }),
-          }
-        : { kind: "date", index, iso: value, format };
+      picked !== undefined
+        ? { kind: "choose", index, names: picked }
+        : format === undefined
+          ? {
+              kind: "focus",
+              index,
+              bindingKey,
+              ...(index === boxes[0] ? { emptyBoxes: boxes } : {}),
+              ...(mark === undefined ? {} : { mark }),
+              ...(kept === undefined ? {} : { kept: kept.mark }),
+            }
+          : { kind: "date", index, iso: value, format };
     const changes = { count: 0 };
     const started = Date.now();
     let answered = yield* fillCall(input, progress, changes)(call);
@@ -897,8 +913,10 @@ const fillField = (
     }
     if (answered._tag === "Left")
       return failedCall(progress, answered.left, {
-        ...(format === undefined ? {} : { held: input.values }),
-        mayMutate: format !== undefined,
+        ...(format === undefined && picked === undefined
+          ? {}
+          : { held: [...input.values, ...(picked ?? [])] }),
+        mayMutate: format !== undefined || picked !== undefined,
       });
     const answer = answered.right;
     if ("refusal" in answer || "checked" in answer)
@@ -1132,14 +1150,13 @@ const afterFieldCall = (
       progress.check = [index];
       return undefined;
     }
-    if ("dated" in answer) {
-      // A date's call may have changed the field even when it failed.
+    if ("dated" in answer || "chosen" in answer) {
+      // A date's or choice's call may have changed the field even when it failed.
+      const done = "dated" in answer ? answer.dated : answer.chosen;
       progress.typed = true;
       progress.typedIn = answer.document;
-      progress.statuses.push(answer.dated ? "filled" : "failed");
-      return answer.dated
-        ? undefined
-        : filledReport(input.step, progress, "not_attempted", answer.url);
+      progress.statuses.push(done ? "filled" : "failed");
+      return done ? undefined : filledReport(input.step, progress, "not_attempted", answer.url);
     }
     if (!("focused" in answer)) return refused("page_unavailable");
     let insertion: InsertionRefusal | undefined;
@@ -1203,7 +1220,13 @@ const afterFieldCall = (
  * the host clicked, each key into the box the page moved the focus to (`fillRow`), else one key per
  * box, and inserts at once a code whose one
  * field hands the focus on once a key went in, binding that field again first (`codeAtOnce`), so no value but a
- * date of birth ever enters a Kernel call's script text or its request to Kernel's REST API. It reports per-field outcomes and never a
+ * date of birth, and the selected choices of a sign-in code picked from named checkboxes, ever
+ * enters a Kernel call's script text or its request to Kernel's REST API. Such a code's call ticks
+ * the checkboxes its code names (`choose`), and is no typed field a submit checks again. Whatever
+ * the fill comes to, it unticks them before it returns while the page still holds them, however
+ * the page shows them (`untickChoices`), and a click again of its screen clicks nothing: the screen
+ * is filled again.
+ * It reports per-field outcomes and never a
  * value. Once anything was typed, a call that fails or finds a control refused can no longer say
  * nothing reached the site: a lost answer is `uncertain`, a control refused before a field's typing
  * fails that field, and one refused before the click, or a submission refused as it fires, refuses
@@ -1265,10 +1288,6 @@ const afterFieldCall = (
  */
 export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepReport> =>
   Effect.gen(function* () {
-    const { step } = input;
-    const crossing = crossingSelector(step);
-    if (crossing !== undefined)
-      return withCheck(refused("selector_unsupported", crossing), "selector_unsupported");
     const progress: FillProgress = {
       statuses: [],
       typed: false,
@@ -1280,6 +1299,49 @@ export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepRe
       trusted: new Set(),
       earlier: [...(input.typedBoxes ?? [])],
     };
+    return yield* fillScreen(input, progress).pipe(Effect.ensuring(untickChoices(input, progress)));
+  });
+
+/**
+ * How long the host waits on the unticking of a step's choices once its fill ends, after which it
+ * stops waiting and goes on, while a call still running in the page may go on to its own limit.
+ */
+const untickMs = 15_000;
+
+/**
+ * Unticks the checkboxes of the step's code fields that have the code picked from them
+ * (`codeChoices`), each named as one of those choices, while the page still holds them, whatever
+ * the fill came to, a failure or an interruption of it too: a code's ticks never stay on the page
+ * for its snapshot to read, nor for a click again to send. Each call's step holds that field
+ * alone, with no submit, so a site that hides its submit once clicked is unticked too, and acts
+ * only while the field is as judged. Its answers are not read, the host waits on it `untickMs` at
+ * most, interrupting it then, and a page that went on finds no field and changes nothing.
+ */
+const untickChoices = (input: FillInput, progress: FillProgress) =>
+  Effect.suspend(() => {
+    progress.check = [];
+    const { popup } = input.step;
+    return Effect.forEach(
+      input.step.fields.flatMap((field, index) => {
+        const choices = input.inspection.screen.fields[index]?.codeChoices;
+        return choices === undefined ? [] : [{ field, index, choices }];
+      }),
+      ({ field, index, choices }) =>
+        fillCall(
+          { ...input, step: { fields: [field], ...(popup === undefined ? {} : { popup }) } },
+          progress,
+        )({ kind: "untick", index, choices }),
+      { discard: true },
+    );
+  }).pipe(Effect.interruptible, Effect.timeout(untickMs), Effect.ignore);
+
+/** The fill of `fillAutofillStep`, before its choices are unticked. */
+const fillScreen = (input: FillInput, progress: FillProgress): Effect.Effect<AutofillStepReport> =>
+  Effect.gen(function* () {
+    const { step } = input;
+    const crossing = crossingSelector(step);
+    if (crossing !== undefined)
+      return withCheck(refused("selector_unsupported", crossing), "selector_unsupported");
     const notice = yield* dismissNotice(input, progress);
     if (notice.refusal !== undefined) return notice.refusal;
     const boxes = codeBoxes(step, input.values);
@@ -1314,11 +1376,11 @@ export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepRe
     if (
       report.outcome === "filled" &&
       report.submit === "stayed_disabled" &&
-      typedFields(step, progress).length > 0
+      typedFields(input, progress).length > 0
     )
       return yield* typeAgain({ ...input, keyboard: byKeys(input.keyboard) });
     if (isBlocked(report) && (yield* closeFieldList(input, progress))) {
-      progress.check = typedFields(step, progress);
+      progress.check = typedFields(input, progress);
       return yield* submitStep(input, progress, boxes, typed, true);
     }
     if (!isBlocked(report) || step.dismiss === undefined) return report;
@@ -1326,7 +1388,7 @@ export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepRe
     // The dismiss emptied the fields before its click: the host types them all again.
     if (again.emptied) return yield* typeAgain(input);
     if (!again.dismissed) return report;
-    progress.check = typedFields(step, progress);
+    progress.check = typedFields(input, progress);
     return yield* submitStep(input, progress, boxes, typed);
   });
 
@@ -1368,12 +1430,18 @@ export const resubmitAutofillStep = (input: CallInput): Effect.Effect<AutofillSt
     };
     const notice = yield* dismissNotice(input, progress);
     if (notice.refusal !== undefined) return notice.refusal;
-    progress.check = typedFields(step, progress);
+    progress.check = typedFields(input, progress);
     // Nothing typed is left to send: the first typed field fails as the submit's check would find
-    // it, with no call for the page's own navigation after the dismiss to lose.
+    // it, with no call for the page's own navigation after the dismiss to lose. A code picked from
+    // named choices left nothing either, since its fill unticked them (`untickChoices`).
     const [emptiedField] = progress.check;
-    if (notice.emptied === true && emptiedField !== undefined) {
-      progress.statuses[emptiedField] = "failed";
+    const choiceField = input.inspection.screen.fields.findIndex(
+      (field) => field.codeChoices !== undefined,
+    );
+    const unsent =
+      choiceField !== -1 ? choiceField : notice.emptied === true ? emptiedField : undefined;
+    if (unsent !== undefined) {
+      progress.statuses[unsent] = "failed";
       return filledReport(step, progress, "not_attempted", notice.url ?? "");
     }
     const codeFields = step.fields.flatMap((field, index) => (field.slot === "code" ? [index] : []));
@@ -1437,11 +1505,15 @@ const isBlocked = (report: AutofillStepReport) =>
 /**
  * The fields the host typed itself and that still count as filled, which a submit it clicks again
  * checks still hold something: never a date, which the authoring library fills into the page's
- * own controls.
+ * own controls, nor a code picked from named checkboxes, which holds no value.
  */
-const typedFields = (step: AutofillStep<FillSlot>, progress: FillProgress) =>
-  step.fields.flatMap((field, index) =>
-    field.slot !== "date_of_birth" && progress.statuses[index] === "filled" ? [index] : [],
+const typedFields = (input: CallInput, progress: FillProgress) =>
+  input.step.fields.flatMap((field, index) =>
+    field.slot !== "date_of_birth" &&
+    input.inspection.screen.fields[index]?.codeChoices === undefined &&
+    progress.statuses[index] === "filled"
+      ? [index]
+      : [],
   );
 
 /**
@@ -1551,7 +1623,7 @@ return { closed: unchanged && clear };`;
  * types and clicks nothing.
  */
 const closeFieldList = (input: CallInput, progress: FillProgress): Effect.Effect<boolean> => {
-  const index = typedFields(input.step, progress).at(-1);
+  const index = typedFields(input, progress).at(-1);
   return index === undefined || input.step.submit === undefined
     ? Effect.succeed(false)
     : input.page.execute(closeFieldListCode(input, index), 30).pipe(
