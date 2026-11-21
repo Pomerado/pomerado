@@ -30,7 +30,9 @@ A tool that fills the cart and places the order in the same run may use the site
 checkout when the site offers one and the build holds no login. Prefer either to creating an
 account. Before acting on a notice, find its container in the page's structure (its form or
 group), not its place in the accessibility snapshot, which can hide dividers. A notice applies
-only to the controls in its own container. Decide before you sign in, since a build that sent a
+only to the controls in its own container. On an Olo checkout, the contact form with
+Continue to Payment is the guest checkout, and the notice that continuing creates an Olo Account
+belongs to the Continue with Apple button. Decide before you sign in, since a build that sent a
 login keeps it. Take the guest's contact details as inputs, and fill the card as the caller-input
 skill says.
 
