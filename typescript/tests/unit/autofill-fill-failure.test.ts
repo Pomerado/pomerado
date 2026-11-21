@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Fiber, TestClock, TestContext } from "effect";
 import { expect, it } from "vitest";
 import { fillAutofillStep } from "../../src/destinations/autofill-fill.js";
 import type { AutofillInspection, AutofillStep } from "../../src/destinations/autofill-step.js";
@@ -83,6 +83,56 @@ it("keeps atomic insertion uncertain when it reached the site but its reply was 
   );
   expect(siteValue).toBe("synthetic-password");
   expect(report).toMatchObject({ outcome: "uncertain", reason: "fill_call_failed" });
+});
+
+it("gives up unticking a choice step's checkboxes within its limit when the page never answers", async () => {
+  const calls: string[] = [];
+  const fill = fillAutofillStep({
+    step: { fields: [{ slot: "code", selector: "#grid" }], submit: "#go" },
+    values: ["7 3 kite"],
+    inspection: {
+      ...inspection,
+      screen: {
+        ...inspection.screen,
+        fields: [
+          {
+            tag: "ul",
+            role: null,
+            formMethod: null,
+            type: null,
+            name: null,
+            id: "grid",
+            autocomplete: null,
+            inputmode: null,
+            label: null,
+            placeholder: null,
+            ariaLabel: null,
+            text: null,
+            slot: "code",
+            codeChoices: ["seven", "three", "kite"],
+          },
+        ],
+      },
+    },
+    page: {
+      targetId: "primary",
+      // The ticks fail, and the untick after them never answers.
+      execute: (code) => {
+        calls.push(code);
+        return calls.length === 1 ? Effect.succeed({ chosen: false, url: inspection.page }) : Effect.never;
+      },
+    },
+    keyboard: { insertText: () => Effect.succeed("inserted" as const) },
+  });
+  const report = await Effect.runPromise(
+    Effect.gen(function* () {
+      const fiber = yield* Effect.fork(fill);
+      for (let second = 0; second < 20; second++) yield* TestClock.adjust("1 second");
+      return yield* Fiber.join(fiber);
+    }).pipe(Effect.provide(TestContext.TestContext)),
+  );
+  expect(report).toMatchObject({ outcome: "filled", submit: "not_attempted" });
+  expect(calls).toHaveLength(2);
 });
 
 /** A DevTools stand-in holding one field marked with the binding key, in a child frame. */

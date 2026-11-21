@@ -483,6 +483,27 @@ it("asks again for the newest code after a refusal, spending the sign-in's code 
   expect(codeRequests.current).toBe(2);
 });
 
+it("asks again for a code picked from named choices that names the refused code's choices in other words", async () => {
+  const { autofill } = values();
+  const owner = scripted(["seven three Kite", "9 3 kite"]);
+  const codeRequests = { current: 0 };
+  const filled = await Effect.runPromise(
+    autofill.valuesFor(
+      codeStep,
+      {
+        ...login({ username: "synthetic-user" }, owner.ask),
+        codeAgain: "rejected",
+        rejectedCodes: new Set(["7 3 kite"]),
+        codeRequests,
+      },
+      [{ codeChoices: ["seven", "three", "kite", "nine"], label: null, ariaLabel: null, placeholder: null }],
+    ),
+  );
+  expect(filled).toMatchObject({ values: ["9 3 kite"] });
+  expect(owner.requests).toHaveLength(2);
+  expect(codeRequests.current).toBe(2);
+});
+
 it("asks nothing once the sign-in's code re-asks are spent", async () => {
   const { autofill } = values();
   const result = await Effect.runPromise(

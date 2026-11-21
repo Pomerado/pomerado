@@ -1,6 +1,10 @@
 import { Data, Effect, Either, Schema } from "effect";
 import { expect, it } from "vitest";
-import { RejectedMarker, SecretSlots } from "../../src/destinations/autofill-contracts.js";
+import {
+  choicePicks,
+  RejectedMarker,
+  SecretSlots,
+} from "../../src/destinations/autofill-contracts.js";
 import { autofillSignedInCode } from "../../src/destinations/autofill-page-code.js";
 import { SignInStep } from "../../src/mint/contracts.js";
 import { makeAutofillValues } from "../../src/runtime/autofill-values.js";
@@ -107,4 +111,16 @@ it("takes a signed-in check of a selector or a URL path, with its account page",
   ])
     expect(decode(signedIn)).toEqual(Either.right({ signedIn }));
   expect(Either.isLeft(decode({ openPath: "/account" }))).toBe(true);
+});
+
+it("picks a code's choices by digit or word, case aside, and nothing for a part no choice or several name, or a choice named twice", () => {
+  const grid = ["seven", "Three", "kite", "nine"];
+  expect(choicePicks("7 3 kite", grid)).toEqual(["seven", "Three", "kite"]);
+  expect(choicePicks("SEVEN three Kite", grid)).toEqual(["seven", "Three", "kite"]);
+  expect(choicePicks("73kite", grid)).toEqual(["seven", "Three", "kite"]);
+  expect(choicePicks("7 3 comet", grid)).toBeUndefined();
+  expect(choicePicks("3 3 kite", grid)).toBeUndefined();
+  expect(choicePicks("", grid)).toBeUndefined();
+  expect(choicePicks("kite", ["kite", "Kite"])).toBeUndefined();
+  expect(choicePicks("hot air balloon", ["hot air balloon", "kite"])).toBeUndefined();
 });
