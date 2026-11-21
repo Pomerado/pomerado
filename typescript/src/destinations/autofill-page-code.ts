@@ -1,7 +1,12 @@
 import { Schema } from "effect";
 import { formControlsCode } from "../browser/form-controls.js";
 import { accessibleNames } from "./accessible-name.js";
-import { maximumCodeBoxes, type AutofillPopup, type DateOfBirthFormat } from "./autofill-contracts.js";
+import {
+  digitNames,
+  maximumCodeBoxes,
+  type AutofillPopup,
+  type DateOfBirthFormat,
+} from "./autofill-contracts.js";
 import { elementReadMs, locateCode, questionTextCode } from "./autofill-locate-code.js";
 import { clipCode, controlNamingCode } from "./control-naming-code.js";
 import { pageCode, primaryPageCode } from "../runtime/host-execute.js";
@@ -112,8 +117,9 @@ for (const [index, codeBox] of codeBoxes.entries())
  * the code picked from checkboxes drawn as digits and pictures does: each checkbox inside it that
  * the accessibility tree shows and that is enabled, with its accessible name (`accessibleNames`),
  * trimmed, in page order. Null unless it holds 2 to 30 of them, each named by one digit or one word
- * of up to 30 letters, which a code can name (`choicePicks`), and no text field. Names only, never
- * a state; `choices` are the elements the choose call clicks.
+ * of up to 30 letters, which a code can name (`choicePicks`), no two by one name, case aside, or by
+ * a digit and its word, which no code could tell apart, and no text field. Names only, never a
+ * state; `choices` are the elements the choose call clicks.
  */
 const choicesCode = `(element) => {
   if (element.matches(":read-write, select") || element.querySelector(":read-write, select") !== null) return null;
@@ -126,7 +132,15 @@ const choicesCode = `(element) => {
       choice.closest('[aria-disabled="true"]') === null,
   );
   const names = choices.map((choice) => name(choice).trim());
-  return choices.length >= 2 && choices.length <= 30 && names.every((each) => /^(?:[0-9]|[\\p{L}\\p{M}]{1,30})$/u.test(each.normalize("NFKC")))
+  const digits = ${JSON.stringify(digitNames)};
+  const keys = names.map((each) => {
+    const key = each.normalize("NFKC").toLowerCase();
+    return digits.includes(key) ? String(digits.indexOf(key)) : key;
+  });
+  return choices.length >= 2 &&
+    choices.length <= 30 &&
+    keys.every((key) => /^(?:[0-9]|[\\p{L}\\p{M}]{1,30})$/u.test(key)) &&
+    new Set(keys).size === keys.length
     ? { choices, names }
     : null;
 }`;
@@ -279,8 +293,9 @@ export type AutofillFillCall =
   | {
       /**
        * Picks a code from the named checkboxes a code field holds (`choicesCode`): `names`, the
-       * choices the code names, in its order, and none to untick them all. This call's code holds
-       * them, as a date's call holds its date, and nothing else of the code.
+       * choices the code names, in its order, and none to untick every checkbox in the field,
+       * however the page shows it. This call's code holds them, as a date's call holds its date,
+       * and nothing else of the code.
        */
       readonly kind: "choose";
       readonly index: number;
@@ -924,12 +939,42 @@ ${
     delete element.ownerDocument.defaultView[key];
   }, ${JSON.stringify(call.bindingKey)}, { timeout: 1000 }, true).catch(() => undefined);
 }`;
+  if (call.kind === "choose" && call.names.length === 0)
+    return `try {
+  // Every checkbox in the field ends unticked, however the page shows it now: under an overlay,
+  // hidden from the accessibility tree or disabled. One still ticked is clicked through its label,
+  // as a person clicks the picture over a hidden box, else clicked in the page, which no overlay
+  // catches, and a disabled box is unticked in place with the events a click fires.
+  const boxes = await fields[${call.index}].locator.evaluateHandle((element) => Array.from(element.querySelectorAll('input[type="checkbox"], [role="checkbox"]')), undefined, { timeout: ${elementReadMs} });
+  const ticked = () => boxes.evaluate((all) => all.map((box) => box instanceof HTMLInputElement ? box.checked : box.getAttribute("aria-checked") === "true"));
+  for (const [place, on] of (await ticked()).entries()) {
+    if (!on) continue;
+    const label = (await boxes.evaluateHandle((all, place) => {
+      const box = all[place];
+      return box instanceof HTMLInputElement && !box.disabled && box.labels?.length ? box.labels[0] : null;
+    }, place)).asElement();
+    if (label !== null) await label.click({ timeout: 1000 }).catch(() => undefined);
+    await boxes.evaluate((all, place) => {
+      const box = all[place];
+      if (box instanceof HTMLInputElement ? !box.checked : box.getAttribute("aria-checked") !== "true") return;
+      if (!(box instanceof HTMLInputElement && box.disabled)) return box.click();
+      box.checked = false;
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+      box.dispatchEvent(new Event("change", { bubbles: true }));
+    }, place);
+  }
+  return (await ticked()).some((on) => on)
+    ? { chosen: false, url: primary.url() }
+    : { chosen: true, url: primary.url(), document: await documentStart() };
+} catch {
+  return { chosen: false, url: primary.url() };
+}`;
   if (call.kind === "choose")
     return `try {
   // The checkboxes as found now, each picked by its own name; a name no checkbox or several hold
-  // picks nothing. Each ends ticked when the code names it and unticked otherwise, so no names
-  // untick them all. One with a label is clicked through it, as a person clicks the picture over a
-  // hidden box. Its failure says nothing more.
+  // picks nothing. Each ends ticked when the code names it and unticked otherwise. One with a label
+  // is clicked through it, as a person clicks the picture over a hidden box. Its failure says
+  // nothing more.
   const found = await fields[${call.index}].locator.evaluateHandle(${choicesCode}, undefined, { timeout: ${elementReadMs} });
   const names = await found.evaluate((read) => read?.names ?? null);
   const picked = ${JSON.stringify(call.names)};

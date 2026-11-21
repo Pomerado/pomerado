@@ -106,7 +106,7 @@ export const stepFieldsFit = (fields: readonly object[]) => {
 export const stepFieldsMessage = `a sign-in step names at most ${maximumStepFields} fields besides its code fields, and at most ${maximumCodeBoxes} code fields, one per box of a split code`;
 
 /** Each digit's word, which a code screen's choice may be named by in place of the digit. */
-const digitNames = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
+export const digitNames = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
 
 /**
  * The choices a code names, in its order, among the named choices a code screen has it picked from
