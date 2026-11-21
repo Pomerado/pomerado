@@ -1987,6 +1987,12 @@ it("orders states sharing a look by a host's method where the login names none, 
   const ended = await replay(picked(), library, { rankMethod: "email", hostMethod: "email" });
   expect(ended).toMatchObject({ outcome: "signed_in" });
   expect(ended.visited).toContain(keyOf(emailMethod));
+  // What is pressed and kept is the host's own pick at the method choice, never the hint.
+  expect(ended.choices?.method).toBe("email");
+  const site = picked();
+  const hostsOwn = await replay(site, library, { rankMethod: "email", hostMethod: "sms" });
+  expect(site.clicks).toEqual(["#continue", "#text"]);
+  expect(hostsOwn.choices?.method).toBe("sms");
   // Without it, the state learned last.
   const unranked = await replay(picked(), library, { hostMethod: "email" });
   expect(unranked.visited).toContain(keyOf(textMethod));
@@ -2010,6 +2016,48 @@ it("orders states sharing a look by a host's method where the login names none, 
   );
   expect(await replay(way, libraryOf([emailState, wayIn, typesPassword]), { rankMethod: "email" })).toMatchObject({ outcome: "signed_in" });
   expect(way.clicks).toEqual(["#continue", "#use-password", "#go"]);
+});
+
+it("takes by a host's method only a state whose recorded press is that method, and keeps no method it led to", async () => {
+  const choose: Screen = { path: "/choose", boxes: [], buttons: ["#use-password", "#email-code"], texts: ["how do you want to sign in"] };
+  const methods = [
+    { method: "password" as const, selector: "#use-password" },
+    { method: "email" as const, selector: "#email-code" },
+  ];
+  const byEmailCode = { fingerprint: arrival(choose), step: stepAt("/choose", [], "#email-code", { methods }) };
+  const byPassword = { fingerprint: arrival(choose), step: stepAt("/choose", [], "#use-password", { methods }) };
+  const codeState = { fingerprint: arrival(codeScreen), step: stepAt("/verify", [code], "#verify") };
+  const typesPassword = { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") };
+  // The password press was learned last.
+  const library = libraryOf([emailState, byEmailCode, codeState], [emailState, byPassword, typesPassword]);
+  const next: Readonly<Record<string, string>> = {
+    "#continue": "choose",
+    "#use-password": "password",
+    "#email-code": "code",
+    "#go": "home",
+    "#verify": "home",
+  };
+  const site = () =>
+    scriptedSite({ start: emailScreen, choose, password: passwordScreen, code: codeScreen }, (_at, clicked) => next[clicked]);
+  const plain = site();
+  expect(await replay(plain, library)).toMatchObject({ outcome: "signed_in" });
+  expect(plain.clicks).toEqual(["#continue", "#use-password", "#go"]);
+  // The hint takes the state whose recorded press is its method, a route the library walked, and
+  // keeps that route, but no method of it as the login's own.
+  const hinted = site();
+  const ended = await replay(hinted, library, { rankMethod: "email" });
+  expect(ended).toMatchObject({ outcome: "signed_in" });
+  expect(hinted.clicks).toEqual(["#continue", "#email-code", "#verify"]);
+  expect(ended.choices?.states).toEqual([emailState, byEmailCode, codeState].map(keyOf));
+  expect(ended.choices).not.toHaveProperty("method");
+  // The login's own method is kept, as before.
+  const chosen = site();
+  expect((await replay(chosen, library, { choices: { method: "email" } })).choices?.method).toBe("email");
+  expect(chosen.clicks).toEqual(["#continue", "#email-code", "#verify"]);
+  // A hint no recorded press goes to orders nothing: the state learned last.
+  const unwalked = site();
+  expect(await replay(unwalked, library, { rankMethod: "sms" })).not.toHaveProperty("choices.method");
+  expect(unwalked.clicks).toEqual(["#continue", "#use-password", "#go"]);
 });
 
 it("goes on in a learned look-alike along the login's own route, or after a state its route goes no further from", async () => {

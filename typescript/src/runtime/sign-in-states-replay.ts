@@ -146,6 +146,12 @@ interface Run<E extends YieldableError, V extends string, L extends AutofillLogi
   readonly answered: Set<string>;
   /** The page's address as the last marker check read it, for an unknown state's shape. */
   page: string | undefined;
+  /**
+   * Whether the method picked last is the host's hint (`rankMethod`) as a lone method beside a way
+   * in, in a state the hint may have ranked first: it is kept as the login's own (`choices.method`)
+   * only where the login named it.
+   */
+  hinted: boolean;
 }
 
 /** A known state the page shows, told by its control and address alone (`byControl`) or not. */
@@ -560,7 +566,7 @@ const signedIn = <E extends YieldableError, V extends string, L extends Autofill
   marker: SignedInEntry,
 ): Ended<V> => {
   const { replay, visited } = run;
-  const method = replay.progress.chosen ?? run.input.choices?.method;
+  const method = (run.hinted ? undefined : replay.progress.chosen) ?? run.input.choices?.method;
   const choices: SignInStatesChoices = {
     states: [...new Set(visited)],
     ...(method === undefined ? {} : { method }),
@@ -1082,7 +1088,8 @@ const sendMethods: ReadonlySet<string> = new Set(["sms", "call", "email", "push"
 /**
  * A method choice's pick: the login's own (`choices.method`), else the way in the recording took,
  * a lone two-factor method beside a way in, or the host's or caller's pick, as a recipe's replay
- * picks.
+ * picks. The host's hint (`rankMethod`) picks nothing here; a lone method that is the hint, in a
+ * state the hint may have ranked first, is not kept as the login's own (`hinted`).
  */
 const methodFor = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -1096,6 +1103,7 @@ const methodFor = <E extends YieldableError, V extends string, L extends Autofil
       run.input.credentials?.password === undefined &&
       twoFactor.length > 0 &&
       twoFactor.every((option) => codeMethods.has(option.method));
+    const lone = twoFactor.length === 1 && twoFactor.length < methods.length ? twoFactor[0] : undefined;
     const picked =
       own ??
       methods.find(
@@ -1105,9 +1113,12 @@ const methodFor = <E extends YieldableError, V extends string, L extends Autofil
           option.option === undefined &&
           option.selector === step.submit,
       ) ??
-      (twoFactor.length === 1 && twoFactor.length < methods.length ? twoFactor[0] : undefined) ??
+      lone ??
       (yield* run.replay.pickMethod(twoFactor));
-    if (isTwoFactorOption(picked)) run.replay.progress.chosen = picked.method;
+    if (isTwoFactorOption(picked)) {
+      run.replay.progress.chosen = picked.method;
+      run.hinted = picked === lone && picked.method === run.input.rankMethod;
+    }
     return picked;
   });
 
@@ -1444,6 +1455,7 @@ export const replaySignInStates = <
       gone: false,
       answered: new Set(),
       page: undefined,
+      hinted: false,
     };
     const from = input.from === undefined ? undefined : yield* stillShown(run, input.from);
     if (from === undefined || typeof from === "string") yield* input.hooks.open(input.entryUrl);
