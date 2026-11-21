@@ -811,13 +811,14 @@ it("opens the entry URL again for a stop in a look-alike of a state the check ac
   const site = scriptedSite({ start, pressed }, (at, clicked) =>
     at === "start" && clicked === "#next" ? "pressed" : at === "pressed" && clicked === "#go" ? "home" : undefined,
   );
-  const checked = await replay(site, library, { valueFree: true });
+  // A look-alike that types is taken once the page held still 1.5 s, inside the step wait.
+  const checked = await replay(site, library, { valueFree: true, stepWaitMs: 2_000 });
   expect(checked).toMatchObject({ outcome: "unsent", reason: "values_needed" });
   const from = checked.stop?.();
   if (from === undefined) throw new Error("no stop");
   // The page went back to the state before while the login was read; it looks the same.
   site.site.screen = "start";
-  expect(await replay(site, library, { from })).toMatchObject({
+  expect(await replay(site, library, { from, stepWaitMs: 2_000 })).toMatchObject({
     outcome: "signed_in",
     fromStop: { continued: false, reason: "state_alike" },
   });
