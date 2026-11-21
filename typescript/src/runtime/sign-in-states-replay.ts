@@ -148,8 +148,8 @@ interface Run<E extends YieldableError, V extends string, L extends AutofillLogi
   page: string | undefined;
   /**
    * Whether the method picked last is the host's hint (`rankMethod`) as a lone method beside a way
-   * in, in a state the hint may have ranked first: it is kept as the login's own (`choices.method`)
-   * only where the login named it.
+   * in, in a state the hint may have ranked first: it is never stored as a pick (`choices.method`)
+   * unless the login named it; the route that signed in is kept as any route is.
    */
   hinted: boolean;
 }
@@ -1089,7 +1089,7 @@ const sendMethods: ReadonlySet<string> = new Set(["sms", "call", "email", "push"
  * A method choice's pick: the login's own (`choices.method`), else the way in the recording took,
  * a lone two-factor method beside a way in, or the host's or caller's pick, as a recipe's replay
  * picks. The host's hint (`rankMethod`) picks nothing here; a lone method that is the hint, in a
- * state the hint may have ranked first, is not kept as the login's own (`hinted`).
+ * state the hint may have ranked first, is never stored as a pick (`hinted`).
  */
 const methodFor = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
