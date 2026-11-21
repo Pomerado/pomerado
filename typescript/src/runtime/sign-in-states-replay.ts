@@ -407,42 +407,58 @@ const pressesOnly = <E extends YieldableError, V extends string, L extends Autof
   );
 };
 
-/** Whether two absolute URLs share their host and path. */
-const sameAddress = (a: string, b: string) => {
+/** Whether two absolute URLs share their host and path, and with `hash` their hash. */
+const sameAddress = (a: string, b: string, hash = true) => {
   const left = URL.parse(a);
   const right = URL.parse(b);
-  return left !== null && right !== null && left.host === right.host && left.pathname === right.pathname;
+  return (
+    left !== null &&
+    right !== null &&
+    left.host === right.host &&
+    left.pathname === right.pathname &&
+    (!hash || left.hash === right.hash)
+  );
 };
 
 /**
  * Where no known state has the page's whole look, the known state a page with no box is by the
- * control it presses, as one page shows other labels in another browser or place: a state that
- * presses only (`pressesOnly`), on the page's top origin and at the host and path the last marker
- * check read (`page`), never the state just acted in nor one acted in that came back
- * (`returnedTo`), taken in the order this login takes states of one look (`ranked`), so a route
- * that holds one there besides the state last acted in takes only its own; the first whose control
- * shows, one match on its recorded origin, at its recorded page's host and path. With no address
- * read, none.
+ * control it presses, as one page shows other labels in another browser or place, while nothing
+ * this sign-in typed or pressed may have reached the site: a state that presses only
+ * (`pressesOnly`), with the page's top origin and main message, at the host, path and hash the
+ * last marker check read (`page`), and, on the page of the state just acted in, one that state
+ * led to; never the state just acted in nor one acted in that came back (`returnedTo`). They are
+ * taken in the order this login takes states of one look (`ranked`), so a route that holds one
+ * there besides the state last acted in takes only its own: the first whose control shows, one
+ * match on its recorded origin, on a page at its recorded host and path. With no address read,
+ * none.
  */
 const byControl = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
   fingerprint: StateFingerprint,
+  after: StateEntry | undefined,
   skip: StateEntry | undefined,
   next: ReadonlySet<string>,
 ) =>
   Effect.gen(function* () {
     const { page } = run;
-    if (fingerprint.boxes.length > 0 || page === undefined) return undefined;
+    if (fingerprint.boxes.length > 0 || page === undefined || mayHaveSent(run) || run.replay.sent.maySent.size > 0)
+      return undefined;
+    const stayed = after !== undefined && sameAddress(page, after.step.page);
     // Each state here counts for the login's own route, one that came back too, as `ranked` reads
     // it, which leaves out the state last acted in as it does for a look.
     const here = (state: StateEntry) =>
-      state.fingerprint.top === fingerprint.top && pressesOnly(run, state) && sameAddress(page, state.step.page);
+      state.fingerprint.top === fingerprint.top &&
+      state.fingerprint.message === fingerprint.message &&
+      pressesOnly(run, state) &&
+      sameAddress(page, state.step.page) &&
+      (!stayed || next.has(state.key));
     const pressing: StateEntry[] = [];
     for (const state of run.input.library.states)
       if (state !== skip && here(state) && !(yield* returnedTo(run, state))) pressing.push(state);
     for (const state of ranked(run, pressing, here, next)) {
       const inspection = yield* shownOn(run, state, resolved(run, state.step));
-      if (typeof inspection !== "string" && sameAddress(inspection.page, state.step.page))
+      // The inspected page is the step's origin and path alone.
+      if (typeof inspection !== "string" && sameAddress(inspection.page, state.step.page, false))
         return { state, inspection, by: "control" } satisfies Shown;
     }
     return undefined;
@@ -492,7 +508,7 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
     // Where the login's own route left other logins' states out, none of its own showing is a page
     // it does not know, for a repair of its own to go on from.
     if (alike.length < candidates.length) return undefined;
-    return candidates.length > 0 || !loose ? refused : yield* byControl(run, fingerprint, skip, next);
+    return candidates.length > 0 || !loose ? refused : yield* byControl(run, fingerprint, after, skip, next);
   });
 
 const signedIn = <E extends YieldableError, V extends string, L extends AutofillLogin>(
