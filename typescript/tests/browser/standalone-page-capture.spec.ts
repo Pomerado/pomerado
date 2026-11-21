@@ -262,22 +262,32 @@ test("a separator hidden from assistive technology, and an unnamed form's edge, 
   }
 });
 
-test("an unnamed form's custom fields, labelled in their open shadow roots, show inside its edge in the capture", async () => {
+test("an unnamed form's custom fields, labelled in their open shadow roots or by slotted text, show inside its edge in the capture", async () => {
   test.setTimeout(90_000);
   // A form-associated field draws its own textbox, and another custom element holds a native
-  // input; each one's label is in its open shadow root. A notice past a hidden divider follows
-  // the form's button.
+  // input, each labelled in its open shadow root; a notice past a hidden divider follows the form.
+  // Fields that show light-DOM text through a slot follow: a label slotted before an input and
+  // help text, a select after its slotted label, a button showing slotted text before more text,
+  // a slotted label over fallback text, and such a field just before a form.
   const site = await startSite((_request, response) =>
     html(
       response,
-      `<title>Checkout</title><script>` +
-        `customElements.define("x-phone", class extends HTMLElement { static formAssociated = true; connectedCallback() { this.attachInternals(); ` +
-        `this.attachShadow({ mode: "open" }).innerHTML = '<label id="label">Phone</label><div role="textbox" contenteditable aria-labelledby="label"></div>'; } });` +
-        `customElements.define("x-input", class extends HTMLElement { connectedCallback() { ` +
-        `this.attachShadow({ mode: "open" }).innerHTML = '<label for="input">Email</label><input id="input">'; } });` +
-        `</script><main><h1>Check out as a guest</h1><form><x-phone></x-phone><x-input></x-input>` +
+      `<title>Checkout</title><script>const define = (name, shadow, formAssociated) => customElements.define(name, ` +
+        `class extends HTMLElement { static formAssociated = formAssociated; connectedCallback() { this.attachShadow({ mode: "open" }).innerHTML = shadow; } });` +
+        `define("x-phone", '<label id="label">Phone</label><div role="textbox" contenteditable aria-labelledby="label"></div>', true);` +
+        `define("x-input", '<label for="input">Email</label><input id="input">');` +
+        `define("x-text", '<label><slot name="label"></slot><input></label><small>We send the receipt here.</small>');` +
+        `define("x-select", '<slot></slot><select><option>Small</option><option>Large</option></select>');` +
+        `define("x-named", '<label><slot name="label">Field</slot><input></label>');` +
+        `define("x-submit", '<input type="hidden"><button><slot></slot></button> Secure checkout');</script>` +
+        `<main><h1>Check out as a guest</h1><form><x-phone></x-phone><x-input></x-input>` +
         `<button type="button">Continue to payment</button></form><hr aria-hidden="true">` +
-        `<div>Signing in opens a store account.</div><button type="button">Sign in</button></main>`,
+        `<div>Signing in opens a store account.</div><button type="button">Sign in</button>` +
+        `<form><x-text><span slot="label">Mobile number</span></x-text><x-submit>Place order</x-submit></form>` +
+        `<p>Orders ship in two days.</p><form><x-select>Size</x-select><button type="button">Add</button></form>` +
+        `<p>Sizes run small.</p><x-text><span slot="label">Coupon</span></x-text>` +
+        `<form><x-named><span slot="label">Name</span></x-named><button type="button">Save</button></form>` +
+        `<p>Names show on the receipt.</p></main>`,
     ),
   );
   const guardian = recordingGuardian({ readPage: true });
@@ -303,6 +313,28 @@ test("an unnamed form's custom fields, labelled in their open shadow roots, show
         '    - button "Continue to payment"',
         "  - separator [aria-hidden]",
         "  - text: Signing in opens a store account.",
+        '  - button "Sign in"',
+        "  - form:",
+        "    - text: Mobile number",
+        '    - textbox "Mobile number"',
+        "    - text: We send the receipt here.",
+        '    - button "Place order"',
+        "  - text: Secure checkout",
+        "  - paragraph: Orders ship in two days.",
+        "  - form:",
+        "    - text: Size",
+        "    - combobox:",
+        '      - option "Small" [selected]',
+        '      - option "Large"',
+        '    - button "Add"',
+        "  - paragraph: Sizes run small.",
+        "  - text: Coupon",
+        '  - textbox "Coupon"',
+        "  - form:",
+        "    - text: We send the receipt here. Name",
+        '    - textbox "Name"',
+        '    - button "Save"',
+        "  - paragraph: Names show on the receipt.",
       ].join("\n"),
     );
   } finally {
