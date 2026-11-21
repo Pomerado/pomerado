@@ -338,9 +338,13 @@ const learnedAlike = <E extends YieldableError, V extends string, L extends Auto
 ) =>
   Effect.gen(function* () {
     const learned = learnedNext(run, after).filter((state) => sameFingerprint(fingerprint, state.fingerprint));
+    // After a press that may have had a code or link sent, one whose own press may have one sent
+    // could have the site send a second.
+    const sent = after.step.methods !== undefined || sendsOnPress(run, after);
     for (const next of ranked(run, learned, fingerprint)) {
       const types = resolved(run, next.step).fields.length > 0;
       if (!(types ? allowed.typing : allowed.pressing && next.step.submit !== after.step.submit)) continue;
+      if (types && sent && sendsOnPress(run, next)) continue;
       const shown = yield* shownOn(run, next, resolved(run, next.step));
       if (typeof shown !== "string") return { state: next, inspection: shown } satisfies Shown;
     }
