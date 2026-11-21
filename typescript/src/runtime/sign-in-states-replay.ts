@@ -214,12 +214,16 @@ const shownWithin = <E extends YieldableError, V extends string, L extends Autof
     }
   });
 
+/** `matchState`'s refusal where none of the login's own states shows, as an unknown state. */
+const ownStateNotShown = "own_state_not_shown";
+
 /**
  * Known states that share one look (`fingerprint`), in the order this login takes them. Where its
  * own route, the states it last signed in through (`choices.states`), holds a state with that look
- * besides the one it last acted in, only its own are taken, in their order there from the state it
- * last acted in on, then the earlier ones: a login never goes on along another login's route, so
- * one whose own state no longer shows stops there, for a repair of its own. Otherwise first a
+ * besides the one it last acted in, unless that one is looked for again, only its own are taken,
+ * in their order there from the last state it acted in that the route holds, then the earlier ones:
+ * a login never goes on along another login's route, so one whose own state no longer shows stops
+ * there, for a repair of its own. Otherwise first a
  * state whose picked method is the login's (`choices.method`), then one the last state led to, or
  * at the start one no state leads to (`next`), then the most recently learned, as a library holds
  * its states in the order learned.
@@ -233,16 +237,20 @@ const ranked = <E extends YieldableError, V extends string, L extends AutofillLo
   const route = run.input.choices?.states ?? [];
   const method = run.input.choices?.method;
   const { states } = run.input.library;
-  // The state last acted in leaves the route no say: where its page stays, the route goes no
-  // further there, so a look-alike a repair learned after it may go on.
+  // The state last acted in, when it is not looked for again, leaves the route no say: where its
+  // page stays, the route goes no further there, so a look-alike a repair learned after it may go on.
   const last = run.visited.at(-1);
   const own = states.some(
-    (state) => state.key !== last && route.includes(state.key) && sameFingerprint(state.fingerprint, fingerprint),
+    (state) =>
+      (state.key !== last || candidates.includes(state)) &&
+      route.includes(state.key) &&
+      sameFingerprint(state.fingerprint, fingerprint),
   );
   const picks = (state: StateEntry) =>
     method !== undefined && state.step.methods?.find((option) => option.selector === state.step.submit)?.method === method;
-  // Along the route from the state last acted in, so a look the route holds twice goes on.
-  const at = route.lastIndexOf(run.visited.at(-1) ?? "");
+  // Along the route from the last state acted in that it holds, so a look the route holds twice
+  // goes on, after a page of another login's too.
+  const at = route.indexOf([...run.visited].reverse().find((key) => route.includes(key)) ?? "");
   const along = (state: StateEntry) => {
     const index = route.indexOf(state.key);
     return index > at ? index - at : route.length + index;
@@ -402,9 +410,9 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
       refused ??= shown;
     }
     if (returned !== undefined) return { returned: returned as StateEntry };
-    // Where the login's own route left other logins' states out, none of its own showing is a page
-    // it does not know, for a repair of its own to go on from.
-    return alike.length < candidates.length ? undefined : refused;
+    // Where the login's own route left other logins' states out, none of its own showing by the
+    // step wait is a page it does not know, for a repair of its own to go on from.
+    return alike.length < candidates.length && refused === "not_found" ? ownStateNotShown : refused;
   });
 
 const signedIn = <E extends YieldableError, V extends string, L extends AutofillLogin>(
@@ -827,6 +835,7 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
     }
     const checked = yield* endCheck(run, observed, stood, after, waitedOut);
     if (checked !== undefined) return checked;
+    if (refused === ownStateNotShown && shape !== undefined) return unknownState(run, shape, after);
     if (refused !== undefined) return stopped(run, refused);
     return shape === undefined || blankFingerprint(shape)
       ? stopped(run, "state_not_shown")

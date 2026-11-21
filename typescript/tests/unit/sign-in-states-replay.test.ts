@@ -1381,6 +1381,44 @@ it("goes on along its own route from the state last acted in where the route hol
   const route = { states: [first, between, last].map(keyOf) };
   expect(await replay(site, libraryOf([first, between, last]), { choices: route })).toMatchObject({ outcome: "signed_in" });
   expect(site.clicks).toEqual(["#a", "#m", "#b"]);
+  // The site goes through a page of another login's in between: the route still goes on from the
+  // last state of its own.
+  const detour: Screen = { path: "/detour", boxes: [], buttons: ["#d"], texts: ["one moment please"] };
+  const elsewhere = { fingerprint: arrival(detour), step: stepAt("/detour", [], "#d") };
+  const around = scriptedSite({ start: step, detour, again: step }, (_at, clicked) =>
+    clicked === "#a" ? "detour" : clicked === "#d" ? "again" : "home",
+  );
+  const library = libraryOf([first, between, last], [first, elsewhere, last]);
+  expect(await replay(around, library, { choices: route })).toMatchObject({ outcome: "signed_in" });
+  expect(around.clicks).toEqual(["#a", "#d", "#b"]);
+});
+
+it("keeps to its own state when it is looked for again, and waits for its controls on a page with boxes", async () => {
+  const signIn: Screen = { path: "/sign-in", boxes: [{ selector: "#email", kind: "identifier" }], buttons: ["#continue", "#next"] };
+  const own = { fingerprint: arrival(signIn), step: stepAt("/sign-in", [email], "#continue") };
+  const other = { fingerprint: arrival(signIn), step: stepAt("/sign-in", [email], "#next") };
+  // Another login's state with the same look was learned later.
+  const library = libraryOf([own], [other]);
+  const route = { states: [keyOf(own)] };
+  const onward = (_at: string, clicked: string) => (clicked === "#continue" ? "home" : "elsewhere");
+  // Its first fill fails with nothing sent, so the state is looked for once more.
+  const site = scriptedSite({ start: signIn }, onward);
+  let failed = false;
+  const fill: AutofillHooks<TestFailure>["fill"] = (request) => {
+    if (failed) return site.hooks.fill(request);
+    failed = true;
+    return Effect.succeed({ outcome: "refused", reason: "not_found", target: 0 } as const);
+  };
+  const redrawn = { ...site, hooks: { ...site.hooks, fill } };
+  expect(await replay(redrawn, library, { choices: route })).toMatchObject({ outcome: "signed_in" });
+  expect(site.clicks).toEqual(["#continue"]);
+  // Its own control shows late, the other login's at once: it waits for its own.
+  const late = scriptedSite(
+    { start: (looks) => ({ ...signIn, buttons: looks < 60 ? ["#next"] : ["#next", "#continue"] }) },
+    onward,
+  );
+  expect(await replay(late, library, { choices: route })).toMatchObject({ outcome: "signed_in" });
+  expect(late.clicks).toEqual(["#continue"]);
 });
 
 it("reads no other press on the page, a way in, or a code page after the code as a second send", async () => {
