@@ -57,7 +57,8 @@ export const expectNotCarried = (calls: readonly HostCall[], value: string) => {
  * The host's call on a local page: Kernel's `page`, `context` and `browser`, as on a worker. It
  * keeps every call, and fails the test, without changing what the call does, when a script holds a
  * value the host's keyboard already typed on the page (no value but a date of
- * birth enters a Kernel call's script). Configured origins the host sends (`configured`), which a
+ * birth, and the selected choices of a sign-in code picked from named choices, enters a Kernel
+ * call's script). Configured origins the host sends (`configured`), which a
  * value may sit inside, do not count. A Patchright page (`patchright`) evaluates locators in its
  * isolated world itself, so its calls run on it as they are.
  */

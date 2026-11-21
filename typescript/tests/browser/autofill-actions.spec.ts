@@ -1351,7 +1351,8 @@ test("a frame's form judged GET, submitted by a control in no form on the page, 
   ).toHaveLength(1);
 });
 
-// No value but a date of birth enters a Kernel call. Page code may copy what the
+// No value but a date of birth, and the selected choices of a sign-in code picked from named
+// choices, enters a Kernel call. Page code may copy what the
 // host typed into a form's action or a frame's address; no call reports such a URL, and the host
 // hands none back to Kernel in a later call's code.
 test("a password the page copies into the form action's query while typing reaches no Kernel call or answer", async ({
