@@ -774,6 +774,57 @@ it("goes on in a first state that needs a value as it would after opening the en
   expect(fresh).not.toHaveProperty("fromStop");
 });
 
+it("goes on in a state told by its text after the state before, as the check told it", async () => {
+  // The same email box, with a line the press brought: the state after the press is told by it.
+  const start: Screen = { path: "/", boxes: [{ selector: "#email", kind: "identifier" }], buttons: ["#use-email"] };
+  const notice: Screen = { ...start, buttons: ["#continue"], texts: ["type your email"] };
+  const library = libraryOf([
+    { fingerprint: arrival(start), step: stepAt("/", [], "#use-email") },
+    { fingerprint: arrival(start, "type your email"), step: stepAt("/", [email], "#continue") },
+    { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") },
+  ]);
+  const site = scriptedSite({ start, notice, password: passwordScreen }, (at, clicked) =>
+    at === "start" && clicked === "#use-email"
+      ? "notice"
+      : at === "notice" && clicked === "#continue"
+        ? "password"
+        : clicked === "#go"
+          ? "home"
+          : undefined,
+  );
+  const checked = await replay(site, library, { valueFree: true });
+  expect(checked).toMatchObject({ outcome: "unsent", reason: "values_needed" });
+  const from = checked.stop?.();
+  if (from === undefined) throw new Error("no stop");
+  expect(await replay(site, library, { from })).toMatchObject({ outcome: "signed_in", fromStop: { continued: true } });
+  expect(site.clicks).toEqual(["#use-email", "#continue", "#go"]);
+});
+
+it("opens the entry URL again for a stop in a look-alike of a state the check acted in", async () => {
+  // A press with nothing typed, then the same page as a learned look-alike that takes the password.
+  const start: Screen = { path: "/", boxes: [{ selector: "#password", kind: "password" }], buttons: ["#next", "#go"] };
+  const pressed: Screen = { ...start, buttons: ["#go"] };
+  const library = libraryOf([
+    { fingerprint: arrival(start), step: stepAt("/", [], "#next") },
+    { fingerprint: arrival(start), step: stepAt("/", [password], "#go") },
+  ]);
+  const site = scriptedSite({ start, pressed }, (at, clicked) =>
+    at === "start" && clicked === "#next" ? "pressed" : at === "pressed" && clicked === "#go" ? "home" : undefined,
+  );
+  const checked = await replay(site, library, { valueFree: true });
+  expect(checked).toMatchObject({ outcome: "unsent", reason: "values_needed" });
+  const from = checked.stop?.();
+  if (from === undefined) throw new Error("no stop");
+  // The page went back to the state before while the login was read; it looks the same.
+  site.site.screen = "start";
+  expect(await replay(site, library, { from })).toMatchObject({
+    outcome: "signed_in",
+    fromStop: { continued: false, reason: "state_alike" },
+  });
+  expect(site.clicks).toEqual(["#next", "#next", "#go"]);
+  expect(site.fills).toEqual(["password"]);
+});
+
 it("stops a value-free check before a press that has the site send a link", async () => {
   const choose: Screen = { path: "/sign-in", boxes: [], buttons: ["#email-me"], texts: ["sign in"] };
   const sent: Screen = { path: "/sent", boxes: [], texts: ["check your inbox"] };

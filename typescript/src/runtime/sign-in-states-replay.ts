@@ -1145,15 +1145,21 @@ const actAgain = <E extends YieldableError, V extends string, L extends Autofill
  * The state a value-free replay stopped in for values (`from`), with the page as read now, when
  * the page still shows it as that replay told it: the same look after the state before
  * (`stateAfter`), its top origin included, and its controls shown on its origin (`shownOn`), at
- * one look; else why not.
+ * one look; else why not. Never a state that looks like one the replay acted in before it, as a
+ * learned look-alike does (`state_alike`): a page gone back to that state reads the same, and only
+ * `arrive`'s wait tells them apart.
  */
 const stillShown = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
   from: SignInStatesStop,
 ) =>
   Effect.gen(function* () {
-    const state = run.input.library.states.find((known) => known.key === from.state);
+    const { states } = run.input.library;
+    const state = states.find((known) => known.key === from.state);
     if (state === undefined || from.visited.at(-1) !== from.state) return "state_unknown";
+    const before = from.visited.slice(0, -1);
+    if (states.some((known) => before.includes(known.key) && sameFingerprint(known.fingerprint, state.fingerprint)))
+      return "state_alike";
     const read = yield* run.input.observe;
     if (read === undefined) return "page_unread";
     if (!sameFingerprint(stateAfter(from.before, read), state.fingerprint)) return "page_changed";
@@ -1183,7 +1189,12 @@ export const replaySignInStates = <
     const markers = [...picked, ...library.signedIn.filter((marker) => !picked.includes(marker)).reverse()];
     const recipe = signInStatesRecipe(library, input.choices);
     if (recipe === undefined)
-      return { outcome: "unsent", reason: "states_empty", visited: [] } as SignInStatesOutcome<V>;
+      return {
+        outcome: "unsent",
+        reason: "states_empty",
+        visited: [],
+        ...(input.from === undefined ? {} : { fromStop: { continued: false, reason: "states_empty" } }),
+      } as SignInStatesOutcome<V>;
     const as: AutofillReplayInput<E, V, L> = { ...input, recipe };
     const run: Run<E, V, L> = {
       input,
