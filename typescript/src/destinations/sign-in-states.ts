@@ -157,6 +157,31 @@ export const describeFingerprint = (fingerprint: StateFingerprint) => {
   return `A sign-in state on ${fingerprint.top}: ${shown}.`;
 };
 
+/** A text as its shape alone: each word "~" and each number "#". */
+const textShape = (text: string) =>
+  text
+    .split(" ")
+    .filter((word) => word !== "")
+    .map((word) => (!/\p{L}/u.test(word) && /[\p{Nd}#]/u.test(word) ? "#" : "~"))
+    .join(" ");
+
+/**
+ * A fingerprint as a log may hold it, with no text and no value: its boxes, its message and its
+ * buttons as shapes (`textShape`), and the host and path of `page`, an absolute URL, each number
+ * in the path "#".
+ */
+export const fingerprintShape = (fingerprint: StateFingerprint, page?: string) => {
+  const url = page === undefined ? null : URL.parse(page);
+  return {
+    ...(url === null ? {} : { host: url.host, path: url.pathname.replace(/\p{Nd}+/gu, "#") }),
+    boxes: fingerprintOf(fingerprint).boxes,
+    submit: fingerprint.submit,
+    ...(fingerprint.message === undefined ? {} : { message: textShape(fingerprint.message) }),
+    ...(fingerprint.buttons === undefined ? {} : { buttons: fingerprint.buttons.map(textShape).sort() }),
+  };
+};
+export type FingerprintShape = ReturnType<typeof fingerprintShape>;
+
 /** The entry for a state, keyed by its fingerprint and step. */
 export const stateEntry = (
   fingerprint: StateFingerprint,

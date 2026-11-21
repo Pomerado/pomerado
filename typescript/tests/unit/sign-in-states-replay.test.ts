@@ -45,6 +45,8 @@ interface Screen {
   readonly frame?: string;
   /** Recorded error markers the screen shows. */
   readonly errors?: readonly string[];
+  /** The button labels a page with no empty box is told by, as the scan normalizes them. */
+  readonly labels?: readonly string[];
 }
 
 /**
@@ -165,7 +167,7 @@ const scriptedSite = (
         top: origin,
         boxes: empty.map(({ frame, kind }) => ({ frame, kind })),
         submit: empty.length > 0,
-        ...(empty.length > 0 ? {} : { message: screen.texts?.[0] ?? "", buttons: [] }),
+        ...(empty.length > 0 ? {} : { message: screen.texts?.[0] ?? "", buttons: [...(screen.labels ?? [])] }),
       },
       boxes,
       texts: screen.texts ?? [],
@@ -180,7 +182,9 @@ const arrival = (screen: Screen, message?: string): StateFingerprint => ({
   boxes: screen.boxes.map((box) => ({ frame: screen.frame ?? origin, kind: box.kind })),
   submit: screen.boxes.length > 0,
   ...(message === undefined ? {} : { message }),
-  ...(screen.boxes.length === 0 ? { message: message ?? screen.texts?.[0] ?? "", buttons: [] } : {}),
+  ...(screen.boxes.length === 0
+    ? { message: message ?? screen.texts?.[0] ?? "", buttons: [...(screen.labels ?? [])] }
+    : {}),
 });
 
 /** A library of recorded sign-ins, each a list of states with their steps, appended in order. */
@@ -208,6 +212,7 @@ const replay = (
     readonly siteAnswer?: "link" | "refused";
     readonly stepWaitMs?: number;
     readonly choices?: SignInStatesChoices;
+    readonly events?: Readonly<Record<string, unknown>>[];
   } = {},
 ) => {
   const asked: string[] = [];
@@ -243,7 +248,7 @@ const replay = (
         broker: { register: () => Effect.void, registeredSecretMatches: () => Effect.succeed([]) },
         site: "example.test",
         correlation: undefined,
-        emit: () => Effect.void,
+        emit: (details) => Effect.sync(() => void options.events?.push(details)),
         failures: {
           unanswered: (cause) => new TestFailure({ code: `unanswered:${String(cause)}` }),
           unavailable: () => new TestFailure({ code: "unavailable" }),
@@ -373,6 +378,127 @@ it("presses once more a press that typed no secret when the page kept its state"
   const kept = scriptedSite({ start: emailScreen }, () => undefined);
   expect(await replay(kept, branches)).toMatchObject({ outcome: "unclear", reason: "credential_screen_returned" });
   expect(kept.clicks).toEqual(["#continue"]);
+});
+
+// A storefront with no box, told by its message and buttons, can show one label otherwise in
+// another browser or place: the state that presses its control at the same address is still it.
+const storefront: Screen = {
+  path: "/",
+  boxes: [],
+  buttons: ["#log-in", "#deals"],
+  texts: ["fresh groceries, fast"],
+  labels: ["~ in", "~", "~ up", "~"],
+};
+const storefrontState = { fingerprint: arrival(storefront), step: stepAt("/", [], "#log-in") };
+const typedEmail = { fingerprint: arrival(emailScreen), step: stepAt("/sign-in", [email], "#continue") };
+const typedPassword = { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") };
+const viaStorefront = libraryOf([storefrontState, typedEmail, typedPassword]);
+const storefrontNext: Readonly<Record<string, string>> = {
+  "#log-in": "email",
+  "#sign-in": "email",
+  "#continue": "password",
+  "#go": "home",
+};
+const toSignIn = { email: emailScreen, password: passwordScreen };
+
+it("takes a page with no box whose label gained a word for the state whose control shows at its address", async () => {
+  const relabeled = { ...storefront, labels: ["~ in", "~ ~", "~ up", "~"] };
+  const site = scriptedSite({ start: relabeled, ...toSignIn }, (_at, clicked) => storefrontNext[clicked]);
+  const events: Readonly<Record<string, unknown>>[] = [];
+  expect(await replay(site, viaStorefront, { events })).toMatchObject({ outcome: "signed_in" });
+  expect(site.clicks).toEqual(["#log-in", "#continue", "#go"]);
+  expect(events).toContainEqual({ stage: "state", state: viaStorefront.states[0]?.key, reason: "same_control" });
+});
+
+it("presses once more a state told by its control when the page kept its look", async () => {
+  const relabeled = { ...storefront, labels: ["~ in", "~ ~", "~ up", "~"] };
+  let presses = 0;
+  const site = scriptedSite({ start: relabeled, ...toSignIn }, (at, clicked) =>
+    clicked === "#log-in" && ++presses === 1 ? at : storefrontNext[clicked],
+  );
+  expect(await replay(site, viaStorefront)).toMatchObject({ outcome: "signed_in" });
+  expect(site.clicks).toEqual(["#log-in", "#log-in", "#continue", "#go"]);
+});
+
+it("never takes a page with no box at another address for a state, though its control shows", async () => {
+  const elsewhere = { ...storefront, path: "/deals", labels: ["~ in", "~ ~", "~ up", "~"] };
+  const site = scriptedSite({ start: elsewhere, ...toSignIn }, (_at, clicked) => storefrontNext[clicked]);
+  expect(await replay(site, viaStorefront)).toMatchObject({ outcome: "unsent", reason: "unknown_state" });
+  expect(site.clicks).toEqual([]);
+});
+
+it("still needs the whole look of a state with boxes, though the control it presses shows", async () => {
+  const library = libraryOf([
+    { fingerprint: arrival(emailScreen), step: stepAt("/sign-in", [], "#continue") },
+    typedPassword,
+  ]);
+  const grown: Screen = { ...emailScreen, boxes: [...emailScreen.boxes, { selector: "#code", kind: "code" }] };
+  const site = scriptedSite({ start: grown, password: passwordScreen }, (_at, clicked) => storefrontNext[clicked]);
+  expect(await replay(site, library)).toMatchObject({ outcome: "unsent", reason: "unknown_state" });
+  expect(site.clicks).toEqual([]);
+});
+
+it("never takes a page with no box by its control alone where its press may have a code sent", async () => {
+  const sendPage: Screen = { path: "/send", boxes: [], buttons: ["#send"], texts: ["we will text you a code"], labels: ["~ ~"] };
+  const library = libraryOf([
+    { fingerprint: arrival(sendPage), step: stepAt("/send", [], "#send") },
+    { fingerprint: arrival(codeScreen), step: stepAt("/verify", [code], "#verify") },
+  ]);
+  const site = scriptedSite({ start: { ...sendPage, labels: ["~ ~ ~"] }, code: codeScreen }, () => "code");
+  expect(await replay(site, library)).toMatchObject({ outcome: "unsent", reason: "unknown_state" });
+  expect(site.clicks).toEqual([]);
+});
+
+// Two storefront states at one address, learned in turn, each pressing its own control.
+const both: Screen = { ...storefront, buttons: ["#log-in", "#sign-in"] };
+const twoStorefronts = libraryOf(
+  [storefrontState, typedEmail, typedPassword],
+  [{ fingerprint: arrival({ ...both, labels: ["~ ~", "~"] }), step: stepAt("/", [], "#sign-in") }, typedEmail, typedPassword],
+);
+
+it("takes a state whose whole look the page shows before one told by its control alone", async () => {
+  const site = scriptedSite({ start: both, ...toSignIn }, (_at, clicked) => storefrontNext[clicked]);
+  expect(await replay(site, twoStorefronts)).toMatchObject({ outcome: "signed_in" });
+  expect(site.clicks).toEqual(["#log-in", "#continue", "#go"]);
+});
+
+it("orders states told by their control alone as states of one look, the login's own first", async () => {
+  const relabeled = { ...both, labels: ["~"] };
+  const site = scriptedSite({ start: relabeled, ...toSignIn }, (_at, clicked) => storefrontNext[clicked]);
+  expect(await replay(site, twoStorefronts)).toMatchObject({ outcome: "signed_in" });
+  expect(site.clicks).toEqual(["#sign-in", "#continue", "#go"]);
+  const own = scriptedSite({ start: relabeled, ...toSignIn }, (_at, clicked) => storefrontNext[clicked]);
+  const route = twoStorefronts.states.filter((state) => state.step.submit !== "#sign-in").map((state) => state.key);
+  expect(await replay(own, twoStorefronts, { choices: { states: route } })).toMatchObject({ outcome: "signed_in" });
+  expect(own.clicks).toEqual(["#log-in", "#continue", "#go"]);
+});
+
+it("tells, at a state no one knows, its shape and the stored ones it was told from, value-free", async () => {
+  const elsewhere: Screen = { ...storefront, path: "/deals/42", texts: ["fresh groceries in 30 minutes"], labels: ["~ in", "~ ~"] };
+  const site = scriptedSite({ start: elsewhere, ...toSignIn }, (_at, clicked) => storefrontNext[clicked]);
+  const ended = await replay(site, viaStorefront);
+  expect(ended).toMatchObject({ outcome: "unsent", reason: "unknown_state" });
+  expect(ended.unknownState?.shapes).toEqual({
+    observed: {
+      host: "example.test",
+      path: "/deals/#",
+      boxes: [],
+      submit: false,
+      message: "~ ~ ~ # ~",
+      buttons: ["~ ~", "~ ~"],
+    },
+    stored: [
+      {
+        key: viaStorefront.states[0]?.key,
+        host: "example.test",
+        path: "/",
+        boxes: [],
+        submit: false,
+        message: "~ ~ ~",
+        buttons: ["~", "~", "~ ~", "~ ~"],
+      },
+    ],
+  });
 });
 
 it("asks for a new code when the site refuses one, as many times as a recipe's replay does", async () => {
