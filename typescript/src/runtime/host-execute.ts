@@ -56,7 +56,10 @@ const ${name} = await (async () => {
  * anchor's to the end of what holds its last, at the outermost level between the two. A form gets
  * none when it is not rendered, when nothing anchored is outside it, such as one that holds the
  * whole page, or when its first or last anchor, or the one after it, is not found that way; an
- * anchor of its own between those that is not found is passed over.
+ * anchor of its own between those that is not found is passed over. An element with an open shadow
+ * root, form-associated or holding a native control there, with no anchor otherwise, counts by the
+ * first anchor in that shadow root before any slot that shows light-DOM content: its label, help
+ * text or a placeholder. One just outside a form counts among the anchors before or after it.
  */
 export const markedAriaSnapshotCode = `
 const markedAriaSnapshot = async (locator, options) => {
@@ -109,11 +112,13 @@ const markedAriaSnapshot = async (locator, options) => {
             ["input", "select", "textarea", "img"].includes(element.localName) ||
             // innerText leaves out what is not rendered, such as an SVG's title.
             !/\\S/.test(element.innerText ?? "");
+          // An id names an element in the control's own tree, such as its shadow root.
+          const tree = element.getRootNode();
           const labelledBy = () =>
             element
               .getAttribute("aria-labelledby")
               ?.split(/\\s+/)
-              .map((id) => document.getElementById(id)?.textContent)
+              .map((id) => (tree.getElementById ? tree : document).getElementById(id)?.textContent)
               .join(" ");
           const label = element.labels?.[0];
           const button =
@@ -136,7 +141,9 @@ const markedAriaSnapshot = async (locator, options) => {
         const anchorOf = (node) => {
           const text = node.nodeType === Node.TEXT_NODE;
           const anchor = words(text ? node.nodeValue : nameOf(node));
-          return anchor !== "" && rendered(text ? node.parentElement : node) ? anchor : "";
+          // A shadow root's own text has its host for a parent.
+          const box = text ? (node.parentElement ?? node.parentNode.host) : node;
+          return anchor !== "" && rendered(box) ? anchor : "";
         };
         const candidate = (node) =>
           node.nodeType === Node.TEXT_NODE ? /\\S/.test(node.nodeValue) : control(node);
@@ -154,9 +161,24 @@ const markedAriaSnapshot = async (locator, options) => {
             ? words(node.nodeValue)
             : "";
         };
+        // The anchor of an element with an open shadow root, which the walks here do not enter,
+        // that is form-associated or holds a native control there: the first anchor there, such as
+        // its label, help text or a placeholder, before any slot that shows light-DOM content.
+        const fieldAnchorOf = (node) => {
+          const shadow = node.shadowRoot ?? null;
+          return shadow !== null &&
+            (node.constructor?.formAssociated === true ||
+              shadow.querySelector("input, select, textarea") !== null) &&
+            rendered(node)
+            ? (anchorsBeside(shadow, shadow, false, 1)[0] ?? "")
+            : "";
+        };
         // Up to \`count\` anchors in \`scope\` next to \`node\`, after it or (\`back\`) before
-        // it, in document order, past aria-hidden subtrees.
+        // it, in document order, past aria-hidden subtrees. A walk over a field's shadow root, the
+        // only walk whose scope is one, ends at a slot that shows light-DOM content: the walk
+        // outside reads that content in its own place.
         const anchorsBeside = (scope, node, back, count) => {
+          const field = scope.nodeType === Node.DOCUMENT_FRAGMENT_NODE;
           const walk = document.createTreeWalker(
             scope,
             NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
@@ -165,6 +187,13 @@ const markedAriaSnapshot = async (locator, options) => {
           const step = () => (back ? walk.previousNode() : walk.nextNode());
           const anchors = [];
           for (let next = step(); next !== null && anchors.length < count; next = step()) {
+            // A slot in SVG or MathML has no assigned nodes to read.
+            if (
+              field &&
+              typeof next.assignedNodes === "function" &&
+              next.assignedNodes().length > 0
+            )
+              break;
             // Walking back reaches what an aria-hidden element holds before the element itself.
             const text = next.nodeType === Node.TEXT_NODE;
             const hidden = back
@@ -173,8 +202,8 @@ const markedAriaSnapshot = async (locator, options) => {
                 ? next
                 : null;
             if (hidden !== null) walk.currentNode = back ? hidden : lastOf(hidden);
-            else if (candidate(next)) {
-              const anchor = formAnchorOf(next);
+            else {
+              const anchor = (candidate(next) ? formAnchorOf(next) : "") || fieldAnchorOf(next);
               if (anchor !== "") anchors[back ? "unshift" : "push"](anchor);
             }
           }
