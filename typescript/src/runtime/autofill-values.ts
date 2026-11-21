@@ -353,7 +353,7 @@ export const makeAutofillValues = <
   const { askedCode, correctedValue } = makeFreshAutofillValues({ ask });
   /** The host's code, else the owner's, with why a new one is needed. */
   const codeValue = (login: L): Effect.Effect<Found, E> =>
-    hosted?.code?.(login) ?? askedCode(login, login.codeBoxes);
+    hosted?.code?.(login) ?? askedCode(login, login.codeBoxes ?? login.codeChoices);
   /** The host's recovery code, else the owner's; a rejected one is corrected in place. */
   const recoveryValue = (login: L): Effect.Effect<Found, E> =>
     hosted?.recoveryCode?.(login) ??

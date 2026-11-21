@@ -883,9 +883,14 @@ const fillField = (
     const kept = tracked
       ? progress.earlier.findLast((box) => box.slot === field?.slot && box.value === value)
       : undefined;
-    // A code picked from named choices: the choices it names.
+    // A code picked from named choices: the choices it names. One that names them not one for one
+    // fails, with nothing picked.
     const choices = input.inspection.screen.fields[index]?.codeChoices;
-    const picked = choices === undefined ? undefined : (choicePicks(value, choices) ?? []);
+    const picked = choices === undefined ? undefined : choicePicks(value, choices);
+    if (choices !== undefined && picked === undefined) {
+      progress.statuses.push("failed");
+      return filledReport(input.step, progress, "not_attempted", "");
+    }
     const call: AutofillFillCall =
       picked !== undefined
         ? { kind: "choose", index, names: picked }
@@ -1215,10 +1220,12 @@ const afterFieldCall = (
  * the host clicked, each key into the box the page moved the focus to (`fillRow`), else one key per
  * box, and inserts at once a code whose one
  * field hands the focus on once a key went in, binding that field again first (`codeAtOnce`), so no value but a
- * date of birth, and the selected choices of a sign-in code picked from named choices, ever enters a
- * Kernel call's script text or its request to Kernel's REST API. Such a code's call ticks or presses
- * the choices its code names (`choose`), and is no typed field a submit checks again. It reports
- * per-field outcomes and never a
+ * date of birth, and the selected choices of a sign-in code picked from named checkboxes, ever
+ * enters a Kernel call's script text or its request to Kernel's REST API. Such a code's call ticks
+ * the checkboxes its code names (`choose`), and is no typed field a submit checks again. Whatever
+ * the fill comes to, it unticks them all before it returns while the page still shows them
+ * (`untickChoices`), and a click again of its screen clicks nothing: the screen is filled again.
+ * It reports per-field outcomes and never a
  * value. Once anything was typed, a call that fails or finds a control refused can no longer say
  * nothing reached the site: a lost answer is `uncertain`, a control refused before a field's typing
  * fails that field, and one refused before the click, or a submission refused as it fires, refuses
@@ -1280,10 +1287,6 @@ const afterFieldCall = (
  */
 export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepReport> =>
   Effect.gen(function* () {
-    const { step } = input;
-    const crossing = crossingSelector(step);
-    if (crossing !== undefined)
-      return withCheck(refused("selector_unsupported", crossing), "selector_unsupported");
     const progress: FillProgress = {
       statuses: [],
       typed: false,
@@ -1295,6 +1298,35 @@ export const fillAutofillStep = (input: FillInput): Effect.Effect<AutofillStepRe
       trusted: new Set(),
       earlier: [...(input.typedBoxes ?? [])],
     };
+    const report = yield* fillScreen(input, progress);
+    yield* untickChoices(input, progress);
+    return report;
+  });
+
+/**
+ * Unticks every checkbox of the step's code fields that have the code picked from them
+ * (`codeChoices`) while the page still shows them, whatever the fill came to: a code's ticks never
+ * stay on the page for its snapshot to read, nor for a click again to send. Its answers are not
+ * read, and a page that went on finds no field and changes nothing.
+ */
+const untickChoices = (input: FillInput, progress: FillProgress) => {
+  progress.check = [];
+  return Effect.forEach(
+    input.inspection.screen.fields.flatMap((field, index) =>
+      field.codeChoices === undefined ? [] : [index],
+    ),
+    (index) => fillCall(input, progress)({ kind: "choose", index, names: [] }),
+    { discard: true },
+  );
+};
+
+/** The fill of `fillAutofillStep`, before its choices are unticked. */
+const fillScreen = (input: FillInput, progress: FillProgress): Effect.Effect<AutofillStepReport> =>
+  Effect.gen(function* () {
+    const { step } = input;
+    const crossing = crossingSelector(step);
+    if (crossing !== undefined)
+      return withCheck(refused("selector_unsupported", crossing), "selector_unsupported");
     const notice = yield* dismissNotice(input, progress);
     if (notice.refusal !== undefined) return notice.refusal;
     const boxes = codeBoxes(step, input.values);
@@ -1385,10 +1417,16 @@ export const resubmitAutofillStep = (input: CallInput): Effect.Effect<AutofillSt
     if (notice.refusal !== undefined) return notice.refusal;
     progress.check = typedFields(input, progress);
     // Nothing typed is left to send: the first typed field fails as the submit's check would find
-    // it, with no call for the page's own navigation after the dismiss to lose.
+    // it, with no call for the page's own navigation after the dismiss to lose. A code picked from
+    // named choices left nothing either, since its fill unticked them (`untickChoices`).
     const [emptiedField] = progress.check;
-    if (notice.emptied === true && emptiedField !== undefined) {
-      progress.statuses[emptiedField] = "failed";
+    const choiceField = input.inspection.screen.fields.findIndex(
+      (field) => field.codeChoices !== undefined,
+    );
+    const unsent =
+      choiceField !== -1 ? choiceField : notice.emptied === true ? emptiedField : undefined;
+    if (unsent !== undefined) {
+      progress.statuses[unsent] = "failed";
       return filledReport(step, progress, "not_attempted", notice.url ?? "");
     }
     const codeFields = step.fields.flatMap((field, index) => (field.slot === "code" ? [index] : []));
@@ -1452,7 +1490,7 @@ const isBlocked = (report: AutofillStepReport) =>
 /**
  * The fields the host typed itself and that still count as filled, which a submit it clicks again
  * checks still hold something: never a date, which the authoring library fills into the page's
- * own controls, nor a code picked from named choices, which holds no value.
+ * own controls, nor a code picked from named checkboxes, which holds no value.
  */
 const typedFields = (input: CallInput, progress: FillProgress) =>
   input.step.fields.flatMap((field, index) =>

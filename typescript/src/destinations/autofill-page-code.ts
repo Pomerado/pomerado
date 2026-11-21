@@ -108,28 +108,25 @@ for (const [index, codeBox] of codeBoxes.entries())
     codeBox === null || (codeBox.limit === "script" && !scriptAgree) ? null : { box: codeBox.box, of: codeBox.of };`;
 
 /**
- * Page code: the named choices a code field holds when it takes no typing, as a screen that has the
- * code picked from checkboxes drawn as digits and pictures does: each checkbox, and each button
- * that submits no form, inside it that the accessibility tree shows and that is enabled, with its
- * accessible name (`accessibleNames`), trimmed, in page order. Null unless it holds 2 to 30 of
- * them, each named in 1 to 30 characters, and no text field. Names only, never a state; `choices`
- * are the elements the choose call clicks.
+ * Page code: the named checkboxes a code field holds when it takes no typing, as a screen that has
+ * the code picked from checkboxes drawn as digits and pictures does: each checkbox inside it that
+ * the accessibility tree shows and that is enabled, with its accessible name (`accessibleNames`),
+ * trimmed, in page order. Null unless it holds 2 to 30 of them, each named by one digit or one word
+ * of up to 30 letters, which a code can name (`choicePicks`), and no text field. Names only, never
+ * a state; `choices` are the elements the choose call clicks.
  */
 const choicesCode = `(element) => {
   if (element.matches(":read-write, select") || element.querySelector(":read-write, select") !== null) return null;
   const name = (${String(accessibleNames)})();
-  const choices = Array.from(
-    element.querySelectorAll('input[type="checkbox"], [role="checkbox"], button, input[type="button"], [role="button"]'),
-  ).filter(
+  const choices = Array.from(element.querySelectorAll('input[type="checkbox"], [role="checkbox"]')).filter(
     (choice) =>
       choice.checkVisibility({ visibilityProperty: true }) &&
       choice.closest('[aria-hidden="true"]') === null &&
       !choice.matches(":disabled") &&
-      choice.closest('[aria-disabled="true"]') === null &&
-      !(choice instanceof HTMLButtonElement && choice.type !== "button" && choice.form !== null),
+      choice.closest('[aria-disabled="true"]') === null,
   );
-  const names = choices.map((choice) => name(choice).trim().replace(/\\s+/g, " "));
-  return choices.length >= 2 && choices.length <= 30 && names.every((each) => each.length > 0 && each.length <= 30)
+  const names = choices.map((choice) => name(choice).trim());
+  return choices.length >= 2 && choices.length <= 30 && names.every((each) => /^(?:[0-9]|[\\p{L}\\p{M}]{1,30})$/u.test(each.normalize("NFKC")))
     ? { choices, names }
     : null;
 }`;
@@ -210,8 +207,8 @@ return {
  *   holds something (`kept`).
  * - `date`: fills a date of birth with the authoring library's `fillDate`, which needs the page's
  *   own options, so this call's code holds the date (`iso`).
- * - `choose`: ticks or presses the choices a sign-in code names among the named choices of its
- *   field (`choicesCode`), so this call's code holds those choices' names (`names`).
+ * - `choose`: ticks the checkboxes a sign-in code names among the named checkboxes of its field
+ *   (`choicesCode`) and unticks the rest, so this call's code holds those choices' names (`names`).
  * - `dismiss`: clicks a covering notice's own control (`dismissCode`).
  * - `submit`: first reads whether the page sent what was typed itself (`pageSentCode`). Otherwise
  *   it guards the submission as it fires (`submissionGuardCode`, under the host's
@@ -281,9 +278,9 @@ export type AutofillFillCall =
     }
   | {
       /**
-       * Picks a code from the named choices a code field holds (`choicesCode`): `names`, the
-       * choices the code names, in its order. This call's code holds them, as a date's call holds
-       * its date, and nothing else of the code.
+       * Picks a code from the named checkboxes a code field holds (`choicesCode`): `names`, the
+       * choices the code names, in its order, and none to untick them all. This call's code holds
+       * them, as a date's call holds its date, and nothing else of the code.
        */
       readonly kind: "choose";
       readonly index: number;
@@ -929,30 +926,27 @@ ${
 }`;
   if (call.kind === "choose")
     return `try {
-  // The choices as found now, each picked by its own name; a name no choice or several hold picks
-  // nothing. A checkbox ends ticked when the code names it and unticked otherwise, and a button is
-  // pressed each time the code names it, in the code's order. A checkbox with a label is clicked
-  // through it, as a person clicks the picture over a hidden box. Its failure says nothing more.
+  // The checkboxes as found now, each picked by its own name; a name no checkbox or several hold
+  // picks nothing. Each ends ticked when the code names it and unticked otherwise, so no names
+  // untick them all. One with a label is clicked through it, as a person clicks the picture over a
+  // hidden box. Its failure says nothing more.
   const found = await fields[${call.index}].locator.evaluateHandle(${choicesCode}, undefined, { timeout: ${elementReadMs} });
   const names = await found.evaluate((read) => read?.names ?? null);
   const picked = ${JSON.stringify(call.names)};
   const at = picked.map((pick) => (names?.indexOf(pick) === names?.lastIndexOf(pick) ? (names?.indexOf(pick) ?? -1) : -1));
-  if (at.length === 0 || at.includes(-1)) return { chosen: false, url: primary.url() };
-  const boxes = await found.evaluate((read) => read.choices.map((choice) => choice.matches('input[type="checkbox"], [role="checkbox"]')));
+  if (names === null || at.includes(-1)) return { chosen: false, url: primary.url() };
   const ticked = () => found.evaluate((read) => read.choices.map((choice) => choice instanceof HTMLInputElement ? choice.checked : choice.getAttribute("aria-checked") === "true"));
-  const click = async (place) => {
+  const wanted = names.map((_, place) => at.includes(place));
+  for (const [place, on] of (await ticked()).entries()) {
+    if (on === wanted[place]) continue;
     const target = await found.evaluateHandle((read, place) => {
       const choice = read.choices[place];
       return choice instanceof HTMLInputElement && choice.labels?.length ? choice.labels[0] : choice;
     }, place);
     await target.asElement().click({ timeout: 5000 });
-  };
-  const wanted = names.map((_, place) => at.includes(place));
-  const before = await ticked();
-  for (const [place, box] of boxes.entries()) if (box && before[place] && !wanted[place]) await click(place);
-  for (const place of at) if (!boxes[place] || !(await ticked())[place]) await click(place);
+  }
   const after = await ticked();
-  if (boxes.some((box, place) => box && after[place] !== wanted[place])) return { chosen: false, url: primary.url() };
+  if (after.some((on, place) => on !== wanted[place])) return { chosen: false, url: primary.url() };
   return { chosen: true, url: primary.url(), document: await documentStart() };
 } catch {
   return { chosen: false, url: primary.url() };

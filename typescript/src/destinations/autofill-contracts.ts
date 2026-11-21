@@ -112,8 +112,8 @@ const digitNames = ["zero", "one", "two", "three", "four", "five", "six", "seven
  * The choices a code names, in its order, among the named choices a code screen has it picked from
  * (`codeChoices`): each digit is a part, which matches a choice named by the digit or its word
  * ("3" or "three"), and each run of letters a word, which matches a choice of that name, case
- * aside. Undefined when the code has no part, or a part matches no choice or more than one, so
- * nothing is guessed.
+ * aside. Undefined when the code has no part, a part matches no choice or more than one, or two
+ * parts match the same choice, so nothing is guessed.
  */
 export const choicePicks = (code: string, choices: readonly string[]) => {
   const parts = code.normalize("NFKC").toLowerCase().match(/[0-9]|[\p{L}\p{M}]+/gu) ?? [];
@@ -124,7 +124,11 @@ export const choicePicks = (code: string, choices: readonly string[]) => {
     });
     return named.length === 1 ? named[0] : undefined;
   });
-  return picks.length > 0 && picks.every((pick) => pick !== undefined) ? picks : undefined;
+  return picks.length > 0 &&
+    picks.every((pick) => pick !== undefined) &&
+    new Set(picks).size === picks.length
+    ? picks
+    : undefined;
 };
 
 /**

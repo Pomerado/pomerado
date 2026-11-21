@@ -1,5 +1,6 @@
 import { Effect } from "effect";
 import type { YieldableError } from "effect/Cause";
+import { choicePicks } from "../destinations/autofill-contracts.js";
 import { bareCode, Unanswered, type makeLoginFieldAsk } from "./login-field-asks.js";
 import type { AutofillLogin, AnsweredLoginField } from "./autofill-values.js";
 
@@ -22,10 +23,20 @@ const codeNotices: Record<NonNullable<AutofillLogin["codeAgain"]>, string> = {
 
 /**
  * A code this sign-in already sent and the site refused: as given, or as one-digit boxes sent it,
- * without its spaces and hyphens.
+ * without its spaces and hyphens, or on a screen that has it picked from named choices, one that
+ * names the same choices (`codeChoices`).
  */
-const refusedBefore = (login: AutofillLogin, code: string) =>
-  login.rejectedCodes?.has(code) === true || login.rejectedCodes?.has(bareCode(code)) === true;
+const refusedBefore = (login: AutofillLogin, code: string) => {
+  const choices = login.codeChoices;
+  const picked = (each: string) =>
+    choices === undefined ? undefined : choicePicks(each, choices)?.toSorted().join("\n");
+  const picks = picked(code);
+  return (
+    login.rejectedCodes?.has(code) === true ||
+    login.rejectedCodes?.has(bareCode(code)) === true ||
+    (picks !== undefined && [...(login.rejectedCodes ?? [])].some((each) => picked(each) === picks))
+  );
+};
 
 /**
  * The owner's answers that share the sign-in's bounded rejection history: a corrected field, and
@@ -61,11 +72,11 @@ export const makeFreshAutofillValues = <E extends YieldableError>({
     });
   /**
    * Caller-provided codes consume the existing shared two-correction budget. An answer must fit
-   * `codeBoxes` code fields one character each, when the screen has several, or name the screen's
-   * choices one for one (`codeChoices`), when it has the code picked from them. The question quotes
-   * the screen's own instruction for the code when the step named one (`codeInstruction`).
+   * `codeBoxes` code fields one character each, when it is their count, or name the choices one for
+   * one, when it is the names of the choices the screen has the code picked from. The question
+   * quotes the screen's own instruction for the code when the step named one (`codeInstruction`).
    */
-  const askedCode = (login: AutofillLogin, codeBoxes: number | undefined) =>
+  const askedCode = (login: AutofillLogin, codeBoxes: number | readonly string[] | undefined) =>
     Effect.gen(function* () {
       while (true) {
         if (login.codeAgain === "rejected" && login.codeRequests) {
@@ -78,7 +89,7 @@ export const makeFreshAutofillValues = <E extends YieldableError>({
           login.codeAgain === undefined ? undefined : codeNotices[login.codeAgain],
           false,
           0,
-          codeBoxes ?? login.codeChoices,
+          codeBoxes,
           login.codeInstruction,
         );
         if (answered instanceof Unanswered || !refusedBefore(login, answered.value))
