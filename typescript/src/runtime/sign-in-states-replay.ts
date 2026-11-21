@@ -1,6 +1,7 @@
 import { Clock, Duration, Effect } from "effect";
 import type { YieldableError } from "effect/Cause";
 import type { AutofillRecipeStep } from "../destinations/autofill-recipe.js";
+import type { SignInMethodChoice } from "../destinations/autofill-contracts.js";
 import { urlOrigin } from "../destinations/autofill-refusal.js";
 import {
   type AutofillInspection,
@@ -70,13 +71,19 @@ export interface SignInStatesReplayInput<
   readonly library: SignInStates;
   /** The login's own picks as its last replay gave them back (`choices` of a signed-in outcome). */
   readonly choices?: SignInStatesChoices | undefined;
+  /**
+   * The method that orders known states sharing a look where the login's own picks name none, such
+   * as the one its caller asked for or the one it saved; it picks nothing at a method choice.
+   */
+  readonly rankMethod?: SignInMethodChoice | undefined;
   /** The page as a state, as `observeSignInState` reads it. */
   readonly observe: Effect.Effect<ObservedState | undefined, E>;
   readonly quiet?: StatesQuiet | undefined;
   /**
    * Where a value-free replay on this browser stopped for the login's values (`stop`), for this
-   * replay with them to go on from: it opens no entry URL when the page still shows that state
-   * (`stillShown`), and otherwise opens it as any replay does. Absent, the replay opens it.
+   * replay with them to go on from: it opens no entry URL when the page still shows that state, one
+   * the login's own route takes (`stillShown`), and otherwise opens it as any replay does. Absent,
+   * the replay opens it.
    */
   readonly from?: SignInStatesStop | undefined;
 }
@@ -139,6 +146,12 @@ interface Run<E extends YieldableError, V extends string, L extends AutofillLogi
   readonly answered: Set<string>;
   /** The page's address as the last marker check read it, for an unknown state's shape. */
   page: string | undefined;
+  /**
+   * Whether the method picked last is the host's hint (`rankMethod`) as a lone method beside a way
+   * in, in a state the hint may have ranked first: it is never stored as a pick (`choices.method`)
+   * unless the login named it; the route that signed in is kept as any route is.
+   */
+  hinted: boolean;
 }
 
 /** A known state the page shows, told by its control and address alone (`byControl`) or not. */
@@ -263,10 +276,10 @@ const ownStateNotShown = "own_state_not_shown";
  * besides the one it last acted in, unless that one is looked for again, only its own are taken,
  * in their order there from the last state it acted in that the route holds, then the earlier ones:
  * a login never goes on along another login's route, so one whose own state no longer shows stops
- * there, for a repair of its own. Otherwise first a
- * state whose picked method is the login's (`choices.method`), then one the last state led to, or
- * at the start one no state leads to (`next`), then the most recently learned, as a library holds
- * its states in the order learned.
+ * there, for a repair of its own. Otherwise first a state whose picked method is the login's
+ * (`choices.method`, else `rankMethod`), then one the last state led to, or at the start one no
+ * state leads to (`next`), then the most recently learned, as a library holds its states in the
+ * order learned.
  */
 const ranked = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -275,7 +288,7 @@ const ranked = <E extends YieldableError, V extends string, L extends AutofillLo
   next: ReadonlySet<string> = new Set(),
 ) => {
   const route = run.input.choices?.states ?? [];
-  const method = run.input.choices?.method;
+  const method = run.input.choices?.method ?? run.input.rankMethod;
   const { states } = run.input.library;
   // The state last acted in, when it is not looked for again, leaves the route no say: where its
   // page stays, the route goes no further there, so a look-alike a repair learned after it may go on.
@@ -553,7 +566,7 @@ const signedIn = <E extends YieldableError, V extends string, L extends Autofill
   marker: SignedInEntry,
 ): Ended<V> => {
   const { replay, visited } = run;
-  const method = replay.progress.chosen ?? run.input.choices?.method;
+  const method = (run.hinted ? undefined : replay.progress.chosen) ?? run.input.choices?.method;
   const choices: SignInStatesChoices = {
     states: [...new Set(visited)],
     ...(method === undefined ? {} : { method }),
@@ -1075,7 +1088,8 @@ const sendMethods: ReadonlySet<string> = new Set(["sms", "call", "email", "push"
 /**
  * A method choice's pick: the login's own (`choices.method`), else the way in the recording took,
  * a lone two-factor method beside a way in, or the host's or caller's pick, as a recipe's replay
- * picks.
+ * picks. The host's hint (`rankMethod`) picks nothing here; a lone method that is the hint, in a
+ * state the hint may have ranked first, is never stored as a pick (`hinted`).
  */
 const methodFor = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -1089,6 +1103,7 @@ const methodFor = <E extends YieldableError, V extends string, L extends Autofil
       run.input.credentials?.password === undefined &&
       twoFactor.length > 0 &&
       twoFactor.every((option) => codeMethods.has(option.method));
+    const lone = twoFactor.length === 1 && twoFactor.length < methods.length ? twoFactor[0] : undefined;
     const picked =
       own ??
       methods.find(
@@ -1098,9 +1113,12 @@ const methodFor = <E extends YieldableError, V extends string, L extends Autofil
           option.option === undefined &&
           option.selector === step.submit,
       ) ??
-      (twoFactor.length === 1 && twoFactor.length < methods.length ? twoFactor[0] : undefined) ??
+      lone ??
       (yield* run.replay.pickMethod(twoFactor));
-    if (isTwoFactorOption(picked)) run.replay.progress.chosen = picked.method;
+    if (isTwoFactorOption(picked)) {
+      run.replay.progress.chosen = picked.method;
+      run.hinted = picked === lone && picked.method === run.input.rankMethod;
+    }
     return picked;
   });
 
@@ -1376,7 +1394,8 @@ const actAgain = <E extends YieldableError, V extends string, L extends Autofill
  * (`stateAfter`), its top origin included, and its controls shown on its origin (`shownOn`), at
  * one look; else why not. Never a state that looks like one the replay acted in before it, as a
  * learned look-alike does (`state_alike`): a page gone back to that state reads the same, and only
- * `arrive`'s wait tells them apart.
+ * `arrive`'s wait tells them apart. Nor one the login's own route leaves out where it holds a state
+ * with that look (`state_not_own`), as a stop of a value-free replay given no `choices` may be.
  */
 const stillShown = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -1389,6 +1408,7 @@ const stillShown = <E extends YieldableError, V extends string, L extends Autofi
     const before = from.visited.slice(0, -1);
     if (states.some((known) => before.includes(known.key) && sameFingerprint(known.fingerprint, state.fingerprint)))
       return "state_alike";
+    if (ranked({ ...run, visited: before }, [state], looksLike(state.fingerprint)).length === 0) return "state_not_own";
     const read = yield* run.input.observe;
     if (read === undefined) return "page_unread";
     if (!sameFingerprint(stateAfter(from.before, read), state.fingerprint)) return "page_changed";
@@ -1435,6 +1455,7 @@ export const replaySignInStates = <
       gone: false,
       answered: new Set(),
       page: undefined,
+      hinted: false,
     };
     const from = input.from === undefined ? undefined : yield* stillShown(run, input.from);
     if (from === undefined || typeof from === "string") yield* input.hooks.open(input.entryUrl);

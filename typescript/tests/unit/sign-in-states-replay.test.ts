@@ -213,6 +213,9 @@ const replay = (
     readonly siteAnswer?: "link" | "refused";
     readonly stepWaitMs?: number;
     readonly choices?: SignInStatesChoices;
+    readonly rankMethod?: SignInStatesChoices["method"];
+    /** The method the host picks at a method choice. */
+    readonly hostMethod?: SignInStatesChoices["method"];
     readonly events?: Readonly<Record<string, unknown>>[];
     readonly from?: SignInStatesStop;
   } = {},
@@ -255,10 +258,18 @@ const replay = (
           unanswered: (cause) => new TestFailure({ code: `unanswered:${String(cause)}` }),
           unavailable: () => new TestFailure({ code: "unavailable" }),
         },
-        ...(options.siteAnswer === undefined
+        ...(options.siteAnswer === undefined && options.hostMethod === undefined
           ? {}
-          : { hosted: { siteAnswer: () => Effect.succeed(options.siteAnswer) } }),
+          : {
+              hosted: {
+                ...(options.siteAnswer === undefined ? {} : { siteAnswer: () => Effect.succeed(options.siteAnswer) }),
+                ...(options.hostMethod === undefined
+                  ? {}
+                  : { method: (offered) => Effect.succeed(offered.find((option) => option.method === options.hostMethod)) }),
+              },
+            }),
         ...(options.choices === undefined ? {} : { choices: options.choices }),
+        ...(options.rankMethod === undefined ? {} : { rankMethod: options.rankMethod }),
         timing: { stepWaitMs: options.stepWaitMs ?? 300, pollMs: 2 },
         quiet: { quietMs: 20, capMs: 120 },
         sent: { current: false },
@@ -1928,6 +1939,135 @@ it("reads no other press on the page, a way in, or a code page after the code as
   const library = repairedFrom([emailState, askText, textCode], textCode, [secondCode]);
   expect((await replayOnClock(texted, library, undefined, Effect.void, true, true)).ended).toMatchObject({ outcome: "signed_in" });
   expect(texted.clicks).toEqual(["#continue", "#text-me", "#verify"]);
+});
+
+it("goes on from a stop only in a state the login's own route takes, else from the entry URL", async () => {
+  const idPage: Screen = { path: "/sign-in", boxes: [{ selector: "#email", kind: "identifier" }], buttons: ["#continue", "#next"] };
+  const own = { fingerprint: arrival(idPage), step: stepAt("/sign-in", [email], "#continue") };
+  const other = { fingerprint: arrival(idPage), step: stepAt("/sign-in", [email], "#next") };
+  const typesPassword = { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") };
+  // Another login learned its own step there later, so a check given no choices takes it.
+  const library = libraryOf([own, typesPassword], [other, typesPassword]);
+  const choices = { states: [keyOf(own), keyOf(typesPassword)] };
+  const site = () =>
+    scriptedSite({ start: idPage, password: passwordScreen }, (_at, clicked) =>
+      clicked === "#continue" || clicked === "#next" ? "password" : clicked === "#go" ? "home" : undefined,
+    );
+  const unchosen = site();
+  const from = (await replay(unchosen, library, { valueFree: true })).stop?.();
+  expect(from?.state).toBe(keyOf(other));
+  if (from === undefined) throw new Error("no stop");
+  const ended = await replay(unchosen, library, { from, choices });
+  expect(ended).toMatchObject({ outcome: "signed_in", fromStop: { continued: false, reason: "state_not_own" } });
+  expect(unchosen.clicks).toEqual(["#continue", "#go"]);
+  expect(ended.visited).toEqual(choices.states);
+  // A check given the login's choices stops in its own state, and the replay goes on there.
+  const chosen = site();
+  const ownStop = (await replay(chosen, library, { valueFree: true, choices })).stop?.();
+  expect(ownStop?.state).toBe(keyOf(own));
+  if (ownStop === undefined) throw new Error("no stop");
+  expect(await replay(chosen, library, { from: ownStop, choices })).toMatchObject({ fromStop: { continued: true } });
+  expect(chosen.clicks).toEqual(["#continue", "#go"]);
+  // A login with no route there goes on in whichever it stopped in, as before.
+  const routeless = site();
+  const anyStop = (await replay(routeless, library, { valueFree: true })).stop?.();
+  if (anyStop === undefined) throw new Error("no stop");
+  expect(await replay(routeless, library, { from: anyStop })).toMatchObject({ fromStop: { continued: true } });
+  expect(routeless.clicks).toEqual(["#next", "#go"]);
+  // So does a login whose route holds no state with that look, only others.
+  const elsewhere = site();
+  const otherStop = (await replay(elsewhere, library, { valueFree: true })).stop?.();
+  if (otherStop === undefined) throw new Error("no stop");
+  expect(await replay(elsewhere, library, { from: otherStop, choices: { states: [keyOf(typesPassword)] } })).toMatchObject({
+    fromStop: { continued: true },
+  });
+  expect(elsewhere.clicks).toEqual(["#next", "#go"]);
+});
+
+it("orders states sharing a look by a host's method where the login names none, and picks nothing by it", async () => {
+  const methods = [
+    { method: "sms" as const, selector: "#text" },
+    { method: "email" as const, selector: "#email" },
+  ];
+  const textMethod = { fingerprint: arrival(pick), step: stepAt("/pick", [], "#text", { methods }) };
+  const emailMethod = { fingerprint: arrival(pick), step: stepAt("/pick", [], "#email", { methods }) };
+  const library = libraryOf([emailState, emailMethod], [emailState, textMethod]);
+  const ended = await replay(picked(), library, { rankMethod: "email", hostMethod: "email" });
+  expect(ended).toMatchObject({ outcome: "signed_in" });
+  expect(ended.visited).toContain(keyOf(emailMethod));
+  // What is pressed and kept is the host's own pick at the method choice, never the hint.
+  expect(ended.choices?.method).toBe("email");
+  const site = picked();
+  const hostsOwn = await replay(site, library, { rankMethod: "email", hostMethod: "sms" });
+  expect(site.clicks).toEqual(["#continue", "#text"]);
+  expect(hostsOwn.choices?.method).toBe("sms");
+  // Without it, the state learned last.
+  const unranked = await replay(picked(), library, { hostMethod: "email" });
+  expect(unranked.visited).toContain(keyOf(textMethod));
+  // The login's own method comes first.
+  const own = await replay(picked(), library, { rankMethod: "email", choices: { method: "sms" } });
+  expect(own.visited).toContain(keyOf(textMethod));
+  // At a method choice, the recorded way in is pressed, not the host's method.
+  const choose: Screen = { path: "/choose", boxes: [], buttons: ["#use-password", "#email-code"], texts: ["how do you want to sign in"] };
+  const wayIn = {
+    fingerprint: arrival(choose),
+    step: stepAt("/choose", [], "#use-password", {
+      methods: [
+        { method: "password" as const, selector: "#use-password" },
+        { method: "email" as const, selector: "#email-code" },
+      ],
+    }),
+  };
+  const typesPassword = { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") };
+  const way = scriptedSite({ start: emailScreen, choose, password: passwordScreen }, (_at, clicked) =>
+    clicked === "#continue" ? "choose" : clicked === "#use-password" ? "password" : clicked === "#go" ? "home" : undefined,
+  );
+  const wentIn = await replay(way, libraryOf([emailState, wayIn, typesPassword]), { rankMethod: "email" });
+  expect(wentIn).toMatchObject({ outcome: "signed_in" });
+  expect(wentIn.choices).not.toHaveProperty("method");
+  expect(way.clicks).toEqual(["#continue", "#use-password", "#go"]);
+});
+
+it("takes by a host's method only a state whose recorded press is that method, and keeps no method it led to", async () => {
+  const choose: Screen = { path: "/choose", boxes: [], buttons: ["#use-password", "#email-code"], texts: ["how do you want to sign in"] };
+  const methods = [
+    { method: "password" as const, selector: "#use-password" },
+    { method: "email" as const, selector: "#email-code" },
+  ];
+  const byEmailCode = { fingerprint: arrival(choose), step: stepAt("/choose", [], "#email-code", { methods }) };
+  const byPassword = { fingerprint: arrival(choose), step: stepAt("/choose", [], "#use-password", { methods }) };
+  const codeState = { fingerprint: arrival(codeScreen), step: stepAt("/verify", [code], "#verify") };
+  const typesPassword = { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") };
+  // The password press was learned last.
+  const library = libraryOf([emailState, byEmailCode, codeState], [emailState, byPassword, typesPassword]);
+  const next: Readonly<Record<string, string>> = {
+    "#continue": "choose",
+    "#use-password": "password",
+    "#email-code": "code",
+    "#go": "home",
+    "#verify": "home",
+  };
+  const site = () =>
+    scriptedSite({ start: emailScreen, choose, password: passwordScreen, code: codeScreen }, (_at, clicked) => next[clicked]);
+  const plain = site();
+  expect(await replay(plain, library)).toMatchObject({ outcome: "signed_in" });
+  expect(plain.clicks).toEqual(["#continue", "#use-password", "#go"]);
+  // The hint takes the state whose recorded press is its method, a route the library walked, and
+  // keeps that route, but no method of it as the login's own.
+  const hinted = site();
+  const ended = await replay(hinted, library, { rankMethod: "email" });
+  expect(ended).toMatchObject({ outcome: "signed_in" });
+  expect(hinted.clicks).toEqual(["#continue", "#email-code", "#verify"]);
+  expect(ended.choices?.states).toEqual([emailState, byEmailCode, codeState].map(keyOf));
+  expect(ended.choices).not.toHaveProperty("method");
+  // The login's own method is kept, as before.
+  const chosen = site();
+  expect((await replay(chosen, library, { choices: { method: "email" } })).choices?.method).toBe("email");
+  expect(chosen.clicks).toEqual(["#continue", "#email-code", "#verify"]);
+  // A hint no recorded press goes to orders nothing: the state learned last.
+  const unwalked = site();
+  expect(await replay(unwalked, library, { rankMethod: "sms" })).not.toHaveProperty("choices.method");
+  expect(unwalked.clicks).toEqual(["#continue", "#use-password", "#go"]);
 });
 
 it("goes on in a learned look-alike along the login's own route, or after a state its route goes no further from", async () => {
