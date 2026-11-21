@@ -56,7 +56,9 @@ const ${name} = await (async () => {
  * anchor's to the end of what holds its last, at the outermost level between the two. A form gets
  * none when it is not rendered, when nothing anchored is outside it, such as one that holds the
  * whole page, or when its first or last anchor, or the one after it, is not found that way; an
- * anchor of its own between those that is not found is passed over.
+ * anchor of its own between those that is not found is passed over. A custom field, one
+ * form-associated or holding a native control in its open shadow root, with no anchor otherwise,
+ * counts by the first anchor in that shadow root, such as its label.
  */
 export const markedAriaSnapshotCode = `
 const markedAriaSnapshot = async (locator, options) => {
@@ -136,7 +138,9 @@ const markedAriaSnapshot = async (locator, options) => {
         const anchorOf = (node) => {
           const text = node.nodeType === Node.TEXT_NODE;
           const anchor = words(text ? node.nodeValue : nameOf(node));
-          return anchor !== "" && rendered(text ? node.parentElement : node) ? anchor : "";
+          // A shadow root's own text has its host for a parent.
+          const box = text ? (node.parentElement ?? node.parentNode.host) : node;
+          return anchor !== "" && rendered(box) ? anchor : "";
         };
         const candidate = (node) =>
           node.nodeType === Node.TEXT_NODE ? /\\S/.test(node.nodeValue) : control(node);
@@ -152,6 +156,17 @@ const markedAriaSnapshot = async (locator, options) => {
           const select = option.closest("select");
           return select !== null && getComputedStyle(option).display !== "none" && rendered(select)
             ? words(node.nodeValue)
+            : "";
+        };
+        // A custom field's anchor, for one form-associated or holding a native control in its open
+        // shadow root, which the walks here do not enter: the first there, such as its label.
+        const fieldAnchorOf = (node) => {
+          const shadow = node.shadowRoot ?? null;
+          return shadow !== null &&
+            (node.constructor.formAssociated === true ||
+              shadow.querySelector("input, select, textarea") !== null) &&
+            rendered(node)
+            ? (anchorsBeside(shadow, shadow, false, 1)[0] ?? "")
             : "";
         };
         // Up to \`count\` anchors in \`scope\` next to \`node\`, after it or (\`back\`) before
@@ -173,8 +188,8 @@ const markedAriaSnapshot = async (locator, options) => {
                 ? next
                 : null;
             if (hidden !== null) walk.currentNode = back ? hidden : lastOf(hidden);
-            else if (candidate(next)) {
-              const anchor = formAnchorOf(next);
+            else {
+              const anchor = (candidate(next) ? formAnchorOf(next) : "") || fieldAnchorOf(next);
               if (anchor !== "") anchors[back ? "unshift" : "push"](anchor);
             }
           }

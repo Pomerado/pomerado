@@ -262,6 +262,54 @@ test("a separator hidden from assistive technology, and an unnamed form's edge, 
   }
 });
 
+test("an unnamed form's custom fields, labelled in their open shadow roots, show inside its edge in the capture", async () => {
+  test.setTimeout(90_000);
+  // A form-associated field draws its own textbox, and another custom element holds a native
+  // input; each one's label is in its open shadow root. A notice past a hidden divider follows
+  // the form's button.
+  const site = await startSite((_request, response) =>
+    html(
+      response,
+      `<title>Checkout</title><script>` +
+        `customElements.define("x-phone", class extends HTMLElement { static formAssociated = true; connectedCallback() { this.attachInternals(); ` +
+        `this.attachShadow({ mode: "open" }).innerHTML = '<label id="label">Phone</label><div role="textbox" contenteditable aria-labelledby="label"></div>'; } });` +
+        `customElements.define("x-input", class extends HTMLElement { connectedCallback() { ` +
+        `this.attachShadow({ mode: "open" }).innerHTML = '<label for="input">Email</label><input id="input">'; } });` +
+        `</script><main><h1>Check out as a guest</h1><form><x-phone></x-phone><x-input></x-input>` +
+        `<button type="button">Continue to payment</button></form><hr aria-hidden="true">` +
+        `<div>Signing in opens a store account.</div><button type="button">Sign in</button></main>`,
+    ),
+  );
+  const guardian = recordingGuardian({ readPage: true });
+  try {
+    const { last } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      turns: [
+        () => patch({ "explore/look.mjs": probe() }),
+        () => [call("execute", execution("explore", "explore/look.mjs"), "first")],
+        () => [call("execute", execution("explore", "explore/look.mjs"), "second")],
+      ],
+    });
+    expect(toolResult(last, "second")).toMatchObject({ status: "completed" });
+    expect(captureOf(executions(guardian.reviews)[1])).toContain(
+      [
+        "  - form:",
+        "    - text: Phone",
+        '    - textbox "Phone"',
+        "    - text: Email",
+        '    - textbox "Email"',
+        '    - button "Continue to payment"',
+        "  - separator [aria-hidden]",
+        "  - text: Signing in opens a store account.",
+      ].join("\n"),
+    );
+  } finally {
+    await site.close();
+  }
+});
+
 test("text the page holds only out of view reads as hidden in the capture, and a shown copy does not", async () => {
   test.setTimeout(90_000);
   // An announcement kept off screen beside an aria-hidden icon; a shown error and a shown count,
