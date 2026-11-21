@@ -1838,6 +1838,13 @@ it("takes, for a login with no route there, the state of its own method, else th
   const fresh = picked();
   expect(await replay(fresh, libraryOf([emailState, byEmail], [emailState, byText]))).toMatchObject({ outcome: "signed_in" });
   expect(fresh.clicks).toEqual(["#continue", "#text"]);
+  // So does one whose route holds only states this library lacks, as one learned in another library.
+  const elsewhere = picked();
+  const foreign = { states: [keyOf({ fingerprint: arrival(pick), step: stepAt("/pick", [], "#call") })] };
+  expect(await replay(elsewhere, libraryOf([emailState, byEmail], [emailState, byText]), { choices: foreign })).toMatchObject({
+    outcome: "signed_in",
+  });
+  expect(elsewhere.clicks).toEqual(["#continue", "#text"]);
 });
 
 it("goes on along its own route from the state last acted in where the route holds a look twice", async () => {
