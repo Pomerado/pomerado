@@ -74,7 +74,7 @@ export interface SignInStatesReplayInput<
   /**
    * The method that orders known states sharing a look where the login's own picks name none, such
    * as the one its caller asked for or the one it saved. It picks nothing among a page's methods
-   * itself, though a state it ranks first presses its recorded method there.
+   * itself, though a state it ranks first may press its recorded method there.
    */
   readonly rankMethod?: SignInMethodChoice | undefined;
   /** The page as a state, as `observeSignInState` reads it. */
