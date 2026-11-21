@@ -100,7 +100,8 @@ const scriptedSite = (
         };
         return {
           url: page(),
-          page: page(),
+          // As a host's inspection reads it: origin and path alone.
+          page: page().split("#")[0] ?? "",
           targets: {
             fields: step.fields.map(() => target),
             submit: step.submit === undefined ? null : target,
@@ -539,22 +540,31 @@ it("never takes by its control, on the page of a state just pressed, a state tha
   expect(site.clicks).toEqual(["#log-in", "#sign-in", "#continue", "#go"]);
 });
 
-it("never takes a state by its control where the page's main message or its address's hash differs", async () => {
-  const step: Screen = { path: "/app#/stay", boxes: [], buttons: ["button.go"], texts: ["one more step"], labels: ["~"] };
-  const library = libraryOf([{ fingerprint: arrival(step), step: stepAt("/app#/stay", [], "button.go") }, typedPassword]);
-  for (const start of [
-    { ...step, labels: ["~ ~"], texts: ["send a new link"] },
-    { ...step, labels: ["~ ~"], path: "/app#/reset" },
-  ]) {
+it("never takes a state by its control where the page's main message differs or an address has a hash", async () => {
+  const step: Screen = { path: "/app", boxes: [], buttons: ["button.go"], texts: ["one more step"], labels: ["~"] };
+  const plain = libraryOf([{ fingerprint: arrival(step), step: stepAt("/app", [], "button.go") }, typedPassword]);
+  // A hash route's state: the control's inspection reads the origin and path alone, so it can't
+  // confirm the hash, even one the page shows when read.
+  const routed = libraryOf([
+    { fingerprint: arrival({ ...step, path: "/app#/stay" }), step: stepAt("/app#/stay", [], "button.go") },
+    typedPassword,
+  ]);
+  const relabeled = { ...step, labels: ["~ ~"] };
+  for (const [library, start] of [
+    [plain, { ...relabeled, texts: ["send a new link"] }],
+    [plain, { ...relabeled, path: "/app#/reset" }],
+    [routed, { ...relabeled, path: "/app#/reset" }],
+    [routed, { ...relabeled, path: "/app#/stay" }],
+  ] as const) {
     const site = scriptedSite({ start, password: passwordScreen }, () => "password");
     expect(await replay(site, library)).toMatchObject({ outcome: "unsent", reason: "unknown_state" });
     expect(site.clicks).toEqual([]);
   }
   // The same page with one label otherwise is still that state.
-  const site = scriptedSite({ start: { ...step, labels: ["~ ~"] }, password: passwordScreen }, (_at, clicked) =>
+  const site = scriptedSite({ start: relabeled, password: passwordScreen }, (_at, clicked) =>
     clicked === "button.go" ? "password" : "home",
   );
-  expect(await replay(site, library)).toMatchObject({ outcome: "signed_in" });
+  expect(await replay(site, plain)).toMatchObject({ outcome: "signed_in" });
   expect(site.clicks).toEqual(["button.go", "#go"]);
 });
 
