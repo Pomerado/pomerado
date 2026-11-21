@@ -146,6 +146,8 @@ type Acted = {
    * code or an approval, which a page that kept the state gets once more.
    */
   readonly press?: AutofillStep;
+  /** Its press picked a method the site sends something by: a text, a call, an email or a push. */
+  readonly sends?: true;
   /** The state's controls went before anything was sent: it is looked for once more. */
   readonly gone?: true;
 };
@@ -233,9 +235,10 @@ const looksLike = (fingerprint: StateFingerprint) => (state: StateEntry) =>
 
 /**
  * Known states that share one look (`alike`), in the order this login takes them. Where its
- * own route, the states it last signed in through (`choices.states`), holds a state with that look,
- * only its own are taken, in their order there: a login never goes on along another login's route,
- * so one whose own state no longer shows stops there, for a repair of its own. Otherwise first a
+ * own route, the states it last signed in through (`choices.states`), holds a state with that look
+ * besides the one it last acted in, only its own are taken, in their order there from the state it
+ * last acted in on, then the earlier ones: a login never goes on along another login's route, so
+ * one whose own state no longer shows stops there, for a repair of its own. Otherwise first a
  * state whose picked method is the login's (`choices.method`), then one the last state led to, or
  * at the start one no state leads to (`next`), then the most recently learned, as a library holds
  * its states in the order learned.
@@ -249,11 +252,22 @@ const ranked = <E extends YieldableError, V extends string, L extends AutofillLo
   const route = run.input.choices?.states ?? [];
   const method = run.input.choices?.method;
   const { states } = run.input.library;
-  const own = states.some((state) => route.includes(state.key) && alike(state));
+  // The state last acted in leaves the route no say: where its page stays, the route goes no
+  // further there, so a look-alike a repair learned after it may go on.
+  const last = run.visited.at(-1);
+  const own = states.some(
+    (state) => state.key !== last && route.includes(state.key) && alike(state),
+  );
   const picks = (state: StateEntry) =>
     method !== undefined && state.step.methods?.find((option) => option.selector === state.step.submit)?.method === method;
+  // Along the route from the state last acted in, so a look the route holds twice goes on.
+  const at = route.lastIndexOf(run.visited.at(-1) ?? "");
+  const along = (state: StateEntry) => {
+    const index = route.indexOf(state.key);
+    return index > at ? index - at : route.length + index;
+  };
   const order = (state: StateEntry) => [
-    own ? route.indexOf(state.key) : 0,
+    own ? along(state) : 0,
     Number(!picks(state)),
     Number(!next.has(state.key)),
     -states.indexOf(state),
@@ -353,17 +367,16 @@ const learnedAlike = <E extends YieldableError, V extends string, L extends Auto
   run: Run<E, V, L>,
   after: StateEntry,
   fingerprint: StateFingerprint,
-  allowed: { readonly typing: boolean; readonly pressing: boolean },
+  allowed: { readonly typing: boolean; readonly pressing: boolean; readonly sent: boolean },
 ) =>
   Effect.gen(function* () {
     const learned = learnedNext(run, after).filter((state) => sameFingerprint(fingerprint, state.fingerprint));
-    // After a press that may have had a code or link sent, one whose own press may have one sent
-    // could have the site send a second.
-    const sent = after.step.methods !== undefined || sendsOnPress(run, after);
     for (const next of ranked(run, learned, looksLike(fingerprint))) {
       const types = resolved(run, next.step).fields.length > 0;
       if (!(types ? allowed.typing : allowed.pressing && next.step.submit !== after.step.submit)) continue;
-      if (types && sent && sendsOnPress(run, next)) continue;
+      // After a press that may have had a code or link sent (`sent`), one that takes no code and
+      // whose own press may have one sent could have the site send a second.
+      if (types && allowed.sent && !takesCodeIn(run, next) && sendsOnPress(run, next)) continue;
       const shown = yield* shownOn(run, next, resolved(run, next.step));
       if (typeof shown !== "string") return { state: next, inspection: shown } satisfies Shown;
     }
@@ -407,8 +420,9 @@ const sameAddress = (a: string, b: string) => {
  * presses only (`pressesOnly`), on the page's top origin and at the host and path the last marker
  * check read (`page`), never the state just acted in nor one acted in that came back
  * (`returnedTo`), taken in the order this login takes states of one look (`ranked`), so a route
- * that holds one there, even that one, takes only its own; the first whose control shows, one
- * match on its recorded origin, at its recorded page's host and path. With no address read, none.
+ * that holds one there besides the state last acted in takes only its own; the first whose control
+ * shows, one match on its recorded origin, at its recorded page's host and path. With no address
+ * read, none.
  */
 const byControl = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -419,8 +433,8 @@ const byControl = <E extends YieldableError, V extends string, L extends Autofil
   Effect.gen(function* () {
     const { page } = run;
     if (fingerprint.boxes.length > 0 || page === undefined) return undefined;
-    // The route's own state here counts even when just acted in or come back, so the login never
-    // goes on from it along another login's route.
+    // Each state here counts for the login's own route, one that came back too, as `ranked` reads
+    // it, which leaves out the state last acted in as it does for a look.
     const here = (state: StateEntry) =>
       state.fingerprint.top === fingerprint.top && pressesOnly(run, state) && sameAddress(page, state.step.page);
     const pressing: StateEntry[] = [];
@@ -459,14 +473,10 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
         : transitions.filter((t) => t.from === after.key).map((t) => t.to),
     );
     const learned = learnedNext(run, after);
-    const alike = ranked(
-      run,
-      run.input.library.states.filter(
-        (state) => state !== skip && sameFingerprint(state.fingerprint, fingerprint),
-      ),
-      looksLike(fingerprint),
-      next,
+    const candidates = states.filter(
+      (state) => state !== skip && sameFingerprint(state.fingerprint, fingerprint),
     );
+    const alike = ranked(run, candidates, looksLike(fingerprint), next);
     let refused: string | undefined;
     let returned: StateEntry | undefined;
     for (const state of alike) {
@@ -479,7 +489,10 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
       refused ??= shown;
     }
     if (returned !== undefined) return { returned: returned as StateEntry };
-    return alike.length > 0 || !loose ? refused : yield* byControl(run, fingerprint, skip, next);
+    // Where the login's own route left other logins' states out, none of its own showing is a page
+    // it does not know, for a repair of its own to go on from.
+    if (alike.length < candidates.length) return undefined;
+    return candidates.length > 0 || !loose ? refused : yield* byControl(run, fingerprint, skip, next);
   });
 
 const signedIn = <E extends YieldableError, V extends string, L extends AutofillLogin>(
@@ -716,9 +729,11 @@ const returnedReason = <E extends YieldableError, V extends string, L extends Au
  * Waits for the page to show a known state after `last`, or at the start, as the recipe replay
  * waits for a screen. The marker signs in. Once anything may have gone out, a recorded error marker
  * of a state acted in stops the replay as that rejection, whatever else the page shows. A known
- * state is taken once its controls show and pass its origin rule, the states the last led to
- * first; one acted in before something went out showing again stops it (`returnedReason`), unless
- * a sign-in learned a look-alike after the last (`learnedNext`) or the state just acted in stands.
+ * state is taken once its controls show and pass its origin rule, in the order this login takes
+ * them (`ranked`); where the login's own route left another login's out, none of its own showing
+ * is an unknown state. One acted in before something went out showing again stops it
+ * (`returnedReason`), unless a sign-in learned a look-alike after the last (`learnedNext`) or the
+ * state just acted in stands.
  * It stands while the page shows its boxes as they were, with or without a new text, or a notice
  * state's boxes beside its text; through the step wait, as the recipe replay waits for its next
  * screen, a code state whose code went asks for a new one at its code marker or at the step wait
@@ -849,6 +864,7 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
             const alike = yield* learnedAlike(run, state, shape, {
               typing: settledHere,
               pressing: capped && acted.press !== undefined,
+              sent: acted.sends === true || sendsOnPress(run, state, true),
             });
             const gate = challenged ? undefined : run.input.hooks.challenge;
             const challenge =
@@ -997,6 +1013,8 @@ const actions = (fields: AutofillStep["fields"]) =>
   }, []);
 
 const codeMethods: ReadonlySet<string> = new Set(["sms", "call", "email", "totp"]);
+/** The methods by which the site sends something once picked: a code, or a push. */
+const sendMethods: ReadonlySet<string> = new Set(["sms", "call", "email", "push"]);
 
 /**
  * A method choice's pick: the login's own (`choices.method`), else the way in the recording took,
@@ -1082,10 +1100,13 @@ const approve = <E extends YieldableError, V extends string, L extends AutofillL
 /**
  * Whether a state's press may have the site send a code or link: a state it led to takes one, or
  * one it led to through states that take nothing, as a "code sent" page before the code's box.
+ * With `alone`, never through a state with its look, which is another press on its page, such as
+ * one another sign-in learned there.
  */
 const sendsOnPress = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
   state: StateEntry,
+  alone = false,
 ) => {
   const { states, transitions } = run.input.library;
   const seen = new Set([state.key]);
@@ -1100,7 +1121,8 @@ const sendsOnPress = <E extends YieldableError, V extends string, L extends Auto
         next.step.fields.some((field) => "slot" in field && field.slot === "code")
       )
         return true;
-      if (next.step.fields.length === 0) queue.push(to);
+      if (next.step.fields.length === 0 && !(alone && sameFingerprint(next.fingerprint, state.fingerprint)))
+        queue.push(to);
     }
   return false;
 };
@@ -1123,12 +1145,15 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
     const { inspection } = shown;
     let reached = arrival;
     const typed = new Set<AutofillSlot>();
-    const acted = (press?: AutofillStep): Acted => ({
+    const acted = (press?: AutofillStep, picked?: NonNullable<AutofillRecipeStep["methods"]>[number]): Acted => ({
       acted: state,
       reached,
       ...(press === undefined || typed.size > 0 || state.step.methods !== undefined || sendsOnPress(run, state)
         ? {}
         : { press }),
+      ...(picked !== undefined && isTwoFactorOption(picked) && sendMethods.has(picked.method)
+        ? { sends: true as const }
+        : {}),
     });
     for (;;) {
       const step = state.step;
@@ -1247,7 +1272,7 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
         if (approved?.type !== "confirm" || !approved.value.confirmed)
           return stopped(run, "push_declined");
       }
-      return acted(press);
+      return acted(press, method);
     }
   });
 
