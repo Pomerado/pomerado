@@ -174,9 +174,11 @@ const markedAriaSnapshot = async (locator, options) => {
             : "";
         };
         // Up to \`count\` anchors in \`scope\` next to \`node\`, after it or (\`back\`) before
-        // it, in document order, past aria-hidden subtrees. In a shadow root, a slot that shows
-        // light-DOM content ends it: the walk outside reads that content in its own place.
+        // it, in document order, past aria-hidden subtrees. A walk over a field's shadow root, the
+        // only walk whose scope is one, ends at a slot that shows light-DOM content: the walk
+        // outside reads that content in its own place.
         const anchorsBeside = (scope, node, back, count) => {
+          const field = scope.nodeType === Node.DOCUMENT_FRAGMENT_NODE;
           const walk = document.createTreeWalker(
             scope,
             NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT,
@@ -185,7 +187,13 @@ const markedAriaSnapshot = async (locator, options) => {
           const step = () => (back ? walk.previousNode() : walk.nextNode());
           const anchors = [];
           for (let next = step(); next !== null && anchors.length < count; next = step()) {
-            if (next.localName === "slot" && next.assignedNodes().length > 0) break;
+            // A slot in SVG or MathML has no assigned nodes to read.
+            if (
+              field &&
+              typeof next.assignedNodes === "function" &&
+              next.assignedNodes().length > 0
+            )
+              break;
             // Walking back reaches what an aria-hidden element holds before the element itself.
             const text = next.nodeType === Node.TEXT_NODE;
             const hidden = back

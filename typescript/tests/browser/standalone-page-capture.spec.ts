@@ -268,7 +268,9 @@ test("an unnamed form's custom fields, labelled in their open shadow roots or by
   // input, each labelled in its open shadow root; a notice past a hidden divider follows the form.
   // Fields that show light-DOM text through a slot follow: a label slotted before an input and
   // help text, a select after its slotted label, a button showing slotted text before more text,
-  // a slotted label over fallback text, and such a field just before a form.
+  // a slotted label over fallback text, and such a field just before a form. The last form holds a
+  // field named by an id in its shadow root that a hidden light-DOM element shares, and a slot in
+  // an SVG.
   const site = await startSite((_request, response) =>
     html(
       response,
@@ -279,7 +281,8 @@ test("an unnamed form's custom fields, labelled in their open shadow roots or by
         `define("x-text", '<label><slot name="label"></slot><input></label><small>We send the receipt here.</small>');` +
         `define("x-select", '<slot></slot><select><option>Small</option><option>Large</option></select>');` +
         `define("x-named", '<label><slot name="label">Field</slot><input></label>');` +
-        `define("x-submit", '<input type="hidden"><button><slot></slot></button> Secure checkout');</script>` +
+        `define("x-submit", '<input type="hidden"><button><slot></slot></button> Secure checkout');` +
+        `define("x-card", '<input aria-labelledby="name"><span id="name" hidden>Card number</span>');</script>` +
         `<main><h1>Check out as a guest</h1><form><x-phone></x-phone><x-input></x-input>` +
         `<button type="button">Continue to payment</button></form><hr aria-hidden="true">` +
         `<div>Signing in opens a store account.</div><button type="button">Sign in</button>` +
@@ -287,7 +290,8 @@ test("an unnamed form's custom fields, labelled in their open shadow roots or by
         `<p>Orders ship in two days.</p><form><x-select>Size</x-select><button type="button">Add</button></form>` +
         `<p>Sizes run small.</p><x-text><span slot="label">Coupon</span></x-text>` +
         `<form><x-named><span slot="label">Name</span></x-named><button type="button">Save</button></form>` +
-        `<p>Names show on the receipt.</p></main>`,
+        `<p>Names show on the receipt.</p><span id="name" hidden>Name on card</span><form><x-card></x-card>` +
+        `<svg width="16" height="16"><slot></slot></svg><button type="button">Pay</button></form><p>Paid securely.</p></main>`,
     ),
   );
   const guardian = recordingGuardian({ readPage: true });
@@ -335,6 +339,11 @@ test("an unnamed form's custom fields, labelled in their open shadow roots or by
         '    - textbox "Name"',
         '    - button "Save"',
         "  - paragraph: Names show on the receipt.",
+        "  - form:",
+        '    - textbox "Card number"',
+        "    - img",
+        '    - button "Pay"',
+        "  - paragraph: Paid securely.",
       ].join("\n"),
     );
   } finally {
