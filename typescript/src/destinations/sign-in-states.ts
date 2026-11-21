@@ -452,8 +452,8 @@ export const appendSignInStates = (
 
 /**
  * A login's own picks, which the host keeps and gives the next replay as they came back: the
- * states it used last, which win where two known states match; the code method it chose; and the
- * signed-in marker it reached.
+ * states it used last, its route, which alone it takes where known states share a look it holds;
+ * the code method it chose; and the signed-in marker it reached.
  */
 export const SignInStatesChoices = Schema.Struct({
   states: Schema.optional(Schema.Array(Key).pipe(Schema.maxItems(32))),
