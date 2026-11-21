@@ -661,7 +661,8 @@ existing authorization and review check. An absent field does not promise availa
 
 When the site still offers the requested action but seems to require something the request rules
 out, prefer asking the caller with `request_input` over ending the build, unless the request also
-rules out asking.
+rules out asking. Prefer asking the same way before reporting that a site has no guest checkout
+when that rests on a notice or on a label you did not find.
 
 Some tasks cannot be built as asked however well you work. End those with `report_blocked`,
 never with final text, which the host treats as unfinished work:
