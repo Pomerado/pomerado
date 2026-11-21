@@ -68,7 +68,8 @@ export interface AutofillHooks<E = unknown, V extends string = string> {
   /**
    * Clicks again the submit of the open sign-in's `blocked` screen, typing nothing, after its
    * `dismiss` when the step names one (`resubmitAutofillStep`). A host without it fills that
-   * screen again as any other.
+   * screen again as any other. A step with a submit key has that key pressed in its last field,
+   * as a replay does once after typing a state whose page was to send itself.
    */
   readonly resubmit?: (input: {
     readonly step: AutofillStep;

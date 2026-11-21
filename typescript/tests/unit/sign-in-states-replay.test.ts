@@ -51,11 +51,13 @@ interface Screen {
 
 /**
  * A scripted site on fixture hooks: `next` says the screen a click on a screen goes to; `home` is
- * signed in. `looks` counts the page reads, for a screen that draws late.
+ * signed in. `looks` counts the page reads, for a screen that draws late. With `resubmit`, the host
+ * can click a screen again, typing nothing, as for a submit key pressed in its last field.
  */
 const scriptedSite = (
   screens: Readonly<Record<string, Screen | ((looks: number) => Screen)>>,
   next: (screen: string, clicked: string) => string | undefined,
+  options: { readonly resubmit?: boolean } = {},
 ) => {
   const site = { screen: "start", looks: 0, typed: new Map<string, string>(), opened: [] as string[] };
   const clicks: string[] = [];
@@ -70,6 +72,14 @@ const scriptedSite = (
       ? { signedIn: true, url: page() }
       : { signedIn: false, failed: "indicator_not_visible", url: page() };
   const controls = () => [...shown().boxes.map((box) => box.selector), ...(shown().buttons ?? [])];
+  const press = (pressed: string) => {
+    clicks.push(pressed);
+    const to = next(site.screen, pressed);
+    if (to !== undefined && to !== site.screen) {
+      site.screen = to;
+      site.typed.clear();
+    }
+  };
   const hooks: AutofillHooks<TestFailure> = {
     open: (url) =>
       Effect.sync(() => {
@@ -137,14 +147,7 @@ const scriptedSite = (
           site.typed.set(field.selector, values[index] ?? "");
         });
         const pressed = step.submit ?? (step.submitKey === undefined ? undefined : "Enter");
-        if (pressed !== undefined) {
-          clicks.push(pressed);
-          const to = next(site.screen, pressed);
-          if (to !== undefined && to !== site.screen) {
-            site.screen = to;
-            site.typed.clear();
-          }
-        }
+        if (pressed !== undefined) press(pressed);
         return {
           outcome: "filled",
           fields: step.fields.map((field) => ({ slot: field.slot, status: "filled" as const })),
@@ -152,6 +155,20 @@ const scriptedSite = (
           url: page(),
         };
       }),
+    ...(options.resubmit !== true
+      ? {}
+      : {
+          resubmit: ({ step }) =>
+            Effect.sync((): AutofillStepReport => {
+              press(step.submit ?? step.submitKey ?? "");
+              return {
+                outcome: "filled",
+                fields: step.fields.map((field) => ({ slot: field.slot, status: "filled" as const })),
+                submit: "clicked",
+                url: page(),
+              };
+            }),
+        }),
   };
   const observe = Effect.sync((): ObservedState => {
     site.looks += 1;
@@ -218,22 +235,30 @@ const replay = (
     readonly hostMethod?: SignInStatesChoices["method"];
     readonly events?: Readonly<Record<string, unknown>>[];
     readonly from?: SignInStatesStop;
+    /** The codes the owner gives in turn, the last one again after them, else a new one each time. */
+    readonly codes?: readonly string[];
+    /** Each question's prompt, in order. */
+    readonly prompts?: string[];
   } = {},
 ) => {
   const asked: string[] = [];
+  let codesGiven = 0;
   const ask = makeInputAsker((request) =>
     Effect.sync(
       () =>
         Object.fromEntries(
           request.questions.map((question) => {
             asked.push(question.id);
+            options.prompts?.push(question.prompt);
             return [
               question.id,
               question.id === "sign_in_link"
                 ? link
                 : question.type === "confirm"
                   ? { confirmed: true }
-                  : String(246810 + asked.length),
+                  : question.id === "code" && options.codes !== undefined
+                    ? (options.codes[Math.min(codesGiven++, options.codes.length - 1)] ?? "")
+                    : String(246810 + asked.length),
             ];
           }),
         ) as InputAnswers,
@@ -271,7 +296,7 @@ const replay = (
         ...(options.choices === undefined ? {} : { choices: options.choices }),
         ...(options.rankMethod === undefined ? {} : { rankMethod: options.rankMethod }),
         timing: { stepWaitMs: options.stepWaitMs ?? 300, pollMs: 2 },
-        quiet: { quietMs: 20, capMs: 120 },
+        quiet: { quietMs: 20, capMs: 120, enterMs: 40 },
         sent: { current: false },
         ...(options.from === undefined ? {} : { from: options.from }),
       }),
@@ -683,6 +708,94 @@ it("waits for a slow site to check a code before asking for another", async () =
   });
   expect(await replay(slow, library)).toMatchObject({ outcome: "signed_in" });
   expect(slow.fills).toEqual(["code"]);
+});
+
+// A code state recorded with no button: its page was to send the code by itself.
+const autoCode = (more: object = {}) =>
+  libraryOf([{ fingerprint: arrival(codeScreen), step: stepAt("/verify", [code], undefined, more) }]);
+const entered = (events: readonly Readonly<Record<string, unknown>>[]) =>
+  events.filter((event) => event.stage === "retried" && event.reason === "enter_after_typing").length;
+
+it("presses Enter once in the code box of a state with no button whose page never sends the code", async () => {
+  const site = scriptedSite({ start: codeScreen }, (_at, pressed) => (pressed === "Enter" ? "home" : undefined), {
+    resubmit: true,
+  });
+  const events: Readonly<Record<string, unknown>>[] = [];
+  expect(await replay(site, autoCode(), { events })).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(site.fills).toEqual(["code"]);
+  expect(site.clicks).toEqual(["Enter"]);
+  expect(entered(events)).toBe(1);
+});
+
+it("never presses Enter after a fill whose page sent the code itself, while the site checks it", async () => {
+  const site = scriptedSite({ start: codeScreen }, () => "home", { resubmit: true });
+  // The page sends the code on its last digit and keeps its look a while as the site checks it.
+  const fill: typeof site.hooks.fill = (call) =>
+    Effect.map(site.hooks.fill(call), (report) => {
+      setTimeout(() => {
+        site.site.screen = "home";
+      }, 150);
+      return report.outcome === "filled" ? { ...report, submit: "page" as const } : report;
+    });
+  expect(await replay({ ...site, hooks: { ...site.hooks, fill } }, autoCode())).toMatchObject({ outcome: "signed_in" });
+  expect(site.fills).toEqual(["code"]);
+  expect(site.clicks).toEqual([]);
+});
+
+it("presses Enter once for each code typed, and still ends at the code retry bound", async () => {
+  const site = scriptedSite({ start: codeScreen }, () => undefined, { resubmit: true });
+  const events: Readonly<Record<string, unknown>>[] = [];
+  const ended = await replay(site, autoCode(), { events });
+  expect(ended).toMatchObject({ outcome: "unclear", reason: "code_rejected" });
+  // The state stood through each step wait after its Enter: no second Enter for the same code.
+  expect(site.fills).toEqual(["code", "code", "code"]);
+  expect(site.clicks).toEqual(["Enter", "Enter", "Enter"]);
+  expect(entered(events)).toBe(3);
+});
+
+it("asks again saying the code didn't sign in, and takes the same code, when the site showed no refusal", async () => {
+  // The site keeps its code page after the first press, with no error, and signs in on the second.
+  let pressed = 0;
+  const site = scriptedSite({ start: codeScreen }, () => (++pressed > 1 ? "home" : undefined));
+  const typed: string[] = [];
+  const fill: typeof site.hooks.fill = (call) =>
+    Effect.sync(() => void typed.push(...call.values)).pipe(Effect.zipRight(site.hooks.fill(call)));
+  const prompts: string[] = [];
+  const library = libraryOf([{ fingerprint: arrival(codeScreen), step: stepAt("/verify", [code], "#verify") }]);
+  const ended = await replay({ ...site, hooks: { ...site.hooks, fill } }, library, { codes: ["135790"], prompts });
+  expect(ended).toMatchObject({ outcome: "signed_in" });
+  expect(typed).toEqual(["135790", "135790"]);
+  expect(prompts[1]).toMatch(/^The last code didn't sign you in\. /u);
+});
+
+it("never types again a code the site refused, after a later code that only didn't sign in", async () => {
+  // The site refuses the first code at its marker, which goes once a code is typed again; the
+  // second code then stays with no marker.
+  const site = scriptedSite(
+    {
+      start: codeScreen,
+      refused: () => ({ ...codeScreen, errors: site.site.typed.has("#code") ? [] : ["#bad-code"] }),
+    },
+    () => "refused",
+  );
+  const typed: string[] = [];
+  const fill: typeof site.hooks.fill = (call) =>
+    Effect.sync(() => void typed.push(...call.values)).pipe(Effect.zipRight(site.hooks.fill(call)));
+  const prompts: string[] = [];
+  const library = libraryOf([
+    {
+      fingerprint: arrival(codeScreen),
+      step: stepAt("/verify", [code], "#verify", { rejectedMarkers: [{ selector: "#bad-code", slot: "code" }] }),
+    },
+  ]);
+  const ended = await replay({ ...site, hooks: { ...site.hooks, fill } }, library, {
+    codes: ["111111", "222222", "111111"],
+    prompts,
+  });
+  expect(ended).toMatchObject({ outcome: "unclear", reason: "code_rejected" });
+  expect(typed).toEqual(["111111", "222222"]);
+  expect(prompts[1]).toMatch(/^The site refused the last code\. /u);
+  expect(prompts[2]).toMatch(/^The last code didn't sign you in\. /u);
 });
 
 it("presses Enter in the email box when its Continue went once the email was typed", async () => {

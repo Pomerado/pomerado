@@ -97,6 +97,12 @@ export type AutofillReplayOutcome<V extends string = string> =
       readonly choice?: SignInChoice;
     };
 
+/**
+ * Why a code screen takes another code: the site showed it refused the last one (`rejected`), or
+ * its screen stayed with no refusal shown (`returned`). Both share the code retry bounds.
+ */
+export type CodeRetry = "rejected" | "returned";
+
 /** Private existing-attempt state survives browser and credential replay rebuilds. */
 export interface AutofillRetryState {
   readonly rejectedValues: Partial<Record<AutofillSlot, Set<string>>>;
@@ -417,7 +423,7 @@ export const valuesFor = <E extends YieldableError, V extends string, L extends 
   values: ReturnType<typeof makeAutofillValues<E, L>>,
   chosen: SignInMethodChoice | undefined,
   step: AutofillStep,
-  codeAgain: "rejected" | undefined,
+  codeAgain: CodeRetry | undefined,
   fresh: Pick<
     AutofillLogin,
     "rejectedCodes" | "codeRequests" | "rejectedValues" | "correctionRequests"
@@ -515,7 +521,7 @@ export const refillRefused = (
   step: AutofillStep,
   maySent: ReadonlySet<AutofillSecret>,
   refilled: ReadonlySet<AutofillSecret>,
-  codeAgain: "rejected" | undefined,
+  codeAgain: CodeRetry | undefined,
   corrected: ReadonlySet<AutofillSlot>,
   planned: readonly AutofillSecret[] = [],
   codeScreens?: CodeScreens,
@@ -526,7 +532,7 @@ export const refillRefused = (
       maySent.has(field.slot) &&
       !corrected.has(field.slot) &&
       !(
-        codeAgain === "rejected" &&
+        codeAgain !== undefined &&
         (field.slot === "code" || (provesLogin(field.slot) && !refilled.has(field.slot)))
       ) &&
       !plannedRefill(step, field.slot, planned, maySent, refilled, codeScreens),

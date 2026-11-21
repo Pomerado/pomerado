@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import type { Page } from "playwright";
 import { Effect } from "effect";
 import { inspectAutofillStep, type AutofillStep } from "../../src/destinations/autofill-step.js";
-import { fillAutofillStep } from "../../src/destinations/autofill-fill.js";
+import { fillAutofillStep, resubmitAutofillStep } from "../../src/destinations/autofill-fill.js";
 import { expectNotCarried, hostKeyboard, hostPage } from "./autofill-host-page.js";
 
 // A code screen whose form has no submit control: one text field, which the browser submits when
@@ -161,6 +161,28 @@ document.getElementById("code").addEventListener("input", (event) => {
     fields: [{ slot: "code", status: "filled" }],
     submit: "page",
   });
+  expect(requests).toEqual([{ method: "POST", url: `${site}/verify`, body: `code=${code}` }]);
+  await expect(page.locator("#account")).toBeVisible();
+});
+
+test("a code typed with no submit, whose form never sends itself, is sent by Enter pressed again in its field, typing nothing", async ({
+  page,
+}) => {
+  const requests = await serve(page, codeForm("/verify"));
+  const typedOnly: AutofillStep = { fields: codeStep.fields };
+  const { report: typed } = await inspectAndFill(page, typedOnly, [code]);
+  expect(typed).toMatchObject({ outcome: "filled", fields: [{ slot: "code", status: "filled" }], submit: "none" });
+  expect(requests).toEqual([]);
+  const host = await hostPage(page);
+  const inspection = await Effect.runPromise(
+    inspectAutofillStep({ step: codeStep, page: host, siteOrigin: site, authenticationOrigins: [] }),
+  );
+  if ("outcome" in inspection) throw new Error(`Inspection refused: ${inspection.reason}`);
+  const report = await Effect.runPromise(
+    resubmitAutofillStep({ step: codeStep, inspection, page: host, settleMs: 2_000 }),
+  );
+  expect(report).toMatchObject({ outcome: "filled", fields: [{ slot: "code", status: "filled" }], submit: "clicked" });
+  expectNotCarried(host.calls, code);
   expect(requests).toEqual([{ method: "POST", url: `${site}/verify`, body: `code=${code}` }]);
   await expect(page.locator("#account")).toBeVisible();
 });
