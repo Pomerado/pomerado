@@ -157,6 +157,53 @@ export const describeFingerprint = (fingerprint: StateFingerprint) => {
   return `A sign-in state on ${fingerprint.top}: ${shown}.`;
 };
 
+/** A text as its shape alone: each word "~" and each number "#". */
+const textShape = (text: string) =>
+  text
+    .split(" ")
+    .filter((word) => word !== "")
+    .map((word) => (!/\p{L}/u.test(word) && /[\p{Nd}#]/u.test(word) ? "#" : "~"))
+    .join(" ");
+
+/**
+ * A path as a log may hold it, each number "#". Given `known`, recorded pages' URLs, a segment no
+ * known page on `host` has at that place, which may be a name or a value, is "#" when a number,
+ * else "~".
+ */
+const pathShape = (host: string, path: string, known: readonly string[] | undefined) => {
+  const paths = known?.flatMap((page) => {
+    const url = URL.parse(page);
+    return url?.host === host ? [url.pathname.split("/")] : [];
+  });
+  return path
+    .split("/")
+    .map((segment, index) =>
+      segment === "" || paths === undefined || paths.some((other) => other[index] === segment)
+        ? segment.replace(/\p{Nd}+/gu, "#")
+        : /^\p{Nd}+$/u.test(segment)
+          ? "#"
+          : "~",
+    )
+    .join("/");
+};
+
+/**
+ * A fingerprint as a log may hold it, with no text and no value: its boxes, its message and its
+ * buttons as shapes (`textShape`), and the host and path of `page`, an absolute URL, as
+ * `pathShape` writes it against `known`.
+ */
+export const fingerprintShape = (fingerprint: StateFingerprint, page?: string, known?: readonly string[]) => {
+  const url = page === undefined ? null : URL.parse(page);
+  return {
+    ...(url === null ? {} : { host: url.host, path: pathShape(url.host, url.pathname, known) }),
+    boxes: fingerprintOf(fingerprint).boxes,
+    submit: fingerprint.submit,
+    ...(fingerprint.message === undefined ? {} : { message: textShape(fingerprint.message) }),
+    ...(fingerprint.buttons === undefined ? {} : { buttons: fingerprint.buttons.map(textShape).sort() }),
+  };
+};
+export type FingerprintShape = ReturnType<typeof fingerprintShape>;
+
 /** The entry for a state, keyed by its fingerprint and step. */
 export const stateEntry = (
   fingerprint: StateFingerprint,
