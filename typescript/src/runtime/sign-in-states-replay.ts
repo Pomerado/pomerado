@@ -214,7 +214,9 @@ interface Run<E extends YieldableError, V extends string, L extends AutofillLogi
   admission: string | undefined;
   /**
    * The host's refusal of the controls `shownOn` looked for last, with their state's key, for the
-   * step event of a replay that ends with its reason (`refusedState`); none once they showed.
+   * step event of a replay that ends with its reason (`refusedState`); none once they showed. Where
+   * several states of one look were refused for the same reason, it is the last one looked for,
+   * where `matchState` ends with the first one's reason.
    */
   refused: { readonly state: string; readonly refusal: AutofillRefusal } | undefined;
   /**
@@ -1104,8 +1106,8 @@ const stopped = <E extends YieldableError, V extends string, L extends AutofillL
 /**
  * For a log, a replay that ended for the reason the host refused the controls `shownOn` looked for
  * last (`refused`): that state's step event, with the check that fired and its evidence, and the
- * first load that failed after the last submit (`firstCause`), as the recipe replay's step event
- * for a screen the host refused has (`refusedScreen`).
+ * first load that failed after the last submit where the replay heard one (`firstCause`), as the
+ * recipe replay's step event for a screen the host refused has (`refusedScreen`).
  */
 const refusedState = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -1371,9 +1373,10 @@ const returnedReason = <E extends YieldableError, V extends string, L extends Au
  * unknown state; a known state whose controls show on a host the origin rule refuses for this
  * login ends it at once (`refusedOrigin`), as a recipe screen does. In place, once the controls of a
  * state acted in within a pop-up went from it, a state it led to there that shows is taken
- * (`inPopup`, `learnedAlike`). One acted in before something went out showing again stops it at
- * the step wait, after the last check (`returnedReason`), unless a sign-in learned a look-alike
- * after the last (`learnedNext`) or the state just acted in stands.
+ * (`inPopup`, `learnedAlike`). One acted in before something went out showing again stops it
+ * after the last check (`returnedReason`), at the step wait or, on a page of boxes no known state
+ * grows into, once it held still `quietMs`, unless a sign-in learned a look-alike after the last
+ * (`learnedNext`) or the state just acted in stands.
  * It stands while the page shows its boxes as they were, with or without a new text, or a notice
  * state's boxes beside its text, a state noted without its question read with the one it showed
  * (`seenLook`); through the step wait, as the recipe replay waits for its next
@@ -1400,9 +1403,9 @@ const returnedReason = <E extends YieldableError, V extends string, L extends Au
  * that cleared a challenge gives the page the whole step wait again, with no look after it, and
  * each look is heard (`challenge_look`). Once the login went out, a
  * page of text alone that held still `landingSettleMs` and can't tell signs in, as at the recipe
- * replay's marker wait, and where every state sits on the page it opened, so can one there
- * (`landsInPlace`). Before an unknown state, a returned one, or none, the recipe replay's last
- * check runs (`endCheck`).
+ * replay's marker wait, and where every state sits on the page it opened, so can one there that
+ * shows no state acted in before (`landsInPlace`). Before an unknown state, a returned one, or
+ * none, the recipe replay's last check runs (`endCheck`).
  */
 const arrive = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -1494,8 +1497,9 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
             if ("refusedOrigin" in shown)
               return (yield* endCheck(run, read, stood, after, false)) ?? stopped(run, shown.refusedOrigin);
             if (!("returned" in shown)) return { ...shown, observed: read };
-            // Judged only at the step wait, after the last check, as the recipe replay judges a
-            // screen that came back once its marker wait ran out (`awaitIndicator`, `lastCheck`).
+            // Judged after the last check, as the recipe replay judges a screen that came back once
+            // its marker wait ran out (`awaitIndicator`, `lastCheck`): at the step wait, or for a page
+            // of boxes no known state grows into once it held still, as any such page ends.
             back = shown.returned;
           }
         }
