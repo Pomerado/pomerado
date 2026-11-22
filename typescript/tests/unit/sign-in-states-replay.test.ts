@@ -64,6 +64,8 @@ interface Screen {
   readonly errors?: readonly string[];
   /** The button labels a page with no empty box is told by, as the scan normalizes them. */
   readonly labels?: readonly string[];
+  /** Boxes the inspection finds that the look never counts, as boxes drawn transparent. */
+  readonly unseen?: readonly string[];
 }
 
 /**
@@ -88,7 +90,7 @@ const scriptedSite = (
     site.screen === "home"
       ? { signedIn: true, url: page() }
       : { signedIn: false, failed: "indicator_not_visible", url: page() };
-  const controls = () => [...shown().boxes.map((box) => box.selector), ...(shown().buttons ?? [])];
+  const controls = () => [...shown().boxes.map((box) => box.selector), ...(shown().unseen ?? []), ...(shown().buttons ?? [])];
   const press = (pressed: string) => {
     clicks.push(pressed);
     const to = next(site.screen, pressed);
@@ -2957,7 +2959,7 @@ it("never ends a step-up in place by the site's own marker, nor on a page that c
   expect(site.cantTell).toEqual([]);
 });
 
-it("never ends a step-up in place by a marker the page showed before it acted, though the step-up led to it", async () => {
+it("acts in place in no state of a step-up recorded with only a marker the page shows all along", async () => {
   // A step-up recorded with the site's own header as its marker, which shows all along.
   const stepCode: Screen = { path: "/records/verify", boxes: [{ selector: "#step-code", kind: "code" }], buttons: ["#verify"] };
   const library = withStepUp(
@@ -2976,10 +2978,72 @@ it("never ends a step-up in place by a marker the page showed before it acted, t
     true,
   );
   const ended = await replay(site, library, { inPlace: true });
+  // Its every state leads only to that marker, so it acts in none of them.
+  expect(ended).toMatchObject({ outcome: "unsent", reason: "state_not_shown", visited: [] });
+  expect(site.fills).toEqual([]);
+  expect(site.clicks).toEqual([]);
+  expect(ended.asked).toEqual([]);
+});
+
+it("never ends a step-up in place by a marker the page showed before it acted, though the step-up also led to it", async () => {
+  // Two recordings share the step-up's first state: one through a code to its own marker, one
+  // straight to the site's header, which shows all along.
+  const stepCode: Screen = { path: "/records/verify", boxes: [{ selector: "#step-code", kind: "code" }], buttons: ["#verify"] };
+  const stepUp = { fingerprint: arrival(stepUpScreen), step: stepAt("/records", [{ selector: "#step-password", slot: "password" }], "#confirm") };
+  const library = withStepUp(
+    withStepUp(
+      twoStates,
+      [stepUp, { fingerprint: arrival(stepCode), step: stepAt("/records/verify", [{ selector: "#step-code", slot: "code" }], "#verify") }],
+      { selector: "#records" },
+    ),
+    [stepUp],
+    { selector: "#account" },
+  );
+  const screens = { start: stepUpScreen, code: stepCode, records: recordsScreen };
+  const site = withMarkers(
+    scriptedSite(screens, (_at, clicked) => (clicked === "#confirm" ? "code" : clicked === "#verify" ? "records" : undefined)),
+    screens,
+    { start: ["#account"], code: ["#account"], records: ["#account", "#records"] },
+    true,
+  );
+  const ended = await replay(site, library, { inPlace: true });
+  expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
   expect(site.fills).toEqual(["password", "code"]);
-  expect(site.clicks).toEqual(["#confirm", "#verify"]);
   expect(ended.asked).toEqual(["code"]);
-  expect(ended.outcome).not.toBe("signed_in");
+  expect(site.confirmed).toEqual([{ selector: "#records" }]);
+});
+
+it("acts in place in no state that leads only to a marker the page already shows, as the login's own password state", async () => {
+  // A library of the site's own sign-in alone, whose marker, the site's header, shows on a step-up
+  // page that looks like its password state.
+  const portal: Screen = { path: "/records", boxes: [{ selector: "#password", kind: "password" }], buttons: ["#go"] };
+  const screens = { start: portal, records: recordsScreen };
+  const site = withMarkers(
+    scriptedSite(screens, (_at, clicked) => (clicked === "#go" ? "records" : undefined)),
+    screens,
+    { start: ["#account"], records: ["#account"] },
+    true,
+  );
+  const ended = await replay(site, twoStates, { inPlace: true });
+  expect(ended).toMatchObject({ outcome: "unsent", reason: "state_not_shown", visited: [] });
+  expect(site.fills).toEqual([]);
+  expect(site.clicks).toEqual([]);
+  // Nor from a value-free check's stop there that the page still shows.
+  const passwordKey = twoStates.states.at(-1)?.key ?? "";
+  const stop = { visited: [twoStates.states[0]?.key ?? "", passwordKey], state: passwordKey };
+  const fromStop = await replay(site, twoStates, { inPlace: true, from: stop });
+  expect(fromStop).toMatchObject({ outcome: "unsent", fromStop: { continued: false, reason: "marker_shown_before" } });
+  expect(site.fills).toEqual([]);
+  // Where the site signed out and shows its own sign-in, the same library signs in again in place.
+  const screensOut = { start: emailScreen, password: passwordScreen, records: recordsScreen };
+  const signedOut = withMarkers(
+    scriptedSite(screensOut, toPassword),
+    screensOut,
+    { records: ["#account"], home: ["#account"] },
+    true,
+  );
+  expect(await replay(signedOut, twoStates, { inPlace: true })).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(signedOut.fills).toEqual(["email", "password"]);
 });
 
 it("still opens the entry URL and signs in by any marker when not in place", async () => {
@@ -3117,6 +3181,73 @@ it("takes no next pop-up screen in place while the one acted in still shows ther
   expect(ended).toMatchObject({ outcome: "unclear", reason: "credential_screen_returned" });
   expect(site.fills).toEqual(["email"]);
   expect(site.clicks).toEqual(["#next"]);
+});
+
+// A page whose boxes the look never counts, as boxes drawn transparent under digits or dots the
+// page draws itself, is a state told by its text alone, though its step types into those boxes.
+const unseenCode = [1, 2, 3, 4, 5, 6].map((box) => `#code-${box}`);
+const drawnCodeScreen: Screen = {
+  path: "/verify",
+  boxes: [],
+  unseen: unseenCode,
+  buttons: ["#verify"],
+  texts: ["enter the code we sent you"],
+  labels: ["verify"],
+};
+const drawnPasswordScreen: Screen = {
+  path: "/password",
+  boxes: [],
+  unseen: ["#password"],
+  buttons: ["#go"],
+  texts: ["enter your password"],
+  labels: ["go"],
+};
+
+it("presses a state told by its text alone once its unseen code boxes are typed, asking for the code once", async () => {
+  const library = libraryOf([
+    { fingerprint: arrival(drawnCodeScreen), step: stepAt("/verify", unseenCode.map((selector) => ({ selector, slot: "code" as const })), "#verify") },
+  ]);
+  const site = scriptedSite({ start: drawnCodeScreen }, (_at, clicked) => (clicked === "#verify" ? "home" : undefined));
+  const ended = await replay(site, library, { stepWaitMs: 2_000 });
+  expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(ended.asked).toEqual(["code"]);
+  expect(site.fills).toEqual(unseenCode.map(() => "code"));
+  expect(site.clicks).toEqual(["#verify"]);
+});
+
+it("presses a password state told by its text alone once its unseen box is typed", async () => {
+  const library = libraryOf([
+    { fingerprint: arrival(drawnPasswordScreen), step: stepAt("/password", [password], "#go") },
+  ]);
+  const site = scriptedSite({ start: drawnPasswordScreen }, (_at, clicked) => (clicked === "#go" ? "home" : undefined));
+  const ended = await replay(site, library, { stepWaitMs: 2_000 });
+  expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(site.fills).toEqual(["password"]);
+  expect(site.clicks).toEqual(["#go"]);
+});
+
+it("still takes a state told by its text alone as gone once the page's look changed after typing", async () => {
+  const library = libraryOf([
+    { fingerprint: arrival(drawnPasswordScreen), step: stepAt("/password", [password], "#go") },
+  ]);
+  // The page sends what was typed itself, and its look changes before any press.
+  const site = scriptedSite({ start: drawnPasswordScreen, home: { path: "/home", boxes: [] } }, () => undefined);
+  const fill = site.hooks.fill;
+  const sending = {
+    ...site,
+    hooks: {
+      ...site.hooks,
+      fill: (request: Parameters<typeof fill>[0]) =>
+        Effect.map(fill(request), (report) => {
+          site.site.screen = "home";
+          return report;
+        }),
+    },
+  };
+  const ended = await replay(sending, library, { stepWaitMs: 2_000 });
+  expect(ended).toMatchObject({ outcome: "signed_in" });
+  expect(site.fills).toEqual(["password"]);
+  expect(site.clicks).toEqual([]);
 });
 
 it("presses in place a pop-up screen that only presses, once the typed one before it went from the pop-up", async () => {

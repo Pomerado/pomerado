@@ -107,7 +107,8 @@ export interface SignInStatesReplayInput<
    * Whether the replay goes on from the page as it is (in place), for a session already signed in
    * that a later stage of the site, or a pop-up a page of the session opened, asks for the login
    * again (a step-up). It opens no entry URL and starts only in a known state the page shows
-   * (`shownHere`), else ends `state_not_shown` having done nothing, or at once with the origin
+   * (`shownHere`) that leads to a marker the page does not show yet (`leadsToNewMarker`), else
+   * ends `state_not_shown` having done nothing, or at once with the origin
    * rule's refusal of a state that shows. Only a marker the states it acted in led to, and that
    * the page did not show before it acted, signs it in (`markersNow`), checked on the page as it
    * is, and never a page that can't tell. A state in a pop-up is told by its controls there
@@ -388,6 +389,29 @@ const markersNow = <E extends YieldableError, V extends string, L extends Autofi
         queue.push(to);
       }
   return run.markers.filter((marker) => reached.has(marker.key) && !run.shownBefore.has(marker.key));
+};
+
+/**
+ * In place (`inPlace`), whether a state leads, through the states after it, to a marker the page
+ * did not show before the replay acted (`shownBefore`): only such a state is acted in at the
+ * start, so a step-up page that looks like a state of the site's own sign-in, whose marker shows
+ * there already, has nothing typed into it.
+ */
+const leadsToNewMarker = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  state: StateEntry,
+) => {
+  const markers = new Set(run.markers.filter((marker) => !run.shownBefore.has(marker.key)).map((marker) => marker.key));
+  const reached = new Set([state.key]);
+  const queue = [state.key];
+  for (const at of queue)
+    for (const { from, to } of run.input.library.transitions)
+      if (from === at && !reached.has(to)) {
+        if (markers.has(to)) return true;
+        reached.add(to);
+        queue.push(to);
+      }
+  return false;
 };
 
 /**
@@ -729,7 +753,8 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
     const learned = learnedNext(run, after);
     // In place, a state in a pop-up where the route leads is told by its controls, not the look.
     const told = (state: StateEntry) =>
-      sameFingerprint(state, fingerprint) || (inPopup(run, state) && next.has(state.key));
+      (sameFingerprint(state, fingerprint) || (inPopup(run, state) && next.has(state.key))) &&
+      (after !== undefined || run.input.inPlace !== true || leadsToNewMarker(run, state));
     const candidates = states.filter((state) => state !== skip && told(state));
     const alike = ranked(run, candidates, told, next, fingerprint);
     let refused: string | undefined;
@@ -1277,7 +1302,8 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
 
 /**
  * After a box was typed, or while a press waits: `same` while the page shows the state's boxes,
- * grown or not, a notice state's beside its text; another known state it now shows in full with
+ * grown or not, a notice state's beside its text, or, for a state told by its text alone, as one
+ * whose boxes are drawn transparent, while the page still looks as the state does; another known state it now shows in full with
  * what was typed (`fuller`), never one acted in before something went out; or `moved` once a box
  * of the state went. In place, a state in a pop-up stays `same`, as the page read is the one that
  * opened it (`inPopup`).
@@ -1294,7 +1320,11 @@ const lookAgain = <E extends YieldableError, V extends string, L extends Autofil
     const shape = standingFingerprint(reached, observed);
     const text = fingerprintText(shape);
     const notice = state.fingerprint.message !== undefined && state.fingerprint.boxes.length > 0;
-    if (sameFingerprint(shape, state) || (notice && sameBoxes(shape, state))) return { kind: "same" as const, text };
+    // A state told by its text alone, whose boxes the look never counts, stands while the page
+    // still looks as the state does.
+    const toldByText = state.fingerprint.boxes.length === 0 && sameFingerprint(observed.fingerprint, state);
+    if (sameFingerprint(shape, state) || (notice && sameBoxes(shape, state)) || toldByText)
+      return { kind: "same" as const, text };
     for (const other of ranked(
       run,
       run.input.library.states.filter((known) => known !== state && sameFingerprint(known, shape)),
@@ -1770,13 +1800,15 @@ const stillShown = <E extends YieldableError, V extends string, L extends Autofi
     const read = yield* run.input.observe;
     if (read === undefined) return "page_unread";
     if (!sameFingerprint(stateAfter(from.before, read), state)) return "page_changed";
+    if (run.input.inPlace === true && !leadsToNewMarker(run, state)) return "marker_shown_before";
     const shown = yield* shownOn(run, state, resolved(run, state.step));
     return typeof shown === "string" ? shown : { state, inspection: shown, observed: read };
   });
 
 /**
  * In place (`inPlace`), the known state the page shows as the replay starts, in the order this
- * login takes them (`matchState`), one in a pop-up told by its controls there: the first look one
+ * login takes them (`matchState`), one in a pop-up told by its controls there, and only one that
+ * leads to a marker the page has not shown at any look so far (`leadsToNewMarker`): the first look one
  * shows at; else why not, the origin rule's refusal at once (`refusedOrigin`), else
  * `state_not_shown` once the page's look held still `quietMs`, or `capMs` passed.
  */
@@ -1791,6 +1823,7 @@ const shownHere = <E extends YieldableError, V extends string, L extends Autofil
       const at = yield* now;
       if (read !== undefined) {
         run.seen = read.fingerprint;
+        yield* noteShownBefore(run);
         const shown = yield* matchState(run, read.fingerprint, undefined, undefined, false);
         if (typeof shown === "object" && "refusedOrigin" in shown) return shown.refusedOrigin;
         if (typeof shown === "object" && !("returned" in shown)) return { ...shown, observed: read };
@@ -1871,11 +1904,11 @@ export const replaySignInStates = <
       admission: undefined,
       shownBefore: new Set(),
     };
+    if (input.inPlace === true) yield* noteShownBefore(run);
     const from = input.from === undefined ? undefined : yield* stillShown(run, input.from);
     const here = typeof from === "object" || input.inPlace !== true ? undefined : yield* shownHere(run);
     if (typeof from === "object") run.visited.push(...(input.from?.visited ?? []).slice(0, -1));
     else if (input.inPlace !== true) yield* input.hooks.open(input.entryUrl);
-    if (input.inPlace === true && typeof here !== "string") yield* noteShownBefore(run);
     const ended =
       typeof here === "string"
         ? stopped(run, here).ended

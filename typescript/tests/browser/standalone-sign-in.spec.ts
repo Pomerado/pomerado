@@ -504,9 +504,6 @@ for (const [limit, partial] of [
   ["script", [1, 2, 3, 4, 5]],
 ] as const)
   test(`a local build whose code screen has six one-character boxes limited by ${limit} sends back a step that names boxes ${partial.join(", ")}, signs in once the step names all six in order, and a run in a new session signs in through them`, async () => {
-    // A run's replay of the screens asks for the code again on script-limited boxes before it
-    // presses Verify; the replay's fix for that removes this marker.
-    test.fail(limit === "script", "the replay of screens asks for the code twice on these boxes");
     test.info().annotations.push({
       type: "slow",
       description: "Original SDKs, Chromium, a scripted build with a password and a six-box code screen, then a run",
