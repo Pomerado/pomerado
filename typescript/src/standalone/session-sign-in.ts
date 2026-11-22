@@ -181,19 +181,21 @@ type Failed = (
 
 /**
  * A recorded sign-in to sign in again with: its screens (`states`), or the recipe an integration
- * saved before builds recorded screens, and its entry page.
+ * saved before builds recorded screens, and its entry page. A build's sign-in whose screens could
+ * not be read (`unreadable`) replays nothing: a build never replays a recipe.
  */
 export interface RecordedSignIn {
   readonly states?: SignInStates | undefined;
   readonly recipe?: SignInRecipe | undefined;
+  readonly unreadable?: true | undefined;
   readonly entryUrl: string;
 }
 
-/** What a recorded sign-in replays: its screens when it has them, else its recipe. */
+/** What a recorded sign-in replays: its screens when it has them, else an older one's recipe. */
 const replayedBy = (sign: RecordedSignIn): SignInBy | undefined =>
   sign.states !== undefined
     ? { states: sign.states }
-    : sign.recipe === undefined
+    : sign.recipe === undefined || sign.unreadable === true
       ? undefined
       : { recipe: sign.recipe };
 
