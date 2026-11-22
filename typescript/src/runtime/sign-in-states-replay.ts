@@ -3,8 +3,10 @@ import type { YieldableError } from "effect/Cause";
 import { type AutofillRecipeStep, handsOffSignIn, type RejectedMarker } from "../destinations/autofill-recipe.js";
 import { handOffPrompt, type SignInMethodChoice } from "../destinations/autofill-contracts.js";
 import { urlOrigin } from "../destinations/autofill-refusal.js";
+import { refusalEvidence } from "../destinations/autofill-refusal-evidence.js";
 import {
   type AutofillInspection,
+  type AutofillRefusal,
   type AutofillSlot,
   type AutofillStep,
   hostSubmits,
@@ -42,6 +44,7 @@ import { recordedRejections } from "./autofill-rejection.js";
 import { approvalNumber, openPastedLink, withApprovalNumber } from "./autofill-replay-approval.js";
 import { settleCarried, type StepValues } from "./autofill-replay-fill.js";
 import { landingSettleMs } from "./autofill-replay-pages.js";
+import { inPlaceShape } from "./autofill-replay-screens.js";
 import { stillShows, unrecordedCode } from "./autofill-replay-code-screen.js";
 import { alreadySignedIn, makeReplay, type Replay, workspaceOf } from "./autofill-replay-session.js";
 import {
@@ -214,6 +217,13 @@ interface Run<E extends YieldableError, V extends string, L extends AutofillLogi
    */
   admission: string | undefined;
   /**
+   * The host's refusal of the controls `shownOn` looked for last, with their state's key, for the
+   * step event of a replay that ends with its reason (`refusedState`); none once they showed. Where
+   * several states of one look were refused for the same reason, it is the last one looked for,
+   * where `matchState` ends with the first one's reason.
+   */
+  refused: { readonly state: string; readonly refusal: AutofillRefusal } | undefined;
+  /**
    * In place (`inPlace`), the markers the page showed before the replay acted, which tell nothing
    * of a step-up's own sign-in (`markersNow`).
    */
@@ -315,7 +325,7 @@ const onStateFrames = <E extends YieldableError, V extends string, L extends Aut
 
 /**
  * A step's controls found on the page and admitted on the state's recorded origin, each on a frame
- * of the state (`onStateFrames`), or why not.
+ * of the state (`onStateFrames`), or why not, the host's refusal kept for its evidence (`refused`).
  */
 const shownOn = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -324,6 +334,7 @@ const shownOn = <E extends YieldableError, V extends string, L extends AutofillL
 ) =>
   Effect.gen(function* () {
     const inspection = yield* run.input.hooks.inspect(step);
+    run.refused = "outcome" in inspection ? { state: state.key, refusal: inspection } : undefined;
     if ("outcome" in inspection) return inspection.reason;
     if (!onStateFrames(run, state, inspection)) return "screen_origin_changed" as const;
     if (placed.has(state) && step.fields.length > 0 && !(yield* placedRow(run, state, inspection)))
@@ -1135,6 +1146,28 @@ const stopped = <E extends YieldableError, V extends string, L extends AutofillL
   } as SignInStatesOutcome<V>,
 });
 
+/**
+ * For a log, a replay that ended for the reason the host refused the controls `shownOn` looked for
+ * last (`refused`): that state's step event, with the check that fired and its evidence, and the
+ * first load that failed after the last submit where the replay heard one (`firstCause`), as the
+ * recipe replay's step event for a screen the host refused has (`refusedScreen`).
+ */
+const refusedState = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  reason: string,
+) => {
+  const kept = run.refused;
+  if (kept === undefined || kept.refusal.reason !== reason) return Effect.void;
+  return run.input.emit({
+    stage: "step",
+    outcome: "refused",
+    state: kept.state,
+    reason,
+    ...refusalEvidence(kept.refusal),
+    ...run.replay.firstCause.evidence(kept.refusal),
+  });
+};
+
 /** How many stored states an unknown state's shapes hold at most. */
 const shapesStored = 8;
 
@@ -1268,6 +1301,34 @@ const mayCantTell = <E extends YieldableError, V extends string, L extends Autof
   return !unproved && (!early || last === undefined || !sendsOnPress(run, last));
 };
 
+/**
+ * Whether a page that held still is where a sign-in whose states all sit on the page it opened, as
+ * one in a dialog, landed, as the recipe replay's wait for a later screen reads it
+ * (`inPlaceShape`): `last` led to a known state, and neither that nor any state after it takes a
+ * secret or an approval, every one of them counted as a later screen, so no one screen is awaited.
+ */
+const landsInPlace = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  last: StateEntry,
+) =>
+  Effect.gen(function* () {
+    const { replay } = run;
+    const { states, transitions } = run.input.library;
+    const reached = new Set<string>();
+    const queue = [last.key];
+    for (const at of queue)
+      for (const { from, to } of transitions)
+        if (from === at && !reached.has(to)) {
+          reached.add(to);
+          queue.push(to);
+        }
+    const later = states.filter((state) => reached.has(state.key)).map((state) => state.step);
+    if (later.length === 0) return false;
+    const screens = { onScreens: replay.onScreens, matches: replay.matchesRecorded };
+    const here = yield* replay.checkHere;
+    return (yield* inPlaceShape(run.as, replay.progress, { fields: [] }, later, here, screens, replay.resolve)) !== undefined;
+  });
+
 /** Signed in on a page that can't tell, as the host confirmed (`endedCantTell`). */
 const cantTellEnd = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -1396,8 +1457,9 @@ const returnedReason = <E extends YieldableError, V extends string, L extends Au
  * login ends it at once (`refusedOrigin`), as a recipe screen does. In place, once the controls of a
  * state acted in within a pop-up went from it, a state it led to there that shows is taken
  * (`inPopup`, `learnedAlike`). One acted in before something went out showing again stops it
- * (`returnedReason`), unless a sign-in learned a look-alike after the last (`learnedNext`) or the
- * state just acted in stands.
+ * after the last check (`returnedReason`), at the step wait or, on a page of boxes no known state
+ * grows into, once it held still `quietMs`, unless a sign-in learned a look-alike after the last
+ * (`learnedNext`) or the state just acted in stands.
  * It stands while the page shows its boxes as they were, with or without a new text, or a notice
  * state's boxes beside its text, a state noted without its question read with the one it showed
  * (`seenLook`); through the step wait, as the recipe replay waits for its next
@@ -1424,8 +1486,9 @@ const returnedReason = <E extends YieldableError, V extends string, L extends Au
  * that cleared a challenge gives the page the whole step wait again, with no look after it, and
  * each look is heard (`challenge_look`). Once the login went out, a
  * page of text alone that held still `landingSettleMs` and can't tell signs in, as at the recipe
- * replay's marker wait. Before an unknown state, or none, the recipe replay's last check runs
- * (`endCheck`).
+ * replay's marker wait, and where every state sits on the page it opened, so can one there that
+ * shows no state acted in before (`landsInPlace`). Before an unknown state, a returned one, or
+ * none, the recipe replay's last check runs (`endCheck`).
  */
 const arrive = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -1441,6 +1504,8 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
     let observed: ObservedState | undefined;
     let refused: string | undefined;
     let stood = false;
+    // A state acted in that the page shows again (`returnedReason`), judged at the step wait.
+    let back: StateEntry | undefined;
     let challenged = false;
     const looked = new Set<string>();
     // Early looks as at a recipe screen: never for a host that reads no page state, nor where a
@@ -1486,7 +1551,7 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
       }
       stood = false;
       if (read !== undefined) {
-        let back: StateEntry | undefined;
+        back = undefined;
         observed = read;
         shape = acted === undefined ? read.fingerprint : stateAfter(acted.reached, read);
         run.seen = shape;
@@ -1540,7 +1605,9 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
             if ("refusedOrigin" in shown)
               return (yield* endCheck(run, read, stood, after, false)) ?? stopped(run, shown.refusedOrigin);
             if (!("returned" in shown)) return { ...shown, observed: read };
-            if (!stood) return stopped(run, returnedReason(run, shown.returned));
+            // Judged after the last check, as the recipe replay judges a screen that came back once
+            // its marker wait ran out (`awaitIndicator`, `lastCheck`): at the step wait, or for a page
+            // of boxes no known state grows into once it held still, as any such page ends.
             back = shown.returned;
           }
         }
@@ -1639,6 +1706,8 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
             mayCantTell(run, after, true)
           ) {
             cantTellRead = held.text;
+            if (back === undefined && after !== undefined && (yield* landsInPlace(run, after)))
+              replay.progress.landedInPlace = true;
             if (yield* replay.endedCantTell(undefined)) return cantTellEnd(run, marker);
           }
         } else if (
@@ -1679,6 +1748,7 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
     }
     const checked = yield* endCheck(run, observed, stood, after, waitedOut);
     if (checked !== undefined) return checked;
+    if (back !== undefined) return stopped(run, returnedReason(run, back));
     if (refused === ownStateNotShown && shape !== undefined) return unknownState(run, shape, after);
     if (refused !== undefined) return stopped(run, refused);
     return shape === undefined || blankFingerprint(shape)
@@ -1957,6 +2027,9 @@ const sendsOnPress = <E extends YieldableError, V extends string, L extends Auto
  * known state the page shows after a box or while a press waits (`holdStill`) is taken, keeping
  * what was typed. A fill that failed with nothing yet sent, as when the page redrew its form under
  * it, has the state looked for once more in the replay (`gone`), as a recipe screen gone unsent is.
+ * A state whose page sent what was typed itself as it was recorded (`pageSends`) is typed as one
+ * with no submit, and gets its own submit or submit key only once the page held unsent, and only
+ * on a host that tells a code the page sent itself (`enterAfterTyping`).
  * The value of each box typed alone, but a code or security answer, is resolved before the first
  * box is typed and held until that box's fill (`held`), so a value nobody gives ends the replay
  * with nothing typed. A code is asked only at its own box, as the site may send it only then, and a
@@ -2001,6 +2074,7 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
       const full = actedStep(run, state);
       let fuller: { readonly state: StateEntry; readonly observed: ObservedState } | undefined;
       const groups = actions(full.fields.filter((field) => !typed.has(field.slot)));
+      const sendsItself = step.pageSends === true;
       const alone = groups
         .flat()
         .filter((field) => field.slot !== "code" && field.slot !== "private_answer");
@@ -2027,7 +2101,7 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
           });
       }
       for (const [index, fields] of groups.entries()) {
-        const keyed = index === groups.length - 1 && full.submitKey !== undefined;
+        const keyed = index === groups.length - 1 && full.submitKey !== undefined && !sendsItself;
         const typing: AutofillStep = {
           fields,
           ...(full.popup === undefined ? {} : { popup: full.popup }),
@@ -2068,7 +2142,7 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
           break;
         }
       }
-      if (fuller === undefined && hostSubmits(full)) {
+      if (fuller === undefined && hostSubmits(full) && !sendsItself) {
         if (input.library.states.some((other) => containsFingerprint(state, other))) {
           const look = yield* holdStill(run, state, reached);
           if (look.kind === "moved") return acted();
@@ -2084,7 +2158,7 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
         run.visited.push(state.key);
         continue;
       }
-      if (!hostSubmits(full)) {
+      if (!hostSubmits(full) || sendsItself) {
         if (groups.length > 0) yield* enterAfterTyping(run, state, full, reached, false);
         return acted();
       }
@@ -2162,7 +2236,11 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
  * send, the host's refusal, a submit control, a host that can't tell a code the page sent, or a
  * request the Enter sent. The Enter that may have gone out sends what was typed, and after a code
  * typed again (`retry`) counts as one try of the code retry bound, as a submit would; the Tab
- * counts nothing more. The replay then waits for the next state as after any typing.
+ * counts nothing more. A state whose page sent what was typed itself as it was recorded
+ * (`pageSends`) gets its own submit or submit key there in place of Enter, under the same holds,
+ * whatever its form shows, and no Tab after it, but only on a host that tells a code the page sent
+ * itself (`checksCodeSent`): another host presses nothing there. The replay then waits for the
+ * next state as after any typing.
  */
 const enterAfterTyping = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -2174,14 +2252,15 @@ const enterAfterTyping = <E extends YieldableError, V extends string, L extends 
   Effect.gen(function* () {
     const { replay, input } = run;
     const { resubmit } = input.hooks;
-    if (resubmit === undefined || hostSubmits(step) || step.fields.length === 0) return;
-    const skipped = (key: "Enter" | "Tab", reason: string) =>
+    const own = state.step.pageSends === true && hostSubmits(step);
+    if (resubmit === undefined || (hostSubmits(step) && !own) || step.fields.length === 0) return;
+    const skipped = (key: "Enter" | "Tab" | "submit", reason: string) =>
       input.emit({ stage: "key_skipped", key, reason });
     // The slots the sign-in holds as typed until they go out (`filled`), which a date of birth,
     // ZIP, recovery code or private answer never is.
     const kept = step.fields.filter((field) => !isExtraSecret(field.slot) && field.slot !== "private_answer");
     if (!kept.some((field) => replay.state.filled.has(field.slot)))
-      return kept.length === 0 ? undefined : yield* skipped("Enter", "page_sent");
+      return kept.length === 0 ? undefined : yield* skipped(own ? "submit" : "Enter", "page_sent");
     const typed = (read: ObservedState) => read.boxes.filter((box) => !box.empty).length;
     const first = yield* input.observe;
     if (first === undefined) return;
@@ -2201,23 +2280,26 @@ const enterAfterTyping = <E extends YieldableError, V extends string, L extends 
     });
     if (!(yield* held)) return;
     const codeOnly = step.fields.every((field) => field.slot === "code");
-    const keyed: AutofillStep = {
-      fields: step.fields,
-      ...(step.popup === undefined ? {} : { popup: step.popup }),
-      submitKey: "Enter",
-      ...(codeOnly ? { codeKey: "Enter" as const } : {}),
-    };
+    const keyed: AutofillStep = own
+      ? { fields: step.fields, ...screenSubmit(step) }
+      : {
+          fields: step.fields,
+          ...(step.popup === undefined ? {} : { popup: step.popup }),
+          submitKey: "Enter",
+          ...(codeOnly ? { codeKey: "Enter" as const } : {}),
+        };
     const here = yield* shownOn(run, state, keyed);
-    if (typeof here === "string") return yield* skipped("Enter", here);
-    if ((here.screen.submitKey?.submitControls ?? 0) > 0)
+    if (typeof here === "string") return yield* skipped(own ? "submit" : "Enter", here);
+    if (!own && (here.screen.submitKey?.submitControls ?? 0) > 0)
       return yield* skipped("Enter", "submit_control");
-    // Nothing else shows that a box in no form sent its code: a host that can't tell presses no key.
+    // Nothing else shows that a page sent its code itself, or that a box in no form did: a host
+    // that can't tell presses nothing.
     const checked = input.hooks.checksCodeSent === true;
-    if (codeOnly && !checked && (here.targets.submit?.submitMethod ?? null) === null)
-      return yield* skipped("Enter", "no_code_sent_check");
+    if (!checked && (own || (codeOnly && (here.targets.submit?.submitMethod ?? null) === null)))
+      return yield* skipped(own ? "submit" : "Enter", "no_code_sent_check");
     const pressed = yield* resubmit({ step: keyed, inspection: here });
     const sent = maySend(pressed);
-    if (sent) yield* input.emit({ stage: "retried", reason: "enter_after_typing" });
+    if (sent) yield* input.emit({ stage: "retried", reason: own ? "submit_after_typing" : "enter_after_typing" });
     yield* input.emit(stepDiagnostic(keyed, pressed));
     if (!sent) return;
     settleCarried(replay);
@@ -2226,7 +2308,7 @@ const enterAfterTyping = <E extends YieldableError, V extends string, L extends 
     noteExactSent(replay, state.step, step, here);
     if (retry && step.fields.some((field) => field.slot === "code")) replay.codeAttempts.current += 1;
     // A press whose answer was lost may have had the page send the code, as one a request left on.
-    if (!codeOnly || !checked || pressed.outcome !== "filled") return;
+    if (own || !codeOnly || !checked || pressed.outcome !== "filled") return;
     if (pressed.requestSent === true) return yield* skipped("Tab", "request_sent");
     if (!(yield* held)) return;
     const tabbed: AutofillStep = { ...keyed, codeKey: "Tab" };
@@ -2242,9 +2324,10 @@ const enterAfterTyping = <E extends YieldableError, V extends string, L extends 
  * a new code from the caller in its code boxes, with its submit, the last code counted refused
  * whether or not the site showed a refusal, so it never goes in again, and bounded as the recipe
  * replay bounds a refused code's retries (`runStep` with `rejected`), each code typed again one try
- * even when nothing showed it went out, and a state with no submit gets its Enter
- * (`enterAfterTyping`); or the emailed link the site's answer named, pasted and opened as an
- * approval's (`openPastedLink`), once per sign-in.
+ * even when nothing showed it went out, and a state with no submit gets its Enter, or a state whose
+ * page sends the code itself (`pageSends`) its code typed alone and then, on a host that tells a
+ * code the page sent itself, its own submit (`enterAfterTyping`); or the emailed link the site's
+ * answer named, pasted and opened as an approval's (`openPastedLink`), once per sign-in.
  */
 const actAgain = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -2262,7 +2345,9 @@ const actAgain = <E extends YieldableError, V extends string, L extends Autofill
           ? { ...full, fields: full.fields.filter((field) => field.slot === "code") }
           : { fields: [], ...(full.popup === undefined ? {} : { popup: full.popup }) };
     yield* input.emit({ stage: "retried", reason: `state_${again.again}` });
-    const here = yield* shownWithin(run, state, step);
+    const { submit: _submit, submitKey: _key, submitVia: _via, ...alone } = step;
+    const typing = again.again === "code" && state.step.pageSends === true ? alone : step;
+    const here = yield* shownWithin(run, state, typing);
     if (typeof here === "string") return stopped(run, here);
     if (again.again === "link") {
       replay.progress.linkAsked = true;
@@ -2273,7 +2358,7 @@ const actAgain = <E extends YieldableError, V extends string, L extends Autofill
     const tries = replay.codeAttempts.current;
     const failed =
       again.again === "code"
-        ? yield* replay.runStep(step, here, "rejected", again.explicit)
+        ? yield* replay.runStep(typing, here, "rejected", again.explicit)
         : yield* replay.runStep(step, here);
     if (failed !== undefined) return stopped(run, failed);
     if (again.again === "code") {
@@ -2434,6 +2519,7 @@ export const replaySignInStates = <
       asked: new Map(),
       hinted: false,
       admission: undefined,
+      refused: undefined,
       shownBefore: new Set(),
     };
     if (input.inPlace === true) yield* noteShownBefore(run);
@@ -2454,6 +2540,7 @@ export const replaySignInStates = <
       (password === undefined || !(yield* stillShows(run.as, password)))
     )
       yield* run.replay.refuseShownAnswer;
+    if ("reason" in ended) yield* refusedState(run, ended.reason);
     return from === undefined
       ? ended
       : {

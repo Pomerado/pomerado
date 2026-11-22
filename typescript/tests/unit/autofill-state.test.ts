@@ -96,6 +96,27 @@ it("counts a screen with no submit of its own as submitted once the minter goes 
   expect(signIn.steps.at(-1)?.submittedBy).toBeUndefined();
 });
 
+// A code screen that sent itself and closed in place before the host clicked keeps its submit,
+// marked as one its page sends, only on a sign-in whose host opts in; otherwise it has none.
+it("keeps a self-sent code screen's submit, as one its page sends, only where the host opts in", () => {
+  const code = { fields: [{ selector: "#code", slot: "code" as const }], submit: "#verify" };
+  const recorded = (recordsPageSends: boolean) => {
+    const signIn = { ...state(), recordsPageSends };
+    Effect.runSync(armStep(signIn, code, screen, ["246810"], noSecret));
+    recordStep(signIn, code, {
+      outcome: "filled",
+      fields: [{ slot: "code", status: "filled" }],
+      submit: "refused",
+      closedInPlace: true,
+      url: screen.page,
+    });
+    return signIn.steps.at(-1);
+  };
+  expect(recorded(true)).toMatchObject({ submit: "#verify", pageSends: true });
+  expect(recorded(false)).not.toHaveProperty("submit");
+  expect(recorded(false)).not.toHaveProperty("pageSends");
+});
+
 it("counts a screen whose host click never ran as submitted by the minter once it goes on", () => {
   const signIn = state();
   const login = {
