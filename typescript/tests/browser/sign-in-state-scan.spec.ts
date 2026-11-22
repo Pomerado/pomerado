@@ -210,12 +210,12 @@ test("a notice after a press beside the same boxes tells the state, and a typed 
   expect(JSON.stringify(typed)).not.toContain("sam@");
 });
 
-test("two code rows alike but for their boxes' role and labels read as two looks, and a step a minter records types the second in its frame, as a row by place does", async ({
+test("two code rows alike but for their boxes' role and labels read as two looks; a row by place finds the second in its frame, never a box past it nor a row a code never goes in, and a step a minter records types it", async ({
   page,
 }) => {
-  const row = (type: string, first: number) => ({
+  const row = (type: string, first: number, before = "") => ({
     [site]: `<h1>Sign in</h1><iframe src="${provider}/verify"></iframe>`,
-    [provider]: `<form>${Array.from(
+    [provider]: `<form>${before}${Array.from(
       { length: 6 },
       (_, at) =>
         `<div><div><input type="${type}" aria-label="${first + at}" autocomplete="one-time-code" inputmode="numeric"></div></div>`,
@@ -227,51 +227,58 @@ test("two code rows alike but for their boxes' role and labels read as two looks
       boxes: Array.from({ length: 6 }, (_, at) => ({ frame: provider, kind: "code" as const, role, label: String(first + at) })),
       submit: false,
     });
+  const inspect = async (step: AutofillStep, authenticationOrigins = [provider]) =>
+    Effect.runPromise(inspectAutofillStep({ step, page: await hostPage(page), siteOrigin: site, authenticationOrigins }));
   const text = await (await open(page, row("text", 1)))();
   expect(text.fingerprint).toEqual(look("textbox", 1));
   const number = await (await open(page, row("number", 0)))();
   expect(number.fingerprint).toEqual(look("spinbutton", 0));
   expect(sameFingerprint(text.fingerprint, number.fingerprint)).toBe(false);
-  const code = "482913";
-  const typed = async (step: AutofillStep) => {
-    const host = await hostPage(page);
-    const inspection = await Effect.runPromise(
-      inspectAutofillStep({ step, page: host, siteOrigin: site, authenticationOrigins: [provider] }),
-    );
-    if ("outcome" in inspection) throw new Error(`Inspection refused: ${inspection.reason}`);
-    const report = await Effect.runPromise(
-      fillAutofillStep({
-        step,
-        values: [...code],
-        inspection,
-        page: host,
-        keyboard: (await hostKeyboard(page)).keyboard,
-        settleMs: 500,
-      }),
-    );
-    expect(report).toMatchObject({ outcome: "filled" });
-    const boxes = page.frames().find((frame) => frame.url().startsWith(provider))?.locator("input");
-    expect(await boxes?.evaluateAll((inputs) => inputs.map((input) => (input as HTMLInputElement).value))).toEqual([
-      ...code,
-    ]);
-    return inspection;
-  };
-  // The row by place, as a replay types a look-alike code screen whose recorded boxes never show.
-  const byPlace = await typed({ fields: codeRowFields(6, false) });
-  expect(isCodeRow(byPlace.screen.fields, 6, false)).toBe(true);
-  // A row of one-character boxes by place is each next box of as many.
-  await open(page, { [site]: `<form>${'<span><input inputmode="numeric" maxlength="1"></span>'.repeat(6)}</form>` });
-  const counted = await Effect.runPromise(
-    inspectAutofillStep({ step: { fields: codeRowFields(6, true) }, page: await hostPage(page), siteOrigin: site, authenticationOrigins: [] }),
-  );
-  expect("outcome" in counted ? counted : isCodeRow(counted.screen.fields, 6, true)).toBe(true);
-  // The step a minter records there, which a build or repair notes with the look it was taken in.
+  // The row by place, as a replay types a look-alike code screen whose recorded boxes never show,
+  // with no box at the place after it.
+  const byPlace = await inspect({ fields: codeRowFields(6, false) });
+  expect("outcome" in byPlace ? byPlace : isCodeRow(byPlace.screen.fields, 6, false)).toBe(true);
+  expect(await inspect({ fields: codeRowFields(7, false).slice(6) })).toMatchObject({ reason: "not_found" });
+  // A transparent box before the row, which the look leaves out, is found at the place after it.
+  const transparent = '<input autocomplete="one-time-code" style="opacity:0">';
+  expect((await (await open(page, row("number", 0, transparent)))()).fingerprint).toEqual(look("spinbutton", 0));
+  expect(await inspect({ fields: codeRowFields(7, false).slice(6) })).not.toHaveProperty("outcome");
+  // A row of one-character boxes by place is each next box of as many, unless its boxes are a
+  // birth date's, a social security number's or a PIN's.
+  for (const [box, found] of [
+    ['inputmode="numeric"', true],
+    ['autocomplete="bday-day"', false],
+    ['name="ssn-last4"', false],
+    ['type="password"', false],
+    ['aria-label="PIN digit"', false],
+  ] as const) {
+    await open(page, { [site]: `<form>${`<span><input ${box} maxlength="1"></span>`.repeat(6)}</form>` });
+    const counted = await inspect({ fields: codeRowFields(6, true) }, []);
+    expect("outcome" in counted ? counted.reason : isCodeRow(counted.screen.fields, 6, true)).toBe(found || "not_found");
+  }
+  // The step a minter records on the second screen types it, and is noted with the look it was
+  // taken in, as a build or repair notes it.
   await open(page, row("number", 0));
   const recorded = {
     page: `${provider}/verify`,
     fields: Array.from({ length: 6 }, (_, at) => ({ selector: `role=spinbutton[name="${at}"]`, slot: "code" as const })),
   } satisfies AutofillRecipeStep;
-  await typed(recorded);
+  const inspection = await inspect(recorded);
+  if ("outcome" in inspection) throw new Error(`Inspection refused: ${inspection.reason}`);
+  const code = "482913";
+  const report = await Effect.runPromise(
+    fillAutofillStep({
+      step: recorded,
+      values: [...code],
+      inspection,
+      page: await hostPage(page),
+      keyboard: (await hostKeyboard(page)).keyboard,
+      settleMs: 500,
+    }),
+  );
+  expect(report).toMatchObject({ outcome: "filled" });
+  const boxes = page.frames().find((frame) => frame.url().startsWith(provider))?.locator("input");
+  expect(await boxes?.evaluateAll((inputs) => inputs.map((input) => (input as HTMLInputElement).value))).toEqual([...code]);
   const signIn = { steps: [{ ...recorded }] };
   noteSignInState(signIn, number);
   expect(observedSignInOf(signIn.steps, { steps: [recorded], signedIn: { selector: "#account" } })).toMatchObject({
