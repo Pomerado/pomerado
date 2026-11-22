@@ -812,10 +812,11 @@ const byControl = <E extends YieldableError, V extends string, L extends Autofil
  * login whose words the site changed, such as one asking to remember the browser: only one the
  * state just acted in led to (`learnedNext`) that presses only (`pressesOnly`), whose control is
  * neither that state's submit nor one of its methods, so nothing that state sent goes out again;
- * with the page's top origin, whatever its message and buttons, at its recorded page (`at`) as the
- * last marker check read the address, neither with a hash, and never one acted in that came back
- * (`returnedTo`). They are taken in the order this login takes states of one look (`ranked`), the
- * first whose control shows as `byControl` takes one.
+ * with the page's whole look but its message, its buttons as recorded, so another page at that
+ * address with the same control, such as one asking for more, is none of it; at its recorded page
+ * (`at`) as the last marker check read the address, neither with a hash, and never one acted in
+ * that came back (`returnedTo`). They are taken in the order this login takes states of one look
+ * (`ranked`), the first whose control shows as `byControl` takes one.
  */
 const ledToByControl = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -835,8 +836,10 @@ const ledToByControl = <E extends YieldableError, V extends string, L extends Au
     )
       return undefined;
     const pressed = [after.step.submit, ...(after.step.methods ?? []).map((option) => option.selector)];
+    // The page's look but its message, which is where a site rewords such a page.
+    const unworded = { ...fingerprint, message: undefined };
     const here = (state: StateEntry) =>
-      state.fingerprint.top === fingerprint.top &&
+      sameFingerprint({ ...state.fingerprint, message: undefined }, unworded) &&
       pressesOnly(run, state) &&
       !pressed.includes(state.step.submit) &&
       hashless(URL.parse(state.step.page, page)?.href ?? "") &&
