@@ -6,9 +6,10 @@
  */
 export const fieldName = (element: Element): string => {
   const words = (text: string | null | undefined) => String(text ?? "").replace(/[\s​]+/g, " ").trim();
-  // A wrapping label holds the control itself, whose value or options are not its name.
+  // A wrapping label holds the control itself, whose value or options are not its name. The copy
+  // goes in a document with no window, so its pictures never load again.
   const labelText = (label: Element) => {
-    const copy = label.cloneNode(true) as Element;
+    const copy = document.implementation.createHTMLDocument("").importNode(label, true);
     copy.querySelectorAll("input, select, textarea, [role=listbox], [role=combobox], [role=option]").forEach((inner) => inner.remove());
     return words(copy.textContent);
   };
