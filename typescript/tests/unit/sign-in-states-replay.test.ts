@@ -11,6 +11,7 @@ import type {
 import {
   appendSignInStates,
   type BoxKind,
+  type BoxTakes,
   decodeSignInStateEntry,
   noteSignInState,
   type ObservedState,
@@ -49,7 +50,11 @@ interface Screen {
     readonly kind: BoxKind;
     readonly role?: string;
     readonly label?: string;
+    readonly takes?: BoxTakes;
   }[];
+  /** A page with boxes: its main instruction and its ways, as the scan normalizes them. */
+  readonly instruction?: string;
+  readonly ways?: readonly string[];
   readonly buttons?: readonly string[];
   readonly texts?: readonly string[];
   /** The origin of the frame the boxes sit in, when not the page's own. */
@@ -195,7 +200,7 @@ const scriptedSite = (
         top: origin,
         boxes: empty.map(({ empty: _empty, submit: _submit, ...box }) => box),
         submit: empty.length > 0,
-        ...(empty.length > 0 ? {} : { message: screen.texts?.[0] ?? "", buttons: [...(screen.labels ?? [])] }),
+        ...(empty.length > 0 ? told(screen) : { message: screen.texts?.[0] ?? "", buttons: [...(screen.labels ?? [])] }),
       },
       boxes,
       texts: screen.texts ?? [],
@@ -205,11 +210,22 @@ const scriptedSite = (
 };
 
 /** A box as a look holds it. */
-const lookOf = (screen: Screen, { kind, role, label }: Screen["boxes"][number]) => ({
+const lookOf = (screen: Screen, { kind, role, label, takes }: Screen["boxes"][number]) => ({
   frame: screen.frame ?? origin,
   kind,
   ...(role === undefined ? {} : { role }),
   ...(label === undefined ? {} : { label }),
+  ...(takes === undefined ? {} : { takes }),
+});
+/** A page with boxes as its look tells it beside them: its instruction and its ways. */
+const told = (screen: Screen) => ({
+  ...(screen.instruction === undefined ? {} : { instruction: screen.instruction }),
+  ...(screen.ways === undefined ? {} : { ways: [...screen.ways].sort() }),
+});
+/** A look as one read before boxes said what they take and pages kept their instruction and ways. */
+const unkinded = ({ instruction: _instruction, ways: _ways, ...fingerprint }: StateFingerprint): StateFingerprint => ({
+  ...fingerprint,
+  boxes: fingerprint.boxes.map(({ takes: _takes, ...box }) => box),
 });
 
 /** The fingerprint a screen shows on arrival, every box empty. */
@@ -220,7 +236,7 @@ const arrival = (screen: Screen, message?: string): StateFingerprint => ({
   ...(message === undefined ? {} : { message }),
   ...(screen.boxes.length === 0
     ? { message: message ?? screen.texts?.[0] ?? "", buttons: [...(screen.labels ?? [])] }
-    : {}),
+    : told(screen)),
 });
 
 /** A library of recorded sign-ins, each a list of states with their steps, appended in order. */
@@ -2520,4 +2536,127 @@ it("learns a look-alike code screen beside the known one, which a new login take
     { stage: "state", state: textState.key },
   ]);
   expect(site.clicks).not.toContain("#other");
+});
+
+const emailBox: Screen = {
+  path: "/sign-in",
+  boxes: [{ selector: "#email", kind: "identifier", takes: "email" }],
+  buttons: ["#continue"],
+};
+const phoneBox: Screen = {
+  path: "/sign-in",
+  boxes: [{ selector: "#phone", kind: "identifier", takes: "phone" }],
+  buttons: ["#continue"],
+};
+
+it("ends at an unknown state when the email page it typed in turns into a phone page, whatever the old email state accepts", async () => {
+  for (const accepts of [["username"], ["email"]] as const) {
+    // A library recorded before boxes said what they take: its email state looks like any
+    // identifier page.
+    const library = libraryOf([
+      { fingerprint: unkinded(arrival(emailBox)), step: stepAt("/sign-in", [{ selector: "#email", accepts }], "#continue") },
+      { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") },
+    ]);
+    const site = scriptedSite({ start: emailBox, phone: phoneBox }, (at, clicked) =>
+      at === "start" && clicked === "#continue" ? "phone" : undefined,
+    );
+    const ended = await replay(site, library);
+    expect(ended).toMatchObject({
+      outcome: "unclear",
+      reason: "unknown_state",
+      unknownState: { fingerprint: { boxes: [{ kind: "identifier", takes: "phone" }] }, sent: true },
+    });
+    expect(site.fills).toEqual([accepts[0]]);
+    expect(site.clicks).toEqual(["#continue"]);
+  }
+});
+
+it("never takes an old state whose step types an email alone on a page whose box takes a phone alone, and keeps every other match", async () => {
+  const at = (takes: BoxTakes): Screen => ({
+    path: "/sign-in",
+    boxes: [{ selector: "#identifier", kind: "identifier", takes }],
+    buttons: ["#continue"],
+  });
+  const recorded = (accepts: readonly ("email" | "phone" | "username")[]) =>
+    libraryOf([
+      {
+        fingerprint: unkinded(arrival(at("other"))),
+        step: stepAt("/sign-in", [{ selector: "#identifier", accepts: [...accepts] }], "#continue"),
+      },
+    ]);
+  const signsIn = (screen: Screen) => scriptedSite({ start: screen }, () => "home");
+  // The phone page is no page of the email state: nothing is typed there.
+  const phone = signsIn(at("phone"));
+  expect(await replay(phone, recorded(["email"]))).toMatchObject({ outcome: "unsent", reason: "unknown_state" });
+  expect(phone.fills).toEqual([]);
+  // Its own email page, a box that says nothing, one that takes either, and a box a site marks as
+  // a phone's for a member number, where the state types a username, all still match.
+  for (const [takes, accepts] of [
+    ["email", ["email"]],
+    ["other", ["email"]],
+    ["email_or_phone", ["email"]],
+    ["phone", ["username"]],
+    ["phone", ["email", "phone"]],
+  ] as const) {
+    const site = signsIn(at(takes));
+    expect(await replay(site, recorded(accepts))).toMatchObject({ outcome: "signed_in" });
+    expect(site.clicks).toEqual(["#continue"]);
+  }
+});
+
+it("tells boxes by what they take where both looks say it: a box that takes either is no email state", async () => {
+  const either: Screen = { ...emailBox, boxes: [{ selector: "#email", kind: "identifier", takes: "email_or_phone" }] };
+  const kinded = (screen: Screen) =>
+    libraryOf([{ fingerprint: arrival(screen), step: stepAt("/sign-in", [email], "#continue") }]);
+  const site = scriptedSite({ start: either }, () => "home");
+  expect(await replay(site, kinded(emailBox))).toMatchObject({ outcome: "unsent", reason: "unknown_state" });
+  expect(site.fills).toEqual([]);
+  expect(await replay(scriptedSite({ start: either }, () => "home"), kinded(either))).toMatchObject({
+    outcome: "signed_in",
+  });
+  expect(await replay(scriptedSite({ start: emailBox }, () => "home"), kinded(emailBox))).toMatchObject({
+    outcome: "signed_in",
+  });
+});
+
+it("orders look-alike states by the instruction and ways each page shows, and a reworded page keeps its match", async () => {
+  const page = (ways: readonly string[], instruction = "~ your password"): Screen => ({
+    ...passwordScreen,
+    instruction,
+    ways,
+    buttons: ["#go", "#send"],
+  });
+  const withCode = page(["~", "~ code instead"]);
+  const plain = page(["~"]);
+  // Two sign-ins recorded the two pages, the plain one last.
+  const library = libraryOf(
+    [{ fingerprint: arrival(withCode), step: stepAt("/password", [password], "#go") }],
+    [{ fingerprint: arrival(plain), step: stepAt("/password", [password], "#send") }],
+  );
+  for (const [screen, pressed] of [
+    [withCode, "#go"],
+    [plain, "#send"],
+  ] as const) {
+    const site = scriptedSite({ start: screen }, () => "home");
+    expect(await replay(site, library)).toMatchObject({ outcome: "signed_in" });
+    expect(site.clicks).toEqual([pressed]);
+  }
+  // A page whose instruction and ways the site reworded still matches the one state of its look.
+  const reworded = scriptedSite({ start: page(["~ in"], "~ the password for this account") }, () => "home");
+  const one = libraryOf([{ fingerprint: arrival(withCode), step: stepAt("/password", [password], "#go") }]);
+  expect(await replay(reworded, one)).toMatchObject({ outcome: "signed_in" });
+  expect(reworded.clicks).toEqual(["#go"]);
+});
+
+it("still stops when a fuller state whose password box drew late shows again after its press", async () => {
+  const late: Screen = { path: "/", boxes: [{ selector: "#email", kind: "identifier", takes: "email" }], buttons: ["#continue"] };
+  const full: Screen = { ...late, boxes: [...late.boxes, { selector: "#password", kind: "password" }] };
+  const library = libraryOf(
+    [{ fingerprint: arrival(full), step: stepAt("/", [email, password], "#continue") }],
+    [{ fingerprint: arrival(late), step: stepAt("/", [email], "#continue") }],
+  );
+  // The password box draws late, and the site shows the whole form again after the press.
+  const site = scriptedSite({ start: (looks) => (looks < 4 ? late : full), again: full }, () => "again");
+  expect(await replay(site, library)).toMatchObject({ outcome: "unclear", reason: "credential_screen_returned" });
+  expect(site.fills).toEqual(["email", "password"]);
 });

@@ -6,6 +6,7 @@ import { fillAutofillStep } from "../../src/destinations/autofill-fill.js";
 import { type AutofillStep, inspectAutofillStep } from "../../src/destinations/autofill-step.js";
 import { observeSignInState, stateAfter } from "../../src/destinations/sign-in-state-scan.js";
 import {
+  type BoxTakes,
   fingerprintOf,
   noteSignInState,
   observedSignInOf,
@@ -67,6 +68,7 @@ test("the scan counts each kind of box, a row of one-character boxes as one code
     frame: site,
     kind,
     ...(count === undefined ? {} : { count, role: "textbox" }),
+    ...(kind === "identifier" ? { takes: "email" } : {}),
     empty: true,
     submit,
   });
@@ -74,13 +76,14 @@ test("the scan counts each kind of box, a row of one-character boxes as one code
     fingerprintOf({
       top: site,
       boxes: [
-        { frame: site, kind: "identifier" },
+        { frame: site, kind: "identifier", takes: "email" },
         { frame: site, kind: "password" },
         { frame: site, kind: "code", count: 6, role: "textbox" },
         { frame: site, kind: "date_of_birth" },
         { frame: site, kind: "zip" },
       ],
       submit: true,
+      ways: ["~ in", "~"],
     }),
   );
   expect(state.boxes).toHaveLength(5);
@@ -112,6 +115,7 @@ test("the scan reads a frame on a listed sign-in origin by its origin, and no ot
         { frame: provider, kind: "code", role: "textbox" },
       ],
       submit: true,
+      ways: ["~"],
     }),
   );
 });
@@ -183,11 +187,12 @@ test("a notice after a press beside the same boxes tells the state, and a typed 
         });
       </script>`,
   });
-  const identifier = { frame: site, kind: "identifier" as const };
+  const identifier = { frame: site, kind: "identifier" as const, takes: "email" as const };
   const password = { frame: site, kind: "password" as const };
   const boxes = [identifier, password];
+  const told = { instruction: "~ back", ways: ["~ in"] };
   const before = await scan();
-  expect(before.fingerprint).toEqual(fingerprintOf({ top: site, boxes, submit: true }));
+  expect(before.fingerprint).toEqual(fingerprintOf({ top: site, boxes, submit: true, ...told }));
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByText("That password is not right")).toBeVisible();
   const after = await scan();
@@ -206,8 +211,63 @@ test("a notice after a press beside the same boxes tells the state, and a typed 
     { ...identifier, empty: false, submit: true },
     { ...password, empty: true, submit: true },
   ]);
-  expect(typed.fingerprint).toEqual(fingerprintOf({ top: site, boxes: [password], submit: true }));
+  expect(typed.fingerprint).toEqual(fingerprintOf({ top: site, boxes: [password], submit: true, ...told }));
   expect(JSON.stringify(typed)).not.toContain("sam@");
+});
+
+test("an identifier box says whether it takes an email, a phone or either, and a page with boxes keeps its instruction and ways, value-free", async ({
+  page,
+}) => {
+  const scan = await open(page, {
+    [site]: `<h1>Welcome back, Sam</h1>
+      <form action="/session" method="post">
+        <input type="email" name="first">
+        <input type="tel" aria-label="Phone number">
+        <label>Email or mobile number <input name="second"></label>
+        <input autocomplete="username" name="third">
+        <input type="tel" name="member" placeholder="Member number">
+        <span id="spoken">N&uacute;mero de tel&eacute;fono</span><input aria-labelledby="spoken" name="fourth">
+        <button>Continue</button>
+      </form>
+      <a href="/password">Use password instead</a>
+      <button type="button">Text a code to 555 0100</button>`,
+  }, ["sam@example.test"]);
+  const state = await scan();
+  const identifier = (takes: BoxTakes) => ({ frame: site, kind: "identifier" as const, takes });
+  expect(state.fingerprint).toEqual(
+    fingerprintOf({
+      top: site,
+      boxes: (["email", "phone", "email_or_phone", "other", "phone", "phone"] as const).map(identifier),
+      submit: true,
+      instruction: "~ back, ~",
+      ways: ["~", "~ password instead", "~ a code to # #"],
+    }),
+  );
+  expect(JSON.stringify(state)).not.toMatch(/sam|555/iu);
+  // A phone box in place of the email box after a press is a new page, and an email box again is
+  // the same state.
+  await open(page, { [site]: `<form><input type="email" name="login"><button>Continue</button></form>` });
+  const host = await hostPage(page);
+  const read = () =>
+    Effect.runPromise(observeSignInState({ page: host, siteOrigin: site, authenticationOrigins: [] })).then((read) => {
+      if (read === undefined) throw new Error("The scan read nothing");
+      return read;
+    });
+  const email = await read();
+  await page.evaluate(() => {
+    const box = document.querySelector("input");
+    box?.setAttribute("type", "tel");
+    box?.setAttribute("aria-label", "Mobile number");
+  });
+  const phone = await read();
+  expect(stateAfter(email, phone)).toEqual(phone.fingerprint);
+  expect(sameFingerprint(phone.fingerprint, email.fingerprint)).toBe(false);
+  await page.evaluate(() => {
+    const box = document.querySelector("input");
+    box?.setAttribute("type", "email");
+    box?.removeAttribute("aria-label");
+  });
+  expect(stateAfter(email, await read())).toEqual(fingerprintOf({ top: site, boxes: [identifier("email")], submit: true }));
 });
 
 test("two code rows alike but for their boxes' role and labels read as two looks; a row by place finds the second in its frame, never a box past it nor a row a code never goes in, and a step a minter records types it", async ({
@@ -226,6 +286,7 @@ test("two code rows alike but for their boxes' role and labels read as two looks
       top: site,
       boxes: Array.from({ length: 6 }, (_, at) => ({ frame: provider, kind: "code" as const, role, label: String(first + at) })),
       submit: false,
+      ways: ["~ ~"],
     });
   const inspect = async (step: AutofillStep, authenticationOrigins = [provider]) =>
     Effect.runPromise(inspectAutofillStep({ step, page: await hostPage(page), siteOrigin: site, authenticationOrigins }));

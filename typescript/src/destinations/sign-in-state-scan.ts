@@ -5,6 +5,7 @@ import { workspaceHost } from "../runtime/workspace-origin.js";
 import type { AutofillPage } from "./autofill-step.js";
 import {
   BoxKind,
+  BoxTakes,
   fingerprintOf,
   type ObservedState,
   type StateBox,
@@ -13,10 +14,12 @@ import {
 export { type ObservedBox, type ObservedState, stateAfter } from "./sign-in-states.js";
 
 // The page as a sign-in state: one host call reads each visible box on a sign-in origin, by its
-// frame's origin and the kind of value its own attributes say it takes, never its value, and a
-// code box by its role and its labels too. Only a page with no empty box is told by text: its main
-// message and its buttons, normalized on the host so no name, address or number is kept, as a code
-// box's labels are, save a lone number of one or two digits, a box's place.
+// frame's origin and the kind of value its own attributes say it takes, never its value, a code
+// box by its role and its labels too, and an identifier box by whether it takes an email, a phone
+// or either. A page with no empty box is told by text: its main message and its buttons,
+// normalized on the host so no name, address or number is kept, as a code box's labels are, save
+// a lone number of one or two digits, a box's place. A page with boxes keeps its instruction and
+// the ways it offers, normalized alike, which only order states of one look.
 
 /**
  * A text as a state holds it, normalized here, never in the page, whose own code may change what
@@ -56,10 +59,13 @@ const normalized = (text: string, limit: number, logins: readonly string[]) =>
  * holds a value, and whether a submit sits in its form; a row of one-character boxes is one code
  * box with its count. A code box also gives its role, its own or else its type's, and the labels
  * of its boxes (`labels`): each one's `aria-label`, else its label elements' text, else its
- * placeholder. A box with no hint of its kind counts as an identifier only when required or
+ * placeholder. An identifier box gives what it takes (`takes`): an email, a phone, either, or
+ * neither said, by its type, input mode and autocomplete and the words of its labels, placeholder,
+ * name and id. A box with no hint of its kind counts as an identifier only when required or
  * in a form that has a submit or another counted box; a search box never counts. With no empty
- * box, the first visible h1, else h2, heading, h3 or paragraph, and up to eight buttons; these
- * and every visible text outside a control (`texts`) as they stand, which the host normalizes.
+ * box, the first visible h1, else h2, heading, h3 or paragraph, and up to eight buttons; with one,
+ * that same text as its instruction and up to twelve buttons and links as its ways; these and
+ * every visible text outside a control (`texts`) as they stand, which the host normalizes.
  */
 const scanFrame = `() => {
   const shows = (element) => {
@@ -100,6 +106,19 @@ const scanFrame = `() => {
       named(element, ["email", "user", "login", "phone", "mobile"])) return "identifier";
     return undefined;
   };
+  const takesOf = (element) => {
+    const type = attribute(element, "type");
+    const mode = attribute(element, "inputmode");
+    const auto = attribute(element, "autocomplete").split(/\\s+/);
+    const labelledBy = (element.getAttribute("aria-labelledby") ?? "").split(/\\s+/)
+      .map((id) => (id === "" ? "" : document.getElementById(id)?.innerText ?? ""));
+    const words = [element.getAttribute("aria-label") ?? "", ...labelledBy, ...[...(element.labels ?? [])].map((label) => label.innerText),
+      element.getAttribute("placeholder") ?? "", attribute(element, "name"), attribute(element, "id")].join(" ").toLowerCase().slice(0, 1000);
+    const email = type === "email" || mode === "email" || auto.includes("email") || /e-?mail|correo|courriel/.test(words);
+    const phone = type === "tel" || mode === "tel" || auto.some((token) => token.startsWith("tel")) ||
+      /phone|mobil|(^|[^a-z])cell|t[e\\u00e9]l[e\\u00e9]f|m[o\\u00f3]vil|celular/.test(words);
+    return email ? (phone ? "email_or_phone" : "email") : phone ? "phone" : "other";
+  };
   const roleOf = (element) => {
     const own = attribute(element, "role");
     return /^[a-z]{1,20}$/.test(own) ? own : attribute(element, "type") === "number" ? "spinbutton" : "textbox";
@@ -123,7 +142,8 @@ const scanFrame = `() => {
   for (const element of boxes) {
     if (inRows.has(element)) continue;
     const kind = kindOf(element);
-    const box = { kind: kind ?? "identifier", ...(kind === "code" ? { role: roleOf(element), labels: [labelOf(element)] } : {}), empty: element.value === "", submit: submitIn(formOf(element)), form: formOf(element) };
+    const box = { kind: kind ?? "identifier", ...(kind === "code" ? { role: roleOf(element), labels: [labelOf(element)] } : {}),
+      ...((kind ?? "identifier") === "identifier" ? { takes: takesOf(element) } : {}), empty: element.value === "", submit: submitIn(formOf(element)), form: formOf(element) };
     if (kind === undefined) unhinted.push({ box, required: element.required });
     else found.push(box);
   }
@@ -155,16 +175,28 @@ const scanFrame = `() => {
     last = block;
   }
   const result = { boxes: found.map(({ form, ...box }) => box), texts: [...own.values()].map((text) => text.slice(0, 2000)) };
-  if (found.some((box) => box.empty)) return result;
   const message = ["h1", "h2", '[role="heading" i]', "h3", "p"]
     .map((selector) => [...document.querySelectorAll(selector)].find((element) => shows(element) && element.innerText.trim() !== ""))
     .find((element) => element !== undefined);
-  const buttons = [...document.querySelectorAll('button, [role="button" i], input[type="submit" i], input[type="button" i]')]
+  const said = message === undefined ? undefined : message.innerText.slice(0, 2000);
+  const controlText = (element) => (element.getAttribute("aria-label") || element.innerText || element.value || "").slice(0, 500);
+  const pressed = 'button, [role="button" i], input[type="submit" i], input[type="button" i]';
+  if (found.some((box) => box.empty)) {
+    const ways = [];
+    for (const element of document.querySelectorAll(pressed + ', a[href], [role="link" i]')) {
+      if (ways.length >= 12) break;
+      if (!shows(element)) continue;
+      const label = controlText(element);
+      if (label.trim() !== "") ways.push(label);
+    }
+    return { ...result, ...(said === undefined ? {} : { instruction: said }), ways };
+  }
+  const buttons = [...document.querySelectorAll(pressed)]
     .filter(shows)
-    .map((element) => (element.getAttribute("aria-label") || element.innerText || element.value || "").slice(0, 500))
+    .map(controlText)
     .filter((label) => label.trim() !== "")
     .slice(0, 8);
-  return { ...result, ...(message === undefined ? {} : { message: message.innerText.slice(0, 2000) }), buttons };
+  return { ...result, ...(said === undefined ? {} : { message: said }), buttons };
 }`;
 
 /** One host call over the primary tab's frames on the site or a configured sign-in origin. */
@@ -212,6 +244,7 @@ const ScannedBox = Schema.Struct({
   count: Schema.optional(Schema.Int.pipe(Schema.between(2, 12))),
   role: Schema.optional(Schema.String),
   labels: Schema.optional(Schema.Array(Schema.String)),
+  takes: Schema.optional(BoxTakes),
   empty: Schema.Boolean,
   submit: Schema.Boolean,
 });
@@ -224,6 +257,8 @@ const Scan = Schema.Struct({
       texts: Schema.Array(Schema.String),
       message: Schema.optional(Schema.String),
       buttons: Schema.optional(Schema.Array(Schema.String)),
+      instruction: Schema.optional(Schema.String),
+      ways: Schema.optional(Schema.Array(Schema.String)),
     }),
   ),
 });
@@ -283,6 +318,7 @@ export const observeSignInState = (input: {
             ...(box.count === undefined ? {} : { count: box.count }),
             ...(box.role !== undefined && /^[a-z]{1,20}$/u.test(box.role) ? { role: box.role } : {}),
             ...(label === "" ? {} : { label }),
+            ...(box.takes === undefined ? {} : { takes: box.takes }),
           };
         };
         // At most the 24 empty boxes a `StateFingerprint` holds, so a long form, such as an account
@@ -290,6 +326,10 @@ export const observeSignInState = (input: {
         const empty = boxes.filter((box) => box.empty).slice(0, 24);
         const told = empty.length > 0 ? undefined : frames.find((frame) => frame.message !== undefined || (frame.buttons ?? []).length > 0);
         const buttons = (told?.buttons ?? []).slice(0, 8).map((label) => normalized(label, 120, logins));
+        // A page with boxes is told beside them by the frame its first empty box sits in.
+        const shown = empty.length > 0 ? frames.find((frame) => frame.boxes.slice(0, 200).some((box) => box.empty)) : undefined;
+        const instruction = shown?.instruction === undefined ? "" : normalized(shown.instruction, 200, logins);
+        const ways = [...new Set((shown?.ways ?? []).slice(0, 12).map((label) => normalized(label, 120, logins)))];
         return {
           fingerprint: fingerprintOf({
             top: named(top),
@@ -297,6 +337,8 @@ export const observeSignInState = (input: {
             submit: empty.some((box) => box.submit),
             ...(told?.message === undefined ? {} : { message: normalized(told.message, 200, logins) }),
             ...(told === undefined ? {} : { buttons: buttons.filter((label) => label !== "") }),
+            ...(instruction === "" ? {} : { instruction }),
+            ...(shown === undefined ? {} : { ways: ways.filter((label) => label !== "") }),
           }),
           boxes: boxes.map((box) => ({ ...written(box), empty: box.empty, submit: box.submit })),
           texts: [
