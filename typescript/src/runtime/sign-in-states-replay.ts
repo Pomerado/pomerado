@@ -1474,10 +1474,11 @@ const codeMethods: ReadonlySet<string> = new Set(["sms", "call", "email", "totp"
 const sendMethods: ReadonlySet<string> = new Set(["sms", "call", "email", "push"]);
 
 /**
- * A method choice's pick: the login's own (`choices.method`), else the way in the recording took,
- * a lone two-factor method beside a way in, or the host's or caller's pick, as a recipe's replay
- * picks. The host's hint (`rankMethod`) picks nothing here; a lone method that is the hint, in a
- * state the hint may have ranked first, is never stored as a pick (`hinted`).
+ * A method choice's pick, as a recipe's replay picks: the way in the recording took, a lone
+ * two-factor method beside a way in, or the host's pick (`hosted.method`), else the login's own
+ * (`choices.method`), else the caller's. The host's hint (`rankMethod`) picks nothing here; a lone
+ * method that is the hint, in a state the hint may have ranked first, is never stored as a pick
+ * (`hinted`).
  */
 const methodFor = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -1493,7 +1494,6 @@ const methodFor = <E extends YieldableError, V extends string, L extends Autofil
       twoFactor.every((option) => codeMethods.has(option.method));
     const lone = twoFactor.length === 1 && twoFactor.length < methods.length ? twoFactor[0] : undefined;
     const picked =
-      own ??
       methods.find(
         (option) =>
           !isTwoFactorOption(option) &&
@@ -1502,7 +1502,9 @@ const methodFor = <E extends YieldableError, V extends string, L extends Autofil
           option.selector === step.submit,
       ) ??
       lone ??
-      (yield* run.replay.pickMethod(twoFactor));
+      (own === undefined
+        ? yield* run.replay.pickMethod(twoFactor)
+        : ((yield* run.input.hosted?.method?.(twoFactor) ?? Effect.succeed(undefined)) ?? own));
     if (isTwoFactorOption(picked)) {
       run.replay.progress.chosen = picked.method;
       run.hinted =
