@@ -76,8 +76,8 @@ const Marker = LegacyAutofillRecipe.fields.signedIn;
 /**
  * A recorded step on an absolute page, or a workspace step on a path. `pageSends` marks a code
  * screen whose page sent the code itself as it was recorded, beside the submit or submit key the
- * page took away then: a replay types the code alone and presses that control only when the page
- * didn't send it. A recipe never holds it. A core before this one leaves out a state that has it,
+ * page took away then: a replay types the code alone and, on a host that tells a code the page
+ * sent itself, presses that control only when the page didn't send it. A recipe never holds it. A core before this one leaves out a state that has it,
  * as it leaves out any field it does not know, so a host records it only once every core that
  * replays its libraries is this one or later (`AutofillSignInState.recordsPageSends`).
  */
