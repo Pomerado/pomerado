@@ -5,6 +5,7 @@ import { observeSignInState } from "../../src/destinations/sign-in-state-scan.js
 import {
   appendSignInStates,
   type SignInStates,
+  type SignInStatesChoices,
   signInStatesOf,
   type StateFingerprint,
 } from "../../src/destinations/sign-in-states.js";
@@ -18,7 +19,8 @@ import { expectNotCarried, hostKeyboard, hostPage } from "./autofill-host-page.j
 // A library of sign-in states that learned an opener after it was recorded: a sign-in that stopped
 // before it signed in appends the opener it pressed, leading to the identifier state the library
 // already knows, and a replay from the opener's page signs in on local Chromium with the host's
-// own scan, inspection and fill. Every host is synthetic.
+// own scan, inspection and fill; and one that learned a box the site renamed, which a login whose
+// route holds the old state signs in by. Every host is synthetic.
 
 class TestFailure extends Data.TaggedError("TestFailure")<{ readonly code: string }> {}
 
@@ -30,10 +32,11 @@ const marker = { selector: "#account", openPath: "/home" };
 test.describe.configure({ timeout: 120_000 });
 
 /**
- * The site: a link at /login that opens the identifier form at /login/identifier, the password at
- * /login/password, then /home with the account marker. Each path a value was sent to.
+ * The site: a link at /login that opens the identifier form at /login/identifier, its box's id
+ * `box.id`, the password at /login/password, then /home with the account marker. Each path a value
+ * was sent to.
  */
-const serve = async (page: Page) => {
+const serve = async (page: Page, box = { id: "username" }) => {
   const sent: string[] = [];
   let typed = "";
   await page.route(/^https:\/\//u, async (route) => {
@@ -56,7 +59,7 @@ const serve = async (page: Page) => {
       url.pathname === "/login"
         ? '<main><h1>Welcome</h1><a id="open-sign-in" href="/login/identifier">Sign in</a></main>'
         : url.pathname === "/login/identifier"
-          ? '<form method="post" action="/login/identifier"><label>Username<input id="username" name="value"></label><button id="next">Next</button></form>'
+          ? `<form method="post" action="/login/identifier"><label>Username<input id="${box.id}" name="value"></label><button id="next">Next</button></form>`
           : url.pathname === "/login/password"
             ? '<form method="post" action="/login/password"><label>Password<input id="password" name="value" type="password"></label><button id="sign-in">Sign in</button></form>'
             : url.pathname === "/home" && typed !== ""
@@ -102,12 +105,13 @@ const appended = (result: ReturnType<typeof appendSignInStates>) => {
   return result;
 };
 
-const signIn = async (page: Page, library: SignInStates) => {
+const signIn = async (page: Page, library: SignInStates, choices?: SignInStatesChoices) => {
   const { host, hooks, observe } = await hostOn(page);
   const ended = await Effect.runPromise(
     Effect.either(
       replaySignInStates({
         library,
+        ...(choices === undefined ? {} : { choices }),
         observe,
         hooks,
         entryUrl: `${site}/login`,
@@ -168,5 +172,59 @@ test("a library that appends an opener leading to a state it knows signs in from
   const ended = await signIn(page, learned.library);
   expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
   expect(ended.visited).toEqual([openerState?.key, ...recorded.states.map((state) => state.key)]);
+  expect(sent).toEqual(["/login/identifier", "/login/password"]);
+});
+
+test("a login whose route holds a state whose box the site renamed signs in by the look-alike learned after it", async ({ page }) => {
+  const box = { id: "username" };
+  const sent = await serve(page, box);
+  const opener = await scanAt(page, "/login");
+  const identifier = await scanAt(page, "/login/identifier");
+  const secret = await scanAt(page, "/login/password");
+  const named = (selector: string): AutofillRecipeStep => ({
+    page: `${site}/login/identifier`,
+    fields: [{ selector, accepts: ["username"] }],
+    submit: "#next",
+  });
+  const passwordStep: AutofillRecipeStep = {
+    page: `${site}/login/password`,
+    fields: [{ selector: "#password", slot: "password" }],
+    submit: "#sign-in",
+  };
+  const recorded = appended(
+    appendSignInStates(signInStatesOf({}, []), {
+      states: [
+        { fingerprint: opener, step: { page: `${site}/login`, fields: [], submit: "#open-sign-in" } },
+        { fingerprint: identifier, step: named("#username") },
+        { fingerprint: secret, step: passwordStep },
+      ],
+      signedIn: marker,
+    }),
+  ).library;
+  const route = recorded.states.map((state) => state.key);
+  const [openerState, , secretState] = recorded.states;
+
+  // The site renames the box. Another login's repair goes on from the opener and learns the
+  // renamed box's state, of the same look, after the one this login's route holds.
+  box.id = "login-name";
+  const renamed = await scanAt(page, "/login/identifier");
+  const learned = appended(
+    appendSignInStates(recorded, {
+      from: openerState?.key,
+      states: [
+        { fingerprint: renamed, step: named("#login-name") },
+        { fingerprint: secret, step: passwordStep },
+      ],
+      signedIn: marker,
+    }),
+  ).library;
+  const renamedState = learned.states.at(-1);
+  expect(learned.states).toHaveLength(4);
+
+  sent.length = 0;
+  await page.context().clearCookies();
+  const ended = await signIn(page, learned, { states: route });
+  expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(ended.visited).toEqual([openerState?.key, renamedState?.key, secretState?.key]);
   expect(sent).toEqual(["/login/identifier", "/login/password"]);
 });
