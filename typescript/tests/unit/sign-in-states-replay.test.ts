@@ -3097,6 +3097,8 @@ it("still takes a state told by its text alone as gone once the page's look chan
   expect(ended).toMatchObject({ outcome: "signed_in" });
   expect(site.fills).toEqual(["password"]);
   expect(site.clicks).toEqual([]);
+});
+
 it("presses in place a pop-up screen that only presses, once the typed one before it went from the pop-up", async () => {
   const keepSignedIn: Screen = { path: "/keep", boxes: [], buttons: ["#keep"] };
   const library = withStepUp(
