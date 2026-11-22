@@ -711,11 +711,11 @@ it("never takes a state by its control where the page's main message differs or 
 });
 
 it("takes by its control, once the login went out, only a state the state just acted in led to, with its buttons", async () => {
-  const stay: Screen = { path: "/stay", boxes: [], buttons: ["#yes"], texts: ["stay signed in"], labels: ["~"] };
+  const stay: Screen = { path: "/stay", boxes: [], buttons: ["#yes", "#no"], texts: ["stay signed in"], labels: ["~", "~ now"] };
   const stayState = { fingerprint: arrival(stay), step: stepAt("/stay", [], "#yes") };
   const next: Readonly<Record<string, string>> = { "#continue": "password", "#go": "stay", "#yes": "home" };
   const reworded = { ...stay, texts: ["stay signed in on this browser"] };
-  const relabeled = { ...stay, labels: ["~ ~"] };
+  const relabeled = { ...stay, labels: ["~", "~ ~"] };
   const site = (shown: Screen) =>
     scriptedSite({ start: emailScreen, password: passwordScreen, stay: shown }, (_at, clicked) => next[clicked]);
   // The password state led to it: taken whatever its message, and heard as told by its control.
@@ -725,20 +725,26 @@ it("takes by its control, once the login went out, only a state the state just a
   expect(await replay(taken, led, { events })).toMatchObject({ outcome: "signed_in" });
   expect(taken.clicks).toEqual(["#continue", "#go", "#yes"]);
   expect(events).toContainEqual({ stage: "state", state: led.states[2]?.key, reason: "same_control" });
-  // Never with buttons other than its own, as another page asking for more with the same control;
-  // never one no sign-in learned after the password state, by its message either, once the login
-  // went out; nor one that presses the password state's own submit, which would send it again.
   const apart = libraryOf([typedEmail, typedPassword], [stayState]);
   const again = libraryOf([typedEmail, typedPassword, { fingerprint: arrival(stay), step: stepAt("/stay", [], "#go") }]);
-  for (const [library, shown] of [
-    [led, relabeled],
-    [apart, reworded],
-    [apart, relabeled],
-    [again, { ...reworded, buttons: ["#go"] }],
+  // A state whose buttons read as another page's may: one alone, or only lone words, each masked alike.
+  const notice: Screen = { path: "/stay", boxes: [], buttons: ["#yes"], texts: ["we noticed a new sign-in"], labels: ["~"] };
+  const bare = (shown: Screen) =>
+    libraryOf([typedEmail, typedPassword, { fingerprint: arrival(shown), step: stepAt("/stay", [], "#yes") }]);
+  const oneButton = { ...notice, labels: ["~ now"] };
+  const twoBare = { ...notice, buttons: ["#yes", "#skip"], labels: ["~", "~"] };
+  for (const [name, library, shown] of [
+    ["buttons other than its own", led, relabeled],
+    ["learned after no other state, its message drifted", apart, reworded],
+    ["learned after no other state, its buttons drifted", apart, relabeled],
+    ["pressing the password state's own submit", again, { ...reworded, buttons: ["#go", "#no"] }],
+    ["one button, another page", bare(oneButton), { ...oneButton, texts: ["add a phone number"] }],
+    ["one lone-word button, another page", bare(notice), { ...notice, texts: ["add a phone number"] }],
+    ["only lone-word buttons, another page", bare(twoBare), { ...twoBare, texts: ["too many attempts"] }],
   ] as const) {
     const stopped = site(shown);
-    expect(await replay(stopped, library)).toMatchObject({ outcome: "unclear", reason: "unknown_state" });
-    expect(stopped.clicks).toEqual(["#continue", "#go"]);
+    expect(await replay(stopped, library), name).toMatchObject({ outcome: "unclear", reason: "unknown_state" });
+    expect(stopped.clicks, name).toEqual(["#continue", "#go"]);
   }
 });
 
