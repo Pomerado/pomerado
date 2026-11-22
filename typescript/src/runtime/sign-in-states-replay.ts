@@ -17,8 +17,11 @@ import {
   type FingerprintShape,
   fingerprintShape,
   fingerprintText,
+  heldOpener,
   type Look,
   type ObservedState,
+  openerLook,
+  openerOf,
   sameBoxes,
   sameFingerprint,
   type SignedInEntry,
@@ -31,6 +34,7 @@ import {
   type StateFingerprint,
   takesLost,
   toldApart,
+  withOpenerLook,
 } from "../destinations/sign-in-states.js";
 import type { AutofillSignInState } from "./autofill-state.js";
 import { maySend } from "../destinations/autofill-refusal.js";
@@ -397,7 +401,10 @@ const takesPrivateAnswer = (state: StateEntry) =>
 /** Whether a known state has the look `look`, one noted without its question (`untold`) whatever its message. */
 const lookedFor = (state: StateEntry, look: StateFingerprint) =>
   untold(state)
-    ? sameFingerprint({ ...state, fingerprint: { ...state.fingerprint, message: undefined } }, { ...look, message: undefined })
+    ? sameFingerprint(
+        { ...state, fingerprint: { ...state.fingerprint, message: undefined } },
+        withOpenerLook({ ...look, message: undefined }, { ...openerLook(look), message: undefined }),
+      )
     : sameFingerprint(state, look);
 
 /**
@@ -807,16 +814,27 @@ const byControl = <E extends YieldableError, V extends string, L extends Autofil
   });
 
 /**
+ * Whether a state's recorded buttons tell its page from another at its address that shows its
+ * control: two or more, not each a lone word the scan masks alike (`~`), as "Continue", "Next" and
+ * "OK" read.
+ */
+const toldByButtons = (state: StateEntry) => {
+  const buttons = state.fingerprint.buttons ?? [];
+  return buttons.length >= 2 && buttons.some((label) => label !== "~");
+};
+
+/**
  * Once anything this sign-in typed may have reached the site, where no known state has the page's
  * whole look, the known state a page with no box is by the control it presses, as a page after the
  * login whose words the site changed, such as one asking to remember the browser: only one the
- * state just acted in led to (`learnedNext`) that presses only (`pressesOnly`), whose control is
- * neither that state's submit nor one of its methods, so nothing that state sent goes out again;
- * with the page's whole look but its message, its buttons as recorded, so another page at that
- * address with the same control, such as one asking for more, is none of it; at its recorded page
- * (`at`) as the last marker check read the address, neither with a hash, and never one acted in
- * that came back (`returnedTo`). They are taken in the order this login takes states of one look
- * (`ranked`), the first whose control shows as `byControl` takes one.
+ * state just acted in led to (`learnedNext`) that presses only (`pressesOnly`), and none while a
+ * control that state pressed, its submit or a method, still shows, as another state's selector may
+ * name that same control, so nothing that state sent goes out again; with the page's whole look
+ * but its message, its buttons as recorded (`toldByButtons`), so another page at that address with
+ * the same control, such as one asking for more, is none of it; at its recorded page (`at`) as the
+ * last marker check read the address, neither with a hash, and never one acted in that came back
+ * (`returnedTo`). They are taken in the order this login takes states of one look (`ranked`), the
+ * first whose control shows as `byControl` takes one.
  */
 const ledToByControl = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -835,18 +853,21 @@ const ledToByControl = <E extends YieldableError, V extends string, L extends Au
       (!mayHaveSent(run) && run.replay.sent.maySent.size === 0)
     )
       return undefined;
-    const pressed = [after.step.submit, ...(after.step.methods ?? []).map((option) => option.selector)];
     // The page's look but its message, which is where a site rewords such a page.
     const unworded = { ...fingerprint, message: undefined };
     const here = (state: StateEntry) =>
       sameFingerprint({ ...state.fingerprint, message: undefined }, unworded) &&
+      toldByButtons(state) &&
       pressesOnly(run, state) &&
-      !pressed.includes(state.step.submit) &&
       hashless(URL.parse(state.step.page, page)?.href ?? "") &&
       at(page, state.step);
     const pressing: StateEntry[] = [];
     for (const state of learnedNext(run, after))
       if (here(state) && !(yield* returnedTo(run, state))) pressing.push(state);
+    if (pressing.length === 0) return undefined;
+    for (const pressed of [after.step.submit, ...(after.step.methods ?? []).map((option) => option.selector)])
+      if (pressed !== undefined && !("outcome" in (yield* run.input.hooks.inspect({ fields: [], submit: pressed }))))
+        return undefined;
     for (const state of ranked(run, pressing, here, next)) {
       const inspection = yield* shownOn(run, state, resolved(run, state.step));
       if (
@@ -1347,10 +1368,9 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
     let challenged = false;
     const looked = new Set<string>();
     // Early looks as at a recipe screen: never for a host that reads no page state, nor where a
-    // state sits in a pop-up, as the page is read on its primary tab alone.
-    const lookEarly =
-      run.input.hooks.pageState !== undefined &&
-      !run.input.library.states.some((state) => state.step.popup !== undefined);
+    // state sits in a pop-up and holds the look of the tab that opened it (`heldOpener`), as that
+    // tab tells nothing of the pop-up.
+    const lookEarly = run.input.hooks.pageState !== undefined && !run.input.library.states.some(heldOpener);
     let answerRead = false;
     let cantTellRead: string | undefined;
     let waitedOut = false;
@@ -1384,9 +1404,13 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
         // One noted without its question looks as it did with the question it showed (`seenLook`).
         const look = acted === undefined ? undefined : seenLook(run, acted.acted);
         const fingerprint = look?.fingerprint;
+        // A pop-up state that holds the look of the tab that opened it is told by that tab, as read
+        // beside the pop-up (`heldOpener`).
+        const byOpener = acted !== undefined && heldOpener(acted.acted);
+        const seen = byOpener ? openerOf(read) : read;
         // A box that lost a kind it took when the state was reached is a new page, whatever the
         // state's own look says (`takesLost`).
-        const moved = acted !== undefined && takesLost(acted.reached, read);
+        const moved = acted !== undefined && takesLost(byOpener ? openerOf(acted.reached) : acted.reached, seen);
         // A page with no box that still looks as it did when its state was taken is that state,
         // as one told by its control alone (`byControl`) is.
         const again =
@@ -1394,11 +1418,15 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
           look !== undefined &&
           !moved &&
           (sameFingerprint(shape, look) ||
-            (look.fingerprint.boxes.length === 0 && sameFingerprint(shape, acted.reached.fingerprint)) ||
+            (look.fingerprint.boxes.length === 0 &&
+              sameFingerprint(
+                byOpener ? openerLook(shape) : shape,
+                (byOpener ? openerOf(acted.reached) : acted.reached).fingerprint,
+              )) ||
             (look.fingerprint.message !== undefined &&
               look.fingerprint.boxes.length > 0 &&
               sameBoxes(shape, look) &&
-              read.texts.includes(look.fingerprint.message)));
+              seen.texts.includes(look.fingerprint.message)));
         stood =
           acted !== undefined &&
           fingerprint !== undefined &&
@@ -1465,7 +1493,7 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
             !codeMarked &&
             resolved(run, state.step).fields.length === 0 &&
             state.step.approval === undefined &&
-            read.boxes.every((box) => box.empty)
+            seen.boxes.every((box) => box.empty)
           ) {
             const alike = yield* learnedAlike(run, state, shape, {
               typing: settledHere,

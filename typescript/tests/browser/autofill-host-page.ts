@@ -190,6 +190,13 @@ export const hostKeyboard = async (
         throw error;
     }
   }
+  // A pop-up the page opens later gets its own session too, as a host's keyboard reaches every tab.
+  page.on("popup", (opened) => {
+    void page
+      .context()
+      .newCDPSession(opened)
+      .then((session) => sessions.set(`popup-${sessions.size}`, session), () => undefined);
+  });
   const native = makeCredentialKeyboard(
     {
       sessions: () => [...sessions.keys()],
