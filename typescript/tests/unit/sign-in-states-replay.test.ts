@@ -2735,6 +2735,41 @@ it("takes, for a code login, the state of one look on its way over one no state 
   }
 });
 
+it("orders no state of one look by a password login's way once it typed its password", async () => {
+  const verify: Screen = { path: "/verify", boxes: [{ selector: "#code", kind: "code" }], buttons: ["#verify", "#next"] };
+  const again: Screen = { path: "/again", boxes: [{ selector: "#password", kind: "password" }], buttons: ["#confirm"] };
+  const typesPassword = { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") };
+  const toAgain = { fingerprint: arrival(verify), step: stepAt("/verify", [code], "#next") };
+  const toHome = { fingerprint: arrival(verify), step: stepAt("/verify", [code], "#verify") };
+  const reenter = { fingerprint: arrival(again), step: stepAt("/again", [password], "#confirm") };
+  // The code state that signs in was learned last; the other goes on to a password.
+  const library = libraryOf([emailState, typesPassword, toAgain, reenter], [emailState, typesPassword, toHome]);
+  const next: Readonly<Record<string, string>> = { "#continue": "password", "#go": "verify", "#verify": "home", "#next": "again", "#confirm": "home" };
+  const site = scriptedSite({ start: emailScreen, password: passwordScreen, verify, again }, (_at, clicked) => next[clicked]);
+  const ended = await replay(site, library, { loginWay: { way: "password", kind: "email" } });
+  expect(ended).toMatchObject({ outcome: "signed_in" });
+  expect(site.clicks).toEqual(["#continue", "#go", "#verify"]);
+});
+
+it("takes, for a code login whose own route went through a password state of one look, the code state of that look", async () => {
+  const start: Screen = {
+    path: "/sign-in",
+    boxes: [{ selector: "#email", kind: "identifier" }, { selector: "#password", kind: "password" }],
+    buttons: ["#continue", "#send-code"],
+  };
+  const byPassword = { fingerprint: arrival(start), step: stepAt("/sign-in", [email, password], "#continue") };
+  const byCode = { fingerprint: arrival(start), step: stepAt("/sign-in", [email], "#send-code") };
+  const codeState = { fingerprint: arrival(codeScreen), step: stepAt("/verify", [code], "#verify") };
+  const site = scriptedSite({ start, code: codeScreen }, (_at, clicked) => (clicked === "#send-code" ? "code" : "home"));
+  // The login signed in with a password before, and is a code login now.
+  const ended = await replay(site, libraryOf([byPassword], [byCode, codeState]), {
+    loginWay: { way: "code" },
+    choices: { states: [keyOf(byPassword)] },
+  });
+  expect(ended).toMatchObject({ outcome: "signed_in" });
+  expect(site.clicks).toEqual(["#send-code", "#verify"]);
+});
+
 it("takes the host's method at a method choice, as a saved authenticator seed's, over the login's remembered pick", async () => {
   const choose: Screen = { path: "/choose", boxes: [], buttons: ["#text", "#app"], texts: ["how should we confirm it's you"] };
   const methods = [

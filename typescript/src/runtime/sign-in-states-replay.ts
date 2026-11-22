@@ -2273,7 +2273,7 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
         }
       }
       if (fuller === undefined && hostSubmits(full) && !sendsItself) {
-        if (input.library.states.some((other) => containsFingerprint(state, other))) {
+        if (input.library.states.some((other) => forLogin(run, other) && containsFingerprint(state, other))) {
           const look = yield* holdStill(run, state, reached);
           if (look.kind === "moved") return acted();
           if (look.kind === "fuller") fuller = look;
