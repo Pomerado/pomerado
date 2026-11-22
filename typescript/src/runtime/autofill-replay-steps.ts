@@ -185,16 +185,21 @@ export const isTwoFactorOption = (
  *   right after a submit that sent the password while a recorded screen remains after it, and when
  *   the replay would end on that screen. The first read may come before the site answered, and a
  *   read with no answer is read again later, so a host never keeps an empty answer for the submit.
- *   None when absent, so that replay goes on, or ends there, as the screens decide.
+ *   None when absent, so that replay goes on, or ends there, as the screens decide. A replay of a
+ *   site sign-in's states also reads it once at each step wait its code state stayed through with
+ *   no code marker after its code went in, before it asks for another code, given the page's
+ *   visible texts, normalized, that it did not show as the state showed (`page`), for `locked`.
  */
 /**
  * What a site's own answer to a submitted credential screen that came back says, as a host reads
  * it: `link`, that it emailed a sign-in link the owner opens, and the replay then asks the owner to
  * paste it, opens it in its own browser and goes on; `refused`, that it refused the login, as a
  * wrong password or a locked account, and the replay then ends right after the password's submit as
- * the returned screen does (`credential_screen_returned`), for the host's own verdict on it.
+ * the returned screen does (`credential_screen_returned`), for the host's own verdict on it;
+ * `locked`, given for a code that went in and didn't sign in, that the site says the account is
+ * locked, and a replay of the states then ends at once (`account_locked`), with no code asked again.
  */
-export type SiteAnswer = "link" | "refused";
+export type SiteAnswer = "link" | "refused" | "locked";
 
 export interface HostedSignIn<
   E extends YieldableError,
@@ -222,7 +227,7 @@ export interface HostedSignIn<
     | undefined;
   readonly resubmit?: ((session: ReplaySession<E, V, L>) => ClearThenResubmit<E, V>) | undefined;
   readonly allowedChoices?: readonly SignInChoice[] | undefined;
-  readonly siteAnswer?: (() => Effect.Effect<SiteAnswer | undefined>) | undefined;
+  readonly siteAnswer?: ((page?: readonly string[]) => Effect.Effect<SiteAnswer | undefined>) | undefined;
 }
 
 export interface AutofillReplayInput<
