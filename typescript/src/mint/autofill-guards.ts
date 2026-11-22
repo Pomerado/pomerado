@@ -90,7 +90,7 @@ export const maskedMethodRefusal = (h: Host, step: Pick<AutofillStep, "methods" 
 
 /**
  * A refusal of a screen whose recorded selectors, submit or page name this account's identity, or
- * undefined: the recipe ships each one with the tool. Nothing is typed before it.
+ * undefined: the sign-in's screens keep each one. Nothing is typed before it.
  */
 export const stepIdentityRefusal = (
   h: Host,
