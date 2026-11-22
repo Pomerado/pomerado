@@ -5,6 +5,7 @@ import type { AutofillRecipeStep } from "../../src/destinations/autofill-recipe.
 import type {
   AutofillInspection,
   AutofillRefusal,
+  AutofillSignedIn,
   AutofillSignedInCheck,
   AutofillStepReport,
 } from "../../src/destinations/autofill-step.js";
@@ -275,6 +276,7 @@ const replay = (
     /** Each question's prompt, in order. */
     readonly prompts?: string[];
     readonly codeRowByPlace?: boolean;
+    readonly inPlace?: boolean;
   } = {},
 ) => {
   const asked: string[] = [];
@@ -344,6 +346,7 @@ const replay = (
         sent: { current: false },
         ...(options.from === undefined ? {} : { from: options.from }),
         ...(options.codeRowByPlace === undefined ? {} : { codeRowByPlace: options.codeRowByPlace }),
+        ...(options.inPlace === undefined ? {} : { inPlace: options.inPlace }),
       }),
     ),
   ).then((outcome) => {
@@ -2742,4 +2745,315 @@ it("still stops as its credential came back where the page keeps a filled phone 
     expect(await replay({ ...site, observe }, library)).toMatchObject({ outcome: "unclear", reason: "credential_screen_returned" });
     expect(site.fills).toEqual(["email"]);
   }
+});
+
+// A sign-in in place (`inPlace`): a later stage of the site, or a pop-up a page of the session
+// opened, asks a session already signed in for the login again (a step-up). The replay goes on from
+// the page as it is, and the site's own marker, which shows there all along, never ends it.
+
+/** `site`, whose markers show by screen (`shows`), keeping each page it opened and each marker it confirmed. */
+const withMarkers = (
+  site: ReturnType<typeof scriptedSite>,
+  screens: Readonly<Record<string, Screen>>,
+  shows: Readonly<Record<string, readonly string[]>>,
+  /** Whether a marker that shows beside a password box fails the check, as the host's does. */
+  passwordFails = false,
+) => {
+  const opened: string[] = [];
+  const confirmed: AutofillSignedIn[] = [];
+  const cantTell: number[] = [];
+  const here = (indicator: AutofillSignedIn): AutofillSignedInCheck => {
+    const screen = screens[site.site.screen];
+    const url = `${origin}${screen?.path ?? "/home"}`;
+    if (!(shows[site.site.screen] ?? []).includes(indicator.selector ?? ""))
+      return { signedIn: false, failed: "indicator_not_visible", url };
+    return passwordFails && screen?.boxes.some((box) => box.kind === "password") === true
+      ? { signedIn: false, failed: "password_field_visible", url }
+      : { signedIn: true, url };
+  };
+  const hooks: AutofillHooks<TestFailure> = {
+    ...site.hooks,
+    open: (url) => Effect.zipRight(Effect.sync(() => opened.push(url)), site.hooks.open(url)),
+    check: (indicator) => Effect.sync(() => here(indicator)),
+    confirm: (indicator) =>
+      Effect.sync(() => {
+        confirmed.push(indicator);
+        return here(indicator);
+      }),
+    confirmCantTell: () => Effect.sync(() => void cantTell.push(1)),
+  };
+  return { ...site, hooks, opened, confirmed, cantTell };
+};
+
+/** A library that knows a sign-in's states and, beside them, a step-up's with its own marker. */
+const withStepUp = (
+  library: SignInStates,
+  states: readonly { readonly fingerprint: StateFingerprint; readonly step: AutofillRecipeStep }[],
+  signedIn: AutofillSignedIn,
+) => {
+  const appended = appendSignInStates(library, { states, signedIn });
+  if ("refused" in appended) throw new Error(appended.refused);
+  return appended.library;
+};
+
+const stepUpScreen: Screen = { path: "/records", boxes: [{ selector: "#step-password", kind: "password" }], buttons: ["#confirm"] };
+const recordsScreen: Screen = { path: "/records", boxes: [], texts: ["your records"], labels: ["download"] };
+const stepUpLibrary = withStepUp(
+  twoStates,
+  [{ fingerprint: arrival(stepUpScreen), step: stepAt("/records", [{ selector: "#step-password", slot: "password" }], "#confirm") }],
+  { selector: "#records", openPath: "/records" },
+);
+const stepUpKey = stepUpLibrary.states.at(-1)?.key;
+const stepUpMarker = stepUpLibrary.signedIn.at(-1)?.key;
+
+it("signs in again in place at the step-up the page shows, opening nothing and checking its own marker there", async () => {
+  const screens = { start: stepUpScreen, records: recordsScreen };
+  const site = withMarkers(
+    scriptedSite(screens, (_at, clicked) => (clicked === "#confirm" ? "records" : undefined)),
+    screens,
+    { start: ["#account"], records: ["#account", "#records"] },
+  );
+  const ended = await replay(site, stepUpLibrary, { inPlace: true });
+  expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false, visited: [stepUpKey] });
+  expect(site.fills).toEqual(["password"]);
+  expect(site.clicks).toEqual(["#confirm"]);
+  expect(site.opened).toEqual([]);
+  expect(site.confirmed).toEqual([{ selector: "#records" }]);
+  expect(ended.asked).toEqual([]);
+});
+
+it("keeps the login's own picks in place, as a step-up's route is never the login's", async () => {
+  const screens = { start: stepUpScreen, records: recordsScreen };
+  const site = withMarkers(
+    scriptedSite(screens, (_at, clicked) => (clicked === "#confirm" ? "records" : undefined)),
+    screens,
+    { start: ["#account"], records: ["#account", "#records"] },
+  );
+  const own = { states: stepUpLibrary.states.slice(0, 2).map((state) => state.key), signedIn: stepUpLibrary.signedIn[0]?.key };
+  const ended = await replay(site, stepUpLibrary, { inPlace: true, choices: own });
+  expect(ended).toMatchObject({ outcome: "signed_in", choices: own });
+  const none = await replay(
+    withMarkers(scriptedSite(screens, (_at, clicked) => (clicked === "#confirm" ? "records" : undefined)), screens, {
+      start: ["#account"],
+      records: ["#records"],
+    }),
+    stepUpLibrary,
+    { inPlace: true },
+  );
+  expect(none).toMatchObject({ outcome: "signed_in" });
+  expect(none).not.toHaveProperty("choices");
+  expect(stepUpMarker).toBeDefined();
+});
+
+it("ends in place at once where the page shows no known state, opening, typing and asking nothing", async () => {
+  const screens = { start: recordsScreen };
+  const site = withMarkers(scriptedSite(screens, () => undefined), screens, { start: ["#account"] });
+  const began = Date.now();
+  const ended = await replay(site, stepUpLibrary, { inPlace: true, stepWaitMs: 5_000 });
+  expect(ended).toMatchObject({ outcome: "unsent", reason: "state_not_shown", visited: [] });
+  expect(Date.now() - began).toBeLessThan(2_000);
+  expect(site.fills).toEqual([]);
+  expect(site.clicks).toEqual([]);
+  expect(site.opened).toEqual([]);
+  expect(site.confirmed).toEqual([]);
+  expect(ended.asked).toEqual([]);
+});
+
+it("never ends a step-up in place by the site's own marker, nor on a page that can't tell", async () => {
+  const checking: Screen = { path: "/checking", boxes: [], texts: ["one moment"] };
+  const screens = { start: stepUpScreen, checking };
+  const site = withMarkers(
+    scriptedSite(screens, (_at, clicked) => (clicked === "#confirm" ? "checking" : undefined)),
+    screens,
+    { start: ["#account"], checking: ["#account"] },
+  );
+  const ended = await replay(site, stepUpLibrary, { inPlace: true });
+  expect(ended).toMatchObject({ outcome: "unclear", reason: "unknown_state" });
+  expect(site.fills).toEqual(["password"]);
+  expect(site.confirmed.every((marker) => marker.selector === "#records")).toBe(true);
+  expect(site.cantTell).toEqual([]);
+});
+
+it("never ends a step-up in place by a marker the page showed before it acted, though the step-up led to it", async () => {
+  // A step-up recorded with the site's own header as its marker, which shows all along.
+  const stepCode: Screen = { path: "/records/verify", boxes: [{ selector: "#step-code", kind: "code" }], buttons: ["#verify"] };
+  const library = withStepUp(
+    twoStates,
+    [
+      { fingerprint: arrival(stepUpScreen), step: stepAt("/records", [{ selector: "#step-password", slot: "password" }], "#confirm") },
+      { fingerprint: arrival(stepCode), step: stepAt("/records/verify", [{ selector: "#step-code", slot: "code" }], "#verify") },
+    ],
+    { selector: "#account" },
+  );
+  const screens = { start: stepUpScreen, code: stepCode, records: recordsScreen };
+  const site = withMarkers(
+    scriptedSite(screens, (_at, clicked) => (clicked === "#confirm" ? "code" : clicked === "#verify" ? "records" : undefined)),
+    screens,
+    { start: ["#account"], code: ["#account"], records: ["#account"] },
+    true,
+  );
+  const ended = await replay(site, library, { inPlace: true });
+  expect(site.fills).toEqual(["password", "code"]);
+  expect(site.clicks).toEqual(["#confirm", "#verify"]);
+  expect(ended.asked).toEqual(["code"]);
+  expect(ended.outcome).not.toBe("signed_in");
+});
+
+it("still opens the entry URL and signs in by any marker when not in place", async () => {
+  const screens = { start: stepUpScreen, records: recordsScreen };
+  const site = withMarkers(
+    scriptedSite(screens, (_at, clicked) => (clicked === "#confirm" ? "records" : undefined)),
+    screens,
+    { start: ["#account"], records: ["#account", "#records"] },
+  );
+  const ended = await replay(site, stepUpLibrary);
+  expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: true, visited: [] });
+  expect(site.opened).toEqual([`${origin}/sign-in`]);
+  expect(site.fills).toEqual([]);
+});
+
+it("goes on in place from a value-free check's stop where it still shows, opening nothing", async () => {
+  const screens = { start: stepUpScreen, records: recordsScreen };
+  const site = withMarkers(
+    scriptedSite(screens, (_at, clicked) => (clicked === "#confirm" ? "records" : undefined)),
+    screens,
+    { start: ["#account"], records: ["#account", "#records"] },
+  );
+  const stop = { visited: [stepUpKey ?? ""], state: stepUpKey ?? "" };
+  const ended = await replay(site, stepUpLibrary, { inPlace: true, from: stop });
+  expect(ended).toMatchObject({ outcome: "signed_in", visited: [stepUpKey], fromStop: { continued: true } });
+  expect(site.fills).toEqual(["password"]);
+  expect(site.opened).toEqual([]);
+});
+
+it("goes on in place from the state the page shows where a value-free check's stop no longer shows, opening nothing", async () => {
+  const screens = { start: stepUpScreen, records: recordsScreen };
+  const site = withMarkers(
+    scriptedSite(screens, (_at, clicked) => (clicked === "#confirm" ? "records" : undefined)),
+    screens,
+    { start: ["#account"], records: ["#account", "#records"] },
+  );
+  const gone = { visited: [stepUpLibrary.states[0]?.key ?? ""], state: stepUpLibrary.states[0]?.key ?? "" };
+  const ended = await replay(site, stepUpLibrary, { inPlace: true, from: gone });
+  expect(ended).toMatchObject({ outcome: "signed_in", visited: [stepUpKey], fromStop: { continued: false, reason: "page_changed" } });
+  expect(site.opened).toEqual([]);
+});
+
+// The login's own sign-in in a pop-up a page of the session opened: the scan reads the page that
+// opened it, which tells nothing of the pop-up.
+const accounts = "https://accounts.example.test";
+const popup = { opener: "primary", origin: accounts } as const;
+const popupEmail: Screen = { path: "/sign-in", boxes: [{ selector: "#email", kind: "identifier" }], buttons: ["#next"] };
+const popupPassword: Screen = { path: "/password", boxes: [{ selector: "#password", kind: "password" }], buttons: ["#sign-in"] };
+
+/**
+ * A task page whose pop-up shows `popupScreens` in turn by `next`, from `first`, until a click
+ * closes it ("closed"), which signs the page in.
+ */
+const popupSite = (
+  popupScreens: Readonly<Record<string, Screen>>,
+  next: (at: string, clicked: string) => string | undefined,
+) => {
+  const task: Screen = { path: "/records", boxes: [], texts: ["your records"], labels: ["download"] };
+  const site = scriptedSite({ start: task, home: { ...recordsScreen, texts: ["welcome back"] } }, () => undefined);
+  const pop = { screen: "first" };
+  const shown = () => popupScreens[pop.screen];
+  const controls = () => [...(shown()?.boxes ?? []).map((box) => box.selector), ...(shown()?.buttons ?? [])];
+  const page = () => `${accounts}${shown()?.path ?? "/"}`;
+  const hooks: AutofillHooks<TestFailure> = {
+    ...site.hooks,
+    inspect: (step) =>
+      step.popup === undefined
+        ? site.hooks.inspect(step)
+        : Effect.sync((): AutofillInspection | AutofillRefusal => {
+            const missing = step.fields.findIndex((field) => !controls().includes(field.selector));
+            if (missing >= 0) return { outcome: "refused", reason: "not_found", target: missing };
+            if (step.submit !== undefined && !controls().includes(step.submit))
+              return { outcome: "refused", reason: "not_found", target: "submit" };
+            const target = { ownerUrl: page(), documentOrigin: accounts, actions: [`${accounts}/session`], methods: ["post"], editable: true, control: "text" as const };
+            return {
+              url: page(),
+              page: page(),
+              targets: { fields: step.fields.map(() => target), submit: step.submit === undefined ? null : target },
+              siteOrigin: origin,
+              authenticationOrigins: [accounts],
+              screen: { origin: accounts, fields: [], submit: null, buttons: [] },
+            };
+          }),
+    fill: (request) =>
+      request.step.popup === undefined
+        ? site.hooks.fill(request)
+        : Effect.sync((): AutofillStepReport => {
+            for (const field of request.step.fields) site.fills.push(field.slot);
+            if (request.step.submit !== undefined) {
+              site.clicks.push(request.step.submit);
+              const to = next(pop.screen, request.step.submit);
+              if (to === "closed") site.site.screen = "home";
+              if (to !== undefined) pop.screen = to;
+            }
+            return {
+              outcome: "filled",
+              fields: request.step.fields.map((field) => ({ slot: field.slot, status: "filled" as const })),
+              submit: request.step.submit === undefined ? "none" : "clicked",
+              url: page(),
+            };
+          }),
+  };
+  return { ...site, hooks, pop };
+};
+
+/** A pop-up sign-in recorded as two states while another page of the site had opened it. */
+const popupLibrary = withStepUp(
+  signInStatesOf({}, []),
+  [
+    {
+      fingerprint: arrival({ path: "/orders", boxes: [], texts: ["your orders"], labels: ["track"] }),
+      step: { page: `${accounts}/sign-in`, fields: [email], submit: "#next", popup } as AutofillRecipeStep,
+    },
+    {
+      fingerprint: arrival({ path: "/orders", boxes: [], texts: ["your orders"], labels: ["track"] }),
+      step: { page: `${accounts}/password`, fields: [password], submit: "#sign-in", popup } as AutofillRecipeStep,
+    },
+  ],
+  { selector: "#account" },
+);
+
+it("signs in again in place through a pop-up's screens, told by their controls there whatever page opened it", async () => {
+  const site = popupSite({ first: popupEmail, password: popupPassword }, (_at, clicked) =>
+    clicked === "#next" ? "password" : clicked === "#sign-in" ? "closed" : undefined,
+  );
+  const ended = await replay(site, popupLibrary, { inPlace: true });
+  expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false, visited: popupLibrary.states.map((state) => state.key) });
+  expect(site.fills).toEqual(["email", "password"]);
+  expect(site.clicks).toEqual(["#next", "#sign-in"]);
+});
+
+it("takes no next pop-up screen in place while the one acted in still shows there, typing nothing more", async () => {
+  const site = popupSite({ first: { ...popupEmail, boxes: [...popupEmail.boxes, { selector: "#password", kind: "password" }], buttons: ["#next", "#sign-in"] } }, () => undefined);
+  const ended = await replay(site, popupLibrary, { inPlace: true });
+  expect(ended).toMatchObject({ outcome: "unclear", reason: "credential_screen_returned" });
+  expect(site.fills).toEqual(["email"]);
+  expect(site.clicks).toEqual(["#next"]);
+});
+
+it("presses in place a pop-up screen that only presses, once the typed one before it went from the pop-up", async () => {
+  const keepSignedIn: Screen = { path: "/keep", boxes: [], buttons: ["#keep"] };
+  const library = withStepUp(
+    signInStatesOf({}, []),
+    [
+      { fingerprint: popupLibrary.states[0]?.fingerprint as StateFingerprint, step: popupLibrary.states[0]?.step as AutofillRecipeStep },
+      {
+        fingerprint: popupLibrary.states[0]?.fingerprint as StateFingerprint,
+        step: { page: `${accounts}/keep`, fields: [], submit: "#keep", popup } as AutofillRecipeStep,
+      },
+    ],
+    { selector: "#account" },
+  );
+  const site = popupSite({ first: popupEmail, keep: keepSignedIn }, (_at, clicked) =>
+    clicked === "#next" ? "keep" : clicked === "#keep" ? "closed" : undefined,
+  );
+  const ended = await replay(site, library, { inPlace: true });
+  expect(ended).toMatchObject({ outcome: "signed_in", visited: library.states.map((state) => state.key) });
+  expect(site.fills).toEqual(["email"]);
+  expect(site.clicks).toEqual(["#next", "#keep"]);
 });
