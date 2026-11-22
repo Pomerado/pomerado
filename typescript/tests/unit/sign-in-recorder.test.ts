@@ -8,6 +8,7 @@ import type {
   AutofillStepReport,
 } from "../../src/destinations/autofill-step.js";
 import type { SignedOutSnapshot } from "../../src/destinations/signed-in-marker.js";
+import type { ObservedState } from "../../src/destinations/sign-in-states.js";
 import { MintFailure, type SignInStep } from "../../src/mint/contracts.js";
 import { makeSignInRecorder } from "../../src/mint/sign-in-recorder.js";
 import type { WebsiteCredentials } from "../../src/runtime/authentication.js";
@@ -72,6 +73,8 @@ interface Options {
   readonly codeBoxes?: number;
   /** The `id` and `name` of the element each selector finds; none by default. */
   readonly named?: Readonly<Record<string, { readonly id: string; readonly name: string }>>;
+  /** Whether the host reads the page as a sign-in state; it does by default. */
+  readonly observes?: boolean;
 }
 
 /** A recorder over a synthetic site, with what it asked, filled, reviewed and checked. */
@@ -92,8 +95,27 @@ const harness = (options: Options = {}) => {
   let hidden = options.lateMarker ?? 0;
   /** The selectors the page shows now; a test takes one away as the site's message goes. */
   const shown = new Set(options.visible ?? []);
+  /** The screen inspected last, whose fields the page shows as empty boxes. */
+  let onPage: AutofillStep | undefined;
+  /** The page as a sign-in state: one empty box per field of the screen inspected last. */
+  const observe = () =>
+    Effect.sync((): ObservedState => {
+      const boxes = (onPage?.fields ?? []).map((field) => ({
+        frame: origin,
+        kind:
+          field.slot === "password" || field.slot === "code"
+            ? field.slot
+            : ("identifier" as const),
+      }));
+      return {
+        fingerprint: { top: origin, boxes, submit: boxes.length > 0, message: "~ in" },
+        boxes: boxes.map((box) => ({ ...box, empty: true, submit: true })),
+        texts: [],
+      };
+    });
   const inspect = (step: AutofillStep) =>
     Effect.sync((): AutofillInspection => {
+      onPage = step;
       let box = 0;
       return {
         url: options.liveUrl ?? `${origin}/login`,
@@ -153,6 +175,7 @@ const harness = (options: Options = {}) => {
     authenticationOrigins: [],
     open: () => Effect.void,
     markerVisible: (selector: string) => Effect.succeed(shown.has(selector)),
+    ...(options.observes === false ? {} : { observe }),
   };
   const ask: InputAsker = (request) =>
     Effect.sync(() => {
@@ -246,21 +269,37 @@ it("records a value-free recipe once a clicked submit sent the login, entered fr
       return recorder.published();
     }),
   );
+  const step = {
+    page: `${origin}/login`,
+    fields: [
+      { selector: "#user", accepts: ["username"] },
+      { selector: "#password", slot: "password" },
+    ],
+    submit: "#sign-in",
+    submittedBy: "host",
+  };
+  // Its screens: the login page as read before its fill, with the step taken there, and the check.
   expect(published).toEqual({
-    recipe: {
-      version: 1,
-      steps: [
-        {
-          page: `${origin}/login`,
-          fields: [
-            { selector: "#user", accepts: ["username"] },
-            { selector: "#password", slot: "password" },
-          ],
-          submit: "#sign-in",
-          submittedBy: "host",
-        },
+    recipe: { version: 1, steps: [step], signedIn: { selector: "#account-menu" } },
+    states: {
+      states: [
+        expect.objectContaining({
+          kind: "state",
+          source: "recorded",
+          step,
+          fingerprint: {
+            top: origin,
+            boxes: [
+              { frame: origin, kind: "identifier" },
+              { frame: origin, kind: "password" },
+            ],
+            submit: true,
+            message: "~ in",
+          },
+        }),
       ],
-      signedIn: { selector: "#account-menu" },
+      transitions: [expect.objectContaining({ kind: "transition" })],
+      signedIn: [expect.objectContaining({ kind: "signed_in", selector: "#account-menu" })],
     },
     entryUrl: `${origin}/login?next=%2Faccount`,
   });
@@ -269,6 +308,19 @@ it("records a value-free recipe once a clicked submit sent the login, entered fr
   // One login question for the build, asked once the screen was reviewed.
   expect(host.logins).toEqual(["missing_credentials"]);
   expect(host.reviewed).toHaveLength(1);
+});
+
+it("publishes a verified sign-in as unreadable, with no screens, on a host that reads no page as a state", async () => {
+  const host = harness({ observes: false });
+  const published = await host.run((recorder) =>
+    Effect.gen(function* () {
+      yield* recorder.step(identifierAndPassword, `${origin}/login`, Effect.void);
+      yield* recorder.step(signedIn, undefined, Effect.void);
+      return recorder.published();
+    }),
+  );
+  expect(published).toMatchObject({ unreadable: true, entryUrl: `${origin}/login` });
+  expect(published).not.toHaveProperty("states");
 });
 
 it("enters from the first screen's live address, without its fragment, when no login URL was given", async () => {

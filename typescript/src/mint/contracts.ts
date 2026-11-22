@@ -148,8 +148,10 @@ export interface RunnerChannels {
  * login but never verified and was not rejected, the host's identical refusals in a row while
  * typing into a sign-in screen (`maximumHostRefusals`), which no correction of the step got past,
  * Guardian's correctable denials in a row of one unchanged sign-in step (`maximumSignInDenials`),
- * or the caller's refusal to trust the origin off the site that the site's sign-in sent the login
- * to, so no sign-in of the site can verify.
+ * the caller's refusal to trust the origin off the site that the site's sign-in sent the login
+ * to, so no sign-in of the site can verify, or the host's refusal of a verified sign-in as one every
+ * login on the site may run, so no tool may rest on it. A host sends `site_sign_in_refused` with no
+ * `authentication` and no `sessionLoss`, and it ends the build at once, even with a retained receipt.
  */
 export type SpentSignIn =
   | "relogin_spent"
@@ -157,7 +159,8 @@ export type SpentSignIn =
   | "sign_in_retry_spent"
   | "host_refusals_repeated"
   | "guardian_denials_repeated"
-  | "sign_in_origin_untrusted";
+  | "sign_in_origin_untrusted"
+  | "site_sign_in_refused";
 
 export type { SessionLoss };
 
@@ -1885,7 +1888,8 @@ export type PublicationDenial = typeof PublicationDenial.Type;
  * - `final_text_without_tool`: the minter answered without a tool call three times in a row.
  * - `turn_budget_spent`: the attempt spent the model calls it may make.
  * - `model_quota_exhausted`: the model provider refused a call because the quota is spent.
- * - `sign_in_failed`: the site could not be signed in, or rejected the login.
+ * - `sign_in_failed`: the site could not be signed in, or rejected the login, or the host refused
+ *   to save a verified sign-in for every login on the site.
  * - `account_locked`: the site said the account is locked, suspended or disabled.
  * - `question_unanswered`: a question the build needed went unanswered.
  * - `owner_declined`: the owner said no to a step the build needs.

@@ -3904,14 +3904,16 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             guided: false,
           };
         // No further sign-in can run: the build ends with that outcome, not the loop guard.
-        // A stop or cleanup the host could not confirm ends live work on its own terms.
+        // A stop or cleanup the host could not confirm ends live work on its own terms. A sign-in
+        // the host refused for every login on the site ends it at once, even with a retained
+        // receipt: the browser is still signed in, and no tool may rest on that sign-in.
         const ending =
           hostStopped ||
           terminal !== undefined ||
           error.authentication?.cleanupCode !== undefined ||
           feedback?.nextStep !== "report_sign_in_unavailable"
             ? ("none" as const)
-            : publishableReceipt()
+            : publishableReceipt() && error.spentSignIn !== "site_sign_in_refused"
               ? ("after_publication" as const)
               : ("now" as const);
         const signIn = signInOrLoginInUseAnswer(error, feedback, ending);
@@ -4006,7 +4008,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             summary: signInUnavailableSummary(failure, error.spentSignIn, error.sessionLoss),
           };
           signInUnavailable = { answer, outcome };
-          if (!publishableReceipt()) terminal ??= outcome;
+          if (!publishableReceipt() || error.spentSignIn === "site_sign_in_refused")
+            terminal ??= outcome;
           yield* diagnose({
             phase: "sign_in",
             reason: "sign_in_unavailable",
