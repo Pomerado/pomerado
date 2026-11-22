@@ -530,6 +530,15 @@ it("never acts again in a screen recorded both on its sign-in host and framed on
   expect(site.fills).toEqual(["email", "code"]);
 });
 
+it("never acts again in a state recorded on its sign-in host, taken framed, when that page comes back", async () => {
+  const library = libraryOf([onHost(emailScreen, [email], "#continue"), onHost(codeScreen, [code], "#verify")]);
+  const site = scriptedSite({ start: inHostFrame(emailScreen), code: inHostFrame(codeScreen) }, (_at, clicked) =>
+    clicked === "#continue" ? "code" : "start",
+  );
+  expect(await replay(site, library)).toMatchObject({ reason: "credential_screen_returned" });
+  expect(site.fills).toEqual(["email", "code"]);
+});
+
 it("reads the site's answer where a framed form recorded on its sign-in host stands with a notice beside it", async () => {
   const library = libraryOf([onHost(passwordScreen, [password], "#go")]);
   const wrong = inHostFrame({ ...passwordScreen, texts: ["that password is not right"] });
