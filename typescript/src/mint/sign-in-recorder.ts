@@ -23,6 +23,7 @@ import {
   observedSignInOf,
   type SignInStates,
 } from "../destinations/sign-in-states.js";
+import { type SignInStatePopup, stepPopup } from "../destinations/sign-in-state-scan.js";
 import {
   SignInRecipe,
   signInRecipe,
@@ -424,16 +425,16 @@ export const makeSignInRecorder = (input: {
 
   /**
    * The page as a sign-in state, before a step that may send what it typed: its own sent
-   * identifiers masked, never the password. A page read as nothing, or as blank, is read again
-   * once; then it is no state.
+   * identifiers masked, never the password; for a step in a pop-up, the pop-up its inspection found
+   * (`stepPopup`). A page read as nothing, or as blank, is read again once; then it is no state.
    */
-  const readState = Effect.suspend(() => {
+  const readState = (popup: SignInStatePopup | undefined) => Effect.suspend(() => {
     const observe = browser.observe;
     if (observe === undefined) return Effect.succeed(undefined);
     const identifiers = Object.entries(h.autofillSentValues.current).flatMap(([field, value]) =>
       field === "password" || value === undefined || value === "" ? [] : [value],
     );
-    const read = observe(undefined, identifiers).pipe(
+    const read = observe(undefined, identifiers, popup).pipe(
       Effect.map((observed) =>
         observed === undefined || blankFingerprint(observed.fingerprint) ? undefined : observed,
       ),
@@ -672,7 +673,7 @@ export const makeSignInRecorder = (input: {
           : reasksCode(open, step, refills, inspected.screen.fields)
             ? ("code" as const)
             : undefined;
-      const observed = yield* readState;
+      const observed = yield* readState(stepPopup(step, inspected));
       yield* armStep(state, step, inspected, filled, secretIn);
       if (observed !== undefined) noteSignInState(state, observed, { questionShape: true });
       if (reasked !== undefined) noteRefill(state, reasked);
@@ -739,7 +740,7 @@ export const makeSignInRecorder = (input: {
       });
       if ("outcome" in screen) return { result: { approved: false, failed: screen.reason } };
       // The approval's page as a state, read before the owner approves, as the site moves on then.
-      const observed = yield* readState;
+      const observed = yield* readState(stepPopup(step, screen));
       // A device approval may have the owner pick the number its screen shows (`matchSelector`).
       const number =
         step.approval === "device"

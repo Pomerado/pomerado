@@ -24,7 +24,9 @@ import {
   type StateEntry,
   type StateFingerprint,
   stateEntry,
+  withOpenerLook,
 } from "../../src/destinations/sign-in-states.js";
+import { statesPopup } from "../../src/destinations/sign-in-state-scan.js";
 import { makeInputAsker } from "../../src/inputs/callback.js";
 import type { SiteAnswer } from "../../src/runtime/autofill-replay-steps.js";
 import type { AutofillHooks } from "../../src/runtime/autofill-state.js";
@@ -1771,6 +1773,20 @@ it("looks only at the step wait's end when a known state sits in a pop-up", asyn
   expect(lookEvents(events)).toEqual([{ stage: "challenge_look", look: "deadline", outcome: "none" }]);
 });
 
+it("looks early where a known state in a pop-up holds the pop-up's own look", async () => {
+  const popup = { opener: "primary", origin: "https://accounts.example.test" } as const;
+  const library = libraryOf([
+    { fingerprint: { ...arrival(emailScreen), popup: true }, step: stepAt("/sign-in", [email], "#continue", { popup }) },
+  ]);
+  const still: Screen = { path: "/sign-in", boxes: [], texts: ["one moment"] };
+  const site = scriptedSite({ start: still }, () => undefined);
+  const { looks, challenge } = lookingAt(site, "none", "none");
+  const { ended } = await replayOnClock(site, library, challenge);
+  expect(ended).toMatchObject({ outcome: "unsent", reason: "unknown_state" });
+  expect(looks).toHaveLength(2);
+  expect(looks[0]).toBeLessThan(3_000);
+});
+
 it("never looks early while the state just acted in still stands", async () => {
   const library = libraryOf([{ fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") }]);
   const site = scriptedSite({ start: passwordScreen }, () => "start");
@@ -3364,6 +3380,39 @@ it("still takes a state told by its text alone as gone once the page's look chan
   expect(ended).toMatchObject({ outcome: "signed_in" });
   expect(site.fills).toEqual(["password"]);
   expect(site.clicks).toEqual([]);
+});
+
+it("takes a pop-up state recorded with its opener's look by the opener read beside the pop-up, after one of the pop-up's own look", async () => {
+  // The page that opened the pop-up, as `popupSite` shows it.
+  const task: Screen = { path: "/records", boxes: [], texts: ["your records"], labels: ["download"] };
+  const screens = { first: popupEmail, password: popupPassword };
+  const library = libraryOf([
+    {
+      fingerprint: { top: accounts, popup: true, boxes: [{ frame: accounts, kind: "identifier" }], submit: true },
+      step: popupLibrary.states[0]?.step as AutofillRecipeStep,
+    },
+    { fingerprint: arrival(task), step: popupLibrary.states[1]?.step as AutofillRecipeStep },
+  ]);
+  expect(statesPopup(popupLibrary)).toBeUndefined();
+  expect(statesPopup(library)).toEqual({ origins: [accounts], opener: true });
+  const site = popupSite(screens, (_at, clicked) => (clicked === "#next" ? "password" : clicked === "#sign-in" ? "closed" : undefined));
+  // As the host reads a library with a pop-up's own look: the pop-up while it shows, beside its opener.
+  const observe = Effect.map(site.observe, (opener): ObservedState => {
+    const shown = screens[site.pop.screen as keyof typeof screens] as Screen | undefined;
+    if (shown === undefined) return opener;
+    const boxes = shown.boxes.map((box) => ({ frame: accounts, kind: box.kind }));
+    const fingerprint: StateFingerprint = { top: accounts, popup: true, boxes, submit: true };
+    return {
+      fingerprint: withOpenerLook(fingerprint, opener.fingerprint),
+      boxes: boxes.map((box) => ({ ...box, empty: true, submit: true })),
+      texts: [],
+      opener,
+    };
+  });
+  const ended = await replay({ ...site, observe }, library);
+  expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false, visited: library.states.map((state) => state.key) });
+  expect(site.fills).toEqual(["email", "password"]);
+  expect(site.clicks).toEqual(["#next", "#sign-in"]);
 });
 
 it("presses in place a pop-up screen that only presses, once the typed one before it went from the pop-up", async () => {
