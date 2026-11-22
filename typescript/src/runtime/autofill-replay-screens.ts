@@ -490,7 +490,7 @@ const passwordBox = { selector: 'input[type="password" i]', slot: "password" } a
  * `landingSettleMs`, then reads as its landing, and the last check decides as for a page off the
  * screens. Undefined while any of that fails.
  */
-const inPlaceShape = <E extends YieldableError, V extends string>(
+export const inPlaceShape = <E extends YieldableError, V extends string>(
   input: Pick<AutofillReplayInput<E, V>, "hooks" | "recipe" | "entryUrl">,
   progress: ScreenWaitProgress<V>,
   awaited: AutofillStep,

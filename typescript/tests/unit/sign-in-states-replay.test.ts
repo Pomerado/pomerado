@@ -2,6 +2,7 @@ import { inspect } from "node:util";
 import { Clock, Data, Duration, Effect, Either, Fiber, Option, TestClock, TestContext } from "effect";
 import { expect, it } from "vitest";
 import type { AutofillRecipeStep } from "../../src/destinations/autofill-recipe.js";
+import { withCheck } from "../../src/destinations/autofill-refusal.js";
 import type {
   AutofillInspection,
   AutofillRefusal,
@@ -1143,6 +1144,68 @@ it("acts in a text-only state that reads like one acted in before but presses an
   const site = scriptedSite({ start: emailScreen, notice, password: passwordScreen, remember }, (_at, clicked) => next[clicked]);
   expect(await replay(site, library)).toMatchObject({ outcome: "signed_in" });
   expect(site.clicks).toEqual(["#continue", "#next", "#go", "#yes"]);
+});
+
+it("runs the last check at the step wait before it ends where an earlier state shows again after the code", async () => {
+  // After the code an offer shows over the home page, with its Log in behind it as the first state
+  // showed it. The account shows only on its own page, which the full check opens.
+  const home: Screen = { path: "/", boxes: [], buttons: ["#log-in"], texts: ["home"], labels: ["log in"] };
+  const emailHere: Screen = { path: "/", boxes: [{ selector: "#email", kind: "identifier" }], buttons: ["#continue"] };
+  const codeHere: Screen = { path: "/", boxes: [{ selector: "#code", kind: "code" }], buttons: ["#verify"] };
+  const library = libraryOf([
+    { fingerprint: arrival(home), step: stepAt("/", [], "#log-in") },
+    { fingerprint: arrival(emailHere), step: stepAt("/", [email], "#continue") },
+    { fingerprint: arrival(codeHere), step: stepAt("/", [code], "#verify") },
+  ]);
+  const next: Readonly<Record<string, string>> = { "#log-in": "email", "#continue": "code", "#verify": "offer" };
+  const site = scriptedSite({ start: home, email: emailHere, code: codeHere, offer: home }, (_at, clicked) => next[clicked]);
+  const confirm: typeof site.hooks.confirm = (...call) =>
+    site.site.screen === "offer" ? Effect.succeed({ signedIn: true, url: `${origin}/account` }) : site.hooks.confirm(...call);
+  const ended = await replay({ ...site, hooks: { ...site.hooks, confirm } }, library);
+  expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(site.clicks).toEqual(["#log-in", "#continue", "#verify"]);
+});
+
+it("signs in on a page that can't tell where a sign-in on one address settles in place", { timeout: 8_000 }, async () => {
+  // A dialog that never leaves its page: after the code it closes without the remember screen a
+  // sign-in met once, and no marker shows there.
+  const emailHere: Screen = { path: "/sign-in", boxes: [{ selector: "#email", kind: "identifier" }], buttons: ["#continue"] };
+  const codeHere: Screen = { path: "/sign-in", boxes: [{ selector: "#code", kind: "code" }], buttons: ["#verify"] };
+  const remember: Screen = { path: "/sign-in", boxes: [], buttons: ["#remember"], texts: ["remember this device?"] };
+  const closed: Screen = { path: "/sign-in", boxes: [], texts: ["welcome back"] };
+  const library = libraryOf([
+    { fingerprint: arrival(emailHere), step: stepAt("/sign-in", [email], "#continue") },
+    { fingerprint: arrival(codeHere), step: stepAt("/sign-in", [code], "#verify") },
+    { fingerprint: arrival(remember), step: stepAt("/sign-in", [], "#remember") },
+  ]);
+  const next: Readonly<Record<string, string>> = { "#continue": "code", "#verify": "closed" };
+  const site = scriptedSite({ start: emailHere, code: codeHere, closed }, (_at, clicked) => next[clicked]);
+  const confirmed: string[] = [];
+  const hooks = { ...site.hooks, confirmCantTell: () => Effect.sync(() => void confirmed.push("confirmed")) };
+  const ended = await replay({ ...site, hooks }, library, { stepWaitMs: 5_000 });
+  expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false, cantTell: true });
+  expect(confirmed).toEqual(["confirmed"]);
+});
+
+it("keeps the evidence of the host's refusal of a state's controls in a step event when the replay ends on it", async () => {
+  const library = libraryOf([{ fingerprint: arrival(emailScreen), step: stepAt("/sign-in", [email], "#continue") }]);
+  const site = scriptedSite({ start: emailScreen }, () => undefined);
+  // The page shows two Continue buttons.
+  const evidence = { framesSearched: 1, matches: `${origin} 2/2` };
+  const refused = withCheck({ outcome: "refused", reason: "ambiguous_match", target: "submit" }, "ambiguous_match", evidence);
+  const inspect: typeof site.hooks.inspect = (step) =>
+    step.submit === "#continue" ? Effect.succeed(refused) : site.hooks.inspect(step);
+  const events: Readonly<Record<string, unknown>>[] = [];
+  const ended = await replay({ ...site, hooks: { ...site.hooks, inspect } }, library, { events });
+  expect(ended).toMatchObject({ outcome: "unsent", reason: "ambiguous_match" });
+  expect(events).toContainEqual({
+    stage: "step",
+    outcome: "refused",
+    state: library.states[0]?.key,
+    reason: "ambiguous_match",
+    check: "ambiguous_match",
+    ...evidence,
+  });
 });
 
 it("signs in on a page that can't tell once it held still, before the step wait", { timeout: 4_000 }, async () => {
