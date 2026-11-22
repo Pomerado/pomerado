@@ -1,6 +1,8 @@
 import { Either, Schema } from "effect";
 import { SignInRecipe, type SignInRecipeStep } from "../destinations/sign-in-recipe.js";
 import { pageMatches } from "../destinations/autofill-recipe.js";
+import type { AutofillSignedIn } from "../destinations/autofill-step.js";
+import type { SignInStates } from "../destinations/sign-in-states.js";
 import {
   loginPathRefusal,
   matchSignedOutSnapshots,
@@ -9,11 +11,11 @@ import {
 import { oneTimeLoginUrlParameters } from "./login-url.js";
 import { namesIdentityOrPrivateMask, namesMaskedContact } from "./sign-in-guards.js";
 import { registrableDomain, sameSite } from "../runtime/same-site.js";
-import { workspaceRelation } from "../runtime/workspace-origin.js";
+import { workspaceRelation, type WorkspaceRelation } from "../runtime/workspace-origin.js";
 
-// A sign-in recipe version checked as a unit: one value-free recipe that every run signing in to
-// the site replays. The checks are deterministic and name each refused part by its path in the
-// version, never its value.
+// A sign-in checked as a unit: one value-free recipe, or one screens library, that every run
+// signing in to the site replays. The checks are deterministic and name each refused part by its
+// path in the version or the screens, never its value.
 
 /**
  * One version of a site's sign-in, value-free: where every run starts and the recipe it replays
@@ -24,6 +26,15 @@ import { workspaceRelation } from "../runtime/workspace-origin.js";
 export interface SignInVersion {
   readonly entryUrl: string;
   readonly recipe: SignInRecipe;
+}
+
+/**
+ * A site's sign-in as screens, value-free: where every run starts and the library it replays
+ * (each state's recorded step, each signed-in marker, and its workspace relation).
+ */
+export interface SignInScreens {
+  readonly entryUrl: string;
+  readonly states: SignInStates;
 }
 
 export interface SignInVersionInput {
@@ -50,7 +61,7 @@ export interface SignInVersionInput {
 /** The checks' rules, each a reason a version is refused. */
 export type SignInVersionRule =
   // The recipe is not one a host reads (`SignInRecipe`), such as one with no steps or a workspace
-  // step whose page is more than a path. No other check runs on it.
+  // step whose page is more than a path, or the screens hold no state. No other check runs on it.
   | "invalid_recipe"
   // A selector names an account's identity, or copies a masked or partial contact or number.
   | "selector_names_contact"
@@ -60,7 +71,7 @@ export type SignInVersionRule =
   | "page_names_contact"
   // The signed-in marker does.
   | "indicator_holds_identity"
-  // The marker has neither a selector nor a URL path.
+  // The marker has neither a selector nor a URL path, or the screens hold no marker.
   | "marker_missing"
   // The marker is a URL path alone that a sign-in page also has.
   | "marker_is_login_path"
@@ -114,7 +125,7 @@ const stepSelectors = (step: SignInRecipeStep, at: string): Text[] => [
   ...(step.submit === undefined ? [] : [{ part: `${at}.submit`, text: step.submit }]),
   ...(step.methods ?? []).flatMap((method, index) => [
     { part: `${at}.methods[${index}].selector`, text: method.selector },
-    // A native select's option value publishes with the tool too.
+    // A native select's option value is kept with the sign-in too.
     ...(method.option === undefined
       ? []
       : [{ part: `${at}.methods[${index}].option`, text: method.option }]),
@@ -159,22 +170,31 @@ const onSite = (siteOrigin: string, value: string) => {
   return url.protocol === "https:" && sameSite(siteOrigin, url);
 };
 
+/** What the checks read of a recipe or a library, each part with its path. */
+interface SignInParts {
+  readonly entryUrl: string;
+  /** Where the sign-in declares a workspace relation, when it does. */
+  readonly workspaceAt: string | undefined;
+  /** The relation it declares for the site; undefined when it declares none or another domain's. */
+  readonly relation: WorkspaceRelation | undefined;
+  readonly steps: readonly { readonly at: string; readonly step: SignInRecipeStep }[];
+  readonly markers: readonly { readonly at: string; readonly marker: AutofillSignedIn }[];
+}
+
 /**
- * The deterministic checks of a version: every selector and page against the recording guards
- * (the recording account's identity values and the masked-contact pattern), the signed-in marker
- * against the pages seen signed out and the sign-in's own pages, no sign-out, an entry URL any
- * later run can open, and every page https and on the site itself or, for a workspace step, on a
- * workspace host the recipe's relation admits (`workspaceRelation`). Each refused part once per
- * rule, in the version's order; empty when the version passes.
+ * The deterministic checks of a sign-in's parts: every selector and page against the recording
+ * guards (the recording account's identity values and the masked-contact pattern), each signed-in
+ * marker against the pages seen signed out and the sign-in's own pages, no sign-out, an entry URL
+ * any later run can open, and every page https and on the site itself or, for a workspace step, on
+ * a workspace host the relation admits (`workspaceRelation`). Each refused part once per rule, in
+ * the sign-in's order.
  */
-export const checkSignInVersion = (
-  input: SignInVersionInput,
+const checkSignInParts = (
+  input: Omit<SignInVersionInput, "version">,
+  parts: SignInParts,
 ): readonly SignInVersionFinding[] => {
-  const { siteOrigin, version, signedOutSnapshots } = input;
-  // The version may come from storage or another process: check what it holds, not its type.
-  const decoded = Schema.decodeUnknownEither(SignInRecipe)(version.recipe);
-  if (Either.isLeft(decoded)) return [{ rule: "invalid_recipe", part: "recipe" }];
-  const recipe = decoded.right;
+  const { siteOrigin, signedOutSnapshots } = input;
+  const { entryUrl, relation } = parts;
   const values = (input.identities ?? []).flatMap((value) =>
     value.length < 3 ? [] : [value.toLowerCase()],
   );
@@ -189,31 +209,28 @@ export const checkSignInVersion = (
       findings.push({ rule, part });
   };
 
-  const relation = workspaceRelation(recipe, siteOrigin);
-  if ("workspace" in recipe && recipe.workspace !== undefined && relation === undefined)
-    refuse("workspace_parent", "recipe.workspace");
+  if (parts.workspaceAt !== undefined && relation === undefined)
+    refuse("workspace_parent", parts.workspaceAt);
 
-  const entry = URL.parse(version.entryUrl);
-  if (!secure(version.entryUrl)) refuse("insecure_origin", "entryUrl");
-  if (!onSite(siteOrigin, version.entryUrl)) refuse("foreign_origin", "entryUrl");
+  const entry = URL.parse(entryUrl);
+  if (!secure(entryUrl)) refuse("insecure_origin", "entryUrl");
+  if (!onSite(siteOrigin, entryUrl)) refuse("foreign_origin", "entryUrl");
   if (entry !== null && (entry.username !== "" || entry.password !== ""))
     refuse("url_credentials", "entryUrl");
-  if (input.entryUrlAsked !== true && oneTimeLoginUrlParameters(version.entryUrl).length > 0)
+  if (input.entryUrlAsked !== true && oneTimeLoginUrlParameters(entryUrl).length > 0)
     refuse("one_time_url", "entryUrl");
-  const entryPast = pastOrigin(version.entryUrl);
+  const entryPast = pastOrigin(entryUrl);
   if (
     // An asked one-time URL's query and fragment hold spent random values, which often have four
     // digits in a row: only its path is read for a masked number.
     namesMaskedContact(input.entryUrlAsked === true ? (entry?.pathname ?? entryPast) : entryPast) ||
     namesIdentityOrPrivateMask(entryPast, pageValues) ||
-    namesIdentityOrPrivateMask(belowDomain(version.entryUrl), values)
+    namesIdentityOrPrivateMask(belowDomain(entryUrl), values)
   )
     refuse("page_names_contact", "entryUrl");
   if (signsOut(entryPast)) refuse("sign_out", "entryUrl");
 
-  const steps: readonly SignInRecipeStep[] = recipe.steps;
-  steps.forEach((step, index) => {
-    const at = `recipe.steps[${index}]`;
+  for (const { at, step } of parts.steps) {
     for (const { part, text } of stepSelectors(step, at)) {
       if (namesMaskedContact(text) || namesIdentityOrPrivateMask(text, values))
         refuse("selector_names_contact", part);
@@ -235,7 +252,7 @@ export const checkSignInVersion = (
     if (
       step.anySegments !== undefined &&
       ((step.origin !== "workspace" && URL.parse(step.page)?.origin !== siteOrigin) ||
-        pageMatches(version.entryUrl, step))
+        pageMatches(entryUrl, step))
     )
       refuse("wildcard_placement", `${at}.anySegments`);
     if (step.popup !== undefined) {
@@ -244,36 +261,89 @@ export const checkSignInVersion = (
       if (!secure(step.popup.origin)) refuse("insecure_origin", `${at}.popup.origin`);
       if (!onSite(siteOrigin, step.popup.origin)) refuse("foreign_origin", `${at}.popup.origin`);
     }
-  });
+  }
 
-  const marker = recipe.signedIn;
-  for (const [key, text] of [
-    ["selector", marker.selector],
-    ["urlPath", marker.urlPath],
-    ["openPath", marker.openPath],
-  ] as const) {
-    if (text === undefined) continue;
-    const selector = key === "selector";
-    const named = selector ? text : pastOrigin(text);
+  for (const { at, marker } of parts.markers) {
+    for (const [key, text] of [
+      ["selector", marker.selector],
+      ["urlPath", marker.urlPath],
+      ["openPath", marker.openPath],
+    ] as const) {
+      if (text === undefined) continue;
+      const selector = key === "selector";
+      const named = selector ? text : pastOrigin(text);
+      if (
+        namesMaskedContact(named) ||
+        namesIdentityOrPrivateMask(named, selector ? values : pageValues)
+      )
+        refuse("indicator_holds_identity", `${at}.${key}`);
+      // The host opens the account page before it checks the marker.
+      if (key === "openPath" && signsOut(named)) refuse("sign_out", `${at}.openPath`);
+    }
+    if (marker.selector === undefined && marker.urlPath === undefined) {
+      refuse("marker_missing", at);
+      continue;
+    }
     if (
-      namesMaskedContact(named) ||
-      namesIdentityOrPrivateMask(named, selector ? values : pageValues)
+      [
+        { page: entryUrl, anySegments: undefined },
+        ...parts.steps.map(({ step }) => step),
+      ].some((step) => loginPathRefusal(marker, step.page, step.anySegments) !== undefined)
     )
-      refuse("indicator_holds_identity", `recipe.signedIn.${key}`);
-    // The host opens the account page before it checks the marker.
-    if (key === "openPath" && signsOut(named)) refuse("sign_out", "recipe.signedIn.openPath");
+      refuse("marker_is_login_path", `${at}.urlPath`);
+    if (matchSignedOutSnapshots(marker, signedOutSnapshots) === "matches")
+      refuse("marker_matches_signed_out_page", at);
   }
-  if (marker.selector === undefined && marker.urlPath === undefined) {
-    refuse("marker_missing", "recipe.signedIn");
-    return findings;
-  }
-  if (
-    [{ page: version.entryUrl, anySegments: undefined }, ...steps].some(
-      (step) => loginPathRefusal(marker, step.page, step.anySegments) !== undefined,
-    )
-  )
-    refuse("marker_is_login_path", "recipe.signedIn.urlPath");
-  if (matchSignedOutSnapshots(marker, signedOutSnapshots) === "matches")
-    refuse("marker_matches_signed_out_page", "recipe.signedIn");
   return findings;
+};
+
+/**
+ * The deterministic checks of a version (`checkSignInParts`) on its recipe as decoded: empty when
+ * the version passes.
+ */
+export const checkSignInVersion = (
+  input: SignInVersionInput,
+): readonly SignInVersionFinding[] => {
+  const { siteOrigin, version } = input;
+  // The version may come from storage or another process: check what it holds, not its type.
+  const decoded = Schema.decodeUnknownEither(SignInRecipe)(version.recipe);
+  if (Either.isLeft(decoded)) return [{ rule: "invalid_recipe", part: "recipe" }];
+  const recipe = decoded.right;
+  const steps: readonly SignInRecipeStep[] = recipe.steps;
+  return checkSignInParts(input, {
+    entryUrl: version.entryUrl,
+    workspaceAt:
+      "workspace" in recipe && recipe.workspace !== undefined ? "recipe.workspace" : undefined,
+    relation: workspaceRelation(recipe, siteOrigin),
+    steps: steps.map((step, index) => ({ at: `recipe.steps[${index}]`, step })),
+    markers: [{ at: "recipe.signedIn", marker: recipe.signedIn }],
+  });
+};
+
+/**
+ * The same checks on a sign-in's screens: each state's recorded step and every signed-in marker
+ * the library holds, since each ships with it, with the library's workspace relation. Screens with
+ * no state are `invalid_recipe` and no other check runs; with no marker, `marker_missing`. Empty
+ * when the screens pass.
+ */
+export const checkSignInScreens = (
+  input: Omit<SignInVersionInput, "version"> & { readonly screens: SignInScreens },
+): readonly SignInVersionFinding[] => {
+  const { siteOrigin, screens } = input;
+  const library = screens.states;
+  if (library.states.length === 0) return [{ rule: "invalid_recipe", part: "states.states" }];
+  const findings = checkSignInParts(input, {
+    entryUrl: screens.entryUrl,
+    workspaceAt: library.workspace === undefined ? undefined : "states.workspace",
+    // A library's header holds a workspace recipe's relation (version 4 and later).
+    relation: workspaceRelation({ version: 4, workspace: library.workspace }, siteOrigin),
+    steps: library.states.map((entry, index) => ({
+      at: `states.states[${index}].step`,
+      step: entry.step,
+    })),
+    markers: library.signedIn.map((marker, index) => ({ at: `states.signedIn[${index}]`, marker })),
+  });
+  return library.signedIn.length === 0
+    ? [...findings, { rule: "marker_missing", part: "states.signedIn" }]
+    : findings;
 };

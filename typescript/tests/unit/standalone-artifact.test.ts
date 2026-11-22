@@ -406,10 +406,11 @@ it("refuses to publish a login URL that holds a sign-in value every time, naming
     });
     expect(JSON.stringify(refused.left)).not.toContain("ada");
   }
-  // A recipe that holds one is refused too, and a sign-in that holds none publishes as it is.
+  // Screens that hold one are refused too, and a sign-in that holds none publishes as it is.
+  const marker = { selector: "[data-user='ada@example.test']" };
   const named = {
     ...signIn,
-    recipe: { ...signIn.recipe, signedIn: { selector: "[data-user='ada@example.test']" } },
+    states: { states: [], transitions: [], signedIn: [{ format: 1 as const, kind: "signed_in" as const, key: "0".repeat(32), ...marker }] },
   };
   expect(Either.isLeft(await screen(named))).toBe(true);
   expect(await screen(signIn)).toEqual(Either.right(signIn));

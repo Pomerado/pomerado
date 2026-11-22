@@ -576,7 +576,7 @@ it("refuses an indicator, a selector or a page that names the account, typing no
 
 /** What the minter reads when a recorded selector names the account. */
 const selectorsNotice =
-  'A screen\'s selectors and submit publish with the tool, so they never name this account\'s username, email, phone or account number (such as a "Continue as …" button or a data attribute holding it). Name each control by its role, label or a stable attribute, and send the step again.';
+  'A screen\'s selectors and submit are kept with the sign-in\'s screens, so they never name this account\'s username, email, phone or account number (such as a "Continue as …" button or a data attribute holding it). Name each control by its role, label or a stable attribute, and send the step again.';
 
 it("refuses a recorded selector holding [private], the mask the minter sees for every value it was given, typing nothing", async () => {
   const host = harness({ held: account });
@@ -655,7 +655,7 @@ it("refuses a signed-in check holding [private] before it reads the page", async
     signedIn: false,
     failed: "indicator_holds_identity",
     nextStep:
-      "The signed-in check names this account's own identity, which publishes with the tool and fails for every other login. Name a marker every signed-in account shows, such as a sign-out control or the account menu, never the account's name, email or number, then inspect read-only and correct the sign-in steps from the page's evidence.",
+      "The signed-in check names this account's own identity, which is kept with the sign-in's screens and fails for every other login. Name a marker every signed-in account shows, such as a sign-out control or the account menu, never the account's name, email or number, then inspect read-only and correct the sign-in steps from the page's evidence.",
   });
   expect(host.confirmed).toEqual([]);
 });
