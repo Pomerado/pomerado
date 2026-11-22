@@ -148,8 +148,9 @@ export interface RunnerChannels {
  * login but never verified and was not rejected, the host's identical refusals in a row while
  * typing into a sign-in screen (`maximumHostRefusals`), which no correction of the step got past,
  * Guardian's correctable denials in a row of one unchanged sign-in step (`maximumSignInDenials`),
- * or the caller's refusal to trust the origin off the site that the site's sign-in sent the login
- * to, so no sign-in of the site can verify.
+ * the caller's refusal to trust the origin off the site that the site's sign-in sent the login
+ * to, so no sign-in of the site can verify, or the host's refusal of a verified sign-in as one every
+ * login on the site may run, so no tool may rest on it.
  */
 export type SpentSignIn =
   | "relogin_spent"
@@ -157,7 +158,8 @@ export type SpentSignIn =
   | "sign_in_retry_spent"
   | "host_refusals_repeated"
   | "guardian_denials_repeated"
-  | "sign_in_origin_untrusted";
+  | "sign_in_origin_untrusted"
+  | "site_sign_in_refused";
 
 export type { SessionLoss };
 

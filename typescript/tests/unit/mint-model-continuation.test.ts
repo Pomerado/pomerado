@@ -325,6 +325,27 @@ it("ends the build at once as sign_in_unavailable when the caller does not trust
   expect(f.requests).toHaveLength(1);
 });
 
+// The sign-in verified, but the host refused it as one every login on the site may run. No tool
+// may rest on it, so the build ends at once as sign-in unavailable, saying the sign-in worked.
+it("ends the build at once as sign_in_unavailable when the host refuses the verified sign-in for every login on the site", async () => {
+  const f = await fixture(
+    (_request, index) =>
+      index === 0
+        ? call("execute", { ...execution, purpose: "authenticate", target: "liveBrowser" })
+        : prose("The site cannot be signed in."),
+    {
+      reviewAndExecute: () =>
+        Effect.fail(new MintFailure({ code: "Unavailable", spentSignIn: "site_sign_in_refused" })),
+    },
+  );
+  const outcome = await f.run();
+  expect(outcome).toMatchObject({ build: "incomplete", recoveryReason: "sign_in_unavailable" });
+  expect(outcome.summary).toBe(signInUnavailableSummary(undefined, "site_sign_in_refused"));
+  expect(outcome.summary).toContain("a sign-in that every login on this site can use");
+  expect(outcome.summary).not.toContain("could not be signed in");
+  expect(f.requests).toHaveLength(1);
+});
+
 // Every sign-in verified, but the site lost its signed-in session on a page load, and the host
 // could not sign in again. The build ends as sign-in unavailable on that cause, not a failed
 // sign-in's, and the agent hears to report it rather than authenticate again.

@@ -160,6 +160,8 @@ const spentReason: Record<SpentSignIn, string> = {
   guardian_denials_repeated: `Guardian denied the same sign-in step ${maximumSignInDenials} times in a row, and the step did not change between them`,
   sign_in_origin_untrusted:
     "the caller did not trust the origin the site's sign-in sent the login to, so no sign-in of the site can verify",
+  site_sign_in_refused:
+    "the host refused the verified sign-in as one every login on the site may run, so no tool may rest on it",
 };
 
 /**
@@ -283,7 +285,9 @@ const spentSignInFeedback = (spent: SpentSignIn | undefined, sessionLoss?: Sessi
   notice:
     sessionLoss !== undefined
       ? `The host could not keep the site signed in: ${sessionLossReason[sessionLoss]}${spent === undefined ? "" : `, and ${spentReason[spent]}`}. The host sent nothing again. ${unavailableInBuild} Report that the site did not keep its signed-in session, with this cause.`
-      : `The host started no sign-in, and sent nothing${spent === undefined ? "" : `: ${spentReason[spent]}`}. ${unavailableInBuild} Report that the site could not be signed in in this attempt.`,
+      : spent === "site_sign_in_refused"
+        ? `The sign-in verified, but ${spentReason[spent]}. ${unavailableInBuild} Report that the site's sign-in could not be saved for every login on the site.`
+        : `The host started no sign-in, and sent nothing${spent === undefined ? "" : `: ${spentReason[spent]}`}. ${unavailableInBuild} Report that the site could not be signed in in this attempt.`,
 });
 
 /**
@@ -358,6 +362,9 @@ export const signInUnavailableSummary = (
   spent: SpentSignIn | undefined,
   sessionLoss?: SessionLoss,
 ) => {
+  // The sign-in worked: the host would not keep it as one every login on the site may run.
+  if (failure === undefined && spent === "site_sign_in_refused")
+    return "The build stopped without publishing because the host could not save a sign-in that every login on this site can use. The sign-in worked, but the host refused it for every login on the site. Nothing was sent again.";
   const stopped =
     "The build stopped without publishing because the website could not be signed in.";
   if (failure?.code === "AccountLocked")
