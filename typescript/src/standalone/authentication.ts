@@ -199,8 +199,8 @@ export const makeSignInBrowser = (options: {
         siteOrigin,
         authenticationOrigins,
       }),
-    observe: (workspace, identifiers) =>
-      observeSignInState({ page, siteOrigin, authenticationOrigins, workspace, identifiers }),
+    observe: (workspace, identifiers, popup) =>
+      observeSignInState({ page, siteOrigin, authenticationOrigins, workspace, identifiers, popup }),
   };
 };
 
