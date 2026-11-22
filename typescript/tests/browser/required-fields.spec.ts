@@ -1016,3 +1016,28 @@ test("a hidden required input labelled as the field itself is that field's requi
     ],
   });
 });
+
+test("reading a field's label never loads the picture inside it again", async ({ page }) => {
+  // A picture code whose first load failed, so the page keeps no copy of it. A copy of its label
+  // made in the live page would load it again, and a site that draws a new code on each load
+  // would then no longer accept the code typed.
+  const site = "https://shop.example.test";
+  let loads = 0;
+  await page.route(`${site}/code.png`, (route) => {
+    loads += 1;
+    return route.fulfill({ status: 502 });
+  });
+  await page.route(`${site}/`, (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: `<form aria-label="Sign in"><label>Code <img src="/code.png" alt=""><input name="code" required></label></form>`,
+    }),
+  );
+  await page.goto(`${site}/`);
+  expect(loads).toBe(1);
+  expect(await call(page, `return await unfilledRequiredFields(page.getByRole("form", { name: "Sign in" }));`)).toEqual({
+    result: [{ label: "Code", shape: "text" }],
+  });
+  await page.waitForTimeout(500);
+  expect(loads).toBe(1);
+});
