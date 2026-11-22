@@ -479,10 +479,10 @@ test("records a sign-in through a device approval with the approval's own page a
 });
 
 // Where the question reads as a notice beside a box like the screen before it's, or the answer box
-// is one the scan doesn't count, the question is the page's message: the screens keep none of it.
-// A run in a new session signs in through the first when the site asks another question.
+// is one the scan doesn't count, the question is the page's message: the screens keep none of it,
+// and a run in a new session signs in through them when the site asks another question.
 for (const layout of ["after an identifier-only screen", "with a box the scan doesn't count"] as const)
-  test(`records a sign-in through a security question ${layout} without its question${layout === "after an identifier-only screen" ? ", and replays it when another is asked" : ""}`, async ({ page }) => {
+  test(`records a sign-in through a security question ${layout} without its question, and replays it when another is asked`, async ({ page }) => {
     test.slow();
     const site = "https://bank.example.test";
     const shown = { question: "what was the name of your first pet?" };
@@ -528,9 +528,6 @@ for (const layout of ["after an identifier-only screen", "with a box the scan do
     if (states === undefined) throw new Error(`no screens: ${JSON.stringify(published)}`);
     const text = JSON.stringify(published).toLowerCase();
     for (const held of ["pet", "synthetic", login.username, login.password]) expect(text).not.toContain(held.toLowerCase());
-    // A replay doesn't yet press on from a screen whose box the scan doesn't count, as typing there
-    // never reads as the screen still standing, so only the first layout is replayed here.
-    if (!identifierFirst) return;
     // A run in a new session, where the site asks another question.
     shown.question = "what was the name of your first school?";
     await page.goto("about:blank");
