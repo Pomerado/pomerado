@@ -1930,9 +1930,9 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
           next,
           heldFor(run, fields, asked),
         );
-        // Any other submit the fill failed ends the state, as a press alone would.
-        const unpressed =
-          asked !== typing && failed === "submit_refused" && fields.some((field) => replay.state.filled.has(field.slot));
+        // A submit refused once every box was typed (`fillFailure`) goes as after the boxes alone;
+        // any other submit the fill failed ends the state, as a press alone would.
+        const unpressed = asked !== typing && failed === "submit_refused";
         if (failed !== undefined && !unpressed) {
           if (
             run.gone ||
