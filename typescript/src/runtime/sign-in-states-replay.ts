@@ -205,12 +205,13 @@ interface Run<E extends YieldableError, V extends string, L extends AutofillLogi
 
 /**
  * A known state the page shows, told by its control and address alone (`byControl`), with its
- * code typed by place into the row the page shows (`byPlace`), or as recorded.
+ * code typed by place into the row the page shows (`byPlace`), learned after the login's own state
+ * of its look whose box is gone (`newer`, `matchState`), or as recorded.
  */
 type Shown = {
   readonly state: StateEntry;
   readonly inspection: AutofillInspection;
-  readonly by?: "control" | "row";
+  readonly by?: "control" | "row" | "newer";
 };
 type Ended<V extends string> = { readonly ended: SignInStatesOutcome<V> };
 /**
@@ -825,8 +826,8 @@ const byPlace = <E extends YieldableError, V extends string, L extends AutofillL
  * taken where the page asks a question this replay answered (`askedBefore`). Where the login's own
  * route left other logins' states out and none of its own shows by the step wait (`waited`), for a
  * box its own state types that is gone, as one the site renamed, a look-alike learned after its
- * own that types too and picks no method is taken in its place, the first whose controls show in
- * the order a login with no route there takes them.
+ * own that types too, presses the same submit and picks no method is taken in its place, the first
+ * whose controls show in the order a login with no route there takes them (`newer`).
  */
 const matchState = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -881,8 +882,9 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
     // Where the login's own route left other logins' states out, none of its own showing by the
     // step wait is a page it does not know, for a repair of its own to go on from, unless a box its
     // own state types is gone, as one the site renamed, and a look-alike learned after its own
-    // that types too and picks no method shows then. A page that lost only a press, such as a
-    // method's, keeps to the route.
+    // that types too, presses the same submit and picks no method shows then. A page that lost
+    // only a press, such as a method's, keeps to the route, as does another form drawn in place of
+    // its own, whose submit is its own.
     if (alike.length < candidates.length && refused === "not_found") {
       const [first] = alike;
       const lost = waited && first !== undefined ? yield* run.input.hooks.inspect(resolved(run, first.step)) : undefined;
@@ -891,12 +893,14 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
         const newer = candidates.filter(
           (state) =>
             states.indexOf(state) > own &&
+            state.step.submit === first?.step.submit &&
             state.step.methods === undefined &&
             resolved(run, state.step).fields.length > 0,
         );
         for (const state of ranked(run, newer, (other) => newer.includes(other), next, fingerprint)) {
           const shown = yield* shownOn(run, state, resolved(run, state.step));
-          if (typeof shown !== "string" && !askedBefore(run, shown)) return { state, inspection: shown } satisfies Shown;
+          if (typeof shown !== "string" && !askedBefore(run, shown))
+            return { state, inspection: shown, by: "newer" } satisfies Shown;
         }
       }
       return ownStateNotShown;
@@ -2105,7 +2109,7 @@ const walk = <E extends YieldableError, V extends string, L extends AutofillLogi
         stage: "state",
         state: arrived.state.key,
         ...("by" in arrived && arrived.by !== undefined
-          ? { reason: arrived.by === "row" ? "code_row" : "same_control" }
+          ? { reason: arrived.by === "row" ? "code_row" : arrived.by === "newer" ? "newer_look_alike" : "same_control" }
           : {}),
       });
       const done = yield* actIn(run, arrived, arrived.observed);
