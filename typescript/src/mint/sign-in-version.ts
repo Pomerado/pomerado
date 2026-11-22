@@ -321,10 +321,11 @@ export const checkSignInVersion = (
 };
 
 /**
- * The same checks on a sign-in's screens: each state's recorded step and every signed-in marker
- * the library holds, since each ships with it, with the library's workspace relation. Screens with
- * no state are `invalid_recipe` and no other check runs; with no marker, `marker_missing`. Empty
- * when the screens pass.
+ * The same checks on a sign-in's screens, a decoded library: each state's recorded step and every
+ * signed-in marker it holds, since each ships with it, with its workspace relation. A state's look
+ * is value-free as read (`sign-in-state-scan.ts`), so no check reads it. Screens with no state are
+ * `invalid_recipe` and no other check runs; with no marker, `marker_missing`. Empty when the
+ * screens pass.
  */
 export const checkSignInScreens = (
   input: Omit<SignInVersionInput, "version"> & { readonly screens: SignInScreens },
