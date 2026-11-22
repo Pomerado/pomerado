@@ -3,7 +3,7 @@ import { primaryPageCode } from "../runtime/host-execute.js";
 import { hostOnSiteSource, siteDomain } from "../runtime/same-site.js";
 import { workspaceHost } from "../runtime/workspace-origin.js";
 import { namedForCodeCode } from "../runtime/autofill-unrecorded-code.js";
-import { codeRowCode } from "./autofill-page-code.js";
+import { choicesCode, codeRowCode } from "./autofill-page-code.js";
 import type { AutofillPage } from "./autofill-step.js";
 import {
   blankFingerprint,
@@ -75,16 +75,26 @@ const normalized = (text: string, limit: number, logins: readonly string[]) =>
  * A code's row is also one by the rule a fill reads a code's boxes by (`codeRowCode`), where the
  * one-parent rule above finds none: four to twelve one-character boxes of one form, or of the
  * document or shadow root outside one, as boxes split three and three or set apart by a separator
- * are; or as many boxes the page's script holds to one character each, side by side on one line.
- * A box named for a code (`namedForCodeCode`) is a code box too. Either is read so only where the
+ * are; or as many boxes the page's script holds to one character each, side by side on one line;
+ * or such a row whose first box alone takes typing, the page switching each later one on in turn.
+ * A box named for a code (`namedForCodeCode`) is a code box too. Each is read so only where the
  * rule before it read each of its boxes alike, as code boxes, or as identifier boxes taking one
  * kind, counted as they were; a code box read where the rule before read identifier boxes says
  * what they took (`takes`), so a look read before compares with it (`sameFingerprint`).
  *
+ * A picture code box, a site's own picture CAPTCHA on a sign-in form, which a gate fills and no
+ * step ever names, reads as the rule before read it with role `captcha`, so a look that shows it
+ * pairs with one that doesn't (`sameFingerprint`). A frame with no box that takes typing reads a
+ * code picked from four or more named checkboxes in one container, as a code step's choices are
+ * read (`choicesCode`), as a code box with role `checkbox`, empty while none is ticked, and tells
+ * itself as a page with no box too. A page with no box reads apart from each notice, a dialog,
+ * region or aside, that holds one of the `dismissed` controls, as it reads apart from a modal
+ * dialog (`dialog`).
+ *
  * With `deep`, it reads each open shadow root too, as inspect and fill walk them, page order
  * first; without, a frame that shows nothing says whether it holds one (`shadowed`).
  */
-const scanFrame = `(deep) => {
+const scanFrame = `({ deep, dismissed }) => {
   const shows = (element) => {
     if (!element.checkVisibility({ visibilityProperty: true, opacityProperty: true })) return false;
     const box = element.getBoundingClientRect();
@@ -112,6 +122,28 @@ const scanFrame = `(deep) => {
   const boxes = all("input, textarea").filter((element) =>
     !notTyped.includes(attribute(element, "type")) && !element.disabled && !element.readOnly &&
     !searching(element) && shows(element));
+  // A picture code box, a site's own picture CAPTCHA on a sign-in form, as a gate that fills one
+  // reads it: a text box named for a captcha, a picture, image, graphic or verification code, in a
+  // form with a password box, and a picture beside it in that form, outside the page's chrome.
+  const chrome = "header, nav, footer, aside, [role=banner], [role=navigation], [role=search], [role=contentinfo], [role=complementary]";
+  const captcha = /(?<!re|h-?|fun|frc-|no)[ck]aptcha|(?:picture|image|graphic|verification)[ _-]?code/i;
+  const pictureCode = (element) => {
+    if (element.tagName !== "INPUT" || element.type !== "text" || element.form === null ||
+      !boxes.some((other) => other.type === "password" && other.form === element.form) ||
+      ![element.id, element.name, element.placeholder, element.getAttribute("aria-label"),
+        ...[...(element.labels ?? [])].map((label) => label.textContent)].some((name) => captcha.test(name ?? "")))
+      return false;
+    const near = element.getBoundingClientRect();
+    return [...element.form.querySelectorAll("*")].some((picture) => {
+      const at = picture.getBoundingClientRect();
+      return at.width >= 40 && at.height >= 15 && !picture.contains(element) &&
+        Math.max(0, at.left - near.right, near.left - at.right) <= 2 * near.height &&
+        Math.max(0, at.top - near.bottom, near.top - at.bottom) <= near.height &&
+        shows(picture) && picture.closest(chrome) === null && picture.closest("[inert], [aria-hidden=true]") === null &&
+        (picture.matches("img, canvas, svg") || (!picture.matches("input, select, textarea") &&
+          picture.querySelector("input, select, textarea") === null && getComputedStyle(picture).backgroundImage.includes("url(")));
+    });
+  };
   // Every submit of the form, a button with no type and one joined by its form attribute too.
   const submitIn = (form) => form !== null && [...form.elements].some((element) => element.type === "submit" && shows(element));
   const kindOf = (element) => {
@@ -188,19 +220,52 @@ const scanFrame = `(deep) => {
     if (kind === "none") unhinted.push({ box, required: members[0].required, at: boxes.indexOf(members[0]) });
     else found.push(box);
   }
+  // A row the page switches on box by box: its first box takes typing, and each later one is off.
+  for (const element of left) {
+    if (grouped.has(element) || element.maxLength !== 1) continue;
+    const members = (${codeRowCode})(element, false, 12, true)?.boxes ?? [];
+    const kind = kindOf(element) ?? "none";
+    if (members.length < 4 || members.length > 12 || members[0] !== element ||
+      !members.slice(1).every((box) => box.disabled) || !["code", "identifier", "none"].includes(kind))
+      continue;
+    grouped.add(element);
+    const box = { ...codeRow(members), ...(kind === "code" ? {} : { takes: takesOf(element) }) };
+    if (kind === "none") unhinted.push({ box, required: element.required, at: boxes.indexOf(element) });
+    else found.push(box);
+  }
   for (const element of left) {
     if (grouped.has(element)) continue;
     const kind = kindOf(element);
-    // A box named for a code that the rule before read as an identifier, or as none said.
-    const box = (kind === undefined || kind === "identifier") && (${namedForCodeCode})(element)
+    const pictured = pictureCode(element);
+    // A box named for a code that the rule before read as an identifier, or as none said; a picture
+    // code box reads as the rule before read it, marked by its role.
+    const box = (kind === undefined || kind === "identifier") && !pictured && (${namedForCodeCode})(element)
       ? { kind: "code", role: roleOf(element), labels: [labelOf(element)], takes: takesOf(element), empty: element.value === "", submit: submitIn(formOf(element)), form: formOf(element) }
       : { kind: kind ?? "identifier", ...(kind === "code" ? { role: roleOf(element), labels: [labelOf(element)] } : {}),
-        ...((kind ?? "identifier") === "identifier" ? { takes: takesOf(element) } : {}), empty: element.value === "", submit: submitIn(formOf(element)), form: formOf(element) };
+        ...((kind ?? "identifier") === "identifier" ? { takes: takesOf(element) } : {}), ...(pictured ? { role: "captcha" } : {}),
+        empty: element.value === "", submit: submitIn(formOf(element)), form: formOf(element) };
     if (kind === undefined) unhinted.push({ box, required: element.required, at: boxes.indexOf(element) });
     else found.push(box);
   }
   for (const { box, required } of unhinted.sort((a, b) => a.at - b.at))
     if (required || box.submit || found.some((other) => other.form !== null && other.form === box.form)) found.push(box);
+  // A code picked from named checkboxes, on a frame with no box that takes typing: each widest
+  // container the old step reads such a code from (\`choicesCode\`) that holds four or more.
+  const checkboxes = 'input[type="checkbox"], [role="checkbox"]';
+  const choices = boxes.length === 0 ? all(checkboxes).filter(shows) : [];
+  if (choices.length >= 4 && choices.length <= 60)
+    for (const choice of choices) {
+      if (found.some((box) => box.grid?.contains(choice))) continue;
+      let grid;
+      for (let at = choice.parentElement; at !== null && at.querySelectorAll(checkboxes).length <= 30; at = at.parentElement) {
+        const read = (${choicesCode})(at);
+        if (read !== null && read.choices.length >= 4) grid = { at, read };
+        else if (grid !== undefined) break;
+      }
+      if (grid !== undefined)
+        found.push({ kind: "code", role: "checkbox", labels: [labelOf(grid.at)], grid: grid.at, form: formOf(grid.at), submit: submitIn(formOf(grid.at)),
+          empty: !grid.read.choices.some((each) => each.checked === true || each.getAttribute("aria-checked") === "true") });
+    }
   // Every visible text of its own outside a control, which the host normalizes: what is new after
   // a press tells a notice the site showed beside the same boxes. Text is read by the block it sits
   // in, so a name in an inline element of its own, as "Not <b>Sam</b>?", is masked within the
@@ -233,7 +298,7 @@ const scanFrame = `(deep) => {
       last = block;
     }
   }
-  const result = { boxes: found.map(({ form, ...box }) => box), texts: [...own.values()].map((text) => text.slice(0, 2000)) };
+  const result = { boxes: found.map(({ form, grid, ...box }) => box), texts: [...own.values()].map((text) => text.slice(0, 2000)) };
   const headings = ["h1", "h2", '[role="heading" i]', "h3", "p"];
   const firstSaid = (within) => headings
     .map((selector) => within(selector).find((element) => shows(element) && element.innerText.trim() !== ""))
@@ -241,6 +306,27 @@ const scanFrame = `(deep) => {
   const said = firstSaid(all);
   const controlText = (element) => (element.getAttribute("aria-label") || element.innerText || element.value || "").slice(0, 500);
   const pressed = 'button, [role="button" i], input[type="submit" i], input[type="button" i]';
+  const buttonsIn = (within) => within(pressed).filter(shows).map(controlText).filter((label) => label.trim() !== "").slice(0, 8);
+  // Each notice the library dismisses: the dialog, region or aside that holds a control it names.
+  const notices = [...new Set((dismissed ?? []).map((control) =>
+    control.closest('dialog, [role~="dialog"], [role~="alertdialog"], [role~="region"], aside')).filter((notice) => notice !== null))];
+  const apart = (element) => notices.some((notice) => notice.contains(element));
+  // The page as a look with no box reads it, and apart from what covers it.
+  const told = () => {
+    const buttons = buttonsIn(all);
+    // The modal dialog shown, as a covering notice's is found: the last that holds no other shown,
+    // and no notice the library dismisses; else the page outside each such notice.
+    const modals = all('dialog[open], [role~="dialog"], [role~="alertdialog"], [aria-modal="true"]').filter((element) => shows(element) && !apart(element));
+    const modal = modals.findLast((element) => !modals.some((other) => other !== element && element.contains(other)));
+    const within = (selector) => (modal === undefined ? all(selector) : [...modal.querySelectorAll(selector)]).filter((element) => !apart(element));
+    const [dialogSaid, dialogButtons] = modal === undefined && notices.length === 0 ? [undefined, []] : [firstSaid(within), buttonsIn(within)];
+    const same = modal === undefined && dialogSaid === said && JSON.stringify(dialogButtons) === JSON.stringify(buttons);
+    const dialog = (dialogSaid === undefined && dialogButtons.length === 0) || same
+      ? {} : { dialog: { ...(dialogSaid === undefined ? {} : { message: dialogSaid }), buttons: dialogButtons } };
+    const shadowed = !deep && said === undefined && buttons.length === 0 &&
+      [...document.querySelectorAll("*")].some((element) => element.shadowRoot !== null);
+    return { ...(said === undefined ? {} : { message: said }), buttons, ...dialog, ...(shadowed ? { shadowed } : {}) };
+  };
   if (found.some((box) => box.empty)) {
     const ways = [];
     for (const element of all(pressed + ', a[href], [role="link" i]')) {
@@ -249,25 +335,20 @@ const scanFrame = `(deep) => {
       const label = controlText(element);
       if (label.trim() !== "") ways.push(label);
     }
-    return { ...result, ...(said === undefined ? {} : { instruction: said }), ways };
+    // A frame whose only boxes are codes picked from checkboxes is told as a page with no box too.
+    return { ...result, ...(said === undefined ? {} : { instruction: said }), ways, ...(found.every((box) => box.grid !== undefined) ? told() : {}) };
   }
-  const buttonsIn = (within) => within(pressed).filter(shows).map(controlText).filter((label) => label.trim() !== "").slice(0, 8);
-  const buttons = buttonsIn(all);
-  // The modal dialog shown, as a covering notice's is found: the last that holds no other shown.
-  const modals = all('dialog[open], [role~="dialog"], [role~="alertdialog"], [aria-modal="true"]').filter(shows);
-  const modal = modals.findLast((element) => !modals.some((other) => other !== element && element.contains(other)));
-  const inModal = (selector) => (modal === undefined ? [] : [...modal.querySelectorAll(selector)]);
-  const dialogSaid = firstSaid(inModal);
-  const dialogButtons = buttonsIn(inModal);
-  const dialog = dialogSaid === undefined && dialogButtons.length === 0
-    ? {} : { dialog: { ...(dialogSaid === undefined ? {} : { message: dialogSaid }), buttons: dialogButtons } };
-  const shadowed = !deep && said === undefined && buttons.length === 0 &&
-    [...document.querySelectorAll("*")].some((element) => element.shadowRoot !== null);
-  return { ...result, ...(said === undefined ? {} : { message: said }), buttons, ...dialog, ...(shadowed ? { shadowed } : {}) };
+  return { ...result, ...told() };
 }`;
 
 /** One host call over the primary tab's frames on the site or a configured sign-in origin. */
-const scanCode = (targetId: string, siteHost: string, authenticationOrigins: readonly string[], deep: boolean) =>
+const scanCode = (
+  targetId: string,
+  siteHost: string,
+  authenticationOrigins: readonly string[],
+  deep: boolean,
+  dismiss: readonly string[],
+) =>
   `${primaryPageCode(targetId)}
 const onSiteHost = ${hostOnSiteSource(siteHost)};
 const authenticationOrigins = ${JSON.stringify(authenticationOrigins)};
@@ -298,7 +379,21 @@ for (const frame of primary.frames()) {
   try {
     const origin = signInOrigin(frameAddress(frame));
     if (origin === undefined || !(await frameShows(frame))) continue;
-    frames.push({ ...(await frame.evaluate(${scanFrame}, ${deep})), origin });
+    // Each control the library dismisses a notice by that shows in this frame, at most five a selector.
+    const dismissed = [];
+    for (const selector of ${JSON.stringify(dismiss)}) {
+      const located = frame.locator(selector);
+      const count = await located.count().catch(() => 0);
+      for (let index = 0; index < Math.min(count, 5); index++) {
+        const handle = await located.nth(index).elementHandle({ timeout: 1000 }).catch(() => null);
+        if (handle !== null) dismissed.push(handle);
+      }
+    }
+    try {
+      frames.push({ ...(await frame.evaluate(${scanFrame}, { deep: ${deep}, dismissed })), origin });
+    } finally {
+      for (const handle of dismissed) await handle.dispose().catch(() => undefined);
+    }
   } catch {
     // A frame the host cannot read, such as one that detaches during the scan, shows nothing.
     continue;
@@ -341,9 +436,12 @@ const Scan = Schema.Struct({
  * as a name is. Undefined when the page could not be read, or its top page is no web page.
  *
  * A page with no empty box that shows a modal dialog reads as that dialog, its heading as the
- * message and its buttons, and keeps the page behind it as its instruction and ways, where a look
- * with no box keeps neither otherwise, so a look read before dialogs were read compares with it
- * (`sameFingerprint`). A page that reads as nothing at all, no box, message or button, is read
+ * message and its buttons, and one with a notice that holds a control of `dismiss`, a library's
+ * steps' own, reads apart from it; either keeps the page as read whole as its instruction and ways,
+ * where a look with no box keeps neither otherwise, so a look read before compares with it
+ * (`sameFingerprint`). A page whose only boxes are codes picked from checkboxes keeps the page as a
+ * look with no box reads it as its instruction and ways alike; on a page with a box that takes
+ * typing they never count. A page that reads as nothing at all, no box, message or button, is read
  * again through its open shadow roots (`deep`), as a page whose sign-in form sits in web components
  * shows nothing to a read of its document alone: no look ever read so is stored or matched.
  */
@@ -353,6 +451,7 @@ export const observeSignInState = (input: {
   readonly authenticationOrigins: readonly string[];
   readonly workspace?: { readonly parent: string } | undefined;
   readonly identifiers?: readonly string[] | undefined;
+  readonly dismiss?: readonly string[] | undefined;
 }): Effect.Effect<ObservedState | undefined> => {
   const scan = (deep: boolean) =>
     input.page
@@ -362,6 +461,7 @@ export const observeSignInState = (input: {
           siteDomain(input.siteOrigin) ?? URL.parse(input.siteOrigin)?.hostname ?? "",
           input.authenticationOrigins,
           deep,
+          [...new Set(input.dismiss ?? [])].slice(0, 8),
         ),
         15,
       )
@@ -401,9 +501,11 @@ const readingOf = (
     workspace !== undefined && origin !== siteOrigin && workspaceHost(siteOrigin, workspace.parent, origin)
       ? "workspace"
       : origin;
-  const boxes = frames.flatMap((frame) =>
-    frame.boxes.slice(0, 200).map((box) => ({ frame: named(frame.origin), ...box })),
-  );
+  // A code picked from named checkboxes counts on a page that shows no box that takes typing.
+  const picked = (box: (typeof frames)[number]["boxes"][number]) => box.kind === "code" && box.role === "checkbox";
+  const typed = frames.some((frame) => frame.boxes.some((box) => !picked(box)));
+  const kept = (frame: (typeof frames)[number]) => frame.boxes.slice(0, 200).filter((box) => !typed || !picked(box));
+  const boxes = frames.flatMap((frame) => kept(frame).map((box) => ({ frame: named(frame.origin), ...box })));
   const written = (box: (typeof boxes)[number]): StateBox => {
     const label = (box.labels ?? [])
       .slice(0, 12)
@@ -423,7 +525,14 @@ const readingOf = (
   // At most the 24 empty boxes a `StateFingerprint` holds, so a long form, such as an account
   // page's, still reads as a state a library can keep.
   const empty = boxes.filter((box) => box.empty).slice(0, 24);
-  const told = empty.length > 0 ? undefined : frames.find((frame) => frame.message !== undefined || (frame.buttons ?? []).length > 0);
+  // A page whose only boxes are codes picked from checkboxes keeps the page as a look with no box
+  // reads it as its instruction and ways, so a look read before such codes were read compares with
+  // it (`sameFingerprint`).
+  const pickedOnly = empty.length > 0 && empty.every(picked);
+  const told =
+    empty.length > 0 && !pickedOnly
+      ? undefined
+      : frames.find((frame) => frame.message !== undefined || (frame.buttons ?? []).length > 0);
   const pressed = (labels: readonly string[]) =>
     labels
       .slice(0, 8)
@@ -434,9 +543,9 @@ const readingOf = (
   // A dialog shown over a page with no box is the look, the page behind it its instruction and ways.
   const dialogMessage = told?.dialog?.message === undefined ? undefined : normalized(told.dialog.message, 200, logins);
   const dialogButtons = pressed(told?.dialog?.buttons ?? []);
-  const dialog = told !== undefined && (dialogMessage !== undefined || dialogButtons.length > 0);
+  const dialog = !pickedOnly && told !== undefined && (dialogMessage !== undefined || dialogButtons.length > 0);
   // A page with boxes is told beside them by the frame its first empty box sits in.
-  const shown = empty.length > 0 ? frames.find((frame) => frame.boxes.slice(0, 200).some((box) => box.empty)) : undefined;
+  const shown = empty.length > 0 && !pickedOnly ? frames.find((frame) => kept(frame).some((box) => box.empty)) : undefined;
   const instruction = shown?.instruction === undefined ? "" : normalized(shown.instruction, 200, logins);
   const ways = [...new Set((shown?.ways ?? []).slice(0, 12).map((label) => normalized(label, 120, logins)))];
   return {
@@ -444,7 +553,9 @@ const readingOf = (
       top: named(top),
       boxes: empty.map(written),
       submit: empty.some((box) => box.submit),
-      ...(dialog
+      ...(pickedOnly
+        ? { ...(message === undefined ? {} : { instruction: message }), ...(told === undefined ? {} : { ways: buttons }) }
+        : dialog
         ? {
             ...(dialogMessage === undefined ? {} : { message: dialogMessage }),
             buttons: dialogButtons,

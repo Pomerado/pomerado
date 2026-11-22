@@ -32,6 +32,7 @@ const open = async (
   page: Page,
   bodies: Readonly<Record<string, string>>,
   identifiers?: readonly string[],
+  dismiss?: readonly string[],
 ) => {
   await page.route(/^https:\/\//u, (route) =>
     route.fulfill({
@@ -43,7 +44,7 @@ const open = async (
   const host = await hostPage(page);
   return () =>
     Effect.runPromise(
-      observeSignInState({ page: host, siteOrigin: site, authenticationOrigins: [provider], identifiers }),
+      observeSignInState({ page: host, siteOrigin: site, authenticationOrigins: [provider], identifiers, dismiss }),
     ).then((state) => {
       if (state === undefined) throw new Error("The scan read nothing");
       return state;
@@ -381,6 +382,8 @@ test("code boxes told by the rule a fill reads a row by, or by a name, read as c
     script: `<div>${six(() => '<input inputmode="numeric" style="width:2em">')}</div>`,
     marked: six(() => '<span><input autocomplete="one-time-code" maxlength="1"><span class="caret"></span></span>'),
     named: '<input type="text" name="code">',
+    // Boxes the page switches on in turn, each once the one before it holds a digit.
+    switched: `<div>${digit}${'<input inputmode="numeric" maxlength="1" disabled>'.repeat(5)}</div>`,
   };
   const read: Record<string, readonly StateBox[]> = {};
   for (const [name, boxes] of Object.entries(pages))
@@ -392,6 +395,7 @@ test("code boxes told by the rule a fill reads a row by, or by a name, read as c
     script: [{ ...row, takes: "other" }],
     marked: [row],
     named: [{ frame: site, kind: "code", role: "textbox", takes: "other" }],
+    switched: [{ ...row, takes: "other" }],
   });
   // A look read before, with each box one by one or a box named for a code as an identifier box,
   // matches each page's look now; a page with one box that takes a name never matches a row.
@@ -405,6 +409,13 @@ test("code boxes told by the rule a fill reads a row by, or by a name, read as c
   expect(sameFingerprint(before(Array.from({ length: 6 }, () => ({ frame: site, kind: "code" as const }))), now("marked"))).toBe(true);
   expect(sameFingerprint(before(identifiers(1)), now("named"))).toBe(true);
   expect(sameFingerprint(before([{ frame: site, kind: "code", role: "textbox" }]), now("separated"))).toBe(false);
+  // A look read before held a switched row's first box alone: it matches where its step types as
+  // many codes as the row has boxes, as a minter records such a row, and only there.
+  const codes = (count: number) =>
+    ({ page: `${site}/verify`, fields: Array.from({ length: count }, (_, at) => ({ selector: `#d${at}`, slot: "code" as const })) }) satisfies AutofillRecipeStep;
+  expect(sameFingerprint({ fingerprint: before(identifiers(1)), step: codes(6) }, now("switched"))).toBe(true);
+  expect(sameFingerprint({ fingerprint: before(identifiers(1)), step: codes(1) }, now("switched"))).toBe(false);
+  expect(sameFingerprint(before(identifiers(1)), now("switched"))).toBe(false);
 });
 
 test("a page with no box that shows a modal dialog reads as the dialog, keeping the page as read before beside it", async ({
@@ -441,6 +452,95 @@ test("a page with no box that shows a modal dialog reads as the dialog, keeping 
   const behind = await scan();
   expect(behind.fingerprint).toEqual(fingerprintOf({ top: site, boxes: [], submit: false, message: "~ near you", buttons: ["~ in", "~ up"] }));
   expect(sameFingerprint(behind.fingerprint, shown.fingerprint)).toBe(false);
+  // The same dialog over another page, as another login's home page shows it, is the same look:
+  // a state read as the dialog matches it, as one read before, which holds only the page behind,
+  // never does.
+  const elsewhere = await (
+    await open(page, {
+      [site]: `<h1>Groceries near you</h1><button>Log in now</button><button>Sign up</button>
+        <div role="dialog" aria-modal="true"><h2>Try membership free</h2><button>Start trial</button><button>No thanks</button></div>`,
+    })
+  )();
+  expect(elsewhere.fingerprint.instruction).toBe(shown.fingerprint.instruction);
+  expect(elsewhere.fingerprint.ways).not.toEqual(shown.fingerprint.ways);
+  expect(sameFingerprint(shown.fingerprint, elsewhere.fingerprint)).toBe(true);
+  expect(toldApart(shown.fingerprint, elsewhere.fingerprint)).toBe(0);
+  expect(sameFingerprint(before, elsewhere.fingerprint)).toBe(false);
+});
+
+test("a page with no box reads apart from a notice whose control the library dismisses, keeping the page as read before beside it", async ({
+  page,
+}) => {
+  const notice = `<div role="region" aria-label="Cookies"><h2>We use cookies</h2><button id="accept">Accept all</button><button>Settings</button></div>`;
+  const body = (shown: string) => `${shown}<h2>Welcome to the shop</h2><button>Log in</button>`;
+  const before = await (await open(page, { [site]: body(notice) }))();
+  expect(before.fingerprint).toEqual(
+    fingerprintOf({ top: site, boxes: [], submit: false, message: "~ use cookies", buttons: ["~ all", "~", "~ in"] }),
+  );
+  const apart = await (await open(page, { [site]: body(notice) }, undefined, ["#accept"]))();
+  expect(apart.fingerprint).toEqual(
+    fingerprintOf({
+      top: site,
+      boxes: [],
+      submit: false,
+      message: "~ to the shop",
+      buttons: ["~ in"],
+      instruction: before.fingerprint.message,
+      ways: before.fingerprint.buttons,
+    }),
+  );
+  // A look read before matches, and so does the page once the notice is gone.
+  expect(sameFingerprint(before.fingerprint, apart.fingerprint)).toBe(true);
+  const gone = await (await open(page, { [site]: body("") }, undefined, ["#accept"]))();
+  expect(gone.fingerprint).toEqual(fingerprintOf({ top: site, boxes: [], submit: false, message: "~ to the shop", buttons: ["~ in"] }));
+  expect(sameFingerprint(gone.fingerprint, apart.fingerprint)).toBe(true);
+});
+
+test("a code picked from four or more named checkboxes, on a page with no text box, reads as a code box and still matches a look read before", async ({
+  page,
+}) => {
+  const pictures = (count: number) =>
+    ["apple", "boat", "cat", "dog", "egg", "fish"].slice(0, count).map((name) => `<input type="checkbox" aria-label="${name}">`).join("");
+  const body = (grid: string, extra = "") =>
+    `<h1>Pick your pictures</h1><form action="/verify" method="post"><div>${grid}</div>
+      <label><input type="checkbox"> Remember this device</label>${extra}<button>Continue</button></form>`;
+  const shown = await (await open(page, { [site]: body(pictures(6)) }))();
+  const before = await (await open(page, { [site]: body("") }))();
+  expect(shown.fingerprint).toEqual(
+    fingerprintOf({
+      top: site,
+      boxes: [{ frame: site, kind: "code", role: "checkbox" }],
+      submit: true,
+      instruction: before.fingerprint.message,
+      ways: before.fingerprint.buttons,
+    }),
+  );
+  expect(sameFingerprint(before.fingerprint, shown.fingerprint)).toBe(true);
+  // Three checkboxes, or a page with a box that takes typing, read as before.
+  const three = await (await open(page, { [site]: body(pictures(3)) }))();
+  expect(three.fingerprint.boxes).toEqual([]);
+  const typed = await (await open(page, { [site]: body(pictures(6), '<input type="email" name="email">') }))();
+  expect(typed.fingerprint.boxes).toEqual([{ frame: site, kind: "identifier", takes: "email" }]);
+});
+
+test("a picture code box on a sign-in form reads as before, marked, so a page that shows it only at times reads as one look", async ({
+  page,
+}) => {
+  const form = (code: string) =>
+    `<h1>Sign in</h1><form action="/session" method="post"><input type="email" name="email"><input type="password" name="password">${code}<button>Continue</button></form>`;
+  const pictured = '<div><input type="text" name="captcha"><canvas width="120" height="40"></canvas></div>';
+  const shown = await (await open(page, { [site]: form(pictured) }))();
+  const plain = { frame: site, kind: "identifier" as const, takes: "other" as const };
+  const sure = [{ frame: site, kind: "identifier" as const, takes: "email" as const }, { frame: site, kind: "password" as const }];
+  expect(shown.fingerprint.boxes).toEqual(fingerprintOf({ top: site, boxes: [...sure, { ...plain, role: "captcha" }], submit: true }).boxes);
+  const without = await (await open(page, { [site]: form("") }))();
+  const before = fingerprintOf({ ...shown.fingerprint, boxes: [...sure, plain] });
+  // A look read before, which counted it, matches; so does the page without it, either way.
+  expect(sameFingerprint(before, shown.fingerprint)).toBe(true);
+  expect(sameFingerprint(without.fingerprint, shown.fingerprint)).toBe(true);
+  // A box of that name with no picture beside it reads as before, unmarked.
+  const bare = await (await open(page, { [site]: form('<input type="text" name="captcha">') }))();
+  expect(bare.fingerprint.boxes).toEqual(before.boxes);
 });
 
 test("a page that shows nothing outside its open shadow roots reads through them; one that shows text of its own reads as before", async ({

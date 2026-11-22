@@ -48,25 +48,26 @@ const strictSlots: ReadonlySet<string> = new Set(["password", "private_answer"])
  * null: its boxes in page order and how they take one character (`limit`), by their `maxlength` of 1
  * (`maxlength`), or by the page's own script (`script`) only where `script` says to look for one,
  * among at most `mostBoxes`. A row by its `maxlength` may hold fewer than two boxes, or more than
- * `mostBoxes`.
+ * `mostBoxes`; with `off`, it holds the boxes the page switched off too, as a page that switches
+ * each box on once the one before it holds a digit, which a fill waits for (`untrustedTarget`).
  */
-export const codeRowCode = `(element, script, mostBoxes) => {
+export const codeRowCode = `(element, script, mostBoxes, off = false) => {
   const textTypes = ["", "text", "tel", "number", "password", "search"];
   const shown = (node) => {
     const rect = node.getBoundingClientRect();
     return rect.width > 0 && rect.height > 0 && node.checkVisibility({ visibilityProperty: true });
   };
   const shownChildren = (node) => Array.from(node.children).filter(shown);
-  const editable = (control) => {
+  const editable = (control, switchedOff = false) => {
     if (control.tagName !== "INPUT") return false;
     if (!textTypes.includes((control.getAttribute("type") ?? "").toLowerCase())) return false;
-    if (control.disabled || control.readOnly) return false;
+    if ((control.disabled && !switchedOff) || control.readOnly) return false;
     return shown(control);
   };
   if (!editable(element)) return null;
   if (element.maxLength === 1) {
     const screen = element.form ?? element.getRootNode();
-    const boxes = Array.from(screen.querySelectorAll("input")).filter((control) => editable(control) && control.maxLength === 1);
+    const boxes = Array.from(screen.querySelectorAll("input")).filter((control) => editable(control, off) && control.maxLength === 1);
     return { boxes, limit: "maxlength" };
   }
   if (element.maxLength >= 0 || !script || element.parentNode === null) return null;
@@ -131,7 +132,7 @@ for (const [index, codeBox] of codeBoxes.entries())
  * a digit and its word, which no code could tell apart, and no text field. Names only, never a
  * state; `choices` are the elements the choose call clicks.
  */
-const choicesCode = `(element) => {
+export const choicesCode = `(element) => {
   if (element.matches(":read-write, select") || element.querySelector(":read-write, select") !== null) return null;
   const name = (${String(accessibleNames)})();
   const choices = Array.from(element.querySelectorAll('input[type="checkbox"], [role="checkbox"]')).filter(
