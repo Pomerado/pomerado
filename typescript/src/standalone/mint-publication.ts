@@ -27,7 +27,7 @@ import { holdsFileHandle } from "../mint/file-handles.js";
 import { fileReadback } from "../mint/file-readback.js";
 import { cardReadback } from "../mint/card-readback.js";
 import type { PublishedSignIn } from "../mint/sign-in-recorder.js";
-import { checkSignInVersion } from "../mint/sign-in-version.js";
+import { checkSignInScreens, type SignInScreens } from "../mint/sign-in-version.js";
 import { emptyCallerInput, sourceDigest } from "../mint/step-checks.js";
 import { liveTestsEvidencePath } from "../mint/live-tests.js";
 import { checkWriteSession } from "../mint/write-session.js";
@@ -148,11 +148,11 @@ export const providerKeyRefusal = (file: string, text: string): MintFailure | un
 };
 
 /**
- * The build's verified sign-in as it ships, value-free: its recipe and the address its runs start
- * from. The login URL, name, description and site naming are refused every time one holds a
- * sign-in value the build was given, naming the part and never the value (`refuseCredentialParts`),
- * and a recipe holding one is refused too. A login URL that is one authorization request is asked
- * about once per URL (`login_url_one_time`); finishing again publishes it as it is.
+ * The build's verified sign-in, screened before it ships. The login URL, name, description and
+ * site naming are refused every time one holds a sign-in value the build was given, naming the
+ * part and never the value (`refuseCredentialParts`), and screens holding one are refused too. A
+ * login URL that is one authorization request is asked about once per URL (`login_url_one_time`);
+ * finishing again publishes it as it is.
  */
 export const screenedSignIn = <E>(
   signIn: PublishedSignIn | undefined,
@@ -188,7 +188,7 @@ export const screenedSignIn = <E>(
       },
     );
     if (signIn === undefined) return undefined;
-    yield* assertAbsent(JSON.stringify(signIn.recipe));
+    if (signIn.states !== undefined) yield* assertAbsent(JSON.stringify(signIn.states));
     // One-time authorization values are not secrets, so this is advice: asked once, and finishing
     // again with the same URL publishes it as it is.
     const oneTimeParameters = oneTimeLoginUrlParameters(signIn.entryUrl);
@@ -204,33 +204,41 @@ export const screenedSignIn = <E>(
   });
 
 /**
- * The build's verified sign-in as the sign-in version check judges it (`checkSignInVersion`),
- * refused every time it fails, naming each rule and part, never a value. A one-time login URL the
- * host already asked about passes, so finishing again publishes it as before. The host passes no
+ * What the build's verified sign-in ships: its screens and the address its runs start from, never
+ * its recipe, once the sign-in version check passes them (`checkSignInScreens`). Refused every time
+ * it fails, naming each rule and part, never a value; a sign-in with no screens, as one whose
+ * screen the recorder could not read, fails as screens with no state. A one-time login URL the host
+ * already asked about passes, so finishing again publishes it as before. The host passes no
  * identity values or signed-out pages: it no longer holds the login, and the recorder already
  * applied the identity guards to each screen and compared the marker with the build's signed-out
  * pages as it recorded the sign-in. A login URL, page or popup off the site's registrable domain
  * is refused (`foreign_origin`), on a sign-in origin the request declares in
  * `authenticationOrigins` too, and one that is not https (`insecure_origin`).
  */
-const signInVersionRefusal = (
+export const shippedSignIn = (
   signIn: PublishedSignIn,
   siteOrigin: string,
   oneTimeLoginUrlsAsked: ReadonlySet<string>,
-): MintFailure | undefined => {
-  const findings = checkSignInVersion({
-    siteOrigin,
-    version: signIn,
-    signedOutSnapshots: [],
-    entryUrlAsked: oneTimeLoginUrlsAsked.has(signIn.entryUrl),
-  });
-  return findings.length === 0
-    ? undefined
-    : new MintFailure({
-        code: "PublicationUnavailable",
-        reason: "sign_in_version_refused",
-        publicationFeedback: { signInFindings: findings },
-      });
+): Effect.Effect<SignInScreens, MintFailure> => {
+  const { states, entryUrl } = signIn;
+  const findings =
+    states === undefined || signIn.unreadable === true
+      ? [{ rule: "invalid_recipe" as const, part: "states.states" }]
+      : checkSignInScreens({
+          siteOrigin,
+          screens: { entryUrl, states },
+          signedOutSnapshots: [],
+          entryUrlAsked: oneTimeLoginUrlsAsked.has(entryUrl),
+        });
+  return states !== undefined && findings.length === 0
+    ? Effect.succeed({ entryUrl, states })
+    : Effect.fail(
+        new MintFailure({
+          code: "PublicationUnavailable",
+          reason: "sign_in_version_refused",
+          publicationFeedback: { signInFindings: findings },
+        }),
+      );
 };
 
 export const mintPublication =
@@ -258,17 +266,16 @@ export const mintPublication =
           const refused = providerKeyRefusal(path, text);
           if (refused !== undefined) return yield* Effect.fail(refused);
         }
-        const signIn = yield* screenedSignIn(
+        const screened = yield* screenedSignIn(
           state.recorder.published(),
           publication.metadata,
           secrets.assertAbsent,
           state.oneTimeLoginUrlsAsked,
         );
-        const versionRefused =
-          signIn === undefined
+        const signIn =
+          screened === undefined
             ? undefined
-            : signInVersionRefusal(signIn, context.siteOrigin, state.oneTimeLoginUrlsAsked);
-        if (versionRefused !== undefined) return yield* Effect.fail(versionRefused);
+            : yield* shippedSignIn(screened, context.siteOrigin, state.oneTimeLoginUrlsAsked);
         // Published code never holds a handle: no saved file the operation could run may hold one,
         // whatever its extension. That is every saved file when Node could load one its imports
         // don't name (see runnableOperationFiles). Otherwise a probe no import reaches, saved only
