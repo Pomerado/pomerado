@@ -24,7 +24,6 @@ import {
   type SignedInEntry,
   type SignInStates,
   type SignInStatesChoices,
-  signInStatesRecipe,
   signInStatesStepUpRecipe,
   standingFingerprint,
   stateAfter,
@@ -2024,8 +2023,9 @@ export const replaySignInStates = <
     const picked = library.signedIn.filter((marker) => marker.key === input.choices?.signedIn);
     // The login's own marker, then the newest first, as the recipe view takes the newest.
     const markers = [...picked, ...library.signedIn.filter((marker) => !picked.includes(marker)).reverse()];
-    const recipe =
-      input.inPlace === true ? signInStatesStepUpRecipe(library, input.choices) : signInStatesRecipe(library, input.choices);
+    // Every state in library order, as `markersShown` reads its steps by their place there. Not in
+    // place the library holds no step-up, so this is the login's recipe with the marker it takes.
+    const recipe = signInStatesStepUpRecipe(library, input.choices);
     if (recipe === undefined)
       return {
         outcome: "unsent",
