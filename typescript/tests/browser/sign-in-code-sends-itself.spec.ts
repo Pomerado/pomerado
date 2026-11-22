@@ -1,16 +1,22 @@
 import { expect, test, type Page } from "@playwright/test";
-import { Effect, Either } from "effect";
+import { Data, Effect, Either } from "effect";
 import type { AutofillStepReport } from "../../src/destinations/autofill-step.js";
+import { observeSignInState } from "../../src/destinations/sign-in-state-scan.js";
+import { appendSignInStates, signInStatesOf } from "../../src/destinations/sign-in-states.js";
 import { localSignInLogin, makeSignInBrowser } from "../../src/standalone/authentication.js";
 import { makeInputAsker } from "../../src/inputs/callback.js";
 import { makeRunSecrets } from "../../src/inputs/secrets.js";
+import type { AutofillHooks } from "../../src/runtime/autofill-state.js";
+import { typedValues } from "../../src/runtime/autofill-values.js";
 import { signInForRun } from "../../src/runtime/sign-in-replay.js";
+import { replaySignInStates } from "../../src/runtime/sign-in-states-replay.js";
 import { expectNotCarried, hostKeyboard, hostPage } from "./autofill-host-page.js";
 
 // A run's sign-in whose recorded code screen has six one-digit boxes and a Verify button, but whose
 // own script sends the code as the sixth box takes its digit, with no new document. The site takes
 // a code once: a second check of it answers that the code expired and signs the session out. So the
-// host must not click Verify after the page sent the code itself.
+// host must not click Verify after the page sent the code itself, nor, for the same boxes in a form
+// with no Verify, press Enter after them while the site still checks the code.
 
 const site = "https://site.example.test";
 const host = "site.example.test";
@@ -28,12 +34,12 @@ const boxes = [1, 2, 3, 4, 5, 6]
   .join("");
 
 /**
- * The code screen: six boxes and a Verify button. The sixth digit sends the code once, and so does
- * each click of Verify, which is counted. An accepted code puts the account in place of the screen;
- * an expired one signs the session out. Each box's key downs are kept, with whether each was
- * trusted.
+ * The code screen: six boxes and a Verify button, or, `inForm`, the boxes alone in a form. The
+ * sixth digit sends the code once, and so does each click of Verify, which is counted, and each
+ * Enter in a box. An accepted code puts the account in place of the screen; an expired one signs
+ * the session out. Each box's key downs are kept, with whether each was trusted.
  */
-const codeScreen = `<main id="view"><p>Enter the code we sent you</p>${boxes}<button id="verify" type="button">Verify</button></main>
+const codeScreen = (inForm: boolean) => `<main id="view"><p>Enter the code we sent you</p>${inForm ? `<form>${boxes}</form>` : `${boxes}<button id="verify" type="button">Verify</button>`}</main>
 <script>
 const view = document.getElementById("view");
 const boxes = [...document.querySelectorAll(".otp")];
@@ -48,6 +54,7 @@ const check = () =>
     });
 boxes.forEach((box, index) => box.addEventListener("keydown", (event) => {
   window.keys.push({ box: index + 1, key: event.key, trusted: event.isTrusted });
+  if (event.key === "Enter") check();
 }));
 boxes.forEach((box, index) => box.addEventListener("input", () => {
   if (box.value !== "" && boxes[index + 1]) boxes[index + 1].focus();
@@ -55,17 +62,17 @@ boxes.forEach((box, index) => box.addEventListener("input", () => {
   sent = true;
   check();
 }));
-document.getElementById("verify").addEventListener("click", () => {
+document.getElementById("verify")?.addEventListener("click", () => {
   window.clicks += 1;
   check();
 });
 </script>`;
 
 /**
- * The site: the code screen at /verify. It keeps each code check and answers it 600 ms later,
+ * The site: the code screen at /verify. It keeps each code check and answers it `checkMs` later,
  * the first as accepted and any later one as expired.
  */
-const serve = async (page: Page) => {
+const serve = async (page: Page, { inForm = false, checkMs = 600 } = {}) => {
   const checks: string[] = [];
   await page.route(`${site}/**`, async (route) => {
     const request = route.request();
@@ -74,13 +81,13 @@ const serve = async (page: Page) => {
       const value: unknown = Reflect.get(Object(body), "code");
       checks.push(typeof value === "string" ? value : "");
       const first = checks.length === 1;
-      await new Promise((resolve) => setTimeout(resolve, 600));
+      await new Promise((resolve) => setTimeout(resolve, checkMs));
       await route.fulfill({
         status: first ? 200 : 401,
         contentType: "application/json",
         body: "{}",
       });
-    } else await route.fulfill({ contentType: "text/html", body: codeScreen });
+    } else await route.fulfill({ contentType: "text/html", body: codeScreen(inForm) });
   });
   return checks;
 };
@@ -168,4 +175,79 @@ test("a run signs in through six code boxes that send the code themselves, and n
   });
   expect(reports[0]).not.toHaveProperty("clicked");
   expect(JSON.stringify(reports)).not.toContain(code);
+});
+
+class TestFailure extends Data.TaggedError("TestFailure")<{ readonly code: string }> {}
+
+/**
+ * A sign-in of the screen as one recorded state with no submit, on a host that presses Enter after
+ * typing such a state (`resubmit`) and reads the tab's own requests for a code the page sent
+ * (`codeSent`).
+ */
+const runStates = async (page: Page) => {
+  await page.goto(`${site}/verify`);
+  const browser = await hostPage(page);
+  const { keyboard } = await hostKeyboard(page);
+  const signIn = makeSignInBrowser({ page: browser, keyboard, siteOrigin: site, authenticationOrigins: [], typing: { typed: false } });
+  const observe = observeSignInState({ page: browser, siteOrigin: site, authenticationOrigins: [] });
+  const scanned = await Effect.runPromise(observe);
+  if (scanned === undefined) throw new Error("The scan read nothing");
+  const recorded = appendSignInStates(signInStatesOf({}, []), {
+    states: [{ fingerprint: scanned.fingerprint, step: { page: `${site}/verify`, fields: recipe.steps[0].fields } }],
+    signedIn: recipe.signedIn,
+  });
+  if ("refused" in recorded) throw new Error(recorded.refused);
+  const requests: { readonly at: number; readonly body: string }[] = [];
+  page.on("request", (request) => requests.push({ at: Date.now(), body: request.postData() ?? "" }));
+  const codeSent = (typed: { readonly since: number; readonly code: string }) =>
+    Effect.succeed(requests.some(({ at, body }) => at >= typed.since && body.includes(JSON.stringify(typed.code))));
+  const failed = (code: string) => () => new TestFailure({ code });
+  const hooks: AutofillHooks<TestFailure> = {
+    inspect: signIn.inspect,
+    fill: (input) => {
+      const filling = { ...input, values: typedValues(input.step, input.values), codeSent };
+      return signIn.fill(filling);
+    },
+    ...(signIn.resubmit === undefined ? {} : { resubmit: signIn.resubmit }),
+    check: (indicator, screens, challengeScreens) => signIn.confirm(indicator, screens, challengeScreens ?? screens),
+    confirm: (indicator, _identifiers, screens, challengeScreens) =>
+      signIn.confirm(indicator, screens, challengeScreens ?? screens),
+    open: (url) => signIn.open(url).pipe(Effect.mapError(failed("open"))),
+    markerVisible: (selector, screenPage, popup) =>
+      signIn.markerVisible(selector, screenPage, popup).pipe(Effect.mapError(failed("marker"))),
+  };
+  const ended = await Effect.runPromise(
+    Effect.either(
+      replaySignInStates({
+        library: recorded.library,
+        observe,
+        hooks,
+        entryUrl: `${site}/verify`,
+        credentials: login,
+        ask: makeInputAsker((request) => Effect.succeed({ [request.questions[0]?.id ?? "code"]: code })),
+        broker: { register: () => Effect.void, registeredSecretMatches: () => Effect.succeed([]) },
+        site: host,
+        correlation: undefined,
+        emit: () => Effect.void,
+        failures: { unanswered: failed("unanswered"), unavailable: failed("unavailable") },
+        timing: { stepWaitMs: 15_000, pollMs: 250 },
+        sent: { current: false },
+      }),
+    ),
+  );
+  expectNotCarried(browser.calls, code);
+  return Either.isRight(ended) ? ended.right.outcome : ended.left.code;
+};
+
+test("a recorded code state with no submit, whose boxes send the code while the site checks it, gets the code once and no Enter", async ({
+  page,
+}) => {
+  // The site takes 9 s to check, longer than the host waits before an Enter after typing.
+  const checks = await serve(page, { inForm: true, checkMs: 9_000 });
+  expect(await runStates(page)).toBe("signed_in");
+  expect(checks).toEqual([code]);
+  expect(await page.evaluate(() => Reflect.get(window, "keys"))).toEqual(
+    Array.from(code, (key, at) => ({ box: at + 1, key, trusted: true })),
+  );
+  await expect(page.locator("#account")).toBeVisible();
 });
