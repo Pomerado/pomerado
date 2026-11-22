@@ -2709,14 +2709,13 @@ it("keeps a match where a box's label the site reworded says nothing, and never 
   expect(site.clicks).toEqual(["#go"]);
 });
 
-it("keeps one state where a sign-in records it again beside other ways", () => {
-  const page: Screen = { ...passwordScreen, instruction: "~ your password", ways: ["~"] };
-  const once = libraryOf([{ fingerprint: arrival(page), step: stepAt("/password", [password], "#go") }]);
-  const again = appendSignInStates(once, {
-    states: [{ fingerprint: arrival({ ...page, ways: ["~", "~ all cookies"] }), step: stepAt("/password", [password], "#go") }],
-    signedIn: { selector: "#account" },
-  });
-  if ("refused" in again) throw new Error(again.refused);
-  expect(again.added).toEqual([]);
-  expect(again.library.states).toEqual(once.states);
+it("still stops as its credential came back where a box's label drew late, for an old email state and a new one", async () => {
+  const late: Screen = { ...emailBox, boxes: [{ selector: "#email", kind: "identifier", takes: "other" }] };
+  for (const fingerprint of [unkinded(arrival(emailBox)), arrival(emailBox)]) {
+    const library = libraryOf([{ fingerprint, step: stepAt("/sign-in", [email], "#continue") }]);
+    // The page is read before its label draws, and comes back with it after the press.
+    const site = scriptedSite({ start: (looks) => (looks < 2 ? late : emailBox), back: emailBox }, () => "back");
+    expect(await replay(site, library)).toMatchObject({ outcome: "unclear", reason: "credential_screen_returned" });
+    expect(site.fills).toEqual(["email"]);
+  }
 });

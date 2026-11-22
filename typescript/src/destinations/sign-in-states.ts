@@ -169,9 +169,6 @@ const comparable = (a: StateFingerprint, b: StateFingerprint): readonly [StateFi
   });
   return [plain(a), plain(b)];
 };
-/** The kinds a box's `takes` says: none for `other`. */
-const kindsOf = (takes: BoxTakes | undefined): readonly string[] =>
-  takes === "email_or_phone" ? ["email", "phone"] : takes === "email" || takes === "phone" ? [takes] : [];
 /** Each frame's identifier boxes by what they take. */
 const takenOn = (fingerprint: StateFingerprint) => {
   const frames = new Map<string, BoxTakes[]>();
@@ -336,10 +333,7 @@ export const fingerprintShape = (fingerprint: StateFingerprint, page?: string, k
 };
 export type FingerprintShape = ReturnType<typeof fingerprintShape>;
 
-/**
- * The entry for a state, keyed by its fingerprint and step, its instruction and ways left out, so
- * a state recorded again beside other ways is the one it was.
- */
+/** The entry for a state, keyed by its fingerprint and step. */
 export const stateEntry = (
   fingerprint: StateFingerprint,
   step: AutofillRecipeStep,
@@ -349,7 +343,7 @@ export const stateEntry = (
   return {
     format: 1,
     kind: "state",
-    key: keyOf({ fingerprint: { ...written, instruction: undefined, ways: undefined }, step }),
+    key: keyOf({ fingerprint: written, step }),
     source,
     fingerprint: written,
     step,
@@ -424,24 +418,23 @@ export const sameBoxes = (a: Look, b: Look) => {
   );
 };
 /**
- * Whether an identifier box the page shows empty, taking an email alone or a phone alone, no longer
- * takes a kind the box on its frame took when read as `reached`, where that reading says it: a phone
- * box where an email box or one that took either was. A box that says nothing, or takes more than
- * before, as one whose label gained an error's words, loses nothing.
+ * Whether an identifier box the page shows empty takes an email alone where the box on its frame,
+ * when read as `reached`, took a phone alone, or the reverse: a phone box where an email box was.
+ * Only a box that takes one kind alone counts, on either side, so a box whose label gained an
+ * error's words, or drew late, changes nothing.
  */
 export const takesLost = (reached: ObservedState, now: ObservedState) => {
-  const before = reached.boxes.filter((box) => box.takes !== undefined && box.takes !== "other");
-  const shown = now.boxes.filter((box) => box.empty && (box.takes === "email" || box.takes === "phone"));
+  const sole = (box: StateBox) => box.takes === "email" || box.takes === "phone";
+  const before = reached.boxes.filter(sole);
+  const shown = now.boxes.filter((box) => box.empty && sole(box));
   for (const box of shown) {
     const at = before.findIndex((other) => other.frame === box.frame && other.takes === box.takes);
     if (at >= 0) before.splice(at, 1);
   }
   return shown.some((box) => {
-    const at = before.findIndex((other) => other.frame === box.frame);
-    if (at < 0) return false;
-    const lost = !kindsOf(before[at]?.takes).every((kind) => kindsOf(box.takes).includes(kind));
-    before.splice(at, 1);
-    return lost;
+    const at = before.findIndex((other) => other.frame === box.frame && other.takes !== box.takes);
+    if (at >= 0) before.splice(at, 1);
+    return at >= 0;
   });
 };
 
@@ -449,9 +442,9 @@ export const takesLost = (reached: ObservedState, now: ObservedState) => {
  * The state the page shows after an action in the state it showed when read as `reached`: the
  * same boxes, typed or not, with a text that was not there then, as a notice under a sign-in form
  * after its submit, is that state's boxes and the first such text; the same boxes alone are that
- * state again; anything else is the page's own fingerprint. Where an identifier box lost a kind it
- * took (`takesLost`), the boxes are as they stand now, each with what it takes now. Text counts
- * beside boxes nowhere else.
+ * state again; anything else is the page's own fingerprint. Where an identifier box takes the other
+ * kind alone (`takesLost`), the boxes are as they stand now, each with what it takes now. Text
+ * counts beside boxes nowhere else.
  */
 export const stateAfter = (reached: ObservedState | undefined, now: ObservedState): StateFingerprint => {
   if (reached === undefined || reached.fingerprint.boxes.length === 0) return now.fingerprint;
