@@ -495,13 +495,15 @@ const readingField = "stateReading";
 /**
  * Notes the state a build's or repair's sign-in step was taken in, read just before that step's
  * fill or approval: on the step the sign-in recorded last, as the state the page showed after the
- * one noted before (`stateAfter`). A step that takes a private answer is noted with no
- * instruction or ways, which may hold its question. A recipe never holds it: its steps are written
- * field by field.
+ * one noted before (`stateAfter`). A step that takes a private answer is noted with no instruction
+ * or ways, which may hold its question, and with `questionShape` its message, which may hold it
+ * too, as a shape alone (`textShape`): a core before the one that reads such a message doesn't
+ * match it. A recipe never holds it: its steps are written field by field.
  */
 export const noteSignInState = (
   signIn: { readonly steps: readonly object[] },
   observed: ObservedState,
+  options?: { readonly questionShape?: boolean },
 ) => {
   const step = signIn.steps.at(-1);
   if (step === undefined) return;
@@ -511,8 +513,10 @@ export const noteSignInState = (
   const privateAnswer =
     Array.isArray(fields) &&
     fields.some((field: unknown) => typeof field === "object" && field !== null && Reflect.get(field, "slot") === "private_answer");
-  const { instruction: _instruction, ways: _ways, ...look } = after;
-  Object.assign(step, { [fingerprintField]: privateAnswer ? look : after });
+  const { message, instruction: _instruction, ways: _ways, ...look } = after;
+  const shaped =
+    message === undefined ? look : { ...look, message: options?.questionShape === true ? textShape(message) : message };
+  Object.assign(step, { [fingerprintField]: privateAnswer ? shaped : after });
   Object.assign(signIn, { [readingField]: observed });
 };
 const ObservedShape = Schema.Struct({

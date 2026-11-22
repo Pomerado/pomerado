@@ -181,6 +181,11 @@ interface Run<E extends YieldableError, V extends string, L extends AutofillLogi
   seen: StateFingerprint | undefined;
   missing: string | undefined;
   /**
+   * For each state noted without its question (`untold`) that this replay acted in, the page's
+   * message and its question (`questionOf`) each time it reached that state, held in memory alone.
+   */
+  readonly asked: Map<string, { readonly message?: string | undefined; readonly question?: string | undefined }[]>;
+  /**
    * Whether the method picked last is the host's hint (`rankMethod`) as a lone method beside a way
    * in, for a login that names no method of its own, in a state the hint may have ranked first: it
    * is never stored as a pick (`choices.method`); the route that signed in is kept as any route is.
@@ -361,6 +366,76 @@ const shownWithin = <E extends YieldableError, V extends string, L extends Autof
 
 /** Whether a known state has the whole look `look`, its step telling what its boxes take (`Look`). */
 const looksLike = (look: Look) => (state: StateEntry) => sameFingerprint(state, look);
+
+/**
+ * Whether a state's step takes a private answer and its look holds no words of the page's message,
+ * which may hold its question (`noteSignInState`): none, or its shape alone.
+ */
+const untold = (state: StateEntry) =>
+  !/\p{L}/u.test(state.fingerprint.message ?? "") &&
+  state.step.fields.some((field) => "slot" in field && field.slot === "private_answer");
+
+/** Whether a known state has the look `look`, one noted without its question (`untold`) whatever its message. */
+const lookedFor = (state: StateEntry, look: StateFingerprint) =>
+  untold(state)
+    ? sameFingerprint({ ...state, fingerprint: { ...state.fingerprint, message: undefined } }, { ...look, message: undefined })
+    : sameFingerprint(state, look);
+
+/**
+ * A state's look, one noted without its question (`untold`) with the message the page showed when
+ * this replay last reached it, as a look noted with that question reads.
+ */
+const seenLook = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  state: StateEntry,
+): { readonly fingerprint: StateFingerprint; readonly step: AutofillRecipeStep } => {
+  if (!untold(state)) return state;
+  const { message: _shape, ...look } = state.fingerprint;
+  const message = run.asked.get(state.key)?.at(-1)?.message;
+  return { fingerprint: message === undefined ? look : { ...look, message }, step: state.step };
+};
+
+/**
+ * The questions a step's private-answer fields show, as its inspection read them by their recorded
+ * selectors, else their labels; undefined where one shows neither.
+ */
+const questionOf = (inspection: AutofillInspection) => {
+  const questions = inspection.screen.fields
+    .filter((field) => field.slot === "private_answer")
+    .map((field) => field.questionText ?? (field.label || undefined));
+  return questions.every((question) => question !== undefined) ? JSON.stringify(questions) : undefined;
+};
+
+/**
+ * A state noted without its question (`untold`) that the page shows, of its look whatever the
+ * page's message (`lookedFor`), in the order this login takes them (`ranked`), one this replay has
+ * not acted in or that the sign-in learned to come after the state acted in last (`next`), whose
+ * controls show on its recorded origin and whose question (`questionOf`) is none this replay
+ * answered; one whose question can't be read only while it answered none. Its refusals count for
+ * nothing, so a page no state is still ends as an unknown state.
+ */
+const askedHere = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  fingerprint: StateFingerprint,
+  after: StateEntry | undefined,
+  next: ReadonlySet<string>,
+) =>
+  Effect.gen(function* () {
+    const told = (state: StateEntry) =>
+      untold(state) &&
+      lookedFor(state, fingerprint) &&
+      (!run.visited.includes(state.key) || next.has(state.key)) &&
+      (after !== undefined || run.input.inPlace !== true || leadsToNewMarker(run, state));
+    const answered = [...run.asked.values()].flat().map((visit) => visit.question);
+    for (const state of ranked(run, run.input.library.states.filter(told), told, next, fingerprint)) {
+      const shown = yield* shownOn(run, state, resolved(run, state.step));
+      if (typeof shown === "string") continue;
+      const question = questionOf(shown);
+      if (question === undefined ? answered.length === 0 : !answered.includes(question))
+        return { state, inspection: shown } satisfies Shown;
+    }
+    return undefined;
+  });
 
 /**
  * In place (`inPlace`), whether a state sits in a pop-up, where it is told by its controls there:
@@ -733,7 +808,8 @@ const byPlace = <E extends YieldableError, V extends string, L extends AutofillL
  * look, a page with no box may be a state told by its control and address alone (`byControl`);
  * its refusals count for nothing, so a page no state is still ends as an unknown state. Where none
  * shows and the origin rule refused one whose controls showed (`admission`), that refusal
- * (`refusedOrigin`).
+ * (`refusedOrigin`). A state noted without its question (`untold`) is taken so only on a page with
+ * no message, and else, or acted in again, apart, before one that came back (`askedHere`).
  */
 const matchState = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -754,7 +830,8 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
     const learned = learnedNext(run, after);
     // In place, a state in a pop-up where the route leads is told by its controls, not the look.
     const told = (state: StateEntry) =>
-      (sameFingerprint(state, fingerprint) || (inPopup(run, state) && next.has(state.key))) &&
+      ((sameFingerprint(state, fingerprint) && (fingerprint.message === undefined || !untold(state))) ||
+        (inPopup(run, state) && next.has(state.key))) &&
       (after !== undefined || run.input.inPlace !== true || leadsToNewMarker(run, state));
     const candidates = states.filter((state) => state !== skip && told(state));
     const alike = ranked(run, candidates, told, next, fingerprint);
@@ -771,6 +848,8 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
       refused ??= shown;
       if (shown === "not_found") missing.push(state);
     }
+    const asked = yield* askedHere(run, fingerprint, after, next);
+    if (asked !== undefined) return asked;
     if (returned !== undefined) return { returned: returned as StateEntry };
     if (run.admission !== undefined) return { refusedOrigin: run.admission };
     if (missing[0] !== undefined) run.missing = missing[0].key;
@@ -1054,7 +1133,8 @@ const returnedReason = <E extends YieldableError, V extends string, L extends Au
  * (`returnedReason`), unless a sign-in learned a look-alike after the last (`learnedNext`) or the
  * state just acted in stands.
  * It stands while the page shows its boxes as they were, with or without a new text, or a notice
- * state's boxes beside its text; through the step wait, as the recipe replay waits for its next
+ * state's boxes beside its text, a state noted without its question read with the one it showed
+ * (`seenLook`); through the step wait, as the recipe replay waits for its next
  * screen, a code state whose code went asks for a new one at its code marker or at the step wait
  * (`code`), though at the step wait, with no code marker, a locked account the site's own answer
  * names ends it at once (`account_locked`), with no code asked again; the site's own answer, read
@@ -1132,7 +1212,9 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
         if (held?.text !== text) held = { text, since: at };
         const still = at - held.since >= quiet.quietMs;
         const capped = at - start >= replay.timing.stepWaitMs;
-        const fingerprint = acted?.acted.fingerprint;
+        // One noted without its question looks as it did with the question it showed (`seenLook`).
+        const look = acted === undefined ? undefined : seenLook(run, acted.acted);
+        const fingerprint = look?.fingerprint;
         // A box that lost a kind it took when the state was reached is a new page, whatever the
         // state's own look says (`takesLost`).
         const moved = acted !== undefined && takesLost(acted.reached, read);
@@ -1140,14 +1222,14 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
         // as one told by its control alone (`byControl`) is.
         const again =
           acted !== undefined &&
-          fingerprint !== undefined &&
+          look !== undefined &&
           !moved &&
-          (sameFingerprint(shape, acted.acted) ||
-            (fingerprint.boxes.length === 0 && sameFingerprint(shape, acted.reached.fingerprint)) ||
-            (fingerprint.message !== undefined &&
-              fingerprint.boxes.length > 0 &&
-              sameBoxes(shape, acted.acted) &&
-              read.texts.includes(fingerprint.message)));
+          (sameFingerprint(shape, look) ||
+            (look.fingerprint.boxes.length === 0 && sameFingerprint(shape, acted.reached.fingerprint)) ||
+            (look.fingerprint.message !== undefined &&
+              look.fingerprint.boxes.length > 0 &&
+              sameBoxes(shape, look) &&
+              read.texts.includes(look.fingerprint.message)));
         stood =
           acted !== undefined &&
           fingerprint !== undefined &&
@@ -1304,10 +1386,10 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
 /**
  * After a box was typed, or while a press waits: `same` while the page shows the state's boxes,
  * grown or not, a notice state's beside its text, or, for a state told by its text alone, as one
- * whose boxes are drawn transparent, while the page still looks as the state does; another known state it now shows in full with
- * what was typed (`fuller`), never one acted in before something went out; or `moved` once a box
- * of the state went. In place, a state in a pop-up stays `same`, as the page read is the one that
- * opened it (`inPopup`).
+ * whose boxes are drawn transparent, while the page still looks as the state does (`seenLook`);
+ * another known state it now shows in full with what was typed (`fuller`), never one acted in
+ * before something went out; or `moved` once a box of the state went. In place, a state in a pop-up
+ * stays `same`, as the page read is the one that opened it (`inPopup`).
  */
 const lookAgain = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -1323,7 +1405,8 @@ const lookAgain = <E extends YieldableError, V extends string, L extends Autofil
     const notice = state.fingerprint.message !== undefined && state.fingerprint.boxes.length > 0;
     // A state told by its text alone, whose boxes the look never counts, stands while the page
     // still looks as the state does.
-    const toldByText = state.fingerprint.boxes.length === 0 && sameFingerprint(observed.fingerprint, state);
+    const toldByText =
+      state.fingerprint.boxes.length === 0 && sameFingerprint(observed.fingerprint, seenLook(run, state));
     if (sameFingerprint(shape, state) || (notice && sameBoxes(shape, state)) || toldByText)
       return { kind: "same" as const, text };
     for (const other of ranked(
@@ -1781,8 +1864,8 @@ const actAgain = <E extends YieldableError, V extends string, L extends Autofill
 /**
  * The state a value-free replay stopped in for values (`from`), with the page as read now, when
  * the page still shows it as that replay told it: the same look after the state before
- * (`stateAfter`), its top origin included, and its controls shown on its origin (`shownOn`), at
- * one look; else why not. Never a state that looks like one the replay acted in before it, as a
+ * (`stateAfter`, `lookedFor`), its top origin included, and its controls shown on its origin
+ * (`shownOn`), at one look; else why not. Never a state that looks like one the replay acted in before it, as a
  * learned look-alike does (`state_alike`): a page gone back to that state reads the same, and only
  * `arrive`'s wait tells them apart. Nor one the login's own route leaves out where it holds a state
  * with that look (`state_not_own`), as a stop of a value-free replay given no `choices` may be.
@@ -1800,7 +1883,9 @@ const stillShown = <E extends YieldableError, V extends string, L extends Autofi
     if (ranked({ ...run, visited: before }, [state], looksLike(state)).length === 0) return "state_not_own";
     const read = yield* run.input.observe;
     if (read === undefined) return "page_unread";
-    if (!sameFingerprint(stateAfter(from.before, read), state)) return "page_changed";
+    const seen = stateAfter(from.before, read);
+    if (!lookedFor(state, seen)) return "page_changed";
+    run.seen = seen;
     if (run.input.inPlace === true && !leadsToNewMarker(run, state)) return "marker_shown_before";
     const shown = yield* shownOn(run, state, resolved(run, state.step));
     return typeof shown === "string" ? shown : { state, inspection: shown, observed: read };
@@ -1919,6 +2004,7 @@ export const replaySignInStates = <
       page: undefined,
       seen: undefined,
       missing: undefined,
+      asked: new Map(),
       hinted: false,
       admission: undefined,
       shownBefore: new Set(),
@@ -1968,6 +2054,11 @@ const walk = <E extends YieldableError, V extends string, L extends AutofillLogi
       if (run.visited.length >= maximumStateVisits) return stopped(run, "state_limit").ended;
       run.visited.push(arrived.state.key);
       run.missing = undefined;
+      if (untold(arrived.state))
+        run.asked.set(arrived.state.key, [
+          ...(run.asked.get(arrived.state.key) ?? []),
+          { message: run.seen?.message, question: questionOf(arrived.inspection) },
+        ]);
       yield* input.emit({
         stage: "state",
         state: arrived.state.key,
