@@ -395,13 +395,15 @@ for (const [name, form, selector, account, failed] of [
   });
 
 // A verified sign-in through a private answer records its question selector in a version 1
-// recipe, with no question text, answer or login value in it.
-test("records a sign-in through a security question as a version 1 recipe without its question or answer", async ({ page }) => {
+// recipe, and its screens, with no question text, answer or login value in them, a question all in
+// lowercase included.
+for (const question of ["First pet?", "what was the name of your first pet?"])
+test(`records a sign-in through the security question "${question}" as a version 1 recipe and screens without its question or answer`, async ({ page }) => {
   const site = "https://bank.example.test";
   await page.route(`${site}/login`, (route) => route.fulfill({ contentType: "text/html", body:
     '<form method="post" action="/session"><label>Email<input id="email" name="email"></label><label>Password<input id="password" name="password" type="password"></label><button id="sign-in">Sign in</button></form>' }));
   await page.route(`${site}/session`, (route) => route.fulfill({ contentType: "text/html", body:
-    '<form method="post" action="/answer"><p id="question">First pet?</p><label>Security answer<input id="answer" name="answer"></label><button id="continue">Continue</button></form>' }));
+    `<form method="post" action="/answer"><p id="question">${question}</p><label>Security answer<input id="answer" name="answer"></label><button id="continue">Continue</button></form>` }));
   await page.route(`${site}/answer`, (route) => route.fulfill({ contentType: "text/html", body:
     '<p id="identity">Signed in</p>' }));
   await page.goto(`${site}/login`);
@@ -418,8 +420,7 @@ test("records a sign-in through a security question as a version 1 recipe withou
   await page.waitForURL(`${site}/answer`);
   expect(await Effect.runPromise(auth.fill({ signedIn: { selector: "#identity" } }))).toMatchObject({ verified: true });
   const published = auth.recorder.published();
-  // Its screens hold the same steps. Nothing published holds the answer, the login or the question
-  // as the page shows it, though the screens keep the question's lowercase words.
+  // Its screens hold the same steps.
   expect(published?.states?.states.map((state) => state.step)).toEqual(published?.recipe.steps);
   expect(published).toMatchObject({
     recipe: {
@@ -442,9 +443,39 @@ test("records a sign-in through a security question as a version 1 recipe withou
     },
     entryUrl: `${site}/login`,
   });
-  const text = JSON.stringify(published);
-  for (const held of ["First pet", "synthetic-first-pet", login.username, login.password, "Security answer"])
-    expect(text).not.toContain(held);
+  const text = JSON.stringify(published).toLowerCase();
+  for (const held of ["pet", "synthetic", login.username, login.password, "security answer"])
+    expect(text).not.toContain(held.toLowerCase());
+});
+
+// A device approval's screen is the page the site shows while it waits, read before the owner
+// approves, never the account the site moves on to once they do.
+test("records a sign-in through a device approval with the approval's own page as its screen", async ({ page }) => {
+  const site = "https://bank.example.test";
+  await page.route(`${site}/login`, (route) => route.fulfill({ contentType: "text/html", body:
+    '<form method="post" action="/approve"><label>Email<input id="email" name="email"></label><button id="continue">Continue</button></form>' }));
+  await page.route(`${site}/approve`, (route) => route.fulfill({ contentType: "text/html", body:
+    "<h1>Approve the sign-in on your device</h1>" }));
+  await page.route(`${site}/account`, (route) => route.fulfill({ contentType: "text/html", body:
+    '<p id="identity">Signed in</p>' }));
+  await page.goto(`${site}/login`);
+  // The owner approves on their device, and the site moves on to the account.
+  const auth = await localSignIn(page, site, makeInputAsker(() => Effect.promise(async () => {
+    await page.goto(`${site}/account`);
+    return { approved: { confirmed: true } };
+  })));
+  await Effect.runPromise(auth.recorder.step({
+    fields: [{ selector: "#email", accepts: ["email"] }],
+    submit: "#continue",
+  }, `${site}/login`, Effect.void));
+  await page.waitForURL(`${site}/approve`);
+  expect(await Effect.runPromise(auth.fill({ approval: "device" }))).toMatchObject({ approved: true });
+  expect(await Effect.runPromise(auth.fill({ signedIn: { selector: "#identity" } }))).toMatchObject({ verified: true });
+  const states = auth.recorder.published()?.states?.states;
+  expect(states?.map((state) => [state.step.approval, state.fingerprint.message])).toEqual([
+    [undefined, undefined],
+    ["device", "~ the sign-in on your device"],
+  ]);
 });
 
 // A run replays such a recipe, here the version 3 an earlier build wrote: it asks for the login and
