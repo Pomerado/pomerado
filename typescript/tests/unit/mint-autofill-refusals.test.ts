@@ -82,16 +82,22 @@ type ScreenRefusal =
 
 /** The login the build already holds, so a password screen may come first. */
 const heldLogin = { username: "synthetic-owner", password: "synthetic-password" };
-/** The standalone host's sign-in recorder on `page`. */
+/**
+ * The standalone host's sign-in recorder on `page`. It reads no page as a sign-in state, so the
+ * page answers only each test's own calls, in turn.
+ */
 const recorderOn = (page: AutofillPage, keyboard: CredentialKeyboard) =>
   makeSignInRecorder({
-    browser: makeSignInBrowser({
-      page,
-      keyboard,
-      siteOrigin: site,
-      authenticationOrigins: [],
-      typing: { typed: false },
-    }),
+    browser: {
+      ...makeSignInBrowser({
+        page,
+        keyboard,
+        siteOrigin: site,
+        authenticationOrigins: [],
+        typing: { typed: false },
+      }),
+      observe: () => Effect.succeed(undefined),
+    },
     login: {
       held: () => heldLogin,
       values: Effect.succeed(heldLogin),

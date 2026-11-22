@@ -418,7 +418,9 @@ test("records a sign-in through a security question as a version 1 recipe withou
   await page.waitForURL(`${site}/answer`);
   expect(await Effect.runPromise(auth.fill({ signedIn: { selector: "#identity" } }))).toMatchObject({ verified: true });
   const published = auth.recorder.published();
-  expect(published).toEqual({
+  // Its screens hold the same steps and check, and no more of the question or answer than it does.
+  expect(published?.states?.states.map((state) => state.step)).toEqual(published?.recipe.steps);
+  expect(published).toMatchObject({
     recipe: {
       version: 1,
       steps: [
