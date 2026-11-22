@@ -1719,15 +1719,15 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["1d434436dac959b2438dcb9546916c7b33400eaf3f42b8bb7d686610ba7e4797", "core"],
+    ["263155659f2b7cb5666bb4b421e340c71c398ebab063e370f266c93bcd50f9a2", "core"],
     ["97e3b5ebdbe8d5fca43790729084de4eef4fbcf5fdf71ad645e679fd72f4e804", "search"],
-    ["f733f795f5096e6bec93ac18366e389afcc71585ca8aeedc378793516ceb6661", "auth"],
+    ["627cab8459434bd0dccb1206b50d0684b0aee2d580cfd931fa973b1ab9154f61", "auth"],
     ["539abe36b602c8e2eff8745dd0462aea41837a20cc0b90cbef7a01cbad6fb89a", "testing"],
     ["ca80679c4488dec4ee85052fb39f1493b6d5f8ca4a5df9b56d10a2e96078e848", "pagination"],
     ["b0220727e7f21e1c5d10101e74996ddb3d2d4e18061ac85c807203ed4ab0f695", "forms"],
     ["3cd1434cdea838aee3b06589f685812620c48d2aba277f86622d6bb45282cb40", "writes"],
     ["3c704ebf62f31a58bcfc21e23889a794cd0005885afc692b4638c9e182022bc9", "cart"],
-    ["919ad5b06c06c46f6b9f1a1049e6ba7cc7c2c12428847de871eb5555483e96fe", "caller-input"],
+    ["a0c9ea62be24b9fcf921daf77c6c9aa93c65c3869ee8cbcad42d8e1698c32f05", "caller-input"],
     ["d47486fdd08e7a7ff6ab8f38ee03e6a3e8e2287eb67f2412f1fe996543ea1857", "publication"],
     ["b76c0ac57db6caf1485147513393a4ab31278ed8d74722853377ca82a1c25808", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],

@@ -156,8 +156,7 @@ Try first. Ask only for what the page or the caller uniquely knows at that point
   offers alternatives for: prefer not starting a refusal of either with "Caller input error:"
   (above). A day or option the page greys out, with or without a reason, is not ambiguous and
   never a question (core skill, "Configure, then read");
-- a code that is not part of signing in (auth skill): another code the site sends to confirm a
-  protected action after sign-in, or a code the site sends during a write, signed out too
+- a code that is not part of signing in (auth skill): a code the site sends during a write, signed out too
   (writes skill), such as a confirmation code by text or email;
 - a fact only the caller has that the site now asks for.
 
@@ -208,7 +207,7 @@ already asked for, or to solve a CAPTCHA.
    - `{ type: "text", prompt, maxLength? }`: free text.
    - `{ type: "confirm", prompt, followUp? }`: yes or no, returned as `{ confirmed }`.
    - `{ type: "secret", secretKind, prompt, maxLength? }`: a code the site sent that is
-     not part of signing in, to confirm an action after sign-in or during a write, signed
+     not part of signing in, during a write, signed
      out too (`one_time_code`; a code that is part of signing in is a `code` field of the
      `authenticate` step, never a question), an
      authenticator code (`totp`, which a saved login's TOTP fills without asking) or

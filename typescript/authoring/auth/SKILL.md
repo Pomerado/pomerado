@@ -10,11 +10,10 @@ screen's fields and its submit control, and the host fills them from the private
 the submit. You never see, type, request or read back a credential. Start with a `signInStep` for
 the first screen. If a step fails, inspect the site and correct the steps in this browser.
 
-A code the site sends as part of signing in, by text message, email or an authenticator app, is
+A code the site sends as part of signing in or after it, by text message, email or an authenticator app, is
 part of the sign-in: map its screen as a `signInStep` with a `code` field and let `authenticate`
 get the code, which the host fills or asks the caller for. Never ask for it separately with
-`request_input`. A `request_input` or script secret question for a code is only for a code that
-is not part of signing in: another code a later protected action after sign-in asks for, or a code
+`request_input`. A `request_input` or script secret question for a code is only for a code
 the site sends during a write, signed out too (writes skill); `authenticate` is never started just
 for such a code.
 
