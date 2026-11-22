@@ -238,12 +238,13 @@ export const isCodeRow = (
  * The code fields of a row of `count` code boxes taken by place, for a code screen whose recorded
  * boxes never showed though the page shows its look: each box of a row of one-character boxes
  * (`row`, by `maxlength` 1 and the code field's word rule), else each code field
- * `unrecordedCodeStep` matches, the next in its frame's page order. A host's inspection of them
- * passes `isCodeRow` before anything is typed.
+ * `unrecordedCodeStep` matches, the next in its frame's page order (`:nth-match`, as a selector
+ * never chains into another frame). A host's inspection of them passes `isCodeRow` before anything
+ * is typed.
  */
 export const codeRowFields = (count: number, row: boolean) => {
   const box = row ? `input[maxlength="1"]${notOtherKind}` : (unrecordedCodeStep.fields[0]?.selector ?? "");
-  return Array.from({ length: count }, (_, index) => ({ selector: `${box} >> nth=${index}`, slot: "code" as const }));
+  return Array.from({ length: count }, (_, index) => ({ selector: `:nth-match(${box}, ${index + 1})`, slot: "code" as const }));
 };
 
 /**

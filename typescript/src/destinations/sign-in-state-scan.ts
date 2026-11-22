@@ -55,7 +55,8 @@ const normalized = (text: string, limit: number, logins: readonly string[]) =>
  * Page code, run in each frame: the visible boxes that take typing, with their kinds, whether each
  * holds a value, and whether a submit sits in its form; a row of one-character boxes is one code
  * box with its count. A code box also gives its role, its own or else its type's, and the labels
- * of its boxes (`labels`): its `aria-label`, else its label elements' text, else its placeholder. A box with no hint of its kind counts as an identifier only when required or
+ * of its boxes (`labels`): each one's `aria-label`, else its label elements' text, else its
+ * placeholder. A box with no hint of its kind counts as an identifier only when required or
  * in a form that has a submit or another counted box; a search box never counts. With no empty
  * box, the first visible h1, else h2, heading, h3 or paragraph, and up to eight buttons; these
  * and every visible text outside a control (`texts`) as they stand, which the host normalizes.

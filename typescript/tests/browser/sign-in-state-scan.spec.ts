@@ -1,9 +1,18 @@
 import { expect, test } from "@playwright/test";
 import type { Page } from "playwright";
 import { Effect } from "effect";
+import type { AutofillRecipeStep } from "../../src/destinations/autofill-recipe.js";
+import { fillAutofillStep } from "../../src/destinations/autofill-fill.js";
+import { type AutofillStep, inspectAutofillStep } from "../../src/destinations/autofill-step.js";
 import { observeSignInState, stateAfter } from "../../src/destinations/sign-in-state-scan.js";
-import { fingerprintOf } from "../../src/destinations/sign-in-states.js";
-import { hostPage } from "./autofill-host-page.js";
+import {
+  fingerprintOf,
+  noteSignInState,
+  observedSignInOf,
+  sameFingerprint,
+} from "../../src/destinations/sign-in-states.js";
+import { codeRowFields, isCodeRow } from "../../src/runtime/autofill-unrecorded-code.js";
+import { hostKeyboard, hostPage } from "./autofill-host-page.js";
 
 // The sign-in state scan on local Chromium, which decides what shows and runs each cross-origin
 // frame in its own process: every visible box on a sign-in origin by the kind its own attributes
@@ -57,7 +66,7 @@ test("the scan counts each kind of box, a row of one-character boxes as one code
   const box = (kind: string, submit: boolean, count?: number) => ({
     frame: site,
     kind,
-    ...(count === undefined ? {} : { count }),
+    ...(count === undefined ? {} : { count, role: "textbox" }),
     empty: true,
     submit,
   });
@@ -67,7 +76,7 @@ test("the scan counts each kind of box, a row of one-character boxes as one code
       boxes: [
         { frame: site, kind: "identifier" },
         { frame: site, kind: "password" },
-        { frame: site, kind: "code", count: 6 },
+        { frame: site, kind: "code", count: 6, role: "textbox" },
         { frame: site, kind: "date_of_birth" },
         { frame: site, kind: "zip" },
       ],
@@ -100,7 +109,7 @@ test("the scan reads a frame on a listed sign-in origin by its origin, and no ot
       top: site,
       boxes: [
         { frame: provider, kind: "password" },
-        { frame: provider, kind: "code" },
+        { frame: provider, kind: "code", role: "textbox" },
       ],
       submit: true,
     }),
@@ -199,4 +208,73 @@ test("a notice after a press beside the same boxes tells the state, and a typed 
   ]);
   expect(typed.fingerprint).toEqual(fingerprintOf({ top: site, boxes: [password], submit: true }));
   expect(JSON.stringify(typed)).not.toContain("sam@");
+});
+
+test("two code rows alike but for their boxes' role and labels read as two looks, and a step a minter records types the second in its frame, as a row by place does", async ({
+  page,
+}) => {
+  const row = (type: string, first: number) => ({
+    [site]: `<h1>Sign in</h1><iframe src="${provider}/verify"></iframe>`,
+    [provider]: `<form>${Array.from(
+      { length: 6 },
+      (_, at) =>
+        `<div><div><input type="${type}" aria-label="${first + at}" autocomplete="one-time-code" inputmode="numeric"></div></div>`,
+    ).join("")}<button type="button">Sign In</button></form>`,
+  });
+  const look = (role: string, first: number) =>
+    fingerprintOf({
+      top: site,
+      boxes: Array.from({ length: 6 }, (_, at) => ({ frame: provider, kind: "code" as const, role, label: String(first + at) })),
+      submit: false,
+    });
+  const text = await (await open(page, row("text", 1)))();
+  expect(text.fingerprint).toEqual(look("textbox", 1));
+  const number = await (await open(page, row("number", 0)))();
+  expect(number.fingerprint).toEqual(look("spinbutton", 0));
+  expect(sameFingerprint(text.fingerprint, number.fingerprint)).toBe(false);
+  const code = "482913";
+  const typed = async (step: AutofillStep) => {
+    const host = await hostPage(page);
+    const inspection = await Effect.runPromise(
+      inspectAutofillStep({ step, page: host, siteOrigin: site, authenticationOrigins: [provider] }),
+    );
+    if ("outcome" in inspection) throw new Error(`Inspection refused: ${inspection.reason}`);
+    const report = await Effect.runPromise(
+      fillAutofillStep({
+        step,
+        values: [...code],
+        inspection,
+        page: host,
+        keyboard: (await hostKeyboard(page)).keyboard,
+        settleMs: 500,
+      }),
+    );
+    expect(report).toMatchObject({ outcome: "filled" });
+    const boxes = page.frames().find((frame) => frame.url().startsWith(provider))?.locator("input");
+    expect(await boxes?.evaluateAll((inputs) => inputs.map((input) => (input as HTMLInputElement).value))).toEqual([
+      ...code,
+    ]);
+    return inspection;
+  };
+  // The row by place, as a replay types a look-alike code screen whose recorded boxes never show.
+  const byPlace = await typed({ fields: codeRowFields(6, false) });
+  expect(isCodeRow(byPlace.screen.fields, 6, false)).toBe(true);
+  // A row of one-character boxes by place is each next box of as many.
+  await open(page, { [site]: `<form>${'<span><input inputmode="numeric" maxlength="1"></span>'.repeat(6)}</form>` });
+  const counted = await Effect.runPromise(
+    inspectAutofillStep({ step: { fields: codeRowFields(6, true) }, page: await hostPage(page), siteOrigin: site, authenticationOrigins: [] }),
+  );
+  expect("outcome" in counted ? counted : isCodeRow(counted.screen.fields, 6, true)).toBe(true);
+  // The step a minter records there, which a build or repair notes with the look it was taken in.
+  await open(page, row("number", 0));
+  const recorded = {
+    page: `${provider}/verify`,
+    fields: Array.from({ length: 6 }, (_, at) => ({ selector: `role=spinbutton[name="${at}"]`, slot: "code" as const })),
+  } satisfies AutofillRecipeStep;
+  await typed(recorded);
+  const signIn = { steps: [{ ...recorded }] };
+  noteSignInState(signIn, number);
+  expect(observedSignInOf(signIn.steps, { steps: [recorded], signedIn: { selector: "#account" } })).toMatchObject({
+    states: [{ fingerprint: look("spinbutton", 0), step: recorded }],
+  });
 });
