@@ -25,6 +25,7 @@ import {
   type SignInStates,
   type SignInStatesChoices,
   signInStatesRecipe,
+  signInStatesStepUpRecipe,
   standingFingerprint,
   stateAfter,
   type StateEntry,
@@ -1861,21 +1862,39 @@ const noteShownBefore = <E extends YieldableError, V extends string, L extends A
  * state, acts there one action at a time, and waits for the next known state, until a signed-in
  * marker verifies the login, a stop rule ends it, or the page shows a state no one knows. Each box goes through the recipe replay's inspection and its
  * screen's origin rule (`admitScreen`), each value through its fill, and a secret goes out at most
- * once in a state. A recipe never runs here; this runs only for a library.
+ * once in a state. A recipe never runs here; this runs only for a library. Only a replay in place
+ * reads a step-up's entries (`stepUp`); any other leaves them out, with every transition to or
+ * from them.
  */
 export const replaySignInStates = <
   E extends YieldableError,
   V extends string,
   L extends AutofillLogin,
 >(
-  input: SignInStatesReplayInput<E, V, L>,
+  given: SignInStatesReplayInput<E, V, L>,
 ): Effect.Effect<SignInStatesOutcome<V>, E> =>
   Effect.gen(function* () {
+    const stepUp = new Set(
+      [...given.library.states, ...given.library.signedIn].filter((entry) => entry.stepUp === true).map((entry) => entry.key),
+    );
+    const input =
+      given.inPlace === true || stepUp.size === 0
+        ? given
+        : {
+            ...given,
+            library: {
+              ...given.library,
+              states: given.library.states.filter((entry) => !stepUp.has(entry.key)),
+              transitions: given.library.transitions.filter((entry) => !stepUp.has(entry.from) && !stepUp.has(entry.to)),
+              signedIn: given.library.signedIn.filter((entry) => !stepUp.has(entry.key)),
+            },
+          };
     const { library } = input;
     const picked = library.signedIn.filter((marker) => marker.key === input.choices?.signedIn);
     // The login's own marker, then the newest first, as the recipe view takes the newest.
     const markers = [...picked, ...library.signedIn.filter((marker) => !picked.includes(marker)).reverse()];
-    const recipe = signInStatesRecipe(library, input.choices);
+    const recipe =
+      input.inPlace === true ? signInStatesStepUpRecipe(library, input.choices) : signInStatesRecipe(library, input.choices);
     if (recipe === undefined)
       return {
         outcome: "unsent",

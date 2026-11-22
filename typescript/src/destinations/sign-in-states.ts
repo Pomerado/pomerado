@@ -82,7 +82,9 @@ const strict = { parseOptions: { onExcessProperty: "error" } } as const;
 /**
  * One stored entry of a library, format 1: a state with the step recorded there; a transition
  * from one entry's key to the next; or a signed-in marker. `source` says whether a sign-in recorded
- * the state or it was derived from a recipe.
+ * the state or it was derived from a recipe. `stepUp` marks a state or marker of a step-up, a
+ * sign-in a signed-in session's later page asks for again, which only a replay in place reads; a
+ * core without it refuses such an entry, as it refuses any field it does not know.
  */
 export const SignInStateEntry = Schema.Union(
   Schema.Struct({
@@ -92,6 +94,7 @@ export const SignInStateEntry = Schema.Union(
     source: Schema.Literal("recorded", "derived"),
     fingerprint: StateFingerprint,
     step: StateStep,
+    stepUp: Schema.optional(Schema.Literal(true)),
   }).annotations(strict),
   Schema.Struct({
     format: Schema.Literal(1),
@@ -105,12 +108,16 @@ export const SignInStateEntry = Schema.Union(
     kind: Schema.Literal("signed_in"),
     key: Key,
     ...Marker.fields,
+    stepUp: Schema.optional(Schema.Literal(true)),
   }).annotations(strict),
 );
 export type SignInStateEntry = typeof SignInStateEntry.Type;
 export type StateEntry = Extract<SignInStateEntry, { readonly kind: "state" }>;
 export type TransitionEntry = Extract<SignInStateEntry, { readonly kind: "transition" }>;
 export type SignedInEntry = Extract<SignInStateEntry, { readonly kind: "signed_in" }>;
+
+/** Whether an entry is a step-up's state or marker (`stepUp`). */
+export const isStepUpEntry = (entry: SignInStateEntry) => entry.kind !== "transition" && entry.stepUp === true;
 
 /** Code-unit order, the same on every host whatever its locale. */
 const byCodeUnit = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -342,20 +349,22 @@ export const fingerprintShape = (fingerprint: StateFingerprint, page?: string, k
 };
 export type FingerprintShape = ReturnType<typeof fingerprintShape>;
 
-/** The entry for a state, keyed by its fingerprint and step. */
+/** The entry for a state, keyed by its fingerprint, step and whether a step-up's. */
 export const stateEntry = (
   fingerprint: StateFingerprint,
   step: AutofillRecipeStep,
   source: "recorded" | "derived" = "recorded",
+  stepUp?: true,
 ): StateEntry => {
   const written = fingerprintOf(fingerprint);
   return {
     format: 1,
     kind: "state",
-    key: keyOf({ fingerprint: written, step }),
+    key: keyOf({ fingerprint: written, step, stepUp }),
     source,
     fingerprint: written,
     step,
+    ...(stepUp === undefined ? {} : { stepUp }),
   };
 };
 const transitionEntry = (from: string, to: string): TransitionEntry => ({
@@ -365,18 +374,19 @@ const transitionEntry = (from: string, to: string): TransitionEntry => ({
   from,
   to,
 });
-const signedInEntry = (marker: AutofillSignedIn): SignedInEntry => {
+const signedInEntry = (marker: AutofillSignedIn, stepUp?: true): SignedInEntry => {
   const fields = {
     ...(marker.selector === undefined ? {} : { selector: marker.selector }),
     ...(marker.urlPath === undefined ? {} : { urlPath: marker.urlPath }),
     ...(marker.openPath === undefined ? {} : { openPath: marker.openPath }),
+    ...(stepUp === undefined ? {} : { stepUp }),
   };
   return { format: 1, kind: "signed_in", key: keyOf(fields), ...fields };
 };
 const keyed = (entry: SignInStateEntry) => {
-  if (entry.kind === "state") return stateEntry(entry.fingerprint, entry.step, entry.source).key;
+  if (entry.kind === "state") return stateEntry(entry.fingerprint, entry.step, entry.source, entry.stepUp).key;
   if (entry.kind === "transition") return transitionEntry(entry.from, entry.to).key;
-  return signedInEntry(entry).key;
+  return signedInEntry(entry, entry.stepUp).key;
 };
 
 /** A counted box as read: whether it is empty, and whether a submit sits in its form. */
@@ -589,20 +599,10 @@ export const signInStatesSteps = (
     (entry) => (entry as StateEntry).step,
   );
 
-/**
- * The library as one login's recipe, for the checks a host runs on a recipe's steps and marker:
- * its steps in library order, written as `autofillRecipe` writes them, and the marker the login
- * reached last (`choices.signedIn`), else the newest. A view, never a recipe to store: it may hold
- * more steps than a recipe may. Undefined with no state or no marker.
- */
-export const signInStatesRecipe = (
-  library: SignInStates,
-  choices?: SignInStatesChoices,
-): AutofillRecipe | undefined => {
-  const marker =
-    library.signedIn.find((entry) => entry.key === choices?.signedIn) ?? library.signedIn.at(-1);
-  if (marker === undefined || library.states.length === 0) return undefined;
-  const steps = signInStatesSteps(library).map((step) => ({
+/** The library as a recipe: its states' steps, written as `autofillRecipe` writes them, and `marker`. */
+const recipeOf = (library: SignInStates, states: readonly StateEntry[], marker: SignedInEntry | undefined) => {
+  if (marker === undefined || states.length === 0) return undefined;
+  const steps = signInStatesSteps(states).map((step) => ({
     ...step,
     fields: step.fields.map(
       (field): AutofillField => ("accepts" in field ? { ...field, slot: field.accepts[0] ?? "email" } : field),
@@ -620,12 +620,73 @@ export const signInStatesRecipe = (
 };
 
 /**
+ * The library as one login's recipe, for the checks a host runs on a recipe's steps and marker:
+ * the steps of its states but a step-up's (`stepUp`) in library order, written as
+ * `autofillRecipe` writes them, and the marker the login reached last (`choices.signedIn`), else
+ * the newest, never a step-up's. A view, never a recipe to store: it may hold more steps than a
+ * recipe may. Undefined with no such state or marker.
+ */
+export const signInStatesRecipe = (
+  library: SignInStates,
+  choices?: SignInStatesChoices,
+): AutofillRecipe | undefined => {
+  const markers = library.signedIn.filter((entry) => entry.stepUp !== true);
+  return recipeOf(
+    library,
+    library.states.filter((entry) => entry.stepUp !== true),
+    markers.find((entry) => entry.key === choices?.signedIn) ?? markers.at(-1),
+  );
+};
+
+/**
+ * The library as a replay in place reads it: the steps of every state, a step-up's and the site's
+ * own sign-in's, in library order, and the step-up marker the login reached last
+ * (`choices.signedIn`), else the newest step-up marker; with none, the marker
+ * `signInStatesRecipe` takes. Undefined with no state or no marker.
+ */
+export const signInStatesStepUpRecipe = (
+  library: SignInStates,
+  choices?: SignInStatesChoices,
+): AutofillRecipe | undefined => {
+  const picked = (markers: readonly SignedInEntry[]) =>
+    markers.find((entry) => entry.key === choices?.signedIn) ?? markers.at(-1);
+  const own = library.signedIn.filter((entry) => entry.stepUp !== true);
+  return recipeOf(library, library.states, picked(library.signedIn.filter(isStepUpEntry)) ?? picked(own));
+};
+
+/**
+ * Each step-up's recipe, one for each step-up marker in library order: the step-up states that
+ * lead to that marker, and a state of the site's own sign-in a step-up was recorded from
+ * (`ObservedSignIn.from`), in library order, so the first is where that step-up starts; and the
+ * marker. None for a library with no step-up.
+ */
+export const signInStatesStepUps = (library: SignInStates): readonly AutofillRecipe[] => {
+  const tagged = new Set(library.states.filter(isStepUpEntry).map((entry) => entry.key));
+  const states = new Set(library.states.map((entry) => entry.key));
+  return library.signedIn.filter(isStepUpEntry).flatMap((marker) => {
+    const leads = new Set([marker.key]);
+    const queue = [marker.key];
+    // Back through the step-up's own states, to the site's state it went on from, if any.
+    for (const at of queue)
+      for (const { from, to } of library.transitions)
+        if (to === at && states.has(from) && !leads.has(from)) {
+          leads.add(from);
+          if (tagged.has(from)) queue.push(from);
+        }
+    const recipe = recipeOf(library, library.states.filter((entry) => leads.has(entry.key)), marker);
+    return recipe === undefined ? [] : [recipe];
+  });
+};
+
+/**
  * A sign-in a build or repair recorded: each state it arrived at, as observed before it acted,
  * with the step it took there, and the marker it signed in by. `from` is the known state a repair
- * went on from, where the library's replay stopped at a state it did not know.
+ * went on from, where the library's replay stopped at a state it did not know. `stepUp` says it
+ * is a step-up, recorded from a signed-in session's page that asked for the login again.
  */
 export interface ObservedSignIn {
   readonly from?: string | undefined;
+  readonly stepUp?: true | undefined;
   readonly states: readonly {
     readonly fingerprint: StateFingerprint;
     readonly step: AutofillRecipeStep;
@@ -652,8 +713,8 @@ export const appendSignInStates = (
     return { refused: "unsupported_step" };
   if (observed.states.some(({ fingerprint }) => blankFingerprint(fingerprint)))
     return { refused: "blank_state" };
-  const states = observed.states.map(({ fingerprint, step }) => stateEntry(fingerprint, step));
-  const marker = signedInEntry(observed.signedIn);
+  const states = observed.states.map(({ fingerprint, step }) => stateEntry(fingerprint, step, "recorded", observed.stepUp));
+  const marker = signedInEntry(observed.signedIn, observed.stepUp);
   const path = [...(observed.from === undefined ? [] : [observed.from]), ...states.map((s) => s.key), marker.key];
   const fresh = [
     ...states,
