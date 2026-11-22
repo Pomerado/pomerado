@@ -16,6 +16,7 @@ import {
   type FingerprintShape,
   fingerprintShape,
   fingerprintText,
+  type Look,
   type ObservedState,
   sameBoxes,
   sameFingerprint,
@@ -27,6 +28,8 @@ import {
   stateAfter,
   type StateEntry,
   type StateFingerprint,
+  takesLost,
+  toldApart,
 } from "../destinations/sign-in-states.js";
 import type { AutofillSignInState } from "./autofill-state.js";
 import { maySend } from "../destinations/autofill-refusal.js";
@@ -315,9 +318,8 @@ const shownWithin = <E extends YieldableError, V extends string, L extends Autof
     }
   });
 
-/** Whether a known state has the whole look `fingerprint`. */
-const looksLike = (fingerprint: StateFingerprint) => (state: StateEntry) =>
-  sameFingerprint(state.fingerprint, fingerprint);
+/** Whether a known state has the whole look `look`, its step telling what its boxes take (`Look`). */
+const looksLike = (look: Look) => (state: StateEntry) => sameFingerprint(state, look);
 
 /** `matchState`'s refusal where none of the login's own states shows, as an unknown state. */
 const ownStateNotShown = "own_state_not_shown";
@@ -331,13 +333,16 @@ const ownStateNotShown = "own_state_not_shown";
  * there, for a repair of its own. Otherwise first a state whose picked method is the login's
  * (`choices.method`, else `rankMethod`), then one the last state led to, or at the start one no
  * state leads to (`next`), then the most recently learned, as a library holds its states in the
- * order learned.
+ * order learned. Given the page's look (`page`), a state whose recorded instruction and ways stand
+ * further from the page's than another's do (`toldApart`) goes after the rest, next after the
+ * login's own route; one recorded without them is never moved by them.
  */
 const ranked = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
   candidates: readonly StateEntry[],
   alike: (state: StateEntry) => boolean,
   next: ReadonlySet<string> = new Set(),
+  page?: StateFingerprint,
 ) => {
   const route = run.input.choices?.states ?? [];
   const method = run.input.choices?.method ?? run.input.rankMethod;
@@ -357,8 +362,11 @@ const ranked = <E extends YieldableError, V extends string, L extends AutofillLo
     const index = route.indexOf(state.key);
     return index > at ? index - at : route.length + index;
   };
+  const told = (state: StateEntry) => (page === undefined ? undefined : toldApart(state.fingerprint, page));
+  const nearest = Math.min(...candidates.flatMap((state) => told(state) ?? []));
   const order = (state: StateEntry) => [
     own ? along(state) : 0,
+    Number((told(state) ?? nearest) > nearest),
     Number(!picks(state)),
     Number(!next.has(state.key)),
     -states.indexOf(state),
@@ -385,7 +393,7 @@ const returnedTo = <E extends YieldableError, V extends string, L extends Autofi
   Effect.gen(function* () {
     if (!run.replay.progress.anythingSent && run.replay.sent.maySent.size === 0) return false;
     for (const other of run.input.library.states) {
-      if (!run.visited.includes(other.key) || !sameFingerprint(other.fingerprint, state.fingerprint)) continue;
+      if (!run.visited.includes(other.key) || !sameFingerprint(other, state)) continue;
       if (other === state) return true;
       if (typeof (yield* shownOn(run, other, resolved(run, other.step))) !== "string") return true;
     }
@@ -461,8 +469,8 @@ const learnedAlike = <E extends YieldableError, V extends string, L extends Auto
   allowed: { readonly typing: boolean; readonly pressing: boolean; readonly sent: boolean },
 ) =>
   Effect.gen(function* () {
-    const learned = learnedNext(run, after).filter((state) => sameFingerprint(fingerprint, state.fingerprint));
-    for (const next of ranked(run, learned, looksLike(fingerprint))) {
+    const learned = learnedNext(run, after).filter((state) => sameFingerprint(fingerprint, state));
+    for (const next of ranked(run, learned, looksLike(fingerprint), undefined, fingerprint)) {
       const types = resolved(run, next.step).fields.length > 0;
       if (!(types ? allowed.typing : allowed.pressing && next.step.submit !== after.step.submit)) continue;
       // After a press that may have had a code or link sent (`sent`), one that takes no code and
@@ -624,10 +632,8 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
         : transitions.filter((t) => t.from === after.key).map((t) => t.to),
     );
     const learned = learnedNext(run, after);
-    const candidates = states.filter(
-      (state) => state !== skip && sameFingerprint(state.fingerprint, fingerprint),
-    );
-    const alike = ranked(run, candidates, looksLike(fingerprint), next);
+    const candidates = states.filter((state) => state !== skip && sameFingerprint(state, fingerprint));
+    const alike = ranked(run, candidates, looksLike(fingerprint), next, fingerprint);
     let refused: string | undefined;
     let returned: StateEntry | undefined;
     const missing: StateEntry[] = [];
@@ -995,21 +1001,26 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
         const still = at - held.since >= quiet.quietMs;
         const capped = at - start >= replay.timing.stepWaitMs;
         const fingerprint = acted?.acted.fingerprint;
+        // A box that lost a kind it took when the state was reached is a new page, whatever the
+        // state's own look says (`takesLost`).
+        const moved = acted !== undefined && takesLost(acted.reached, read);
         // A page with no box that still looks as it did when its state was taken is that state,
         // as one told by its control alone (`byControl`) is.
         const again =
+          acted !== undefined &&
           fingerprint !== undefined &&
-          (sameFingerprint(shape, fingerprint) ||
-            (acted !== undefined &&
-              fingerprint.boxes.length === 0 &&
-              sameFingerprint(shape, acted.reached.fingerprint)) ||
+          !moved &&
+          (sameFingerprint(shape, acted.acted) ||
+            (fingerprint.boxes.length === 0 && sameFingerprint(shape, acted.reached.fingerprint)) ||
             (fingerprint.message !== undefined &&
               fingerprint.boxes.length > 0 &&
-              sameBoxes(shape, fingerprint) &&
+              sameBoxes(shape, acted.acted) &&
               read.texts.includes(fingerprint.message)));
         stood =
+          acted !== undefined &&
           fingerprint !== undefined &&
-          (again || (fingerprint.boxes.length > 0 && sameBoxes(shape, fingerprint)));
+          !moved &&
+          (again || (fingerprint.boxes.length > 0 && sameBoxes(shape, acted.acted)));
         if (!again && !blankFingerprint(shape)) {
           // A state by its control alone, once for each look that settled as for an early look,
           // and at the step wait, as a whole look may still draw.
@@ -1099,7 +1110,7 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
         } else if (
           refused === undefined &&
           still &&
-          !run.input.library.states.some((state) => containsFingerprint(shape as StateFingerprint, state.fingerprint))
+          !run.input.library.states.some((state) => containsFingerprint(shape as StateFingerprint, state))
         )
           break;
       }
@@ -1157,20 +1168,17 @@ const lookAgain = <E extends YieldableError, V extends string, L extends Autofil
     const shape = standingFingerprint(reached, observed);
     const text = fingerprintText(shape);
     const notice = state.fingerprint.message !== undefined && state.fingerprint.boxes.length > 0;
-    if (sameFingerprint(shape, state.fingerprint) || (notice && sameBoxes(shape, state.fingerprint)))
-      return { kind: "same" as const, text };
+    if (sameFingerprint(shape, state) || (notice && sameBoxes(shape, state))) return { kind: "same" as const, text };
     for (const other of ranked(
       run,
-      run.input.library.states.filter(
-        (known) => known !== state && sameFingerprint(known.fingerprint, shape),
-      ),
+      run.input.library.states.filter((known) => known !== state && sameFingerprint(known, shape)),
       looksLike(shape),
     )) {
       if (yield* returnedTo(run, other)) continue;
       const shown = yield* shownOn(run, other, resolved(run, other.step));
       if (typeof shown !== "string") return { kind: "fuller" as const, state: other, observed };
     }
-    return containsFingerprint(state.fingerprint, shape)
+    return containsFingerprint(state, shape)
       ? { kind: "same" as const, text }
       : { kind: "moved" as const };
   });
@@ -1322,7 +1330,7 @@ const sendsOnPress = <E extends YieldableError, V extends string, L extends Auto
         next.step.fields.some((field) => "slot" in field && field.slot === "code")
       )
         return true;
-      if (next.step.fields.length === 0 && !(alone && sameFingerprint(next.fingerprint, state.fingerprint)))
+      if (next.step.fields.length === 0 && !(alone && sameFingerprint(next, state)))
         queue.push(to);
     }
   return false;
@@ -1407,7 +1415,7 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
         }
       }
       if (fuller === undefined && hostSubmits(full)) {
-        if (input.library.states.some((other) => containsFingerprint(state.fingerprint, other.fingerprint))) {
+        if (input.library.states.some((other) => containsFingerprint(state, other))) {
           const look = yield* holdStill(run, state, reached);
           if (look.kind === "moved") return acted();
           if (look.kind === "fuller") fuller = look;
@@ -1599,12 +1607,11 @@ const stillShown = <E extends YieldableError, V extends string, L extends Autofi
     const state = states.find((known) => known.key === from.state);
     if (state === undefined || from.visited.at(-1) !== from.state) return "state_unknown";
     const before = from.visited.slice(0, -1);
-    if (states.some((known) => before.includes(known.key) && sameFingerprint(known.fingerprint, state.fingerprint)))
-      return "state_alike";
-    if (ranked({ ...run, visited: before }, [state], looksLike(state.fingerprint)).length === 0) return "state_not_own";
+    if (states.some((known) => before.includes(known.key) && sameFingerprint(known, state))) return "state_alike";
+    if (ranked({ ...run, visited: before }, [state], looksLike(state)).length === 0) return "state_not_own";
     const read = yield* run.input.observe;
     if (read === undefined) return "page_unread";
-    if (!sameFingerprint(stateAfter(from.before, read), state.fingerprint)) return "page_changed";
+    if (!sameFingerprint(stateAfter(from.before, read), state)) return "page_changed";
     const shown = yield* shownOn(run, state, resolved(run, state.step));
     return typeof shown === "string" ? shown : { state, inspection: shown, observed: read };
   });
