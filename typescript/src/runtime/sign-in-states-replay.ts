@@ -870,7 +870,9 @@ const ledToByControl = <E extends YieldableError, V extends string, L extends Au
  * learned on is still that choice: a state with no box whose step lists methods, with the page's
  * top origin and main message, never one acted in, taken in the order this login takes states of
  * one look (`ranked`), the first one of whose method controls shows, one match on its recorded
- * origin (`shownOn`). It then picks among its methods as recorded (`methodFor`).
+ * origin (`shownOn`). It then picks among its methods as recorded (`methodFor`). None once this
+ * replay picked a method (`chosen`): a chooser still drawn after that pick, pressed again, may have
+ * the site send once more, as a learned look-alike is never a method choice (`learnedNext`).
  */
 const byMethods = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -878,7 +880,7 @@ const byMethods = <E extends YieldableError, V extends string, L extends Autofil
   next: ReadonlySet<string>,
 ) =>
   Effect.gen(function* () {
-    if (fingerprint.boxes.length > 0) return undefined;
+    if (fingerprint.boxes.length > 0 || run.replay.progress.chosen !== undefined) return undefined;
     const here = (state: StateEntry) =>
       state.fingerprint.boxes.length === 0 &&
       state.step.methods !== undefined &&
@@ -895,30 +897,63 @@ const byMethods = <E extends YieldableError, V extends string, L extends Autofil
   });
 
 /**
- * Where nothing else is, an approval the state just acted in led to, other than a hand-off, on a
- * page with no box that the recipe replay admits as its approval screen (`approvalScreen`): its
- * recorded page, or any other page of that page's origin that is no recorded state's page nor the
- * entry, shows no password field, no credential screen that came back and no marker yet, as a
- * site's approval page may hold a code of its own in its path; never one acted in, taken in the
- * order this login takes them (`ranked`).
+ * Whether an approval `after` led to, other than a hand-off, is one this login takes there: one its
+ * own route (`choices.states`) holds, or any where it has none, as the recipe replay has only its
+ * recipe's own approval screen; in place, any.
+ */
+const ownApproval = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  next: ReadonlySet<string>,
+  state: StateEntry,
+) => {
+  const route = run.input.inPlace === true ? [] : (run.input.choices?.states ?? []);
+  return (
+    next.has(state.key) &&
+    state.step.approval !== undefined &&
+    state.step.approval !== "handoff" &&
+    (route.length === 0 || route.includes(state.key))
+  );
+};
+
+/**
+ * An approval state's controls on the page, where the recipe replay admits the page as its
+ * approval screen (`approvalScreen`): its recorded page, or any other page of that page's origin
+ * that is no recorded state's page nor the entry, shows no password field, no credential screen
+ * that came back and no marker yet, as a site's approval page may hold a code of its own in its path.
+ */
+const approvalShown = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  state: StateEntry,
+) =>
+  Effect.gen(function* () {
+    const shown = yield* shownOn(run, state, resolved(run, state.step));
+    if (typeof shown === "string") return undefined;
+    const recorded = resolvedPage(state.step, run.replay.progress.workspace) ?? state.step.page;
+    return (yield* approvalScreen(run.as, run.replay, state.step, recorded, shown.page)) === "admitted"
+      ? shown
+      : undefined;
+  });
+
+/**
+ * Where nothing else is, at the step wait (`waited`), as a page the site shows a moment before a
+ * known one is no approval, an approval the state just acted in led to that this login takes there
+ * (`ownApproval`), on a page with no box the recipe replay admits as its approval screen
+ * (`approvalShown`); never one acted in, taken in the order this login takes them (`ranked`).
  */
 const byApproval = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
   fingerprint: StateFingerprint,
   after: StateEntry | undefined,
   next: ReadonlySet<string>,
+  waited: boolean,
 ) =>
   Effect.gen(function* () {
-    if (after === undefined || fingerprint.boxes.length > 0) return undefined;
-    const led = (state: StateEntry) =>
-      next.has(state.key) && state.step.approval !== undefined && state.step.approval !== "handoff";
+    if (!waited || after === undefined || fingerprint.boxes.length > 0) return undefined;
+    const led = (state: StateEntry) => ownApproval(run, next, state);
     const approvals = run.input.library.states.filter((state) => led(state) && !run.visited.includes(state.key));
     for (const state of ranked(run, approvals, led, next, fingerprint)) {
-      const shown = yield* shownOn(run, state, resolved(run, state.step));
-      if (typeof shown === "string") continue;
-      const recorded = resolvedPage(state.step, run.replay.progress.workspace) ?? state.step.page;
-      if ((yield* approvalScreen(run.as, run.replay, state.step, recorded, shown.page)) === "admitted")
-        return { state, inspection: shown, by: "origin" } satisfies Shown;
+      const shown = yield* approvalShown(run, state);
+      if (shown !== undefined) return { state, inspection: shown, by: "origin" } satisfies Shown;
     }
     return undefined;
   });
@@ -969,9 +1004,9 @@ const byPlace = <E extends YieldableError, V extends string, L extends AutofillL
  * place into the row the page shows (`byPlace`); with no state of its whole look, a page with no
  * box may be a state told by its control and address alone (`byControl`), else, once anything may
  * have gone out, one the state just acted in led to (`ledToByControl`), else a method choice told
- * by its methods' controls (`byMethods`), else an approval `after` led to on its recorded origin
- * (`byApproval`); their refusals count for nothing, so a page no state is still ends as an unknown
- * state. Where none
+ * by its methods' controls (`byMethods`), else, at the step wait, an approval `after` led to on its
+ * recorded origin (`byApproval`); their refusals count for nothing, so a page no state is still ends
+ * as an unknown state. Where none
  * shows and the origin rule refused one whose controls showed (`admission`), that refusal
  * (`refusedOrigin`). A state noted without its question (`untold`) is taken so only on a page with
  * no message, and else, or acted in again, apart, before one that came back (`askedHere`). None is
@@ -1093,7 +1128,7 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
         (yield* ledToByControl(run, fingerprint, after, next, at));
       if (known !== undefined) return known;
     }
-    return (yield* byMethods(run, fingerprint, next)) ?? (yield* byApproval(run, fingerprint, after, next));
+    return (yield* byMethods(run, fingerprint, next)) ?? (yield* byApproval(run, fingerprint, after, next, waited));
   });
 
 const signedIn = <E extends YieldableError, V extends string, L extends AutofillLogin>(
@@ -2408,18 +2443,24 @@ export const replaySignInStates = <
   });
 
 /**
- * The emailed link's approval state a sign-in learned after `state`, the first in the order this
- * login takes them (`ranked`): where its page was, a site may show a code box this time.
+ * The emailed link's approval state a sign-in learned after `state` that this login takes there
+ * (`ownApproval`), the first in the order it takes them (`ranked`), with its inspection, once the
+ * identifier went out and only where the recipe replay admits the page as that link's screen
+ * (`approvalShown`), as the recipe replay looks for a code box only there: where its page was, a
+ * site may show a code box this time.
  */
-const linkAfter = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+const linkHere = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
   state: StateEntry,
-) => {
-  const { states, transitions } = run.input.library;
-  const next = new Set(transitions.filter((t) => t.from === state.key).map((t) => t.to));
-  const links = states.filter((other) => next.has(other.key) && other.step.approval === "email_link");
-  return ranked(run, links, (other) => links.includes(other))[0];
-};
+) =>
+  Effect.gen(function* () {
+    if (![...run.replay.state.submittedSlots].some(isIdentifier)) return undefined;
+    const next = new Set(run.input.library.transitions.filter((t) => t.from === state.key).map((t) => t.to));
+    const led = (other: StateEntry) => ownApproval(run, next, other) && other.step.approval === "email_link";
+    const [link] = ranked(run, run.input.library.states.filter(led), led);
+    const inspection = link === undefined ? undefined : yield* approvalShown(run, link);
+    return link === undefined || inspection === undefined ? undefined : { state: link, inspection };
+  });
 
 /**
  * The replay from the page it is on: each known state it shows in turn, from `first` when given,
@@ -2430,8 +2471,8 @@ const linkAfter = <E extends YieldableError, V extends string, L extends Autofil
  * recorded does (`unrecordedCode`), once and only while no code may have gone out, and the replay
  * goes on; a caller that records such a page itself (`codeRowByPlace: false`) gets the unknown
  * state. One that then signs in names the page (`unrecordedCode`). Where the state acted in last
- * led to an emailed link's approval (`linkAfter`), once its identifier or password went out, the
- * page takes the code as the recipe replay's link screen does (`onLinkScreen`): never the host
+ * led to an emailed link's approval on a page the recipe replay admits as its screen (`linkHere`),
+ * the page takes the code as the recipe replay's link screen does (`onLinkScreen`): never the host
  * generator's, and with no code given, the link's own question is asked as in its state. A
  * recovery code still held once it ends goes back unspent.
  */
@@ -2461,12 +2502,12 @@ const walk = <E extends YieldableError, V extends string, L extends AutofillLogi
         const unknown = arrived.ended.unknownState?.fingerprint;
         // The last box typed still showing is the site's answer to it, as a login page come back.
         const typed = run.replay.progress.ran.findLast((step) => step.fields.length > 0);
-        const link = last === undefined ? undefined : linkAfter(run, last.acted);
+        const link = last === undefined || unknown === undefined ? undefined : yield* linkHere(run, last.acted);
         const code =
           unknown !== undefined &&
           (run.replay.sent.seenSent("password") ||
             (run.input.credentials?.password === undefined && run.replay.progress.anythingSent) ||
-            (link !== undefined && [...run.replay.state.submittedSlots].some(isIdentifier))) &&
+            link !== undefined) &&
           input.codeRowByPlace !== false &&
           typed !== undefined &&
           !(yield* stillShows(run.as, typed))
@@ -2479,10 +2520,9 @@ const walk = <E extends YieldableError, V extends string, L extends AutofillLogi
         }
         if (code === "link_code_unanswered" && link !== undefined) {
           // Nobody gave the code: the link's own question, as in its state, on the page as it is.
-          const shown = yield* shownOn(run, link, resolved(run, link.step));
           const read = yield* input.observe;
-          if (typeof shown === "string" || read === undefined) return named(arrived.ended);
-          next = { state: link, inspection: shown, observed: read };
+          if (read === undefined) return named(arrived.ended);
+          next = { ...link, observed: read };
           continue;
         }
         if (code !== "none") return stopped(run, code).ended;

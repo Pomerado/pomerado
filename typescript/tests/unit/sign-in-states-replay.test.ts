@@ -1163,6 +1163,29 @@ it("takes an approval on another page of its recorded origin, as a recipe's appr
   expect(await replay(back, library)).toMatchObject({ outcome: "unclear", reason: "unknown_state", asked: [] });
 });
 
+it("never takes a page shown a moment before the password page for an approval the login's route leaves out", { timeout: 8_000 }, async () => {
+  const approval: Screen = { path: "/approve", boxes: [], texts: ["approve the sign-in on your phone"] };
+  const start = { fingerprint: arrival(emailScreen), step: stepAt("/sign-in", [email], "#continue") };
+  const library = libraryOf(
+    [start, { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") }],
+    [start, { fingerprint: arrival(approval), step: stepAt("/approve", [], undefined, { approval: "device" }) }],
+  );
+  // The login signed in through the password, and the site shows a page of its own before it.
+  const moment: Screen = { path: "/continue", boxes: [], texts: ["one moment"] };
+  const site = scriptedSite({ start: emailScreen, moment, password: passwordScreen }, (_at, clicked) => {
+    if (clicked !== "#continue") return "home";
+    setTimeout(() => {
+      site.site.screen = "password";
+    }, 2_500);
+    return "moment";
+  });
+  const states = library.states.slice(0, 2).map((state) => state.key);
+  const ended = await replay(site, library, { stepWaitMs: 10_000, choices: { states } });
+  expect(ended).toMatchObject({ outcome: "signed_in" });
+  expect(ended.asked).toEqual([]);
+  expect(site.fills).toEqual(["email", "password"]);
+});
+
 it("never picks a sign-in method a second time when the page keeps the choice", async () => {
   const choose: Screen = { path: "/method", boxes: [], buttons: ["#text-me", "#use-password"], texts: ["how should we reach you"] };
   const methods = [
@@ -1202,6 +1225,29 @@ it("takes a method choice that offers this login fewer methods by its message an
   );
   expect(await replay(other, library, { hostMethod: "sms" })).toMatchObject({ outcome: "unclear", reason: "unknown_state" });
   expect(other.clicks).toEqual(["#continue"]);
+});
+
+it("never takes another method choice by its methods' controls once a method was picked", async () => {
+  // Two choosers with one message, learned in two sign-ins: a text or an email, and a text or a call.
+  const textOrEmail: Screen = { path: "/method", boxes: [], buttons: ["#text-me", "#email-me"], texts: ["how should we reach you"], labels: ["text me", "email me"] };
+  const textOrCall: Screen = { ...textOrEmail, buttons: ["#text-me", "#call-me"], labels: ["text me", "call me"] };
+  const sms = { method: "sms" as const, selector: "#text-me" };
+  const signIn = (chooser: Screen, other: { readonly method: "email" | "call"; readonly selector: string }) => [
+    { fingerprint: arrival(emailScreen), step: stepAt("/sign-in", [email], "#continue") },
+    { fingerprint: arrival(chooser), step: stepAt("/method", [], "#text-me", { methods: [sms, other] }) },
+    { fingerprint: arrival(codeScreen), step: stepAt("/verify", [code], "#verify") },
+  ];
+  const library = libraryOf(
+    signIn(textOrEmail, { method: "email", selector: "#email-me" }),
+    signIn(textOrCall, { method: "call", selector: "#call-me" }),
+  );
+  // The chooser stays drawn after the text, its button relabelled while the site sends it.
+  const sending: Screen = { ...textOrEmail, labels: ["sending", "email me"] };
+  const site = scriptedSite({ start: emailScreen, method: textOrEmail, sending }, (at, clicked) =>
+    at === "start" ? "method" : clicked === "#text-me" ? "sending" : undefined,
+  );
+  expect(await replay(site, library, { hostMethod: "sms" })).toMatchObject({ reason: "unknown_state" });
+  expect(site.clicks).toEqual(["#continue", "#text-me"]);
 });
 
 it("never signs in on a page that can't tell before the password went in", { timeout: 8_000 }, async () => {

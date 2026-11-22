@@ -169,6 +169,7 @@ export const runFoundCodeScreen = <E extends YieldableError, V extends string, L
     if (replay.sent.maySent.has("code") || replay.state.filled.has("code"))
       return failed ?? "sign_in_check_failed";
     replay.progress.ran.splice(before);
+    if (onLinkScreen) replay.progress.linkCodeScreen = undefined;
     return "none" as const;
   });
 
