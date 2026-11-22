@@ -1128,7 +1128,7 @@ it("signs in on a page that can't tell once it held still, before the step wait"
   expect(confirmed).toEqual(["confirmed"]);
 });
 
-it("signs in on an account chooser that can't tell in place of a code state, once the step wait ran out", async () => {
+it("signs in on an account chooser that can't tell after a password whose press may lead to a code", async () => {
   const library = libraryOf([
     { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") },
     { fingerprint: arrival(codeScreen), step: stepAt("/verify", [code], "#verify") },
@@ -1417,6 +1417,14 @@ it("hands the browser to a person at a hand-off state after the presses before i
   expect(await replay(site(), library, { valueFree: true, handOff: () => undefined })).toMatchObject({
     outcome: "unsent",
     reason: "handoff_not_signed_in",
+  });
+  // A page of another look, as a provider's own account picker, never signs in as one that can't tell.
+  const picker: Screen = { path: "/sso/accounts", boxes: [], texts: ["choose an account"], labels: ["~"] };
+  const other = scriptedSite({ start, picker }, (_at, clicked) => (clicked === "#sign-in" ? "picker" : undefined));
+  const hooks = { ...other.hooks, confirmCantTell: () => Effect.void };
+  expect(await replay({ ...other, hooks }, library, { valueFree: true, handOff: () => undefined })).toMatchObject({
+    outcome: "unsent",
+    reason: "unknown_state",
   });
 });
 
@@ -2094,17 +2102,19 @@ it("goes on along the login's own route where known states share a look, never a
   expect(gone.clicks).toEqual(["#continue"]);
 });
 
-it("takes on every login's route a look-alike a repair learned that only adds a dismiss, before the state it adds to", async () => {
+it("acts in a login's own state with the dismiss of a look-alike that only adds one, along its own route", async () => {
   const plain = { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") };
   const dismissing = { ...plain, step: stepAt("/password", [password], "#go", { dismiss: "#reject" }) };
-  const own = { states: [keyOf(emailState), keyOf(plain)] };
-  // Learned after the login's own state, or before it, as one another login recorded with the notice up.
-  const libraries = [libraryOf([emailState, plain], [emailState, dismissing]), libraryOf([emailState, dismissing], [emailState, plain])];
-  for (const [library, banner] of libraries.flatMap((library) => [true, false].map((up) => [library, up] as const))) {
-    const site = scriptedSite({ start: emailScreen, password: { ...passwordScreen, buttons: ["#go", "#reject"] } }, (_at, clicked) =>
-      clicked === "#continue" ? "password" : "home",
+  const coded = { fingerprint: arrival(codeScreen), step: stepAt("/verify", [code], "#verify") };
+  // Another login, with no code, learned the look-alike once a notice came to cover the submit.
+  const library = libraryOf([emailState, plain, coded], [emailState, dismissing]);
+  const route = [keyOf(emailState), keyOf(plain), keyOf(coded)];
+  for (const banner of [true, false]) {
+    const covering = { ...passwordScreen, buttons: ["#go", "#reject"] };
+    const site = scriptedSite({ start: emailScreen, password: covering, code: codeScreen }, (_at, clicked) =>
+      clicked === "#continue" ? "password" : clicked === "#go" ? "code" : "home",
     );
-    // A notice over the submit catches its click until its own control dismisses it.
+    // The notice catches the submit's click until its own control dismisses it.
     let covered = banner;
     const fill: typeof site.hooks.fill = (call) => {
       if (call.step.dismiss !== undefined) covered = false;
@@ -2112,8 +2122,9 @@ it("takes on every login's route a look-alike a repair learned that only adds a 
         ? Effect.succeed({ outcome: "filled", fields: [], submit: "blocked", url: `${origin}/password` } as AutofillStepReport)
         : site.hooks.fill(call);
     };
-    const ended = await replay({ ...site, hooks: { ...site.hooks, fill } }, library, { choices: own });
-    expect(ended).toMatchObject({ outcome: "signed_in", visited: [keyOf(emailState), keyOf(dismissing)] });
+    const ended = await replay({ ...site, hooks: { ...site.hooks, fill } }, library, { choices: { states: route } });
+    expect(ended).toMatchObject({ outcome: "signed_in", visited: route });
+    expect(site.fills).toEqual(["email", "password", "code"]);
   }
 });
 

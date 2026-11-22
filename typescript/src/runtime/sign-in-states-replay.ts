@@ -1,6 +1,6 @@
 import { Clock, Duration, Effect } from "effect";
 import type { YieldableError } from "effect/Cause";
-import type { AutofillRecipeStep } from "../destinations/autofill-recipe.js";
+import { type AutofillRecipeStep, handsOffSignIn } from "../destinations/autofill-recipe.js";
 import { handOffPrompt, type SignInMethodChoice } from "../destinations/autofill-contracts.js";
 import { urlOrigin } from "../destinations/autofill-refusal.js";
 import {
@@ -246,6 +246,21 @@ const resolved = <E extends YieldableError, V extends string, L extends Autofill
 });
 
 /**
+ * The step a state acts with (`resolved`), with the dismiss of the newest look-alike a sign-in
+ * learned that only adds one to it (`addsDismiss`): a notice that came to cover the state for one
+ * login covers it for every login, and a fill clicks it only where the page shows it. The state
+ * keeps its key, its route and what it leads to.
+ */
+const actedStep = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  state: StateEntry,
+): AutofillStep => {
+  const full = resolved(run, state.step);
+  const dismiss = run.input.library.states.findLast((other) => addsDismiss(other, state))?.step.dismiss;
+  return dismiss === undefined ? full : { ...full, dismiss };
+};
+
+/**
  * Whether each control, and each frame above it, sits on the state's top origin, its recorded
  * origin or a frame its boxes were read on, named as the scan names them (`workspace`).
  */
@@ -401,15 +416,13 @@ const ownStateNotShown = "own_state_not_shown";
  * besides the one it last acted in, unless that one is looked for again, only its own are taken,
  * in their order there from the last state it acted in that the route holds, then the earlier ones:
  * a login never goes on along another login's route, so one whose own state no longer shows stops
- * there, for a repair of its own; a look-alike that only adds a dismiss to one of its own
- * (`addsDismiss`) counts as its own, at that state's place and before it, so a notice that came to
- * cover every login's state costs one repair. Otherwise first a state whose picked method is the
- * login's (`choices.method`, else `rankMethod`), then one the last state led to, or at the start
- * one no state leads to (`next`), then the most recently learned, as a library holds its states in
- * the order learned. Given the page's look (`page`), a state whose recorded instruction and ways
- * stand further from the page's than another's do (`toldApart`) goes after the rest, next after
- * the login's own route; one recorded without them is never moved by them. In place (`inPlace`),
- * the route takes no part, as a step-up is no part of the login's own sign-in.
+ * there, for a repair of its own. Otherwise first a state whose picked method is the login's
+ * (`choices.method`, else `rankMethod`), then one the last state led to, or at the start one no
+ * state leads to (`next`), then the most recently learned, as a library holds its states in the
+ * order learned. Given the page's look (`page`), a state whose recorded instruction and ways stand
+ * further from the page's than another's do (`toldApart`) goes after the rest, next after the
+ * login's own route; one recorded without them is never moved by them. In place (`inPlace`), the
+ * route takes no part, as a step-up is no part of the login's own sign-in.
  */
 const ranked = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -432,27 +445,24 @@ const ranked = <E extends YieldableError, V extends string, L extends AutofillLo
     );
   const picks = (state: StateEntry) =>
     method !== undefined && state.step.methods?.find((option) => option.selector === state.step.submit)?.method === method;
-  const twinOf = (state: StateEntry) =>
-    states.find((other) => route.includes(other.key) && alike(other) && addsDismiss(state, other));
   // Along the route from the last state acted in that it holds, so a look the route holds twice
   // goes on, after a page of another login's too.
   const at = route.indexOf([...run.visited].reverse().find((key) => route.includes(key)) ?? "");
   const along = (state: StateEntry) => {
-    const index = route.indexOf(route.includes(state.key) ? state.key : (twinOf(state)?.key ?? ""));
+    const index = route.indexOf(state.key);
     return index > at ? index - at : route.length + index;
   };
   const told = (state: StateEntry) => (page === undefined ? undefined : toldApart(state.fingerprint, page));
   const nearest = Math.min(...candidates.flatMap((state) => told(state) ?? []));
   const order = (state: StateEntry) => [
     own ? along(state) : 0,
-    Number(own && twinOf(state) === undefined),
     Number((told(state) ?? nearest) > nearest),
     Number(!picks(state)),
     Number(!next.has(state.key)),
     -states.indexOf(state),
   ];
   return candidates
-    .filter((state) => !own || route.includes(state.key) || twinOf(state) !== undefined)
+    .filter((state) => !own || route.includes(state.key))
     .map((state) => ({ state, by: order(state) }))
     .sort((a, b) => {
       const at = a.by.findIndex((value, index) => value !== b.by[index]);
@@ -1423,11 +1433,11 @@ const approve = <E extends YieldableError, V extends string, L extends AutofillL
   });
 
 /**
- * A hand-off state, as the recipe replay's hand-off screen: a replay that may not hand off
- * (`handOff`) stops there for values (`valuesNeeded`); one that may asks the person one
- * `browser_handoff` question, with no values, and then only a marker that may sign it in and
- * verifies (`markersNow`, `verifyMarker`) does so (`handedOff`), never a page that can't tell; else
- * it ends `handoff_not_signed_in`.
+ * A hand-off state, once it shows, as at the recipe replay's hand-off screen: a replay that may
+ * not hand off (`handOff`) stops there for values (`valuesNeeded`); one that may asks the person
+ * one `browser_handoff` question, with no values, and then only a marker that may sign it in and
+ * verifies (`markersNow`, `verifyMarker`) does so (`handedOff`), never a page that can't tell;
+ * else it ends `handoff_not_signed_in`.
  */
 const handOff = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -1526,7 +1536,7 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
       if (step.choice !== undefined && !(input.hosted?.allowedChoices ?? []).includes(step.choice))
         return stopped(run, "sign_in_choice_not_allowed", { choice: step.choice });
       if (step.approval !== undefined) return (yield* approve(run, state, inspection)) ?? acted();
-      const full = resolved(run, step);
+      const full = actedStep(run, state);
       let fuller: { readonly state: StateEntry; readonly observed: ObservedState } | undefined;
       const groups = actions(full.fields.filter((field) => !typed.has(field.slot)));
       for (const [index, fields] of groups.entries()) {
@@ -1712,7 +1722,7 @@ const actAgain = <E extends YieldableError, V extends string, L extends Autofill
   Effect.gen(function* () {
     const { replay, input } = run;
     const state = last.acted;
-    const full = resolved(run, state.step);
+    const full = actedStep(run, state);
     const step: AutofillStep =
       again.again === "repress" && last.press !== undefined
         ? last.press
@@ -1840,9 +1850,13 @@ export const replaySignInStates = <
         visited: [],
         ...(input.from === undefined ? {} : { fromStop: { continued: false, reason: "states_empty" } }),
       } as SignInStatesOutcome<V>;
-    const as: AutofillReplayInput<E, V, L> = { ...input, recipe };
+    // A library that hands off signs in only once a marker shows, never on a page that can't tell,
+    // as a recipe that hands off (`markerOnly`).
+    const { confirmCantTell: _cantTell, ...markerOnly } = input.hooks;
+    const held = handsOffSignIn(recipe) ? { ...input, hooks: markerOnly } : input;
+    const as: AutofillReplayInput<E, V, L> = { ...held, recipe };
     const run: Run<E, V, L> = {
-      input,
+      input: held,
       as,
       replay: makeReplay(as),
       quiet: input.quiet ?? statesQuiet,
