@@ -960,6 +960,14 @@ describe("the publication policy", () => {
     expect(policy).not.toContain("  ");
   });
 
+  // A host that keeps a sign-in as screens ships no sign-in file in the bundle, so the review never
+  // treats its absence as a problem; every host's decision policy carries the rule.
+  it("says a signed-in tool may ship no sign-in file when its host keeps the screens", () => {
+    expect(publicationDecisionPolicy).toContain(
+      "is a confirmation finding. A tool that runs signed in may ship no sign-in file, since the host keeps its sign-in screens apart from the bundle: that is never a finding.",
+    );
+  });
+
   // A site's choice longer than an option label holds reaches the caller shortened, and the review
   // refused the tool for not showing the site's full text, a fix it said only the host could make,
   // though the question's prompt can hold that text.
