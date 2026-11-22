@@ -37,10 +37,10 @@ const screens: Readonly<Record<string, { readonly box?: "identifier" | "password
 const named = (origin: string) => (origin !== site && workspaceHost(site, parent, origin) ? "workspace" : origin);
 
 /** The site, opening on `opensOn` when given (a page the browser was left on), else the URL. */
-const workspaceSite = (opensOn?: string) => {
+const workspaceSite = (opensOn?: string, signedInOn?: string) => {
   const state = {
     at: new URL(`${site}/login`),
-    signedInOn: undefined as string | undefined,
+    signedInOn,
     typed: undefined as string | undefined,
   };
   const fills: string[] = [];
@@ -147,16 +147,32 @@ const library: SignInStates = (() => {
   return appended.library;
 })();
 
+/** `library` with the identifier state also recorded on a workspace host, as a site that remembers it. */
+const remembered: SignInStates = (() => {
+  const appended = appendSignInStates(library, {
+    states: [
+      {
+        fingerprint: { top: "workspace", boxes: [{ frame: "workspace", kind: "identifier" }], submit: true },
+        step: { origin: "workspace", page: "/login", fields: [{ selector: "#username", accepts: ["username"] }], submit: "#next" },
+      },
+    ],
+    signedIn: { selector: "#account", openPath: "/home" },
+  });
+  if ("refused" in appended) throw new Error(appended.refused);
+  return appended.library;
+})();
+
 const signIn = (
   fake: ReturnType<typeof workspaceSite>,
   username = "ada-owner",
   pinned?: string,
   events: { readonly kind: string; readonly origin: string }[] = [],
+  replayed: SignInStates = library,
 ) =>
   Effect.runPromise(
     Effect.either(
       replaySignInStates({
-        library,
+        library: replayed,
         observe: fake.observe,
         hooks: fake.hooks,
         entryUrl: `${site}/login`,
@@ -220,4 +236,14 @@ it("goes on at the login's pinned workspace, typing the password there", async (
   const ended = await signIn(fake, "ada-owner", acme);
   expect(ended).toMatchObject({ outcome: "signed_in", workspaceOrigin: acme });
   expect(fake.fills).toEqual([`${acme}/login/password`]);
+});
+
+it("still finds the login's session on its pinned workspace before it ends at a refused host", async () => {
+  // Another account's workspace shows its identifier state, while this login's own session on its
+  // pinned workspace is still good.
+  const fake = workspaceSite(`${globex}/login`, acme);
+  const events: { readonly kind: string; readonly origin: string }[] = [];
+  const ended = await signIn(fake, "ada-owner", acme, events, remembered);
+  expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: true });
+  expect(fake.fills).toEqual([]);
 });
