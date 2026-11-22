@@ -64,6 +64,8 @@ interface Screen {
   readonly errors?: readonly string[];
   /** The button labels a page with no empty box is told by, as the scan normalizes them. */
   readonly labels?: readonly string[];
+  /** Boxes the inspection finds that the look never counts, as boxes drawn transparent. */
+  readonly unseen?: readonly string[];
 }
 
 /**
@@ -88,7 +90,7 @@ const scriptedSite = (
     site.screen === "home"
       ? { signedIn: true, url: page() }
       : { signedIn: false, failed: "indicator_not_visible", url: page() };
-  const controls = () => [...shown().boxes.map((box) => box.selector), ...(shown().buttons ?? [])];
+  const controls = () => [...shown().boxes.map((box) => box.selector), ...(shown().unseen ?? []), ...(shown().buttons ?? [])];
   const press = (pressed: string) => {
     clicks.push(pressed);
     const to = next(site.screen, pressed);
@@ -2988,4 +2990,71 @@ it("takes no next pop-up screen in place while the one acted in still shows ther
   expect(ended).toMatchObject({ outcome: "unclear", reason: "credential_screen_returned" });
   expect(site.fills).toEqual(["email"]);
   expect(site.clicks).toEqual(["#next"]);
+});
+
+// A page whose boxes the look never counts, as boxes drawn transparent under digits or dots the
+// page draws itself, is a state told by its text alone, though its step types into those boxes.
+const unseenCode = [1, 2, 3, 4, 5, 6].map((box) => `#code-${box}`);
+const drawnCodeScreen: Screen = {
+  path: "/verify",
+  boxes: [],
+  unseen: unseenCode,
+  buttons: ["#verify"],
+  texts: ["enter the code we sent you"],
+  labels: ["verify"],
+};
+const drawnPasswordScreen: Screen = {
+  path: "/password",
+  boxes: [],
+  unseen: ["#password"],
+  buttons: ["#go"],
+  texts: ["enter your password"],
+  labels: ["go"],
+};
+
+it("presses a state told by its text alone once its unseen code boxes are typed, asking for the code once", async () => {
+  const library = libraryOf([
+    { fingerprint: arrival(drawnCodeScreen), step: stepAt("/verify", unseenCode.map((selector) => ({ selector, slot: "code" as const })), "#verify") },
+  ]);
+  const site = scriptedSite({ start: drawnCodeScreen }, (_at, clicked) => (clicked === "#verify" ? "home" : undefined));
+  const ended = await replay(site, library, { stepWaitMs: 2_000 });
+  expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(ended.asked).toEqual(["code"]);
+  expect(site.fills).toEqual(unseenCode.map(() => "code"));
+  expect(site.clicks).toEqual(["#verify"]);
+});
+
+it("presses a password state told by its text alone once its unseen box is typed", async () => {
+  const library = libraryOf([
+    { fingerprint: arrival(drawnPasswordScreen), step: stepAt("/password", [password], "#go") },
+  ]);
+  const site = scriptedSite({ start: drawnPasswordScreen }, (_at, clicked) => (clicked === "#go" ? "home" : undefined));
+  const ended = await replay(site, library, { stepWaitMs: 2_000 });
+  expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(site.fills).toEqual(["password"]);
+  expect(site.clicks).toEqual(["#go"]);
+});
+
+it("still takes a state told by its text alone as gone once the page's look changed after typing", async () => {
+  const library = libraryOf([
+    { fingerprint: arrival(drawnPasswordScreen), step: stepAt("/password", [password], "#go") },
+  ]);
+  // The page sends what was typed itself, and its look changes before any press.
+  const site = scriptedSite({ start: drawnPasswordScreen, home: { path: "/home", boxes: [] } }, () => undefined);
+  const fill = site.hooks.fill;
+  const sending = {
+    ...site,
+    hooks: {
+      ...site.hooks,
+      fill: (request: Parameters<typeof fill>[0]) =>
+        Effect.map(fill(request), (report) => {
+          site.site.screen = "home";
+          return report;
+        }),
+    },
+  };
+  const ended = await replay(sending, library, { stepWaitMs: 2_000 });
+  expect(ended).toMatchObject({ outcome: "signed_in" });
+  expect(site.fills).toEqual(["password"]);
+  expect(site.clicks).toEqual([]);
 });
