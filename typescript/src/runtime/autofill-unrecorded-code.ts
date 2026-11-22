@@ -1,4 +1,5 @@
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
+import { type AutofillRecipeStep, HandOffRecipeStep } from "../destinations/autofill-recipe.js";
 import type {
   AutofillInspection,
   AutofillRefusal,
@@ -71,6 +72,9 @@ const notOtherKind = `:not(${anyOf([
   '[autocomplete^="cc-" i]',
 ])})`;
 
+/** A form's submit control, as a code field's form shows one. */
+const submitControl = `:is(${anyOf(['button[type="submit" i]', 'input[type="submit" i]', "button:not([type])"])})`;
+
 /**
  * The code field and its form's submit, matched case-insensitively on attributes alone, never on
  * page text. A field marked
@@ -97,10 +101,9 @@ const codeFieldStep = (): AutofillStep => {
   // A page with a marked field matches only that, so a row of boxes whose first is marked and
   // whose ids name a code still matches that one box, as before.
   const unmarkedPage = `:root:not(:has(${marked}))`;
-  const submit = `:is(${anyOf(['button[type="submit" i]', 'input[type="submit" i]', "button:not([type])"])})`;
   return {
     fields: [{ selector: `${marked}, ${unmarkedPage} ${codeLike}`, slot: "code" }],
-    submit: `form:has(${marked}) ${submit}, ${unmarkedPage} form:has(${codeLike}) ${submit}`,
+    submit: `form:has(${marked}) ${submitControl}, ${unmarkedPage} form:has(${codeLike}) ${submitControl}`,
   };
 };
 export const unrecordedCodeStep = codeFieldStep();
@@ -311,4 +314,28 @@ export const onSignInOrigin = (
     (inspection.authenticationOrigins.includes(page.origin) &&
       !sameSite(inspection.siteOrigin, page))
   );
+};
+
+/**
+ * A code screen found by attributes alone (`findCodeScreen`) as a recorded screen a library of
+ * sign-in states can keep, so a host can have the page recorded: its code field by the selector
+ * that names it alone (`codeFieldName`), a row's other boxes by theirs (`codeBoxRow`), and, where
+ * its form's submit was found, that submit within the code field's form, on the page it showed on.
+ * None where a box has no such name, the field sits in a pop-up, or the screen passes a recipe's
+ * bounds, such as a selector over its length.
+ */
+export const recordedCodeScreen = (found: {
+  readonly step: AutofillStep;
+  readonly inspection: AutofillInspection;
+}): AutofillRecipeStep | undefined => {
+  const { inspection } = found;
+  const name = inspection.codeFieldName;
+  const row = inspection.screen.fields[0]?.codeBox === undefined ? [] : inspection.codeBoxRow;
+  if (name === undefined || row === undefined || inspection.popupTargetId !== undefined) return undefined;
+  const step = {
+    page: inspection.page,
+    fields: [name, ...row].map((selector) => ({ selector, slot: "code" as const })),
+    ...(found.step.submit === undefined ? {} : { submit: `form:has(${name}) ${submitControl}` }),
+  };
+  return Schema.is(HandOffRecipeStep)(step) ? step : undefined;
 };

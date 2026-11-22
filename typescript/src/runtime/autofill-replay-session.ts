@@ -202,6 +202,8 @@ const makeReplaySession = <E extends YieldableError, V extends string, L extends
      * never the host generator's again.
      */
     unrecordedCodeScreen: undefined as string | undefined,
+    /** That screen as a recorded screen a library of states can keep (`recordedCodeScreen`). */
+    unrecordedCodeStep: undefined as AutofillRecipeStep | undefined,
     /**
      * The code box on a recorded emailed link's screen that this replay is answering, by its page
      * and field (`codeScreenOf`): the recording says the site emails, so it never takes the host

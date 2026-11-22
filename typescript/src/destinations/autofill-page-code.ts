@@ -33,15 +33,30 @@ import { pageControlsCode } from "./page-controls.js";
  * A field that is no box, or a screen with fewer than two, has none. Attributes only, never a value.
  * When the step names one code field and it is the first box of such a row by its `maxlength`, as
  * a code screen the recipe never recorded may show, `codeBoxRow` names each other box of that same
- * row, in order, by a selector that matches it alone in its document or shadow root: its id, else
- * its name, else its `aria-label`. A row with a box none of those name alone, or with more than
- * `maximumCodeBoxes` boxes, has none.
+ * row, in order, by a selector that matches it alone in its document or shadow root (`nameOfCode`):
+ * its id, else its name, else its `aria-label`. A row with a box none of those name alone, or with
+ * more than `maximumCodeBoxes` boxes, has none. A step that names one code field also has that
+ * field named so (`codeFieldName`), when one of those names it alone, so a code screen found by
+ * attributes alone can be kept as a recorded screen.
  */
 /**
  * The slots whose field must hold nothing at all before the host types into it: a secret that may
  * hold symbols alone, so any remnant may be part of one.
  */
 const strictSlots: ReadonlySet<string> = new Set(["password", "private_answer"]);
+
+/** Page code: a selector that matches `control` alone in its document or shadow root, else null. */
+const nameOfCode = `(control) => {
+  const root = control.getRootNode();
+  for (const attribute of ["id", "name", "aria-label"]) {
+    const value = control.getAttribute(attribute);
+    if (!value) continue;
+    const selector = "input[" + attribute + '="' + CSS.escape(value) + '"]';
+    const matches = root.querySelectorAll(selector);
+    if (matches.length === 1 && matches[0] === control) return selector;
+  }
+  return null;
+}`;
 
 const codeBoxesCode = `const codeBoxes = [];
 const codeFields = codeSlots.filter(Boolean).length;
@@ -67,17 +82,7 @@ for (const [index, field] of fields.entries()) {
       const at = boxes.indexOf(element);
       return boxes.length < 2 || at < 0 ? null : { box: at + 1, of: boxes.length, limit };
     };
-    const nameOf = (control) => {
-      const root = control.getRootNode();
-      for (const attribute of ["id", "name", "aria-label"]) {
-        const value = control.getAttribute(attribute);
-        if (!value) continue;
-        const selector = "input[" + attribute + '="' + CSS.escape(value) + '"]';
-        const matches = root.querySelectorAll(selector);
-        if (matches.length === 1 && matches[0] === control) return selector;
-      }
-      return null;
-    };
+    const nameOf = ${nameOfCode};
     if (!editable(element)) return null;
     if (element.maxLength === 1) {
       const screen = element.form ?? element.getRootNode();
@@ -110,7 +115,11 @@ const scriptAgree =
   new Set(scriptBoxes.map(({ of }) => of)).size <= 1;
 for (const [index, codeBox] of codeBoxes.entries())
   codeBoxes[index] =
-    codeBox === null || (codeBox.limit === "script" && !scriptAgree) ? null : { box: codeBox.box, of: codeBox.of };`;
+    codeBox === null || (codeBox.limit === "script" && !scriptAgree) ? null : { box: codeBox.box, of: codeBox.of };
+const codeFieldName =
+  codeFields === 1
+    ? await fields[codeSlots.indexOf(true)].locator.evaluate(${nameOfCode}, undefined, { timeout: ${elementReadMs} }).catch(() => null)
+    : null;`;
 
 /**
  * Page code: the named checkboxes a code field holds when it takes no typing, as a screen that has
@@ -212,7 +221,8 @@ return {
   buttons,
   ...(submitKey === null || submit === null ? {} : { keySubmit: { submitControls: submit.submitControls } }),
   ...(popupTargetId === undefined ? {} : { popupTargetId }),
-  ...(codeBoxRow === undefined ? {} : { codeBoxRow }),${hostFillChecked ? "\n  ...(hostFillUnsupported === undefined ? {} : { hostFillUnsupported })," : ""}
+  ...(codeBoxRow === undefined ? {} : { codeBoxRow }),
+  ...(codeFieldName === null ? {} : { codeFieldName }),${hostFillChecked ? "\n  ...(hostFillUnsupported === undefined ? {} : { hostFillUnsupported })," : ""}
   url: primary.url(),
   document: await documentStart(),
 };`;

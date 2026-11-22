@@ -150,10 +150,15 @@ export type SignInStatesOutcome<V extends string = string> = AutofillReplayOutco
   readonly fromStop?: { readonly continued: true } | { readonly continued: false; readonly reason: string };
   /**
    * A replay that signed in after it gave the code on a page no state knew (`walk`): that page's
-   * fingerprint, and the key of the state acted in before it (`after`), with no selector or value,
-   * for a host to have the page recorded.
+   * fingerprint, the key of the state acted in before it (`after`), and the page as a recorded
+   * screen a library can keep (`step`, `recordedCodeScreen`), its boxes by the selectors that name
+   * them alone and no value, where each has one, for a host to have the page recorded.
    */
-  readonly unrecordedCode?: { readonly fingerprint: StateFingerprint; readonly after?: string };
+  readonly unrecordedCode?: {
+    readonly fingerprint: StateFingerprint;
+    readonly after?: string;
+    readonly step?: AutofillRecipeStep;
+  };
   readonly unknownState?: {
     readonly fingerprint: StateFingerprint;
     readonly description: string;
@@ -2262,7 +2267,12 @@ const walk = <E extends YieldableError, V extends string, L extends AutofillLogi
             : "none";
         if (code === "ran" && unknown !== undefined) {
           const after = arrived.ended.unknownState?.after;
-          answered = { fingerprint: unknown, ...(after === undefined ? {} : { after }) };
+          const step = run.replay.progress.unrecordedCodeStep;
+          answered = {
+            fingerprint: unknown,
+            ...(after === undefined ? {} : { after }),
+            ...(step === undefined ? {} : { step }),
+          };
           continue;
         }
         if (code !== "none") return stopped(run, code).ended;

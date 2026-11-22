@@ -3,7 +3,13 @@ import type { YieldableError } from "effect/Cause";
 import type { AutofillStep } from "../destinations/autofill-step.js";
 import { report } from "./sign-in-telemetry.js";
 import type { AutofillReplayInput } from "./autofill-replay-steps.js";
-import { codeBoxRow, codeScreenOf, findCodeScreen, onSignInOrigin } from "./autofill-unrecorded-code.js";
+import {
+  codeBoxRow,
+  codeScreenOf,
+  findCodeScreen,
+  onSignInOrigin,
+  recordedCodeScreen,
+} from "./autofill-unrecorded-code.js";
 import type { Replay } from "./autofill-replay-session.js";
 import type { AutofillLogin } from "./autofill-values.js";
 
@@ -165,7 +171,10 @@ export const runFoundCodeScreen = <E extends YieldableError, V extends string, L
       replay.progress.linkCodeScreen = undefined;
       return "none" as const;
     }
-    if (failed === undefined && replay.sent.maySent.has("code")) return "ran" as const;
+    if (failed === undefined && replay.sent.maySent.has("code")) {
+      replay.progress.unrecordedCodeStep = "outcome" in field ? undefined : recordedCodeScreen(field);
+      return "ran" as const;
+    }
     if (replay.sent.maySent.has("code") || replay.state.filled.has("code"))
       return failed ?? "sign_in_check_failed";
     replay.progress.ran.splice(before);

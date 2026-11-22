@@ -164,11 +164,28 @@ test("a code page the library never recorded, after the password, is answered on
   expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
   expect(asked).toEqual(["code"]);
   expect(posts.filter((post) => post.startsWith("/verify"))).toEqual([`/verify code=${code}`]);
-  // The page's look and the state before it, for the host to have the page recorded.
+  // The page's look, the state before it and the page as a recorded screen, for the host to have
+  // the page recorded.
   expect(ended.unrecordedCode).toEqual({
     fingerprint: expect.objectContaining({ boxes: [expect.objectContaining({ kind: "code" })] }),
     after: library.states[0]?.key,
+    step: {
+      page: `${site}/verify`,
+      fields: [{ selector: 'input[id="code"]', slot: "code" }],
+      submit: 'form:has(input[id="code"]) :is(button[type="submit" i], input[type="submit" i], button:not([type]))',
+    },
   });
+  // A library that keeps the page signs in through it as a known state the next time.
+  const { fingerprint, after, step } = ended.unrecordedCode ?? {};
+  if (fingerprint === undefined || step === undefined) throw new Error("No recorded code screen");
+  const kept = appendSignInStates(library, { from: after, states: [{ fingerprint, step }], signedIn: { selector: "#account" } });
+  if ("refused" in kept) throw new Error(kept.refused);
+  await page.goto("about:blank");
+  posts.length = 0;
+  const again = await replay(page, kept.library, { code });
+  expect(again.ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(again.ended.unrecordedCode).toBeUndefined();
+  expect(posts.filter((post) => post.startsWith("/verify"))).toEqual([`/verify code=${code}`]);
 });
 
 test("a refused password beside a security question flags no saved answer", async ({ page }) => {

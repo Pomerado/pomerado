@@ -458,6 +458,8 @@ const Located = Schema.Union(
     popupTargetId: Schema.optional(Schema.String),
     /** The other boxes of the row the step's one code field begins (`codeBoxRow`). */
     codeBoxRow: Schema.optional(Schema.Array(Schema.String)),
+    /** The step's one code field, by a selector that matches it alone (`codeFieldName`). */
+    codeFieldName: Schema.optional(Schema.String),
     /** With `hostCardFill`: the first field whose selector the host's card fill can't take. */
     hostFillUnsupported: Schema.optional(Schema.Number),
     url: Schema.String,
@@ -548,6 +550,11 @@ export interface AutofillInspection {
    * Read at run time for a code screen the recipe never recorded, never a recipe value.
    */
   readonly codeBoxRow?: readonly string[] | undefined;
+  /**
+   * Host-only: when the step names one code field, a selector that matches that field alone, read
+   * from its id, name or `aria-label` as `codeBoxRow`'s are; absent when none does.
+   */
+  readonly codeFieldName?: string | undefined;
   readonly screen: {
     /**
      * The origin of the frame the host found the step's controls in, its submit's or, when it
@@ -1149,6 +1156,7 @@ export const inspectAutofillStep = (input: {
       ...(trustedByHost.size === 0 ? {} : { trustedSignInOrigins: [...trustedByHost].sort() }),
       ...(carried === undefined ? {} : { carriedSignInOrigin: carried }),
       ...(found.codeBoxRow === undefined ? {} : { codeBoxRow: found.codeBoxRow }),
+      ...(found.codeFieldName === undefined ? {} : { codeFieldName: found.codeFieldName }),
       ...(input.paymentFrameOrigins === undefined
         ? {}
         : { paymentFrameOrigins: input.paymentFrameOrigins }),
