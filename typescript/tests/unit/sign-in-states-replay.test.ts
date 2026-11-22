@@ -1634,10 +1634,9 @@ it("never presses again a press on a code page that the page kept, as it may hav
 it("hands the browser to a person at a hand-off state after the presses before it, then checks the marker", async () => {
   const start: Screen = { path: "/", boxes: [], buttons: ["#sign-in"], texts: ["welcome"] };
   const provider: Screen = { path: "/sso", boxes: [{ selector: "#user", kind: "identifier" }], buttons: ["#next"] };
-  const library = libraryOf([
-    { fingerprint: arrival(start), step: stepAt("/", [], "#sign-in") },
-    { fingerprint: arrival(provider), step: stepAt("/sso", [], undefined, { approval: "handoff" }) },
-  ]);
+  const signIn = { fingerprint: arrival(start), step: stepAt("/", [], "#sign-in") };
+  const handOff = { fingerprint: arrival(provider), step: stepAt("/sso", [], undefined, { approval: "handoff" }) };
+  const library = libraryOf([signIn, handOff]);
   const site = () => scriptedSite({ start, provider }, (_at, clicked) => (clicked === "#sign-in" ? "provider" : undefined));
   // A check that may not hand off stops there, unsent.
   const check = site();
@@ -1660,19 +1659,22 @@ it("hands the browser to a person at a hand-off state after the presses before i
     outcome: "unsent",
     reason: "handoff_not_signed_in",
   });
-  // A page of another look, as a provider's own account picker, is the hand-off once it settled,
-  // as at a recipe's hand-off screen, and never signs in as one that can't tell.
+  // A page of another look, as a provider's own account picker, never signs in as one that can't tell.
   const picker: Screen = { path: "/sso/accounts", boxes: [], texts: ["choose an account"], labels: ["~"] };
   const other = () => scriptedSite({ start, picker }, (_at, clicked) => (clicked === "#sign-in" ? "picker" : undefined));
   const left = other();
   const hooks = { ...left.hooks, confirmCantTell: () => Effect.void };
-  const unsigned = await replay({ ...left, hooks }, library, { valueFree: true, handOff: () => undefined });
-  expect(unsigned).toMatchObject({ outcome: "unsent", reason: "handoff_not_signed_in" });
-  expect(unsigned.asked).toEqual(["signed_in"]);
+  expect(await replay({ ...left, hooks }, library, { valueFree: true, handOff: () => undefined })).toMatchObject({
+    outcome: "unsent",
+    reason: "unknown_state",
+  });
+  // Where the login's own route names the hand-off next, that page is the hand-off once it settled,
+  // as at a recipe's hand-off screen.
   const signed = other();
   expect(
     await replay(signed, library, {
       valueFree: true,
+      choices: { states: [signIn, handOff].map(keyOf) },
       handOff: () => {
         signed.site.screen = "home";
       },
@@ -2097,6 +2099,27 @@ it("stops where a page that typed its value comes back fresh, whatever look-alik
   }
 });
 
+it("never takes a learned look-alike that presses alone before the step wait, while a press may be under way", async () => {
+  // A page slow to answer a press, where another login learned another press alone that the
+  // library knows sends nothing and leads elsewhere: the first press may still be under way.
+  const sendPage: Screen = { path: "/send", boxes: [], buttons: ["#send", "#other"], texts: ["one moment"] };
+  const elsewhere: Screen = { path: "/elsewhere", boxes: [], texts: ["another way in"] };
+  let sentAt: number | undefined;
+  const sending = (looks: number) => {
+    sentAt ??= looks;
+    return looks - sentAt < 12 ? sendPage : passwordScreen;
+  };
+  const next: Readonly<Record<string, string>> = { "#continue": "send", "#send": "sending", "#other": "elsewhere", "#go": "home" };
+  const site = scriptedSite({ start: emailScreen, send: sendPage, sending, elsewhere }, (_at, clicked) => next[clicked]);
+  const send = { fingerprint: arrival(sendPage), step: stepAt("/send", [], "#send") };
+  const library = libraryOf(
+    [emailState, send, { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") }],
+    [emailState, send, { fingerprint: arrival(sendPage), step: stepAt("/send", [], "#other") }],
+  );
+  expect((await replayOnClock(site, library)).ended).toMatchObject({ outcome: "signed_in" });
+  expect(site.clicks).toEqual(["#continue", "#send", "#go"]);
+});
+
 it("never takes a learned look-alike that asks for an approval or picks a method", async () => {
   // The identifier's page comes back fresh after a state between, where a sign-in learned an
   // approval, or a method choice, with its look after that state.
@@ -2300,23 +2323,30 @@ it("goes on in the look-alike of an earlier state a repair walked from the state
   expect(before.fills).toEqual(["email"]);
 });
 
-it("presses a learned look-alike's other control once the page settled, in place of pressing the same one again", async () => {
+it("presses a learned look-alike's other control at the step wait, or once the page settled where the login's route names it next", async () => {
   const pick: Screen = { path: "/pick", boxes: [], buttons: ["#a", "#b"], texts: ["how do you want to sign in"] };
   const pickA = { fingerprint: arrival(pick), step: stepAt("/pick", [], "#a") };
   const pickB = { fingerprint: arrival(pick), step: stepAt("/pick", [], "#b") };
   const typesPassword = { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") };
   const next: Readonly<Record<string, string>> = { "#continue": "pick", "#a": "pick", "#b": "password", "#go": "home" };
-  const { timedSite, at } = timed(scriptedSite({ start: emailScreen, pick, password: passwordScreen }, (_at, clicked) => next[clicked]));
-  const { looks, challenge } = lookingAt(timedSite, "none", "none");
-  const { ended, events } = await replayOnClock(timedSite, libraryOf([emailState, pickA, pickB, typesPassword]), challenge);
-  expect(ended).toMatchObject({ outcome: "signed_in", loginProved: true });
-  expect(timedSite.clicks).toEqual(["#continue", "#a", "#b", "#go"]);
-  // As a recipe presses its next screen's button, once the page held still 1.5 s, not at the step wait.
-  expect((at.get("#b") ?? 0) - (at.get("#a") ?? 0)).toBeGreaterThanOrEqual(1_500);
-  expect((at.get("#b") ?? 0) - (at.get("#a") ?? 0)).toBeLessThan(3_000);
-  // The look before the press-only look-alike runs once the page settled, and is heard so.
-  expect(looks).toHaveLength(1);
-  expect(lookEvents(events)).toEqual([{ stage: "challenge_look", look: "early", outcome: "none" }]);
+  const route = { states: [emailState, pickA, pickB, typesPassword].map(keyOf) };
+  for (const [choices, after, look] of [
+    [undefined, 30_000, "deadline"],
+    // As a recipe presses its next screen's button, once the page held still 1.5 s.
+    [route, 1_500, "early"],
+  ] as const) {
+    const { timedSite, at } = timed(scriptedSite({ start: emailScreen, pick, password: passwordScreen }, (_at, clicked) => next[clicked]));
+    const { looks, challenge } = lookingAt(timedSite, "none", "none");
+    const library = libraryOf([emailState, pickA, pickB, typesPassword]);
+    const { ended, events } = await replayOnClock(timedSite, library, challenge, Effect.void, true, false, { choices });
+    expect(ended).toMatchObject({ outcome: "signed_in", loginProved: true });
+    expect(timedSite.clicks).toEqual(["#continue", "#a", "#b", "#go"]);
+    expect((at.get("#b") ?? 0) - (at.get("#a") ?? 0)).toBeGreaterThanOrEqual(after);
+    expect((at.get("#b") ?? 0) - (at.get("#a") ?? 0)).toBeLessThan(after + 1_500);
+    // The look before the press-only look-alike runs then, and is heard so.
+    expect(looks).toHaveLength(1);
+    expect(lookEvents(events)).toEqual([{ stage: "challenge_look", look, outcome: "none" }]);
+  }
 });
 
 it("takes no learned look-alike after an approval, as on a page like an earlier state's", async () => {
@@ -3755,4 +3785,45 @@ it("takes a page that settled for a hand-off only where the hand-off is the logi
   expect(ended).toMatchObject({ outcome: "unclear", reason: "values_needed" });
   expect(endedAt).toBeLessThan(30_000);
   expect(events).toContainEqual(expect.objectContaining({ reason: "settled_page" }));
+});
+
+it("never takes a settled page for a hand-off the login's route doesn't name next", async () => {
+  const provider: Screen = { path: "/sso", boxes: [{ selector: "#user", kind: "identifier" }], buttons: ["#next"] };
+  const identifier = { fingerprint: arrival(emailScreen), step: stepAt("/sign-in", [email], "#continue") };
+  const handOff = { fingerprint: arrival(provider), step: stepAt("/sso", [], undefined, { approval: "handoff" }) };
+  // One login signed in right after its email, another through a provider's hand-off; this one's
+  // landing page shows no marker for 15 seconds.
+  const landing: Screen = { path: "/welcome", boxes: [], texts: ["loading your account"] };
+  const signsIn = scriptedSite({ start: emailScreen, landing }, (_at, clicked) => (clicked === "#continue" ? "landing" : undefined));
+  const drawn = Effect.gen(function* () {
+    while (signsIn.site.screen !== "landing") yield* Effect.sleep(Duration.millis(50));
+    yield* Effect.sleep(Duration.seconds(15));
+    signsIn.site.screen = "home";
+  });
+  const { ended, endedAt } = await replayOnClock(signsIn, libraryOf([identifier], [identifier, handOff]), undefined, drawn, true, false, {
+    choices: { states: [keyOf(identifier)] },
+  });
+  expect(ended).toMatchObject({ outcome: "signed_in" });
+  expect(endedAt).toBeGreaterThanOrEqual(15_000);
+  // With no route, a library that learned only a hand-off after the email never takes a password
+  // page for it: it is a state no one knows, for a repair to learn.
+  const typesPassword = scriptedSite({ start: emailScreen, password: passwordScreen }, (_at, clicked) =>
+    clicked === "#continue" ? "password" : undefined,
+  );
+  const unknown = await replay(typesPassword, libraryOf([identifier, handOff]), { handOff: () => undefined });
+  expect(unknown).toMatchObject({ reason: "unknown_state" });
+  expect(unknown.asked).toEqual([]);
+});
+
+it("signs in at once on a page with a box no state knows where the marker's full check passes", async () => {
+  // The account page shows a box of its own, and only the full check, which opens the account
+  // page, sees the marker.
+  const account: Screen = { path: "/account", boxes: [{ selector: "#zip", kind: "zip" }], texts: ["your account"] };
+  const site = scriptedSite({ start: emailScreen, password: passwordScreen, home: account }, toPassword);
+  const check: AutofillHooks<TestFailure>["check"] = () =>
+    Effect.sync(() => ({ signedIn: false, failed: "indicator_not_visible", url: `${origin}/account` }));
+  const { timedSite, at } = timed({ ...site, hooks: { ...site.hooks, check } });
+  const { ended, endedAt } = await replayOnClock(timedSite, twoStates);
+  expect(ended).toMatchObject({ outcome: "signed_in", loginProved: true });
+  expect(endedAt - (at.get("#go") ?? 0)).toBeLessThan(2_000);
 });

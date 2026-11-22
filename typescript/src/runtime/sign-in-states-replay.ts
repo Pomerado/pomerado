@@ -700,26 +700,40 @@ const lookForChallenge = <E extends YieldableError, V extends string, L extends 
     return stopped(run, "challenge_unsolved", { challenge: challenge.vendor });
   });
 
+/** Whether the login's own route (`choices.states`) holds `next` right after `state`. */
+const routeNext = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  state: StateEntry,
+  next: StateEntry,
+) => {
+  const route = run.input.choices?.states ?? [];
+  return route.some((key, index) => key === state.key && route[index + 1] === next.key);
+};
+
 /**
  * The first learned look-alike of the state just acted in (`learnedNext`) that the page is, or in
  * place one in a pop-up (`inPopup`), and whose controls show, in the order this login takes them
  * (`ranked`): one that types something (`typing`), and a press alone only where that state's own
  * press would be made once more (`pressing`), in its place, once its own control shows and differs
  * from that state's, as a recipe presses its next screen's button once it shows; never one that
- * presses that state's own control, as that press would go out once more after it.
+ * presses that state's own control, as that press would go out once more after it. Before the step
+ * wait (`routed`), only a press alone the login's own route holds right after that state
+ * (`routeNext`), as another login's press may lead elsewhere while that state's own may still be
+ * under way.
  */
 const learnedAlike = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
   after: StateEntry,
   fingerprint: StateFingerprint,
-  allowed: { readonly typing: boolean; readonly pressing: boolean; readonly sent: boolean },
+  allowed: { readonly typing: boolean; readonly pressing: boolean | "routed"; readonly sent: boolean },
 ) =>
   Effect.gen(function* () {
     const told = (state: StateEntry) => sameFingerprint(fingerprint, state) || inPopup(run, state);
     const learned = learnedNext(run, after).filter(told);
     for (const next of ranked(run, learned, told, undefined, fingerprint)) {
       const types = resolved(run, next.step).fields.length > 0;
-      if (!(types ? allowed.typing : allowed.pressing && next.step.submit !== after.step.submit)) continue;
+      const presses = allowed.pressing === "routed" ? routeNext(run, after, next) : allowed.pressing;
+      if (!(types ? allowed.typing : presses && next.step.submit !== after.step.submit)) continue;
       // After a press that may have had a code or link sent (`sent`), one that takes no code and
       // whose own press may have one sent could have the site send a second.
       if (types && allowed.sent && !takesCodeIn(run, next) && sendsOnPress(run, next)) continue;
@@ -1380,25 +1394,18 @@ const returnedReason = <E extends YieldableError, V extends string, L extends Au
 ) => (typesSent(run, state) ? "credential_screen_returned" : "state_repeated");
 
 /**
- * The hand-off state that is this login's next after `state`, which this replay has not acted in:
- * one its own route (`choices.states`) holds right after `state`, else one `state` led to where
- * every state it led to is a hand-off. Where `state` also led to a state of another kind, as an
- * identifier screen leads one login to its password and another to a provider, a page that settled
- * is no hand-off of a login whose route doesn't name it.
+ * The hand-off state the login's own route holds right after `state` (`routeNext`), which this
+ * replay has not acted in. A hand-off the route doesn't name there is taken only by its recorded
+ * look, as a recipe knows only its own route: an identifier screen may lead one login to its
+ * password and another to a provider, and a page that settled after it is no hand-off of the first.
  */
 const handOffAfter = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
   state: StateEntry,
-) => {
-  const { states, transitions } = run.input.library;
-  const route = run.input.choices?.states ?? [];
-  const led = states.filter((next) => transitions.some((t) => t.from === state.key && t.to === next.key));
-  const handOffs = led.filter((next) => next.step.approval === "handoff" && !run.visited.includes(next.key));
-  return (
-    handOffs.find((next) => route.some((key, index) => key === state.key && route[index + 1] === next.key)) ??
-    (led.every((next) => next.step.approval === "handoff") ? handOffs[0] : undefined)
+) =>
+  run.input.library.states.find(
+    (next) => next.step.approval === "handoff" && !run.visited.includes(next.key) && routeNext(run, state, next),
   );
-};
 
 /**
  * Whether a page with boxes no known state has or holds ends the replay once it held still
@@ -1408,7 +1415,9 @@ const handOffAfter = <E extends YieldableError, V extends string, L extends Auto
  * answers (`unrecordedCode`). Any other ends so only at the step wait, as a recipe screen's wait
  * gives a slow page the whole wait, with the host's challenge look once it held still
  * `landingSettleMs` and again at the step wait's end; its end check keeps the guard of a page
- * that ends early (`mayCantTell`), as it had when it ended once it held still.
+ * that ends early (`mayCantTell`), as it had when it ended once it held still. Once it held still
+ * `quietMs`, with no password or code box, the marker's full check runs there once, as it did
+ * when such a page ended then, so a signed-in page with a box of its own signs in at once.
  */
 const endsEarly = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -1442,12 +1451,13 @@ const endsEarly = <E extends YieldableError, V extends string, L extends Autofil
  * once it held still and again at the step wait, opens an emailed link (`link`) or ends a refused
  * login; a page of a state that typed nothing, held still
  * `quietMs`, and `landingSettleMs` at least, with every box empty and no code marker, is a
- * look-alike learned after it that types something, or one that presses another control alone in
- * place of the press made once more, once its controls show (`learnedAlike`) and the host's
- * challenge look found none there, for any host, the page settling again after a look that
- * cleared one; at
- * the step wait, a new text no known state has is an unknown state, else a press that typed nothing
- * and sends no code or link is made once more (`repress`), and otherwise it stops
+ * look-alike learned after it that types something, or one the login's own route holds next that
+ * presses another control alone in place of the press made once more (`routeNext`), once its
+ * controls show (`learnedAlike`) and the host's challenge look found none there, for any host,
+ * the page settling again after a look that cleared one; at the step wait, a new text no known
+ * state has is an unknown state, else a press alone learned after it is taken so (`learnedAlike`),
+ * else a press that typed nothing and sends no code or link is made once more (`repress`), and
+ * otherwise it stops
  * (`returnedReason`), as nothing is sent twice. A box that sent itself counts as sent first
  * (`settleCarried`). A page with boxes no known state has or holds ends the replay once it held
  * still `quietMs` at the step wait, or before it where the code probe or a caller that goes on
@@ -1498,8 +1508,8 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
     let waitedOut = false;
     // The last look a state was looked for by its control alone (`byControl`).
     let byControlRead: string | undefined;
-    // The hand-off that is the login's next after the state just acted in (`handOffAfter`), and
-    // whether the full marker check ran on a page that settled before it.
+    // The hand-off the login's own route names next after the state just acted in
+    // (`handOffAfter`), and whether the marker's full check ran on a page that settled.
     const handOff = acted === undefined ? undefined : handOffAfter(run, acted.acted);
     let lateChecked = false;
     // A value-free check's login entry, while it may end as one that can't tell (`entryCantTell`).
@@ -1668,7 +1678,8 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
           // nothing, with no answer of the site's to explain it, is a look-alike a sign-in learned
           // to come after it, if one shows and the host's look finds no challenge there. It settles
           // as for an early look, so a challenge drawn late shows first, as a recipe's button-only
-          // screen holds `landingSettleMs` before the wait passes on to it.
+          // screen holds `landingSettleMs` before the wait passes on to it. One that presses alone
+          // is pressed so only where the login's own route holds it next, else at the step wait.
           const settledHere = at - held.since >= Math.max(quiet.quietMs, landingSettleMs);
           if (
             again &&
@@ -1680,7 +1691,7 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
           ) {
             const alike = yield* learnedAlike(run, state, shape, {
               typing: settledHere,
-              pressing: acted.press !== undefined,
+              pressing: acted.press === undefined ? false : capped || "routed",
               sent: acted.sends === true || sendsOnPress(run, state, true),
             });
             const gate = challenged ? undefined : run.input.hooks.challenge;
@@ -1725,12 +1736,20 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
         } else if (
           refused === undefined &&
           still &&
-          (capped || endsEarly(run, shape)) &&
           !run.input.library.states.some((state) => containsFingerprint(shape as StateFingerprint, state))
         ) {
           if (endsEarly(run, shape)) break;
+          // The marker's full check once, which may open the account page, then a page that
+          // settles again (`endsEarly`).
+          if (!lateChecked && !read.boxes.some((box) => box.kind === "password" || box.kind === "code")) {
+            lateChecked = true;
+            for (const marker of markersNow(run)) if (yield* verifyMarker(run, marker)) return signedIn(run, marker);
+            held = undefined;
+            yield* pause(run);
+            continue;
+          }
           // At the step wait it ends after the host's deadline look, as any page there does.
-          unknownBoxes = true;
+          unknownBoxes = capped;
         }
       }
       const waited = at - start >= replay.timing.stepWaitMs;
