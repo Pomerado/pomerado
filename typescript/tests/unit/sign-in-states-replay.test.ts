@@ -478,6 +478,87 @@ it("never types into a state whose box sits in a frame off its recorded origin",
   expect(inFrame.fills).toEqual([]);
 });
 
+const www = "https://www.example.test";
+/** A screen in a frame on the sign-in host, and its state recorded with the host's page on top. */
+const inHostFrame = (screen: Screen): Screen => ({ ...screen, frame: auth });
+const onHost = (screen: Screen, fields: AutofillRecipeStep["fields"], submit: string) => ({
+  fingerprint: { ...arrival(inHostFrame(screen)), top: auth },
+  step: stepAt(screen.path, fields, submit, { page: `${auth}${screen.path}` }),
+});
+/** A scripted site whose screens named in `pages` show on that origin's page, not the site's. */
+const onPages = (site: ReturnType<typeof scriptedSite>, pages: Readonly<Record<string, string>>) => {
+  const at = (address: string) => {
+    const top = pages[site.site.screen];
+    return top === undefined ? address : `${top}${new URL(address).pathname}`;
+  };
+  const observe = Effect.map(site.observe, (read) => ({
+    ...read,
+    fingerprint: { ...read.fingerprint, top: pages[site.site.screen] ?? read.fingerprint.top },
+  }));
+  const inspect: typeof site.hooks.inspect = (step) =>
+    Effect.map(site.hooks.inspect(step), (shown) =>
+      "outcome" in shown ? shown : { ...shown, page: at(shown.page), url: at(shown.url ?? shown.page) },
+    );
+  return { ...site, observe, hooks: { ...site.hooks, inspect } };
+};
+
+it("takes a state recorded on its sign-in host where the site's own page shows its form in a frame on that host", async () => {
+  const library = libraryOf([onHost(combined, [email, password], "#continue")]);
+  // The password box draws late, as the page may still grow into the state.
+  const site = scriptedSite({ start: (looks) => inHostFrame(looks < 20 ? emailOnly : combined) }, () => "home");
+  expect(await replay(site, library, { stepWaitMs: 2_000 })).toMatchObject({ outcome: "signed_in" });
+  expect(site.fills).toEqual(["email", "password"]);
+  // On another page of the site, where the origin rule refuses the state, the page is still unknown.
+  const other = onPages(scriptedSite({ start: inHostFrame(combined) }, () => "home"), { start: www });
+  expect(await replay(other, library)).toMatchObject({ reason: "unknown_state" });
+  expect(other.fills).toEqual([]);
+});
+
+it("takes the framed form a sign-in learned after its host's own, and never the host's form again where the origin rule refuses it", async () => {
+  const framed = { fingerprint: arrival(inHostFrame(emailScreen)), step: stepAt("/sign-in", [email], "#continue") };
+  const library = libraryOf([onHost(emailScreen, [email], "#continue"), framed]);
+  const screens = { start: inHostFrame(emailScreen), framed: inHostFrame(emailScreen) };
+  const learned = onPages(scriptedSite(screens, (at) => (at === "start" ? "framed" : "home")), { start: auth });
+  expect(await replay(learned, library)).toMatchObject({ outcome: "signed_in" });
+  expect(learned.fills).toEqual(["email", "email"]);
+  // The same form framed on another host of the site after the host's own is a page no state knows.
+  const refused = onPages(scriptedSite(screens, () => "framed"), { start: auth, framed: www });
+  expect(await replay(refused, libraryOf([onHost(emailScreen, [email], "#continue")]))).toMatchObject({ reason: "unknown_state" });
+  expect(refused.fills).toEqual(["email"]);
+});
+
+it("never acts again in a screen recorded both on its sign-in host and framed on the site's page when that page comes back", async () => {
+  const library = libraryOf(
+    [onHost(emailScreen, [email], "#continue"), onHost(codeScreen, [code], "#verify")],
+    [
+      { fingerprint: arrival(inHostFrame(emailScreen)), step: stepAt("/sign-in", [email], "#continue") },
+      { fingerprint: arrival(inHostFrame(codeScreen)), step: stepAt("/verify", [code], "#verify") },
+    ],
+  );
+  const site = scriptedSite({ start: inHostFrame(emailScreen), code: inHostFrame(codeScreen) }, (_at, clicked) =>
+    clicked === "#continue" ? "code" : "start",
+  );
+  expect(await replay(site, library)).toMatchObject({ reason: "credential_screen_returned" });
+  expect(site.fills).toEqual(["email", "code"]);
+});
+
+it("never acts again in a state recorded on its sign-in host, taken framed, when that page comes back", async () => {
+  const library = libraryOf([onHost(emailScreen, [email], "#continue"), onHost(codeScreen, [code], "#verify")]);
+  const site = scriptedSite({ start: inHostFrame(emailScreen), code: inHostFrame(codeScreen) }, (_at, clicked) =>
+    clicked === "#continue" ? "code" : "start",
+  );
+  expect(await replay(site, library)).toMatchObject({ reason: "credential_screen_returned" });
+  expect(site.fills).toEqual(["email", "code"]);
+});
+
+it("reads the site's answer where a framed form recorded on its sign-in host stands with a notice beside it", async () => {
+  const library = libraryOf([onHost(passwordScreen, [password], "#go")]);
+  const wrong = inHostFrame({ ...passwordScreen, texts: ["that password is not right"] });
+  const site = scriptedSite({ start: inHostFrame(passwordScreen), wrong }, () => "wrong");
+  expect(await replay(site, library, { siteAnswer: "refused" })).toMatchObject({ reason: "credential_screen_returned" });
+  expect(site.fills).toEqual(["password"]);
+});
+
 it("presses once more a press that typed no secret when the page kept its state", async () => {
   const start: Screen = { path: "/", boxes: [], buttons: ["#sign-in"], texts: ["welcome"] };
   const library = libraryOf([
