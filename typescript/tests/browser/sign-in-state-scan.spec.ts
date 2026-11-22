@@ -11,7 +11,7 @@ import {
   observedSignInOf,
   sameFingerprint,
 } from "../../src/destinations/sign-in-states.js";
-import { codeRowFields, isCodeRow } from "../../src/runtime/autofill-unrecorded-code.js";
+import { codeRowFields, isCodeRowByPlace } from "../../src/runtime/autofill-unrecorded-code.js";
 import { hostKeyboard, hostPage } from "./autofill-host-page.js";
 
 // The sign-in state scan on local Chromium, which decides what shows and runs each cross-origin
@@ -237,27 +237,42 @@ test("two code rows alike but for their boxes' role and labels read as two looks
   // The row by place, as a replay types a look-alike code screen whose recorded boxes never show,
   // with no box at the place after it.
   const byPlace = await inspect({ fields: codeRowFields(6, false) });
-  expect("outcome" in byPlace ? byPlace : isCodeRow(byPlace.screen.fields, 6, false)).toBe(true);
+  expect("outcome" in byPlace ? byPlace : isCodeRowByPlace(byPlace.screen.fields, 6, false)).toBe(true);
   expect(await inspect({ fields: codeRowFields(7, false).slice(6) })).toMatchObject({ reason: "not_found" });
   // A transparent box before the row, which the look leaves out, is found at the place after it.
   const transparent = '<input autocomplete="one-time-code" style="opacity:0">';
   expect((await (await open(page, row("number", 0, transparent)))()).fingerprint).toEqual(look("spinbutton", 0));
   expect(await inspect({ fields: codeRowFields(7, false).slice(6) })).not.toHaveProperty("outcome");
   // A row of one-character boxes by place is each next box of as many, unless its boxes are a
-  // birth date's, a social security number's or a PIN's.
-  for (const [box, found] of [
-    ['inputmode="numeric"', true],
-    ['autocomplete="bday-day"', false],
-    ['autocomplete="section-signup bday-day"', false],
-    ['name="ssn-last4"', false],
-    ['type="password"', false],
-    ['aria-label="PIN digit"', false],
-    ['aria-label="PIN: digit"', false],
-  ] as const) {
-    await open(page, { [site]: `<form>${`<span><input ${box} maxlength="1"></span>`.repeat(6)}</form>` });
+  // birth date's, a social security number's or a PIN's, by their attributes or by their labels.
+  const labelled = (label: (at: number) => string, hidden = "") => (at: number) =>
+    `<label for="b${at}"${hidden}>${label(at)}</label><input id="b${at}" inputmode="numeric" maxlength="1">`;
+  const attributed = (attributes: (at: number) => string) => (at: number) => `<input ${attributes(at)} maxlength="1">`;
+  const rows = [
+    attributed(() => 'inputmode="numeric"'),
+    ...[
+      'autocomplete="bday-day"',
+      'autocomplete="section-signup bday-day"',
+      'name="ssn-last4"',
+      'type="password"',
+      'aria-label="PIN digit"',
+      'aria-label="PIN: digit"',
+    ].map((attributes) => attributed(() => attributes)),
+    labelled((at) => `PIN digit ${at + 1}`),
+    labelled((at) => `PIN ${at + 1}`, " hidden"),
+    labelled((at) => `Date of birth ${at + 1}`),
+    attributed((at) => `aria-label="PIN-${at + 1}"`),
+    attributed((at) => `aria-label="Enter PIN, digit ${at + 1}"`),
+    attributed((at) => `placeholder="${["Month", "Month", "Day", "Day", "Year", "Year"][at] ?? ""}"`),
+    attributed((at) => `placeholder="${"MMDDYY".charAt(at)}"`),
+  ];
+  const taken: boolean[] = [];
+  for (const box of rows) {
+    await open(page, { [site]: `<form>${Array.from({ length: 6 }, (_, at) => `<span>${box(at)}</span>`).join("")}</form>` });
     const counted = await inspect({ fields: codeRowFields(6, true) }, []);
-    expect("outcome" in counted ? counted.reason : isCodeRow(counted.screen.fields, 6, true)).toBe(found || "not_found");
+    taken.push(!("outcome" in counted) && isCodeRowByPlace(counted.screen.fields, 6, true));
   }
+  expect(taken).toEqual(rows.map((_, at) => at === 0));
   // The step a minter records on the second screen types it, and is noted with the look it was
   // taken in, as a build or repair notes it.
   await open(page, row("number", 0));

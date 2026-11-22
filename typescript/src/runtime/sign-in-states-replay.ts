@@ -44,7 +44,7 @@ import {
   valuesNeeded,
 } from "./autofill-replay-steps.js";
 import { admitScreen, noteExactSent } from "./autofill-replay-workspace.js";
-import { codeRowFields, isCodeRow } from "./autofill-unrecorded-code.js";
+import { codeRowFields, isCodeRowByPlace } from "./autofill-unrecorded-code.js";
 import { isIdentifier, provesLogin, screenSubmit, submittedLoginProof } from "./autofill-state.js";
 import type { AutofillLogin } from "./autofill-values.js";
 import { workspaceHost } from "./workspace-origin.js";
@@ -280,9 +280,10 @@ const codeRowOf = (state: StateEntry) => {
 };
 
 /**
- * Whether a state typed by place shows its row as taken: each field the next box of the row
- * (`isCodeRow`), and no box at the place after it, as a box the scan does not count, such as one
- * drawn transparent, would put every character a box over.
+ * Whether a state typed by place shows its row as taken: each field the next box of the row, none
+ * labelled for a PIN, a social security number or a date (`isCodeRowByPlace`), and no box at the
+ * place after it, as a box the scan does not count, such as one drawn transparent, would put every
+ * character a box over.
  */
 const placedRow = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -291,7 +292,7 @@ const placedRow = <E extends YieldableError, V extends string, L extends Autofil
 ) =>
   Effect.gen(function* () {
     const { row, count } = codeRowOf(state);
-    if (!isCodeRow(inspection.screen.fields, count, row)) return false;
+    if (!isCodeRowByPlace(inspection.screen.fields, count, row)) return false;
     const after = yield* run.input.hooks.inspect({ fields: codeRowFields(count + 1, row).slice(count) });
     return "outcome" in after && after.reason === "not_found";
   });

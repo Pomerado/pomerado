@@ -142,7 +142,7 @@ const scriptedSite = (
               inputmode: null,
               label: null,
               placeholder: null,
-              ariaLabel: null,
+              ariaLabel: shown().boxes.find(({ selector }) => selector === field.selector)?.label ?? null,
               text: null,
               slot: field.slot,
             })),
@@ -2465,6 +2465,10 @@ it("types the code by place into the row of a look-alike code screen whose recor
   const past = rowSite({ ...numberRow, buttons: codeRowFields(7, false).slice(6).map(({ selector }) => selector) });
   expect(await replay(past, rowLibrary)).toMatchObject({ outcome: "unclear", reason: "not_found" });
   expect(past.fills).toEqual(["email"]);
+  // A row of the look whose boxes are labelled for a PIN, as a PIN screen alike, types nothing.
+  const pin = rowSite({ ...numberRow, boxes: numberRow.boxes.map((box, at) => ({ ...box, label: `PIN ${at + 1}` })) });
+  expect(await replay(pin, rowLibrary)).toMatchObject({ outcome: "unclear", reason: "not_found" });
+  expect(pin.fills).toEqual(["email"]);
   // A caller that goes on from the page itself gets it as it stopped, with its look and the state.
   const logged: Readonly<Record<string, unknown>>[] = [];
   const left = rowSite(numberRow);

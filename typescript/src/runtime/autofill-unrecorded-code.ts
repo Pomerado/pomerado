@@ -222,7 +222,7 @@ export const codeBoxRow = <E>(
  * (`namesWholeOtherWord`): with `row`, each the next box of a row of as many one-character boxes
  * (`codeBox`).
  */
-export const isCodeRow = (
+const isCodeRow = (
   fields: AutofillInspection["screen"]["fields"],
   count: number,
   row: boolean,
@@ -232,6 +232,33 @@ export const isCodeRow = (
     (field, index) =>
       (!row || (field.codeBox?.box === index + 1 && field.codeBox.of === count)) &&
       !namesWholeOtherWord(field),
+  );
+
+/**
+ * Words of a box's labels, `aria-label` or placeholder that name a value a code never goes in: a
+ * PIN, a social security number or a date, as of birth, by name or by a date mask's letters.
+ */
+const otherRowWords = ["pin", "ssn", "social", "birth", "birthday", "dob", "date", "month", "day", "year"];
+const dateMaskWord = /^(?:m{1,2}|d{1,2}|y{1,4})$/u;
+
+/**
+ * Whether inspected fields typed by place are a row of `count` code boxes in order (`isCodeRow`),
+ * none of them named, by its labels, `aria-label` or placeholder, with `otherRowWords` or a date
+ * mask's letters as a word of its own (`wordsOf`), such as "PIN-1", "Date of birth 1", "Year" or
+ * "MM".
+ */
+export const isCodeRowByPlace = (
+  fields: AutofillInspection["screen"]["fields"],
+  count: number,
+  row: boolean,
+) =>
+  isCodeRow(fields, count, row) &&
+  fields.every((field) =>
+    [field.label, field.ariaLabel, field.placeholder].every(
+      (value) =>
+        value === null ||
+        !wordsOf(value).some((word) => otherRowWords.includes(word) || dateMaskWord.test(word)),
+    ),
   );
 
 /**
@@ -256,8 +283,8 @@ const notOtherRowKind = `:not(${anyOf([
  * boxes never showed though the page shows its look: each box of a row of one-character boxes
  * (`row`, by `maxlength` 1, the code field's word rule and `notOtherRowKind`), else each code field
  * `unrecordedCodeStep` matches, the next in its frame's page order (`:nth-match`, as a selector
- * never chains into another frame). A host's inspection of them passes `isCodeRow`, and shows no
- * box at the next place, before anything is typed.
+ * never chains into another frame). A host's inspection of them passes `isCodeRowByPlace`, and
+ * shows no box at the next place, before anything is typed.
  */
 export const codeRowFields = (count: number, row: boolean) => {
   const box = row
