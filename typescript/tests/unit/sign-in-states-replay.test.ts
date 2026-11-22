@@ -24,6 +24,7 @@ import {
   stateEntry,
 } from "../../src/destinations/sign-in-states.js";
 import { makeInputAsker } from "../../src/inputs/callback.js";
+import type { SiteAnswer } from "../../src/runtime/autofill-replay-steps.js";
 import type { AutofillHooks } from "../../src/runtime/autofill-state.js";
 import { codeRowFields } from "../../src/runtime/autofill-unrecorded-code.js";
 import type { InputAnswers } from "../../src/runtime/input-request.js";
@@ -244,7 +245,8 @@ const replay = (
   options: {
     readonly password?: string;
     readonly valueFree?: boolean;
-    readonly siteAnswer?: "link" | "refused";
+    /** The host's read of the site's answer: a fixed answer, or one read on each call. */
+    readonly siteAnswer?: SiteAnswer | ((page?: readonly string[]) => SiteAnswer | undefined);
     readonly stepWaitMs?: number;
     readonly choices?: SignInStatesChoices;
     readonly rankMethod?: SignInStatesChoices["method"];
@@ -305,7 +307,15 @@ const replay = (
           ? {}
           : {
               hosted: {
-                ...(options.siteAnswer === undefined ? {} : { siteAnswer: () => Effect.succeed(options.siteAnswer) }),
+                ...(options.siteAnswer === undefined
+                  ? {}
+                  : {
+                      siteAnswer: (page?: readonly string[]) =>
+                        Effect.sync(() => {
+                          const said = options.siteAnswer;
+                          return typeof said === "function" ? said(page) : said;
+                        }),
+                    }),
                 ...(options.hostMethod === undefined
                   ? {}
                   : { method: (offered) => Effect.succeed(offered.find((option) => option.method === options.hostMethod)) }),
@@ -815,6 +825,69 @@ it("never types again a code the site refused, after a later code that only didn
   expect(typed).toEqual(["111111", "222222"]);
   expect(prompts[1]).toMatch(/^The site refused the last code\. /u);
   expect(prompts[2]).toMatch(/^The last code didn't sign you in\. /u);
+});
+
+// The host's read of the site's answer at a code page that stayed, counted, with the texts it got.
+const reading = (said?: SiteAnswer) => {
+  const reads = { count: 0, pages: [] as (readonly string[] | undefined)[] };
+  return { reads, siteAnswer: (page?: readonly string[]) => (reads.count++, reads.pages.push(page), said) };
+};
+
+it("ends at once as a locked account when the site's answer to a code that didn't sign in says so", async () => {
+  const verify = { ...codeScreen, texts: ["enter the code we emailed you."] };
+  const site = scriptedSite(
+    { start: verify, locked: { ...verify, texts: [...verify.texts, "your account is locked."] } },
+    () => "locked",
+  );
+  const library = libraryOf([{ fingerprint: arrival(verify), step: stepAt("/verify", [code], "#verify") }]);
+  const { reads, siteAnswer } = reading("locked");
+  const events: Readonly<Record<string, unknown>>[] = [];
+  const ended = await replay(site, library, { siteAnswer, events });
+  expect(ended).toMatchObject({ outcome: "unclear", reason: "account_locked" });
+  expect(ended.asked).toEqual(["code"]);
+  expect(site.fills).toEqual(["code"]);
+  // One read, of what the page shows that it didn't before the code.
+  expect(reads.pages).toEqual([["your account is locked."]]);
+  expect(events.some((event) => event.stage === "retried")).toBe(false);
+});
+
+it("reads the site's answer once at each code page that stayed, and never on a code that signs in", async () => {
+  let pressed = 0;
+  const site = scriptedSite({ start: codeScreen }, () => (++pressed > 1 ? "home" : undefined));
+  const library = libraryOf([{ fingerprint: arrival(codeScreen), step: stepAt("/verify", [code], "#verify") }]);
+  // Any answer but a locked account asks again as a code that didn't sign in.
+  const { reads, siteAnswer } = reading("refused");
+  const prompts: string[] = [];
+  expect(await replay(site, library, { siteAnswer, prompts })).toMatchObject({ outcome: "signed_in" });
+  expect(prompts[1]).toMatch(/^The last code didn't sign you in\. /u);
+  expect(site.fills).toEqual(["code", "code"]);
+  expect(reads.count).toBe(1);
+  const quick = scriptedSite({ start: codeScreen }, () => "home");
+  const normal = reading("locked");
+  expect(await replay(quick, library, { siteAnswer: normal.siteAnswer })).toMatchObject({ outcome: "signed_in" });
+  expect(normal.reads.count).toBe(0);
+});
+
+it("asks for a new code the site refused at its marker without reading the site's answer", async () => {
+  const library = libraryOf([
+    {
+      fingerprint: arrival(codeScreen),
+      step: stepAt("/verify", [code], "#verify", { rejectedMarkers: [{ selector: "#bad-code", slot: "code" }] }),
+    },
+  ]);
+  const site = scriptedSite({ start: codeScreen, refused: { ...codeScreen, errors: ["#bad-code"] } }, () => "refused");
+  const { reads, siteAnswer } = reading("locked");
+  expect(await replay(site, library, { siteAnswer })).toMatchObject({ outcome: "unclear", reason: "code_rejected" });
+  expect(site.fills).toEqual(["code", "code", "code"]);
+  expect(reads.count).toBe(0);
+});
+
+it("ends a password state that stayed as it came back, whatever the site's answer says of a lock", async () => {
+  const library = libraryOf([{ fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") }]);
+  const site = scriptedSite({ start: passwordScreen }, () => "start");
+  const ended = await replay(site, library, { siteAnswer: "locked" });
+  expect(ended).toMatchObject({ outcome: "unclear", reason: "credential_screen_returned" });
+  expect(site.fills).toEqual(["password"]);
 });
 
 it("presses Enter in the email box when its Continue went once the email was typed", async () => {

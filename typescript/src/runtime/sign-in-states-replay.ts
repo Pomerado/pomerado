@@ -890,8 +890,10 @@ const returnedReason = <E extends YieldableError, V extends string, L extends Au
  * It stands while the page shows its boxes as they were, with or without a new text, or a notice
  * state's boxes beside its text; through the step wait, as the recipe replay waits for its next
  * screen, a code state whose code went asks for a new one at its code marker or at the step wait
- * (`code`); the site's own answer, read once it held still and again at the step wait, opens an
- * emailed link (`link`) or ends a refused login; a page of a state that typed nothing, held still
+ * (`code`), though at the step wait, with no code marker, a locked account the site's own answer
+ * names ends it at once (`account_locked`), with no code asked again; the site's own answer, read
+ * once it held still and again at the step wait, opens an emailed link (`link`) or ends a refused
+ * login; a page of a state that typed nothing, held still
  * `quietMs`, and `landingSettleMs` at least, with every box empty and no code marker, is a
  * look-alike learned after it that types something, or at the step wait one that presses another
  * control alone in place of the press made once more, once its controls show (`learnedAlike`) and
@@ -995,8 +997,15 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
         }
         if (acted !== undefined && stood) {
           const state = acted.acted;
-          if (takesCodeIn(run, state) && replay.sent.maySent.has("code") && (codeMarked || capped))
+          if (takesCodeIn(run, state) && replay.sent.maySent.has("code") && (codeMarked || capped)) {
+            // The site's answer to the code: the texts the page shows that it didn't as the state showed.
+            const answer = codeMarked ? undefined : run.input.hosted?.siteAnswer;
+            if (answer !== undefined) {
+              const said = yield* answer(read.texts.filter((text) => !acted.reached.texts.includes(text)));
+              if (said === "locked") return stopped(run, "account_locked");
+            }
             return { again: "code", explicit: codeMarked } satisfies Again;
+          }
           if ((still && !answerRead) || capped) {
             answerRead = true;
             const said = yield* siteAnswer(run, state);
