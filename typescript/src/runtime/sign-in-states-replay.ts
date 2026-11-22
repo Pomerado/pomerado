@@ -1123,7 +1123,7 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
             // A known state on a host this login may not type on ends it at once, as at a recipe
             // screen, after the step wait's last check, which may find the login's session still good.
             if ("refusedOrigin" in shown)
-              return (yield* endCheck(run, read, stood, after, true)) ?? stopped(run, shown.refusedOrigin);
+              return (yield* endCheck(run, read, stood, after, false)) ?? stopped(run, shown.refusedOrigin);
             if (!("returned" in shown)) return { ...shown, observed: read };
             if (!stood) return stopped(run, returnedReason(run, shown.returned));
             back = shown.returned;
@@ -1763,7 +1763,11 @@ const shownHere = <E extends YieldableError, V extends string, L extends Autofil
     }
   });
 
-/** In place (`inPlace`), the markers the page shows before the replay acts (`shownBefore`). */
+/**
+ * In place (`inPlace`), the markers the page shows before the replay acts (`shownBefore`): each
+ * whose check passes, or fails only for a password field or a challenge's form that shows beside
+ * it, as a step-up's own form does.
+ */
 const noteShownBefore = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
 ) =>
@@ -1772,7 +1776,9 @@ const noteShownBefore = <E extends YieldableError, V extends string, L extends A
       const onPage = { selector: marker.selector, urlPath: marker.urlPath };
       if (onPage.selector === undefined && onPage.urlPath === undefined) continue;
       const check = yield* run.input.hooks.check(onPage, run.as.recipe.steps, run.replay.state.steps);
-      if (check.signedIn) run.shownBefore.add(marker.key);
+      // A marker that shows beside the step-up's own form fails the check for that form alone.
+      if (check.signedIn || check.failed === "password_field_visible" || check.failed === "challenge_form_visible")
+        run.shownBefore.add(marker.key);
     }
   });
 

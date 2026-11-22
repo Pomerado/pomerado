@@ -2758,15 +2758,20 @@ const withMarkers = (
   site: ReturnType<typeof scriptedSite>,
   screens: Readonly<Record<string, Screen>>,
   shows: Readonly<Record<string, readonly string[]>>,
+  /** Whether a marker that shows beside a password box fails the check, as the host's does. */
+  passwordFails = false,
 ) => {
   const opened: string[] = [];
   const confirmed: AutofillSignedIn[] = [];
   const cantTell: number[] = [];
   const here = (indicator: AutofillSignedIn): AutofillSignedInCheck => {
-    const url = `${origin}${screens[site.site.screen]?.path ?? "/home"}`;
-    return (shows[site.site.screen] ?? []).includes(indicator.selector ?? "")
-      ? { signedIn: true, url }
-      : { signedIn: false, failed: "indicator_not_visible", url };
+    const screen = screens[site.site.screen];
+    const url = `${origin}${screen?.path ?? "/home"}`;
+    if (!(shows[site.site.screen] ?? []).includes(indicator.selector ?? ""))
+      return { signedIn: false, failed: "indicator_not_visible", url };
+    return passwordFails && screen?.boxes.some((box) => box.kind === "password") === true
+      ? { signedIn: false, failed: "password_field_visible", url }
+      : { signedIn: true, url };
   };
   const hooks: AutofillHooks<TestFailure> = {
     ...site.hooks,
@@ -2887,6 +2892,7 @@ it("never ends a step-up in place by a marker the page showed before it acted, t
     scriptedSite(screens, (_at, clicked) => (clicked === "#confirm" ? "code" : clicked === "#verify" ? "records" : undefined)),
     screens,
     { start: ["#account"], code: ["#account"], records: ["#account"] },
+    true,
   );
   const ended = await replay(site, library, { inPlace: true });
   expect(site.fills).toEqual(["password", "code"]);
