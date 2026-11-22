@@ -69,14 +69,33 @@ export type StateFingerprint = typeof StateFingerprint.Type;
 const Key = Schema.String.pipe(Schema.pattern(/^[0-9a-f]{32}$/u));
 const Marker = LegacyAutofillRecipe.fields.signedIn;
 
-/** A recorded step on an absolute page, or a workspace step on a path. */
-const StateStep = HandOffRecipeStep.pipe(
+/**
+ * A recorded step on an absolute page, or a workspace step on a path. `pageSends` marks a code
+ * screen whose page sent the code itself as it was recorded, beside the submit or submit key the
+ * page took away then: a replay types the code alone and presses that control only when the page
+ * didn't send it. A recipe never holds it. A core before this one leaves out a state that has it,
+ * as it leaves out any field it does not know, so a host records it only once every core that
+ * replays its libraries is this one or later (`AutofillSignInState.recordsPageSends`).
+ */
+const StateStep = Schema.extend(
+  HandOffRecipeStep,
+  Schema.Struct({ pageSends: Schema.optional(Schema.Literal(true)) }),
+).pipe(
+  Schema.filter(
+    (step) =>
+      step.pageSends === undefined ||
+      step.submit !== undefined ||
+      step.submitKey !== undefined ||
+      "a pageSends step names a submit or submit key",
+  ),
   Schema.filter(
     (step) =>
       (step.origin === "workspace" ? step.page.startsWith("/") : URL.parse(step.page) !== null) ||
       "a workspace step's page is a path, and any other step's an absolute URL",
   ),
 );
+/** A state's step: a recipe's, which may say the page sends it itself (`pageSends`). */
+export type SignInStateStep = typeof StateStep.Type;
 
 const strict = { parseOptions: { onExcessProperty: "error" } } as const;
 /**
@@ -352,7 +371,7 @@ export type FingerprintShape = ReturnType<typeof fingerprintShape>;
 /** The entry for a state, keyed by its fingerprint, step and whether a step-up's. */
 export const stateEntry = (
   fingerprint: StateFingerprint,
-  step: AutofillRecipeStep,
+  step: SignInStateStep,
   source: "recorded" | "derived" = "recorded",
   stepUp?: true,
 ): StateEntry => {
@@ -533,6 +552,8 @@ const ObservedShape = Schema.Struct({
  * a replay's own before a repair went on, are left out, and `from` is the known state the repair
  * went on from. A noted step followed by one with no note, a step count that is not the recipe's,
  * or no note at all fails with the first step that has none (`missingFingerprint`), never quietly.
+ * A recorded step whose page sent it itself (`pageSends`) marks its recipe step so, when that step
+ * names a submit or submit key.
  */
 export const observedSignInOf = (
   steps: readonly object[],
@@ -552,7 +573,11 @@ export const observedSignInOf = (
     ...(from === undefined ? {} : { from }),
     states: recipe.steps.slice(first).map((step, index) => ({
       fingerprint: noted[first + index] as StateFingerprint,
-      step,
+      step:
+        Reflect.get(steps[first + index] ?? {}, "pageSends") === true &&
+        (step.submit !== undefined || step.submitKey !== undefined)
+          ? { ...step, pageSends: true as const }
+          : step,
     })),
     signedIn: recipe.signedIn,
   };
@@ -569,6 +594,16 @@ export const decodeSignInStateEntry = (stored: unknown): SignInStateEntry | unde
   const value = typeof stored === "string" ? Option.getOrUndefined(Schema.decodeUnknownOption(Schema.parseJson())(stored)) : stored;
   const entry = Option.getOrUndefined(Schema.decodeUnknownOption(SignInStateEntry)(value));
   return entry !== undefined && keyed(entry) === entry.key ? entry : undefined;
+};
+
+/**
+ * Stored entries read back (`decodeSignInStateEntry`), and how many of them this host could not
+ * read and left out (`dropped`), for a host to report: a transition to or from one left out then
+ * leads nowhere.
+ */
+export const decodeSignInStateEntries = (stored: readonly unknown[]) => {
+  const entries = stored.flatMap((entry) => decodeSignInStateEntry(entry) ?? []);
+  return { entries, dropped: stored.length - entries.length };
 };
 
 /** A library: the site's header, and its entries of each kind in the order they were stored. */
@@ -721,7 +756,7 @@ export interface ObservedSignIn {
   readonly stepUp?: true | undefined;
   readonly states: readonly {
     readonly fingerprint: StateFingerprint;
-    readonly step: AutofillRecipeStep;
+    readonly step: SignInStateStep;
   }[];
   readonly signedIn: AutofillSignedIn;
 }
@@ -734,8 +769,10 @@ export const maximumStates = 64;
  * as they are, and those entries (`added`), none when it knew them all. A state is known by its
  * key, its fingerprint and step alike. A sign-in that stopped before it signed in (`to`) leads to
  * the oldest known state of its own sign-in with that look, a step-up's for a step-up, and adds no
- * marker. Refused: a workspace step in a library with no workspace; a state that shows nothing to
- * tell it by; a `to` no such state looks like (`unknown_state`); and a library that would pass
+ * marker. Refused: a workspace step in a library with no workspace, or a new entry this core can't
+ * read back from its stored bytes (`decodeSignInStateEntry`), as a step with a field no reader
+ * knows, which a reader would leave out (`unsupported_step`); a state that shows nothing to tell it
+ * by; a `to` no such state looks like (`unknown_state`); and a library that would pass
  * `maximumStates`.
  */
 export const appendSignInStates = (
@@ -768,6 +805,8 @@ export const appendSignInStates = (
     [...library.states, ...library.transitions, ...library.signedIn].map((entry) => entry.key),
   );
   const added = fresh.filter((entry) => !known.has(entry.key) && known.add(entry.key));
+  if (added.some((entry) => decodeSignInStateEntry(signInStateEntryText(entry)) === undefined))
+    return { refused: "unsupported_step" };
   const growth = added.filter((entry) => entry.kind === "state").length;
   if (library.states.length + growth > maximumStates) return { refused: "library_full" };
   return {

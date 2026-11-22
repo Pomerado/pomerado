@@ -213,6 +213,12 @@ interface AutofillRecordedStep {
   readonly submit?: string;
   /** The key the host pressed in the last field to submit its form, on a form with no submit. */
   readonly submitKey?: AutofillRecipeStep["submitKey"];
+  /**
+   * A code screen whose page sent the code itself and took its `submit` or `submitKey` away in
+   * place before the host pressed it (`closedInPlace`), on a sign-in that keeps that control
+   * (`recordsPageSends`): its screens press it only when the page didn't send.
+   */
+  readonly pageSends?: true;
   readonly submittedBy?: "host" | "minter";
   /**
    * `keyboard` once the host pressed the screen's covered submit from the keyboard, `click_layer`
@@ -294,6 +300,13 @@ export interface AutofillSignInState<E = unknown, V extends string = string> {
    * screen's submit was clicked (`submitFilled`).
    */
   readonly securityAnswers?: SecurityAnswerFills;
+  /**
+   * Whether a code screen that sent itself and took its submit away in place keeps that submit or
+   * submit key, marked `pageSends`, rather than losing it (`recordStep`). A core before the one
+   * that reads `pageSends` leaves out a state that has it, so a host sets this once every core
+   * that replays the screens it records is this one or later.
+   */
+  readonly recordsPageSends?: boolean;
 }
 
 export const isIdentifier = (slot: AutofillSlot): slot is IdentifierKind =>
@@ -392,13 +405,14 @@ export const submitFilled = (state: AutofillSignInState): readonly AutofillSlot[
 /**
  * The minter went on from a screen whose fill reached the page but no host click sent: it clicked
  * that screen's submit itself, which records the screen as submitted by the minter, or the screen
- * had none and sent itself, as a code box that submits on its last digit does, or its values went
- * with the next screen's submit. Either way they count as submitted once the minter goes on.
+ * had none and sent itself, as a code box that submits on its last digit does, or kept the submit
+ * the page took away as it sent itself (`pageSends`), or its values went with the next screen's
+ * submit. Either way they count as submitted once the minter goes on.
  */
 export const settleMinterSubmit = (state: AutofillSignInState): readonly AutofillSlot[] => {
   if (state.filled.size === 0) return [];
   const last = state.steps.at(-1);
-  if (last?.submit !== undefined && last.submittedBy === undefined)
+  if (last?.submit !== undefined && last.submittedBy === undefined && last.pageSends !== true)
     state.steps[state.steps.length - 1] = { ...last, submittedBy: "minter" };
   return submitFilled(state);
 };
@@ -658,9 +672,10 @@ export const noteRefill = (state: AutofillSignInState, slot: RefillSlot = "passw
  * saved security answer typed, a step that reached nothing leaves the recipe, a step the host
  * clicked records it, with `submitVia` when it pressed the submit from the keyboard or clicked
  * through the site's own control over it, a code screen that closed in place before the host
- * clicked anything (`closedInPlace`) records no submit or submit key, as the page sends it, and one
- * whose click another element caught is the open sign-in's `blocked` screen. Returns whether
- * anything reached the page.
+ * clicked anything (`closedInPlace`) records no submit or submit key, as the page sends it, or, on
+ * a sign-in that keeps it (`recordsPageSends`), keeps it marked `pageSends`, and one whose click
+ * another element caught is the open sign-in's `blocked` screen. Returns whether anything reached
+ * the page.
  */
 export const recordStep = (
   state: AutofillSignInState,
@@ -691,7 +706,8 @@ export const recordStep = (
     };
   else if (stepReport.outcome === "filled" && stepReport.closedInPlace === true && last) {
     const { submit: _gone, submitKey: _key, ...sentByPage } = last;
-    state.steps[state.steps.length - 1] = sentByPage;
+    state.steps[state.steps.length - 1] =
+      state.recordsPageSends === true ? { ...last, pageSends: true } : sentByPage;
   }
   return reached || submit === "clicked" || submit === "uncertain";
 };

@@ -440,8 +440,9 @@ it("counts a screen as sent once the minter goes on after the host's click faile
 });
 
 // A code screen that sent itself on its last digit and took its submit away in place, so the host
-// clicked nothing: once the minter goes on, it is recorded as sent by the page, with no submit.
-it("records a code screen that closed in place with no submit once the minter goes on", async () => {
+// clicked nothing: once the minter goes on, it is recorded as sent by the page. It keeps its
+// submit, which its screens press only on a day the page doesn't send the code itself.
+it("records a code screen that closed in place with its submit, as one its page sends, once the minter goes on", async () => {
   const host = harness({
     held: account,
     answers: { code: ["482913"] },
@@ -464,7 +465,9 @@ it("records a code screen that closed in place with no submit once the minter go
       return recorder.published();
     }),
   );
-  expect(published?.recipe.steps[1]).toEqual({ page: `${origin}/login`, fields: code.fields });
+  const step = { page: `${origin}/login`, fields: code.fields, submit: "#verify" };
+  expect(published?.recipe.steps[1]).toEqual(step);
+  expect(published?.states?.states[1]?.step).toEqual({ ...step, pageSends: true });
 });
 
 // A refused step shows the minter went on from the screen before, as a method chooser shows

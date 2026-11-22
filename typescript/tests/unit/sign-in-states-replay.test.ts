@@ -13,6 +13,7 @@ import {
   appendSignInStates,
   type BoxKind,
   type BoxTakes,
+  decodeSignInStateEntries,
   decodeSignInStateEntry,
   noteSignInState,
   type ObservedState,
@@ -1504,6 +1505,25 @@ it("appends only what a library did not hold, leaving every stored entry as it w
   );
   // A stored entry whose key is not its content's reads as none.
   expect(decodeSignInStateEntry(stored[0]?.replace("#continue", "#other"))).toBeUndefined();
+});
+
+it("refuses to append a state whose step its readers can't read back, and counts what a reader leaves out", () => {
+  // A step with a field no reader knows, as a newer writer's step reads to an older reader.
+  const unknown = stepAt("/sign-in", [email], "#continue", { sendsLater: true });
+  const signedIn = { selector: "#account" };
+  expect(
+    appendSignInStates(signInStatesOf({}, []), { states: [{ fingerprint: arrival(emailScreen), step: unknown }], signedIn }),
+  ).toEqual({ refused: "unsupported_step" });
+  const known = appendSignInStates(signInStatesOf({}, []), {
+    states: [{ fingerprint: arrival(emailScreen), step: stepAt("/sign-in", [email], "#continue") }],
+    signedIn,
+  });
+  if ("refused" in known) throw new Error(known.refused);
+  const unread = signInStateEntryText(stateEntry(arrival(passwordScreen), { ...unknown, page: `${origin}/password` }));
+  expect(decodeSignInStateEntries([...known.added.map(signInStateEntryText), unread])).toEqual({
+    entries: known.added,
+    dropped: 1,
+  });
 });
 
 it("fails loudly when a recorded step carries no state", () => {

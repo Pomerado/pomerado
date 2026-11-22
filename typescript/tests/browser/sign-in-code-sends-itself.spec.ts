@@ -35,12 +35,12 @@ const boxes = [1, 2, 3, 4, 5, 6]
 
 /**
  * The code screen: six boxes and a Verify button, or, `inForm`, the boxes alone in a form. The
- * sixth digit sends the code once, and so does each click of Verify, which is counted, and each
- * Enter in a box. An accepted code puts the account in place of the screen, or of the form, which
+ * sixth digit sends the code once, unless the page doesn't send it itself (`sendsItself` false),
+ * and so does each click of Verify, which is counted, and each Enter in a box. An accepted code puts the account in place of the screen, or of the form, which
  * hides; an expired one signs the session out. Each box's key downs are kept, with whether each
  * was trusted.
  */
-const codeScreen = (inForm: boolean) => `<main id="view"><p>Enter the code we sent you</p>${inForm ? `<form>${boxes}</form>` : `${boxes}<button id="verify" type="button">Verify</button>`}</main>
+const codeScreen = (inForm: boolean, sendsItself: boolean) => `<main id="view"><p>Enter the code we sent you</p>${inForm ? `<form>${boxes}</form>` : `${boxes}<button id="verify" type="button">Verify</button>`}</main>
 <script>
 const view = document.getElementById("view");
 const boxes = [...document.querySelectorAll(".otp")];
@@ -64,7 +64,7 @@ boxes.forEach((box, index) => box.addEventListener("keydown", (event) => {
 }));
 boxes.forEach((box, index) => box.addEventListener("input", () => {
   if (box.value !== "" && boxes[index + 1]) boxes[index + 1].focus();
-  if (sent || !/^[0-9]{6}$/.test(typed())) return;
+  if (!${sendsItself} || sent || !/^[0-9]{6}$/.test(typed())) return;
   sent = true;
   check();
 }));
@@ -78,7 +78,7 @@ document.getElementById("verify")?.addEventListener("click", () => {
  * The site: the code screen at /verify. It keeps each code check and answers it `checkMs` later,
  * the first as accepted and any later one as expired.
  */
-const serve = async (page: Page, { inForm = false, checkMs = 600 } = {}) => {
+const serve = async (page: Page, { inForm = false, checkMs = 600, sendsItself = true } = {}) => {
   const checks: string[] = [];
   await page.route(`${site}/**`, async (route) => {
     const request = route.request();
@@ -93,7 +93,7 @@ const serve = async (page: Page, { inForm = false, checkMs = 600 } = {}) => {
         contentType: "application/json",
         body: "{}",
       });
-    } else await route.fulfill({ contentType: "text/html", body: codeScreen(inForm) });
+    } else await route.fulfill({ contentType: "text/html", body: codeScreen(inForm, sendsItself) });
   });
   return checks;
 };
@@ -186,11 +186,11 @@ test("a run signs in through six code boxes that send the code themselves, and n
 class TestFailure extends Data.TaggedError("TestFailure")<{ readonly code: string }> {}
 
 /**
- * A sign-in of the screen as one recorded state with no submit, on a host that presses Enter after
- * typing such a state (`resubmit`) and reads the tab's own requests for a code the page sent
- * (`codeSent`).
+ * A sign-in of the screen as one recorded state with no submit, or with `submitted`'s, on a host
+ * that presses Enter or that submit after typing such a state (`resubmit`) and reads the tab's own
+ * requests for a code the page sent (`codeSent`).
  */
-const runStates = async (page: Page) => {
+const runStates = async (page: Page, submitted: { readonly submit?: string; readonly pageSends?: true } = {}) => {
   await page.goto(`${site}/verify`);
   const browser = await hostPage(page);
   const { keyboard } = await hostKeyboard(page);
@@ -199,7 +199,7 @@ const runStates = async (page: Page) => {
   const scanned = await Effect.runPromise(observe);
   if (scanned === undefined) throw new Error("The scan read nothing");
   const recorded = appendSignInStates(signInStatesOf({}, []), {
-    states: [{ fingerprint: scanned.fingerprint, step: { page: `${site}/verify`, fields: recipe.steps[0].fields } }],
+    states: [{ fingerprint: scanned.fingerprint, step: { page: `${site}/verify`, fields: recipe.steps[0].fields, ...submitted } }],
     signedIn: recipe.signedIn,
   });
   if ("refused" in recorded) throw new Error(recorded.refused);
@@ -255,5 +255,30 @@ test("a recorded code state with no submit, whose boxes send the code while the 
   expect(await page.evaluate(() => Reflect.get(window, "keys"))).toEqual(
     Array.from(code, (key, at) => ({ box: at + 1, key, trusted: true })),
   );
+  await expect(page.locator("#account")).toBeVisible();
+});
+
+// The code state as a recording keeps it when its page sent the code itself and took Verify away:
+// with Verify, which its replay presses only when the page doesn't send the code itself.
+const sentByPage = { submit: "#verify", pageSends: true } as const;
+
+test("a recorded code state whose page sent the code itself gets its Verify pressed once, when the page doesn't send it", async ({
+  page,
+}) => {
+  const checks = await serve(page, { sendsItself: false });
+  expect(await runStates(page, sentByPage)).toBe("signed_in");
+  expect(checks).toEqual([code]);
+  expect(await page.evaluate(() => Reflect.get(window, "clicks"))).toBe(1);
+  await expect(page.locator("#account")).toBeVisible();
+});
+
+test("a recorded code state whose page sends the code itself gets no Verify press while the site checks it", async ({
+  page,
+}) => {
+  // The site takes 9 s to check, longer than the replay holds before it presses Verify.
+  const checks = await serve(page, { checkMs: 9_000 });
+  expect(await runStates(page, sentByPage)).toBe("signed_in");
+  expect(checks).toEqual([code]);
+  expect(await page.evaluate(() => Reflect.get(window, "clicks"))).toBe(0);
   await expect(page.locator("#account")).toBeVisible();
 });
