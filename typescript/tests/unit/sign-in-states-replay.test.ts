@@ -1187,6 +1187,30 @@ it("signs in on a page that can't tell where a sign-in on one address settles in
   expect(confirmed).toEqual(["confirmed"]);
 });
 
+it("never lands in place on a sign-in on one address whose dialog closes back to its launcher", { timeout: 8_000 }, async () => {
+  // A wrong password closes the dialog back to the page's Log in, with no error marker.
+  const launcher: Screen = { path: "/sign-in", boxes: [], buttons: ["#log-in"], texts: ["home"], labels: ["log in"] };
+  const emailHere: Screen = { path: "/sign-in", boxes: [{ selector: "#email", kind: "identifier" }], buttons: ["#continue"] };
+  const passwordHere: Screen = { path: "/sign-in", boxes: [{ selector: "#password", kind: "password" }], buttons: ["#go"] };
+  const remember: Screen = { path: "/sign-in", boxes: [], buttons: ["#remember"], texts: ["remember this device?"] };
+  const library = libraryOf([
+    { fingerprint: arrival(launcher), step: stepAt("/sign-in", [], "#log-in") },
+    { fingerprint: arrival(emailHere), step: stepAt("/sign-in", [email], "#continue") },
+    { fingerprint: arrival(passwordHere), step: stepAt("/sign-in", [password], "#go") },
+    { fingerprint: arrival(remember), step: stepAt("/sign-in", [], "#remember") },
+  ]);
+  const next: Readonly<Record<string, string>> = { "#log-in": "email", "#continue": "password", "#go": "closed" };
+  const site = scriptedSite(
+    { start: launcher, email: emailHere, password: passwordHere, closed: launcher },
+    (_at, clicked) => next[clicked],
+  );
+  const confirmed: string[] = [];
+  const hooks = { ...site.hooks, confirmCantTell: () => Effect.sync(() => void confirmed.push("confirmed")) };
+  const ended = await replay({ ...site, hooks }, library, { stepWaitMs: 3_000 });
+  expect(ended).toMatchObject({ outcome: "unclear", reason: "state_repeated" });
+  expect(confirmed).toEqual([]);
+});
+
 it("keeps the evidence of the host's refusal of a state's controls in a step event when the replay ends on it", async () => {
   const library = libraryOf([{ fingerprint: arrival(emailScreen), step: stepAt("/sign-in", [email], "#continue") }]);
   const site = scriptedSite({ start: emailScreen }, () => undefined);

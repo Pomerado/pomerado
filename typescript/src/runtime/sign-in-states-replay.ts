@@ -1492,7 +1492,8 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
             mayCantTell(run, after, true)
           ) {
             cantTellRead = held.text;
-            if (after !== undefined && (yield* landsInPlace(run, after))) replay.progress.landedInPlace = true;
+            if (back === undefined && after !== undefined && (yield* landsInPlace(run, after)))
+              replay.progress.landedInPlace = true;
             if (yield* replay.endedCantTell(undefined)) return cantTellEnd(run, marker);
           }
         } else if (
