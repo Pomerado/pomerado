@@ -123,10 +123,11 @@ const scanFrame = `({ deep, dismissed }) => {
     !notTyped.includes(attribute(element, "type")) && !element.disabled && !element.readOnly &&
     !searching(element) && shows(element));
   // A picture code box, a site's own picture CAPTCHA on a sign-in form, as a gate that fills one
-  // reads it: a text box named for a captcha, a picture, image, graphic or verification code, in a
+  // reads it: a text box named for a captcha, a picture, image or graphic code, never a verification
+  // code, which a sign-in's own code box may be named for, in a
   // form with a password box, and a picture beside it in that form, outside the page's chrome.
   const chrome = "header, nav, footer, aside, [role=banner], [role=navigation], [role=search], [role=contentinfo], [role=complementary]";
-  const captcha = /(?<!re|h-?|fun|frc-|no)[ck]aptcha|(?:picture|image|graphic|verification)[ _-]?code/i;
+  const captcha = /(?<!re|h-?|fun|frc-|no)[ck]aptcha|(?:picture|image|graphic)[ _-]?code/i;
   const pictureCode = (element) => {
     if (element.tagName !== "INPUT" || element.type !== "text" || element.form === null ||
       !boxes.some((other) => other.type === "password" && other.form === element.form) ||
@@ -314,9 +315,17 @@ const scanFrame = `({ deep, dismissed }) => {
   // The page as a look with no box reads it, and apart from what covers it.
   const told = () => {
     const buttons = buttonsIn(all);
-    // The modal dialog shown, as a covering notice's is found: the last that holds no other shown,
-    // and no notice the library dismisses; else the page outside each such notice.
-    const modals = all('dialog[open], [role~="dialog"], [role~="alertdialog"], [aria-modal="true"]').filter((element) => shows(element) && !apart(element));
+    // The modal dialog shown over the page, as a covering notice's is found: one that holds what
+    // sits at the window's centre, the last that holds no other shown, and no notice the library
+    // dismisses; else the page outside each such notice. A banner at an edge is no such dialog.
+    let centre = document.elementFromPoint(innerWidth / 2, innerHeight / 2);
+    while (centre?.shadowRoot) {
+      const inner = centre.shadowRoot.elementFromPoint(innerWidth / 2, innerHeight / 2);
+      if (inner === null || inner === centre) break;
+      centre = inner;
+    }
+    const covers = (element) => centre !== null && (element.contains(centre) || roots.some((root) => root !== document && element.contains(root.host) && root.contains(centre)));
+    const modals = all('dialog[open], [role~="dialog"], [role~="alertdialog"], [aria-modal="true"]').filter((element) => shows(element) && !apart(element) && covers(element));
     const modal = modals.findLast((element) => !modals.some((other) => other !== element && element.contains(other)));
     const within = (selector) => (modal === undefined ? all(selector) : [...modal.querySelectorAll(selector)]).filter((element) => !apart(element));
     const [dialogSaid, dialogButtons] = modal === undefined && notices.length === 0 ? [undefined, []] : [firstSaid(within), buttonsIn(within)];

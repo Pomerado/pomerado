@@ -182,7 +182,8 @@ const codesOf = (step: AutofillRecipeStep | undefined) =>
  * boxes, as one-character boxes read one by one, or identifier boxes taking what it says they took
  * (`takes`); a lone code box that says what it took with one identifier box. A row whose look read
  * before held its first box alone, as a page that switches each box on in turn showed it, pairs with
- * that one box where the other look's step types as many codes as the row has boxes (`codes`). A row
+ * that one box where the other look's step types as many codes as the row has boxes, or one code
+ * the fill spreads across the row from its first box (`codes`). A row
  * pairs only with boxes read one by one, never with another row, whose role and label tell it.
  * A picture code box left pairs with a box of its kind and frame the other look holds, else with
  * none, as a site may show it only at times. `folded` holds every box paired so, whose takes are
@@ -219,7 +220,7 @@ const paired = (
       const taken =
         boxes.length >= (row.count ?? 1)
           ? boxes.slice(0, row.count ?? 1)
-          : row.count !== undefined && codesThere === row.count
+          : row.count !== undefined && (codesThere === row.count || codesThere === 1)
             ? boxes.slice(0, 1)
             : [];
       if (taken.length === 0) continue;
@@ -384,13 +385,16 @@ export const signInDismisses = (library: SignInStates) => [
 export const sameMessage = (a: StateFingerprint, b: StateFingerprint) =>
   readings(a).some((left) => readings(b).some((right) => lookOf(left).fingerprint.message === lookOf(right).fingerprint.message));
 /**
- * Whether `twin` is `state` with a `dismiss` added and nothing else: one look and one step but for
- * the covering notice's control `twin` clicks, which a fill clicks only where the page shows it.
+ * Whether `twin` is `state` with a `dismiss` added and nothing else: one look, or two the `page`
+ * matches, as a page read apart from a notice is both the look recorded under it and the one
+ * recorded with it (`readings`), and one step but for the covering notice's control `twin` clicks,
+ * which a fill clicks only where the page shows it.
  */
-export const addsDismiss = (twin: StateEntry, state: StateEntry) =>
+export const addsDismiss = (twin: StateEntry, state: StateEntry, page?: StateFingerprint) =>
   twin.step.dismiss !== undefined &&
   state.step.dismiss === undefined &&
-  sameFingerprint(twin, state) &&
+  (sameFingerprint(twin, state) ||
+    (page !== undefined && sameFingerprint(twin, page) && sameFingerprint(state, page))) &&
   canonical({ ...twin.step, dismiss: undefined }) === canonical(state.step);
 /** Whether a fingerprint shows nothing to tell it by: no box, no message and no button. */
 export const blankFingerprint = (fingerprint: StateFingerprint) =>
@@ -566,12 +570,21 @@ const standingBoxes = (reached: ObservedState, now: ObservedState) => {
     return at < 0;
   });
 };
-/** The page's boxes as they stand since `reached`: the empty ones, and the ones filled since. */
+/**
+ * The page's boxes as they stand since `reached`: the empty ones, and the ones filled since; a code
+ * box keeps what the identifier boxes a look read before held there took (`takes`), so it still
+ * pairs with them (`paired`).
+ */
 export const standingFingerprint = (reached: ObservedState, now: ObservedState): StateFingerprint => {
   const boxes = standingBoxes(reached, now);
   return fingerprintOf({
     top: now.fingerprint.top,
-    boxes: boxes.map(({ frame, kind, count }) => ({ frame, kind, ...(count === undefined ? {} : { count }) })),
+    boxes: boxes.map(({ frame, kind, count, takes }) => ({
+      frame,
+      kind,
+      ...(count === undefined ? {} : { count }),
+      ...(kind === "code" && takes !== undefined ? { takes } : {}),
+    })),
     submit: boxes.some((box) => box.submit),
   });
 };

@@ -410,20 +410,25 @@ test("code boxes told by the rule a fill reads a row by, or by a name, read as c
   expect(sameFingerprint(before(identifiers(1)), now("named"))).toBe(true);
   expect(sameFingerprint(before([{ frame: site, kind: "code", role: "textbox" }]), now("separated"))).toBe(false);
   // A look read before held a switched row's first box alone: it matches where its step types as
-  // many codes as the row has boxes, as a minter records such a row, and only there.
+  // many codes as the row has boxes, as a minter records such a row, or one code a fill spreads
+  // across the row, and only there.
   const codes = (count: number) =>
     ({ page: `${site}/verify`, fields: Array.from({ length: count }, (_, at) => ({ selector: `#d${at}`, slot: "code" as const })) }) satisfies AutofillRecipeStep;
   expect(sameFingerprint({ fingerprint: before(identifiers(1)), step: codes(6) }, now("switched"))).toBe(true);
-  expect(sameFingerprint({ fingerprint: before(identifiers(1)), step: codes(1) }, now("switched"))).toBe(false);
+  expect(sameFingerprint({ fingerprint: before(identifiers(1)), step: codes(1) }, now("switched"))).toBe(true);
+  expect(sameFingerprint({ fingerprint: before(identifiers(1)), step: codes(3) }, now("switched"))).toBe(false);
   expect(sameFingerprint(before(identifiers(1)), now("switched"))).toBe(false);
 });
 
 test("a page with no box that shows a modal dialog reads as the dialog, keeping the page as read before beside it", async ({
   page,
 }) => {
+  // A dialog over the page, at the window's centre, as an offer after a code shows.
+  const offer = `<div role="dialog" aria-modal="true" style="position: fixed; inset: 0; display: grid; place-content: center; background: white">
+    <h2>Try membership free</h2><button>Start trial</button><button>No thanks</button></div>`;
   const scan = await open(page, {
     [site]: `<h1>Groceries near you</h1><button>Log in</button><button>Sign up</button>
-      <div role="dialog" aria-modal="true"><h2>Try membership free</h2><button>Start trial</button><button>No thanks</button></div>`,
+      ${offer}`,
   });
   const shown = await scan();
   const before = fingerprintOf({
@@ -458,7 +463,7 @@ test("a page with no box that shows a modal dialog reads as the dialog, keeping 
   const elsewhere = await (
     await open(page, {
       [site]: `<h1>Groceries near you</h1><button>Log in now</button><button>Sign up</button>
-        <div role="dialog" aria-modal="true"><h2>Try membership free</h2><button>Start trial</button><button>No thanks</button></div>`,
+        ${offer}`,
     })
   )();
   expect(elsewhere.fingerprint.instruction).toBe(shown.fingerprint.instruction);
@@ -466,6 +471,15 @@ test("a page with no box that shows a modal dialog reads as the dialog, keeping 
   expect(sameFingerprint(shown.fingerprint, elsewhere.fingerprint)).toBe(true);
   expect(toldApart(shown.fingerprint, elsewhere.fingerprint)).toBe(0);
   expect(sameFingerprint(before, elsewhere.fingerprint)).toBe(false);
+  // A dialog at an edge, as a banner, covers nothing at the centre: the page reads as before.
+  const banner = await (
+    await open(page, {
+      [site]: `<h1>Groceries near you</h1><button>Log in</button><button>Sign up</button>
+        <div role="dialog" style="position: fixed; bottom: 0; left: 0; right: 0"><h2>We use cookies</h2><button>Accept</button></div>`,
+    })
+  )();
+  expect(banner.fingerprint.instruction).toBeUndefined();
+  expect(banner.fingerprint.message).toBe("~ near you");
 });
 
 test("a page with no box reads apart from a notice whose control the library dismisses, keeping the page as read before beside it", async ({
@@ -538,9 +552,14 @@ test("a picture code box on a sign-in form reads as before, marked, so a page th
   // A look read before, which counted it, matches; so does the page without it, either way.
   expect(sameFingerprint(before, shown.fingerprint)).toBe(true);
   expect(sameFingerprint(without.fingerprint, shown.fingerprint)).toBe(true);
-  // A box of that name with no picture beside it reads as before, unmarked.
+  // A box of that name with no picture beside it reads as before, unmarked, and so does a box
+  // named for a verification code beside a picture, as a sign-in's own code box may be.
   const bare = await (await open(page, { [site]: form('<input type="text" name="captcha">') }))();
   expect(bare.fingerprint.boxes).toEqual(before.boxes);
+  const verification = await (
+    await open(page, { [site]: form('<div><input type="text" name="verification_code"><canvas width="120" height="40"></canvas></div>') })
+  )();
+  expect(verification.fingerprint.boxes.some((box) => box.role === "captcha")).toBe(false);
 });
 
 test("a page that shows nothing outside its open shadow roots reads through them; one that shows text of its own reads as before", async ({

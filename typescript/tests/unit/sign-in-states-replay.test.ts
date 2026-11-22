@@ -205,7 +205,8 @@ const scriptedSite = (
         top: origin,
         boxes: empty.map(({ empty: _empty, submit: _submit, ...box }) => box),
         submit: empty.length > 0,
-        ...(empty.length > 0 ? told(screen) : { message: screen.texts?.[0] ?? "", buttons: [...(screen.labels ?? [])] }),
+        // A page with no box read apart from a dialog or notice keeps the page as read whole beside it.
+        ...(empty.length > 0 ? told(screen) : { message: screen.texts?.[0] ?? "", buttons: [...(screen.labels ?? [])], ...told(screen) }),
       },
       boxes,
       texts: screen.texts ?? [],
@@ -402,6 +403,56 @@ const combined: Screen = {
   buttons: ["#continue"],
 };
 const emailOnly: Screen = { path: "/", boxes: [{ selector: "#email", kind: "identifier" }], buttons: ["#continue"] };
+
+it("acts in a state read before as identifier boxes on a page now read as a code box, as it did then", async () => {
+  // A box named for a code, read before as an identifier box taking what it said, and now as a
+  // code box that says so: the code is typed, then Verify pressed, once.
+  const before: Screen = { path: "/verify", boxes: [{ selector: "#code", kind: "identifier", takes: "other" }], buttons: ["#verify"] };
+  const now: Screen = { ...before, boxes: [{ selector: "#code", kind: "code", role: "textbox", takes: "other" }] };
+  const codes = libraryOf([{ fingerprint: arrival(before), step: stepAt("/verify", [code], "#verify") }]);
+  const verify = scriptedSite({ start: now }, (_at, clicked) => (clicked === "#verify" ? "home" : undefined));
+  const verified = await replay(verify, codes);
+  expect(verified).toMatchObject({ outcome: "signed_in" });
+  expect(verify.fills).toEqual(["code"]);
+  expect(verify.clicks).toEqual(["#verify"]);
+  expect(verified.asked.filter((id) => id === "code")).toHaveLength(1);
+  // A username box whose name holds a code's word, read now as a code box: both boxes are typed.
+  const username = { selector: "#user", accepts: ["username" as const] };
+  const form: Screen = {
+    path: "/sign-in",
+    boxes: [{ selector: "#user", kind: "identifier", takes: "other" }, { selector: "#password", kind: "password" }],
+    buttons: ["#go"],
+  };
+  const read: Screen = { ...form, boxes: [{ selector: "#user", kind: "code", role: "textbox", takes: "other" }, { selector: "#password", kind: "password" }] };
+  const login = libraryOf([{ fingerprint: arrival(form), step: stepAt("/sign-in", [username, password], "#go") }]);
+  const signIn = scriptedSite({ start: read }, (_at, clicked) => (clicked === "#go" ? "home" : undefined));
+  expect(await replay(signIn, login)).toMatchObject({ outcome: "signed_in" });
+  expect(signIn.fills).toEqual(["username", "password"]);
+  expect(signIn.clicks).toEqual(["#go"]);
+});
+
+it("acts in a state recorded under a notice with the dismiss of one recorded with it, where the page read apart from the notice is both", async () => {
+  const whole: Screen = { path: "/", boxes: [], buttons: ["#c", "#x"], texts: ["we use cookies"], labels: ["~", "~ all"] };
+  const under: Screen = { path: "/", boxes: [], buttons: ["#c"], texts: ["welcome back"], labels: ["~"] };
+  const library = libraryOf(
+    [{ fingerprint: arrival(whole), step: stepAt("/", [], "#c", { dismiss: "#x" }) }],
+    [{ fingerprint: arrival(under), step: stepAt("/", [], "#c") }],
+  );
+  // The page read apart from the notice: the page under it, with the page read whole beside it.
+  const shown: Screen = { ...under, buttons: ["#c", "#x"], instruction: "we use cookies", ways: ["~", "~ all"] };
+  const site = scriptedSite({ start: shown }, (_at, clicked) => (clicked === "#c" ? "home" : undefined));
+  const dismissed: (string | undefined)[] = [];
+  const hooks: AutofillHooks<TestFailure> = {
+    ...site.hooks,
+    fill: (input) => {
+      dismissed.push(input.step.dismiss);
+      return site.hooks.fill(input);
+    },
+  };
+  expect(await replay({ ...site, hooks }, library)).toMatchObject({ outcome: "signed_in" });
+  expect(site.clicks).toEqual(["#c"]);
+  expect(dismissed).toEqual(["#x"]);
+});
 
 it("takes a state whose step types a box the site shows filled already, as an email it kept, only where no state has the page's look", async () => {
   const both = { fingerprint: arrival(combined), step: stepAt("/", [email, password], "#continue") };
@@ -725,6 +776,20 @@ it("never takes a state by its control where the page's main message differs or 
   );
   expect(await replay(site, plain)).toMatchObject({ outcome: "signed_in" });
   expect(site.clicks).toEqual(["button.go", "#go"]);
+});
+
+it("takes by its control a reworded page read as a dialog over the page, as the page read before was", async () => {
+  const stay: Screen = { path: "/stay", boxes: [], buttons: ["#yes", "#help"], texts: ["stay signed in"], labels: ["~", "help"] };
+  const stayState = { fingerprint: arrival(stay), step: stepAt("/stay", [], "#yes") };
+  // Read now as the dialog over the page: its own message and button, the page as read whole beside them.
+  const dialog: Screen = { ...stay, texts: ["stay signed in on this browser"], labels: ["~"], instruction: "stay signed in on this browser", ways: ["~", "help"] };
+  const next: Readonly<Record<string, string>> = { "#continue": "password", "#go": "stay", "#yes": "home" };
+  const site = scriptedSite({ start: emailScreen, password: passwordScreen, stay: dialog }, (_at, clicked) => next[clicked]);
+  const led = libraryOf([typedEmail, typedPassword, stayState]);
+  const events: Readonly<Record<string, unknown>>[] = [];
+  expect(await replay(site, led, { events })).toMatchObject({ outcome: "signed_in" });
+  expect(site.clicks).toEqual(["#continue", "#go", "#yes"]);
+  expect(events).toContainEqual({ stage: "state", state: led.states[2]?.key, reason: "same_control" });
 });
 
 it("takes by its control, once the login went out, only a state the state just acted in led to, with its buttons", async () => {

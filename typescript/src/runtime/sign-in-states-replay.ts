@@ -270,16 +270,17 @@ const resolved = <E extends YieldableError, V extends string, L extends Autofill
 
 /**
  * The step a state acts with (`resolved`), with the dismiss of the newest look-alike a sign-in
- * learned that only adds one to it (`addsDismiss`): a notice that came to cover the state for one
- * login covers it for every login, and a fill clicks it only where the page shows it. The state
- * keeps its key, its route and what it leads to.
+ * learned that only adds one to it, by its look or as the `page` reads (`addsDismiss`): a notice
+ * that came to cover the state for one login covers it for every login, and a fill clicks it only
+ * where the page shows it. The state keeps its key, its route and what it leads to.
  */
 const actedStep = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
   state: StateEntry,
+  page: StateFingerprint,
 ): AutofillStep => {
   const full = resolved(run, state.step);
-  const dismiss = run.input.library.states.findLast((other) => addsDismiss(other, state))?.step.dismiss;
+  const dismiss = run.input.library.states.findLast((other) => addsDismiss(other, state, page))?.step.dismiss;
   return dismiss === undefined ? full : { ...full, dismiss };
 };
 
@@ -838,10 +839,11 @@ const ledToByControl = <E extends YieldableError, V extends string, L extends Au
     )
       return undefined;
     const pressed = [after.step.submit, ...(after.step.methods ?? []).map((option) => option.selector)];
-    // The page's look but its message, which is where a site rewords such a page.
-    const unworded = { ...fingerprint, message: undefined };
+    // The page's look but its message, which is where a site rewords such a page, as either reads
+    // it: a page read apart from a dialog or notice keeps the page's message as its instruction.
+    const unworded = { ...fingerprint, message: undefined, instruction: undefined };
     const here = (state: StateEntry) =>
-      sameFingerprint({ ...state.fingerprint, message: undefined }, unworded) &&
+      sameFingerprint({ ...state.fingerprint, message: undefined, instruction: undefined }, unworded) &&
       pressesOnly(run, state) &&
       !pressed.includes(state.step.submit) &&
       hashless(URL.parse(state.step.page, page)?.href ?? "") &&
@@ -1915,7 +1917,7 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
       if (step.choice !== undefined && !(input.hosted?.allowedChoices ?? []).includes(step.choice))
         return stopped(run, "sign_in_choice_not_allowed", { choice: step.choice });
       if (step.approval !== undefined) return (yield* approve(run, state, inspection)) ?? acted();
-      const full = actedStep(run, state);
+      const full = actedStep(run, state, reached.fingerprint);
       let fuller: { readonly state: StateEntry; readonly observed: ObservedState } | undefined;
       const groups = actions(full.fields.filter((field) => !typed.has(field.slot)));
       const alone = groups
@@ -2136,7 +2138,7 @@ const actAgain = <E extends YieldableError, V extends string, L extends Autofill
   Effect.gen(function* () {
     const { replay, input } = run;
     const state = last.acted;
-    const full = actedStep(run, state);
+    const full = actedStep(run, state, last.reached.fingerprint);
     const step: AutofillStep =
       again.again === "repress" && last.press !== undefined
         ? last.press

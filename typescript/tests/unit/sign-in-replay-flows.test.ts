@@ -5,6 +5,7 @@ import type {
   AutofillSignedInCheck,
   AutofillStepReport,
 } from "../../src/destinations/autofill-step.js";
+import type { AutofillRecipeStep } from "../../src/destinations/autofill-recipe.js";
 import type { SignInRecipe } from "../../src/destinations/sign-in-recipe.js";
 import { appendSignInStates } from "../../src/destinations/sign-in-states.js";
 import { makeInputAsker } from "../../src/inputs/callback.js";
@@ -1404,7 +1405,7 @@ const observeOn = (fake: ScriptedSite): NonNullable<SignInReplayBrowser<never>["
       texts: [],
     };
   });
-const loginScreens = () => {
+const loginScreens = (step: AutofillRecipeStep = loginStep) => {
   const added = appendSignInStates(
     { states: [], transitions: [], signedIn: [] },
     {
@@ -1418,7 +1419,7 @@ const loginScreens = () => {
             ],
             submit: true,
           },
-          step: loginStep,
+          step,
         },
       ],
       signedIn: { selector: "#account" },
@@ -1427,15 +1428,19 @@ const loginScreens = () => {
   if ("refused" in added) throw new Error(added.refused);
   return added.library;
 };
-const screensSignIn = (fake: ScriptedSite) => {
+const screensSignIn = (
+  fake: ScriptedSite,
+  states = loginScreens(),
+  observe: NonNullable<SignInReplayBrowser<never>["observe"]> = observeOn(fake),
+) => {
   const secrets = makeRunSecrets();
   const { ask } = owner(fake);
   return Effect.runPromise(
     Effect.either(
       signInForRun({
-        states: loginScreens(),
+        states,
         entryUrl: `${origin}/login`,
-        browser: { ...fake.browser, observe: observeOn(fake) },
+        browser: { ...fake.browser, observe },
         login: localSignInLogin({ ask, register: secrets.register, siteOrigin: origin }),
         ask,
         secrets,
@@ -1471,6 +1476,27 @@ it("signs a run in through its screens, going on with the login from the screen 
     "fill:login",
   ]);
   expect(fake.filled("login")).toEqual([[login.username], [login.password], []]);
+});
+
+it("reads a run's screens apart from each notice its screens' steps dismiss", async () => {
+  const typed: string[] = [];
+  const fake = scriptedSite({
+    entry: "login",
+    screens: { login: loginScreen, account: [] },
+    fill: (_page, values) => {
+      typed.push(...values);
+      return values.length === 0 && signedLogin(typed) ? { next: "account", signIn: true } : {};
+    },
+  });
+  const dismissed: (readonly string[] | undefined)[] = [];
+  const observe: NonNullable<SignInReplayBrowser<never>["observe"]> = (workspace, identifiers, dismiss) => {
+    dismissed.push(dismiss);
+    return observeOn(fake)(workspace, identifiers, dismiss);
+  };
+  const result = await screensSignIn(fake, loginScreens({ ...loginStep, dismiss: "#accept-cookies" }), observe);
+  expect(result).toEqual(Either.right({ alreadySignedIn: false }));
+  expect(dismissed.length).toBeGreaterThan(0);
+  expect(new Set(dismissed.map((each) => JSON.stringify(each)))).toEqual(new Set([JSON.stringify(["#accept-cookies"])]));
 });
 
 it("fails a run whose site shows a screen its screens don't know, before typing anything", async () => {
