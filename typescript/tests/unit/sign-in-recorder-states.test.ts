@@ -10,8 +10,6 @@ import {
   noteSignInState,
   type ObservedState,
   observedSignInOf,
-  sameFingerprint,
-  stateEntry,
 } from "../../src/destinations/sign-in-states.js";
 import { makeInputAsker } from "../../src/inputs/callback.js";
 import { makeRunSecrets } from "../../src/inputs/secrets.js";
@@ -373,55 +371,4 @@ it("notes a private answer's screen by its look alone, with none of its question
     answerState.fingerprint,
   ]);
   expect(JSON.stringify(observed)).not.toContain("pet");
-});
-
-it("notes a private answer's screen with no message where its question shows beside the box before it", () => {
-  // An identifier-first sign-in whose question page holds one box like the email page's, so the
-  // question reads as a notice beside the same box (`stateAfter`).
-  const box = { frame: origin, kind: "identifier" as const };
-  const page = (texts: readonly string[], takes?: "email"): ObservedState => ({
-    fingerprint: { top: origin, boxes: [{ ...box, ...(takes === undefined ? {} : { takes }) }], submit: true },
-    boxes: [{ ...box, ...(takes === undefined ? {} : { takes }), empty: true, submit: true }],
-    texts,
-  });
-  const steps = [
-    { page: `${origin}/login`, fields: [{ selector: "#email", accepts: ["email"] }], submit: "#continue" },
-    {
-      page: `${origin}/question`,
-      fields: [{ selector: "#answer", slot: "private_answer", questionSelector: "#question" }],
-      submit: "#next",
-    },
-  ] as const;
-  const signIn: { steps: object[] } = { steps: [] };
-  signIn.steps.push({ ...steps[0] });
-  noteSignInState(signIn, page(["continue"], "email"));
-  signIn.steps.push({ ...steps[1] });
-  noteSignInState(signIn, page(["what was the name of your first pet?", "continue"]));
-  const observed = observedSignInOf(signIn.steps, { steps, signedIn: { selector: "#account" } });
-  if (!("states" in observed)) throw new Error("the sign-in noted no state");
-  expect(observed.states[1]?.fingerprint).not.toHaveProperty("message");
-  expect(JSON.stringify(observed)).not.toContain("pet");
-});
-
-it("matches a private answer's screen whatever question its page asks, and only its", () => {
-  const look = {
-    top: origin,
-    boxes: [{ frame: origin, kind: "identifier" as const, takes: "email" as const }],
-    submit: true,
-  };
-  const answer = stateEntry(look, {
-    page: `${origin}/question`,
-    fields: [{ selector: "#answer", slot: "private_answer", questionSelector: "#question" }],
-    submit: "#next",
-  });
-  const email = stateEntry(look, {
-    page: `${origin}/login`,
-    fields: [{ selector: "#email", accepts: ["email"] }],
-    submit: "#continue",
-  });
-  const asked = { ...look, message: "what was the name of your first school?" };
-  expect(sameFingerprint(answer, asked)).toBe(true);
-  expect(sameFingerprint(asked, answer)).toBe(true);
-  expect(sameFingerprint(email, asked)).toBe(false);
-  expect(sameFingerprint(email, look)).toBe(true);
 });

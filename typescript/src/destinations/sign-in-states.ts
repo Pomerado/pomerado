@@ -230,27 +230,9 @@ const takesAgree = (inner: Look, outer: Look, within = false) => {
   const all = (kinds: readonly string[], kind: string) => kinds.length > 0 && kinds.every((taken) => taken === kind);
   return !((all(boxes, "phone") && all(fields, "email")) || (all(boxes, "email") && all(fields, "phone")));
 };
-/** Whether a recorded step takes a private answer, whose page's text may hold its question. */
-const takesPrivateAnswer = (step: unknown) => {
-  const fields: unknown = typeof step === "object" && step !== null ? Reflect.get(step, "fields") : undefined;
-  return (
-    Array.isArray(fields) &&
-    fields.some((field: unknown) => typeof field === "object" && field !== null && Reflect.get(field, "slot") === "private_answer")
-  );
-};
-/**
- * Whether two looks are one (`comparable`, `takesAgree`). Where either is a known state whose step
- * takes a private answer, which is noted with no message (`noteSignInState`), neither's message
- * counts, so a page that asks another question, or words it anew, is still that state.
- */
 export const sameFingerprint = (a: Look, b: Look) => {
   const [left, right] = comparable(lookOf(a).fingerprint, lookOf(b).fingerprint);
-  const untold = takesPrivateAnswer(lookOf(a).step) || takesPrivateAnswer(lookOf(b).step);
-  const text = (fingerprint: StateFingerprint) => {
-    const { message: _message, ...look } = fingerprint;
-    return fingerprintText(untold ? look : fingerprint);
-  };
-  return text(left) === text(right) && takesAgree(a, b);
+  return fingerprintText(left) === fingerprintText(right) && takesAgree(a, b);
 };
 /**
  * Whether `twin` is `state` with a `dismiss` added and nothing else: one look and one step but for
@@ -513,9 +495,9 @@ const readingField = "stateReading";
 /**
  * Notes the state a build's or repair's sign-in step was taken in, read just before that step's
  * fill or approval: on the step the sign-in recorded last, as the state the page showed after the
- * one noted before (`stateAfter`). A step that takes a private answer is noted with no message,
- * instruction or ways, any of which may hold its question, and is matched with no message
- * (`sameFingerprint`). A recipe never holds it: its steps are written field by field.
+ * one noted before (`stateAfter`). A step that takes a private answer is noted with no
+ * instruction or ways, which may hold its question. A recipe never holds it: its steps are written
+ * field by field.
  */
 export const noteSignInState = (
   signIn: { readonly steps: readonly object[] },
@@ -525,8 +507,12 @@ export const noteSignInState = (
   if (step === undefined) return;
   const before: unknown = Reflect.get(signIn, readingField);
   const after = stateAfter(Schema.is(ObservedShape)(before) ? before : undefined, observed);
-  const { message: _message, instruction: _instruction, ways: _ways, ...look } = after;
-  Object.assign(step, { [fingerprintField]: takesPrivateAnswer(step) ? look : after });
+  const fields: unknown = Reflect.get(step, "fields");
+  const privateAnswer =
+    Array.isArray(fields) &&
+    fields.some((field: unknown) => typeof field === "object" && field !== null && Reflect.get(field, "slot") === "private_answer");
+  const { instruction: _instruction, ways: _ways, ...look } = after;
+  Object.assign(step, { [fingerprintField]: privateAnswer ? look : after });
   Object.assign(signIn, { [readingField]: observed });
 };
 const ObservedShape = Schema.Struct({
