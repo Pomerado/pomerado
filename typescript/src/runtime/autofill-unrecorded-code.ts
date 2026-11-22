@@ -235,15 +235,33 @@ export const isCodeRow = (
   );
 
 /**
+ * One-character boxes that are never a code's, beyond the code field's word rule: a password box,
+ * as a PIN's, one for a date of birth, one named for a social security number or a birth date, and
+ * one whose `aria-label` holds the word PIN.
+ */
+const notOtherRowKind = `:not(${anyOf([
+  '[type="password" i]',
+  '[autocomplete^="bday" i]',
+  '[aria-label~="pin" i]',
+  ...["ssn", "social", "birth", "dob"].flatMap((word) => [
+    `[name*="${word}" i]`,
+    `[id*="${word}" i]`,
+    `[aria-label*="${word}" i]`,
+  ]),
+])})`;
+
+/**
  * The code fields of a row of `count` code boxes taken by place, for a code screen whose recorded
  * boxes never showed though the page shows its look: each box of a row of one-character boxes
- * (`row`, by `maxlength` 1 and the code field's word rule), else each code field
+ * (`row`, by `maxlength` 1, the code field's word rule and `notOtherRowKind`), else each code field
  * `unrecordedCodeStep` matches, the next in its frame's page order (`:nth-match`, as a selector
- * never chains into another frame). A host's inspection of them passes `isCodeRow` before anything
- * is typed.
+ * never chains into another frame). A host's inspection of them passes `isCodeRow`, and shows no
+ * box at the next place, before anything is typed.
  */
 export const codeRowFields = (count: number, row: boolean) => {
-  const box = row ? `input[maxlength="1"]${notOtherKind}` : (unrecordedCodeStep.fields[0]?.selector ?? "");
+  const box = row
+    ? `input[maxlength="1"]${notOtherKind}${notOtherRowKind}`
+    : (unrecordedCodeStep.fields[0]?.selector ?? "");
   return Array.from({ length: count }, (_, index) => ({ selector: `:nth-match(${box}, ${index + 1})`, slot: "code" as const }));
 };
 

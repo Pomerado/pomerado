@@ -141,9 +141,6 @@ export const sameFingerprint = (a: StateFingerprint, b: StateFingerprint) => {
   const [left, right] = comparable(a, b);
   return fingerprintText(left) === fingerprintText(right);
 };
-/** Whether two looks are one in full, their code boxes' role and label given and alike. */
-export const sameLabelledFingerprint = (a: StateFingerprint, b: StateFingerprint) =>
-  labelled(a) && labelled(b) && fingerprintText(a) === fingerprintText(b);
 /** Whether a fingerprint shows nothing to tell it by: no box, no message and no button. */
 export const blankFingerprint = (fingerprint: StateFingerprint) =>
   fingerprint.boxes.length === 0 &&
@@ -215,15 +212,17 @@ const pathShape = (host: string, path: string, known: readonly string[] | undefi
 };
 
 /**
- * A fingerprint as a log may hold it, with no text and no value: its boxes, its message and its
- * buttons as shapes (`textShape`), and the host and path of `page`, an absolute URL, as
- * `pathShape` writes it against `known`.
+ * A fingerprint as a log may hold it, with no text and no value: its boxes, a code box's label,
+ * its message and its buttons as shapes (`textShape`), and the host and path of `page`, an absolute
+ * URL, as `pathShape` writes it against `known`.
  */
 export const fingerprintShape = (fingerprint: StateFingerprint, page?: string, known?: readonly string[]) => {
   const url = page === undefined ? null : URL.parse(page);
   return {
     ...(url === null ? {} : { host: url.host, path: pathShape(url.host, url.pathname, known) }),
-    boxes: fingerprintOf(fingerprint).boxes,
+    boxes: fingerprintOf(fingerprint).boxes.map((box) =>
+      box.label === undefined ? box : { ...box, label: textShape(box.label) },
+    ),
     submit: fingerprint.submit,
     ...(fingerprint.message === undefined ? {} : { message: textShape(fingerprint.message) }),
     ...(fingerprint.buttons === undefined ? {} : { buttons: fingerprint.buttons.map(textShape).sort() }),
@@ -294,7 +293,7 @@ export const standingFingerprint = (reached: ObservedState, now: ObservedState):
   });
   return fingerprintOf({
     top: now.fingerprint.top,
-    boxes: boxes.map(({ empty: _empty, submit: _submit, ...box }) => box),
+    boxes: boxes.map(({ frame, kind, count }) => ({ frame, kind, ...(count === undefined ? {} : { count }) })),
     submit: boxes.some((box) => box.submit),
   });
 };

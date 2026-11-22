@@ -19,7 +19,6 @@ import {
   type ObservedState,
   sameBoxes,
   sameFingerprint,
-  sameLabelledFingerprint,
   type SignedInEntry,
   type SignInStates,
   type SignInStatesChoices,
@@ -261,8 +260,40 @@ const shownOn = <E extends YieldableError, V extends string, L extends AutofillL
     const inspection = yield* run.input.hooks.inspect(step);
     if ("outcome" in inspection) return inspection.reason;
     if (!onStateFrames(run, state, inspection)) return "screen_origin_changed" as const;
+    if (placed.has(state) && step.fields.length > 0 && !(yield* placedRow(run, state, inspection)))
+      return "ambiguous_match" as const;
     const refused = yield* admitScreen(run.as, run.replay, state.step, inspection.page, inspection);
     return refused ?? inspection;
+  });
+
+/** The states whose code is typed by place (`byPlace`). */
+const placed = new WeakSet<StateEntry>();
+
+/**
+ * A code state's row as its look holds it: one code box with a count, a row of one-character
+ * boxes (`row`), else as many code boxes as it shows.
+ */
+const codeRowOf = (state: StateEntry) => {
+  const { boxes } = state.fingerprint;
+  const row = boxes.length === 1 && boxes[0]?.count !== undefined;
+  return { row, count: row ? (boxes[0]?.count ?? 0) : boxes.length };
+};
+
+/**
+ * Whether a state typed by place shows its row as taken: each field the next box of the row
+ * (`isCodeRow`), and no box at the place after it, as a box the scan does not count, such as one
+ * drawn transparent, would put every character a box over.
+ */
+const placedRow = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  state: StateEntry,
+  inspection: AutofillInspection,
+) =>
+  Effect.gen(function* () {
+    const { row, count } = codeRowOf(state);
+    if (!isCodeRow(inspection.screen.fields, count, row)) return false;
+    const after = yield* run.input.hooks.inspect({ fields: codeRowFields(count + 1, row).slice(count) });
+    return "outcome" in after && after.reason === "not_found";
   });
 
 /**
@@ -539,8 +570,9 @@ const byControl = <E extends YieldableError, V extends string, L extends Autofil
  * login takes them), with its code typed by place into the row of code boxes the page shows
  * instead: the first whose step types a code alone, one character a box, into as many fields as
  * its look's one row of code boxes in one frame holds, two or more, as its own step with the row's
- * fields (`codeRowFields`), once they show on its frames and pass its origin rule (`shownOn`) as
- * that row (`isCodeRow`). Its own submit, Enter or the page's own send then goes as recorded.
+ * fields (`codeRowFields`), once they show on its frames and pass its origin rule as that row, at
+ * this and every later look (`shownOn`, `placedRow`). Its own submit, Enter or the page's own send
+ * then goes as recorded.
  */
 const byPlace = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -549,8 +581,7 @@ const byPlace = <E extends YieldableError, V extends string, L extends AutofillL
   Effect.gen(function* () {
     for (const state of missing) {
       const { boxes } = state.fingerprint;
-      const row = boxes.length === 1 && boxes[0]?.count !== undefined;
-      const count = row ? (boxes[0]?.count ?? 0) : boxes.length;
+      const { row, count } = codeRowOf(state);
       if (
         count < 2 ||
         state.step.fields.length !== count ||
@@ -559,9 +590,9 @@ const byPlace = <E extends YieldableError, V extends string, L extends AutofillL
       )
         continue;
       const typed: StateEntry = { ...state, step: { ...state.step, fields: codeRowFields(count, row) } };
+      placed.add(typed);
       const shown = yield* shownOn(run, typed, resolved(run, typed.step));
-      if (typeof shown !== "string" && isCodeRow(shown.screen.fields, count, row))
-        return { state: typed, inspection: shown, by: "row" } satisfies Shown;
+      if (typeof shown !== "string") return { state: typed, inspection: shown, by: "row" } satisfies Shown;
     }
     return undefined;
   });
@@ -569,9 +600,7 @@ const byPlace = <E extends YieldableError, V extends string, L extends AutofillL
 /**
  * The known state the page shows: one whose fingerprint it is and whose recorded controls show,
  * one match each, on its recorded origin, in the order this login takes them (`ranked`), never
- * the state just acted in again. A state of the page's whole look, its code boxes' role and label
- * too (`sameLabelledFingerprint`), goes before one recorded without them, and only such states
- * count for the login's own route. A state acted in before something went out that the
+ * the state just acted in again. A state acted in before something went out that the
  * page shows again, with no other, is `returned`, unless a sign-in learned it after the last one
  * (`learnedNext`). With `loose`, states of its look none of whose recorded controls showed may be a
  * code state typed by place into the row the page shows (`byPlace`); with no state of its whole
@@ -597,9 +626,7 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
     const candidates = states.filter(
       (state) => state !== skip && sameFingerprint(state.fingerprint, fingerprint),
     );
-    const exact = (state: StateEntry) => sameLabelledFingerprint(state.fingerprint, fingerprint);
-    const order = ranked(run, candidates, candidates.some(exact) ? exact : looksLike(fingerprint), next);
-    const alike = [...order.filter(exact), ...order.filter((state) => !exact(state))];
+    const alike = ranked(run, candidates, looksLike(fingerprint), next);
     let refused: string | undefined;
     let returned: StateEntry | undefined;
     const missing: StateEntry[] = [];
@@ -961,6 +988,7 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
         observed = read;
         shape = acted === undefined ? read.fingerprint : stateAfter(acted.reached, read);
         run.seen = shape;
+        run.missing = undefined;
         const text = fingerprintText(shape);
         if (held?.text !== text) held = { text, since: at };
         const still = at - held.since >= quiet.quietMs;
