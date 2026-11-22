@@ -2370,6 +2370,20 @@ it("orders states sharing a look by a host's method where the login names none, 
   expect(way.clicks).toEqual(["#continue", "#use-password", "#go"]);
 });
 
+it("takes the host's method at a method choice, as a saved authenticator seed's, over the login's remembered pick", async () => {
+  const choose: Screen = { path: "/choose", boxes: [], buttons: ["#text", "#app"], texts: ["how should we confirm it's you"] };
+  const methods = [
+    { method: "sms" as const, selector: "#text" },
+    { method: "totp" as const, selector: "#app" },
+  ];
+  const library = libraryOf([emailState, { fingerprint: arrival(choose), step: stepAt("/choose", [], "#text", { methods }) }]);
+  const site = scriptedSite({ start: emailScreen, choose }, (_at, clicked) => (clicked === "#continue" ? "choose" : "home"));
+  const ended = await replay(site, library, { hostMethod: "totp", choices: { method: "sms" } });
+  expect(ended).toMatchObject({ outcome: "signed_in" });
+  expect(site.clicks).toEqual(["#continue", "#app"]);
+  expect(ended.choices?.method).toBe("totp");
+});
+
 it("takes by a host's method only a state whose recorded press is that method, and keeps no method it led to", async () => {
   const choose: Screen = { path: "/choose", boxes: [], buttons: ["#use-password", "#email-code"], texts: ["how do you want to sign in"] };
   const methods = [

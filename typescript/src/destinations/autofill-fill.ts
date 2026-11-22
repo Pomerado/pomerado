@@ -473,7 +473,8 @@ interface FillInput extends CallInput {
    * host's own reading of the tab's requests that went out at or after `since` (epoch ms, when the
    * fill began), matched against `code`, the step's code fields' values joined in field order, in
    * the host alone and never in a page call. Asked on a step whose every field takes a code, with
-   * each look before the click that finds the screen as typed and again before each click; true
+   * each look before the click that finds the screen as typed and again before each click, or, on
+   * one with no submit, each look that finds it as typed while the host waits on the page; true
    * reports the screen sent by the page (`page`) and clicks nothing. One that fails says no.
    */
   readonly codeSent?: (typed: {
@@ -781,7 +782,8 @@ const submitCall = (
  * screen as typed, or is lost, looks again, and any other answer is taken as the submit call's
  * would be. Only then does the submit call click. On such a step each look that finds the screen
  * as typed, and each click, first asks the host whether the page sent the code itself (`sent`,
- * `codeSent`), and a yes is the page's own send. A click again of a blocked screen skips that
+ * `codeSent`), and a yes is the page's own send, as it is for each look of a step with no submit
+ * whose every field takes a code. A click again of a blocked screen skips that
  * first look, and none of its later looks takes every box locked or emptied as the page's own send
  * (`codeLook`): its dismiss may have emptied every box itself.
  */
@@ -811,6 +813,12 @@ const submitWhenEnabled = (
       if (look !== undefined && !looking && (yield* sent))
         return Either.right<CallAnswer>({ pageSent: true, url });
       const answered = yield* fillCall(input, progress, changes)(looking ? look : call);
+      // A code step with no submit: its page may have sent the code while the boxes stay as typed.
+      if (readsOnly && Either.isRight(answered) && "submit" in answered.right) {
+        url = answered.right.url;
+        if (answered.right.submit === "none" && (yield* sent))
+          return Either.right<CallAnswer>({ pageSent: true, url });
+      }
       if (looking && (Either.isLeft(answered) || unclicked(answered, "none"))) {
         if (Either.isRight(answered) && "submit" in answered.right) {
           url = answered.right.url;
@@ -1111,15 +1119,17 @@ const fillRow = (
 
 /**
  * The host's own answer whether the page already sent the step's code (`codeSent`), typed from
- * `since`, asked afresh each time it runs: no without the hook or a code field the host submits,
- * or when the answer fails or the hook throws.
+ * `since`, asked afresh each time it runs: no without the hook, or a code field the host submits
+ * or a step whose every field takes a code, or when the answer fails or the hook throws.
  */
 const sentByPage = (input: FillInput, since: number): Effect.Effect<boolean> => {
   const code = input.step.fields
     .flatMap((field, index) => (field.slot === "code" ? [input.values[index] ?? ""] : []))
     .join("");
   const hook = input.codeSent;
-  return hook === undefined || code === "" || !codeSentBySite(input.step)
+  const asked =
+    codeSentBySite(input.step) || input.step.fields.every((field) => field.slot === "code");
+  return hook === undefined || code === "" || !asked
     ? Effect.succeed(false)
     : Effect.flatten(Effect.try(() => hook({ since, code }))).pipe(
         // error-reporting-allow: typed-recovery a host that can't tell whether the page sent the code leaves the click to the looks before it, as without the hook
