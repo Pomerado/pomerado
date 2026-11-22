@@ -535,13 +535,13 @@ test("a signed-in build's example starts at the root on the browser's signed-in 
   );
   expect(built.build).toBe("published");
   // The run first checks its sign-in from the entry page. This site shows its form to a signed-in
-  // session too, so the run signs in again (the check's load, then the replay's) before the root.
+  // session too, so the run signs in again through its screens, going on from the form the check
+  // loaded and stopped on, before the root.
   expect(site.visits).toEqual([
     "/login",
     "/account",
     "/deep",
     "/",
-    "/login",
     "/login",
     "/account",
     "/",
