@@ -1,6 +1,7 @@
 import type { Effect } from "effect";
 import type { ExpectedConfirm } from "../browser/dialogs/contracts.js";
 import type { SignInRecipe } from "../destinations/sign-in-recipe.js";
+import type { SignInStates } from "../destinations/sign-in-states.js";
 import { publicationCostlyChoice, publicationCostlyChoiceDefault } from "../guardian/publication.js";
 import type { GuardianAction, PublicationFinding } from "../guardian/review-contracts.js";
 import type { ScriptQuestionDeclarations } from "../runtime/script-input.js";
@@ -116,11 +117,13 @@ export interface MintArtifact {
   readonly inputSchema: unknown;
   readonly outputSchema: unknown;
   /**
-   * The build's verified sign-in, value-free: its recipe, the address its runs start from and,
-   * when a host records them, the build's sign-in origins.
+   * The build's verified sign-in, value-free: its screens (`states`), or the recipe a build saved
+   * before builds recorded screens, or both; the address its runs start from and, when a host
+   * records them, the build's sign-in origins. It holds at least one of `states` and `recipe`.
    */
   readonly signIn?: {
-    readonly recipe: SignInRecipe;
+    readonly recipe?: SignInRecipe;
+    readonly states?: SignInStates;
     readonly entryUrl: string;
     readonly authenticationOrigins?: readonly string[];
   };

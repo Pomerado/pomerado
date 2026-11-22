@@ -16,6 +16,7 @@ import {
   matchSignedOutSnapshots,
   type SignedOutSnapshot,
 } from "../destinations/signed-in-marker.js";
+import { type SignInStates } from "../destinations/sign-in-states.js";
 import {
   SignInRecipe,
   signInRecipe,
@@ -112,9 +113,15 @@ export interface SignInStepResult {
   readonly approved?: true;
 }
 
-/** A verified sign-in's value-free recipe and the address its runs start from. */
+/**
+ * A verified sign-in's value-free recipe, the address its runs start from, and its screens
+ * (`states`); `unreadable` instead when a screen it took could not be read as a state, even read
+ * again, so it has none, and publication refuses it.
+ */
 export interface PublishedSignIn {
   readonly recipe: SignInRecipe;
+  readonly states?: SignInStates;
+  readonly unreadable?: true;
   readonly entryUrl: string;
 }
 

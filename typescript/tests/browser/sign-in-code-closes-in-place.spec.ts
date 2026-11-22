@@ -154,7 +154,7 @@ const codeAgainRecipe = {
 } as const;
 
 /** One run's sign-in with `recipe`, answering the login ask and each code ask. */
-const run = async (page: Page, recipe: Parameters<typeof signInForRun>[0]["recipe"]) => {
+const run = async (page: Page, recipe: NonNullable<Parameters<typeof signInForRun>[0]["recipe"]>) => {
   const browser = await hostPage(page);
   const { keyboard } = await hostKeyboard(page);
   const secrets = makeRunSecrets();

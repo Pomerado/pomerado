@@ -1,12 +1,22 @@
-import { Effect, Schema } from "effect";
+import { Effect, Either, Schema } from "effect";
 import { ExpectedConfirms } from "../browser/dialogs/expected.js";
 import { autofillRecipePath } from "../destinations/autofill-recipe.js";
 import { decodeSignInRecipe, signInRecipeText } from "../destinations/sign-in-recipe.js";
+import {
+  decodeSignInStateEntry,
+  type SignInStateEntry,
+  type SignInStates,
+  signInStateEntryText,
+  signInStatesOf,
+} from "../destinations/sign-in-states.js";
 import { createLocalWorkspace } from "../execution/local-workspace.js";
 import { localError, localRelativePath } from "../execution/local-path.js";
 import { ScriptQuestionDeclarations } from "../runtime/script-input.js";
 import { SignInRunFailed } from "../runtime/sign-in-replay.js";
 import { Artifact, PageUrl, SignInOrigin, type MintArtifact } from "./contracts.js";
+
+/** Where an integration keeps its sign-in's screens, beside `pomerado.json`. */
+export const signInStatesPath = "sign-in-states.json";
 
 const Metadata = Schema.Struct({
   entrypoint: Schema.String,
@@ -14,15 +24,23 @@ const Metadata = Schema.Struct({
   inputSchema: Schema.Unknown,
   outputSchema: Schema.Unknown,
   /**
-   * Where the build's sign-in recipe is (`auth-fill.json`), where its runs start and the build's
-   * https sign-in origins.
+   * Where the build's sign-in is: its screens (`sign-in-states.json`), or, for an integration
+   * written before builds recorded screens, its recipe (`auth-fill.json`); where its runs start
+   * and the build's https sign-in origins.
    */
   signIn: Schema.optionalWith(
-    Schema.Struct({
-      recipe: Schema.Literal(autofillRecipePath),
-      entryUrl: PageUrl,
-      authenticationOrigins: Schema.optionalWith(Schema.Array(SignInOrigin), { exact: true }),
-    }),
+    Schema.Union(
+      Schema.Struct({
+        states: Schema.Literal(signInStatesPath),
+        entryUrl: PageUrl,
+        authenticationOrigins: Schema.optionalWith(Schema.Array(SignInOrigin), { exact: true }),
+      }),
+      Schema.Struct({
+        recipe: Schema.Literal(autofillRecipePath),
+        entryUrl: PageUrl,
+        authenticationOrigins: Schema.optionalWith(Schema.Array(SignInOrigin), { exact: true }),
+      }),
+    ),
     { exact: true },
   ),
   /** The questions publication reviewed, the only ones a run asks. */
@@ -31,7 +49,52 @@ const Metadata = Schema.Struct({
   acceptedConfirms: Schema.optionalWith(ExpectedConfirms, { exact: true }),
 });
 /** The artifact's own files beside its source, which no source path may name. */
-const metadataFiles = new Set(["pomerado.json", autofillRecipePath]);
+const metadataFiles = new Set(["pomerado.json", autofillRecipePath, signInStatesPath]);
+
+/**
+ * `sign-in-states.json`: format 1, the library's workspace when it has one, and its entries in
+ * the order they were stored, each in its stored form.
+ */
+const StatesFile = Schema.parseJson(
+  Schema.Struct({
+    format: Schema.Literal(1),
+    workspace: Schema.optionalWith(Schema.Struct({ parent: Schema.String }), { exact: true }),
+    entries: Schema.Array(Schema.Unknown),
+  }),
+);
+
+/** A library in its stored form: every state, then every marker, then every transition. */
+const signInStatesText = (library: SignInStates) =>
+  `${JSON.stringify(
+    {
+      format: 1,
+      ...(library.workspace === undefined ? {} : { workspace: library.workspace }),
+      entries: [...library.states, ...library.signedIn, ...library.transitions].map(
+        (entry) => JSON.parse(signInStateEntryText(entry)) as unknown,
+      ),
+    },
+    null,
+    2,
+  )}\n`;
+
+/**
+ * A stored library read back. An entry this host can't read, or one whose key is not its
+ * content's, fails it whole, as does a library with no state or no marker: a run never signs in
+ * from part of its screens.
+ */
+const decodeSignInStates = (text: string): SignInStates | "invalid" | "unknown_version" => {
+  const stored = Schema.decodeUnknownEither(StatesFile)(text);
+  if (stored._tag === "Left") {
+    const format = Either.getOrUndefined(Schema.decodeUnknownEither(Schema.parseJson())(text));
+    const version: unknown =
+      typeof format === "object" && format !== null ? Reflect.get(format, "format") : undefined;
+    return typeof version === "number" && version !== 1 ? "unknown_version" : "invalid";
+  }
+  const entries = stored.right.entries.map(decodeSignInStateEntry);
+  if (entries.some((entry) => entry === undefined)) return "invalid";
+  const library = signInStatesOf(stored.right, entries as SignInStateEntry[]);
+  return library.states.length === 0 || library.signedIn.length === 0 ? "invalid" : library;
+};
 const HttpUrl = Schema.String.pipe(
   Schema.filter((value) => {
     if (!URL.canParse(value)) return false;
@@ -87,16 +150,43 @@ export const readArtifact = (directory: string) =>
     );
     const { signIn, ...source } = metadata;
     if (signIn === undefined) return yield* validateArtifact({ ...source, files });
-    // A recipe this host cannot read fails the artifact: it never runs signed out instead.
+    // A sign-in this host cannot read fails the artifact: it never runs signed out instead.
     const text = yield* workspace
-      .read(signIn.recipe)
+      .read("states" in signIn ? signIn.states : signIn.recipe)
       .pipe(
         Effect.mapError(() => new SignInRunFailed({ code: "MissingRecipe", reason: "missing" })),
       );
+    if ("states" in signIn) {
+      const states = decodeSignInStates(text);
+      if (states === "invalid" || states === "unknown_version")
+        return yield* new SignInRunFailed({ code: "MissingRecipe", reason: states });
+      return yield* validateArtifact({ ...source, files, signIn: { ...signIn, states } });
+    }
+    // An integration written before builds recorded screens signs in by its recipe.
     const recipe = decodeSignInRecipe(text);
     if (recipe === "invalid" || recipe === "unknown_version")
       return yield* new SignInRunFailed({ code: "MissingRecipe", reason: recipe });
     return yield* validateArtifact({ ...source, files, signIn: { ...signIn, recipe } });
+  });
+
+/** The file a checked artifact's sign-in is written to, its text, and its `pomerado.json` entry. */
+const storedSignIn = (signIn: (typeof Artifact.Type)["signIn"]) =>
+  Effect.gen(function* () {
+    if (signIn === undefined) return undefined;
+    const { recipe, states, ...rest } = signIn;
+    if (states !== undefined)
+      return {
+        path: signInStatesPath,
+        text: signInStatesText(states),
+        metadata: { states: signInStatesPath, ...rest },
+      };
+    if (recipe === undefined)
+      return yield* Effect.fail(localError(new Error("Artifact sign-in has no screens or recipe")));
+    return {
+      path: autofillRecipePath,
+      text: signInRecipeText(recipe),
+      metadata: { recipe: autofillRecipePath, ...rest },
+    };
   });
 
 export const writeArtifact = (directory: string, artifact: MintArtifact) =>
@@ -104,8 +194,10 @@ export const writeArtifact = (directory: string, artifact: MintArtifact) =>
     const checked = yield* validateArtifact(artifact);
     const workspace = yield* createLocalWorkspace({ root: directory });
     for (const file of checked.files) yield* workspace.write(file.path, file.content);
-    if (checked.signIn !== undefined)
-      yield* workspace.write(autofillRecipePath, signInRecipeText(checked.signIn.recipe));
+    // A sign-in with screens is written as its screens alone; only one without them, as an
+    // integration read from before builds recorded screens, keeps its recipe.
+    const signIn = yield* storedSignIn(checked.signIn);
+    if (signIn?.text !== undefined) yield* workspace.write(signIn.path, signIn.text);
     yield* workspace.write(
       "pomerado.json",
       `${JSON.stringify(
@@ -114,9 +206,7 @@ export const writeArtifact = (directory: string, artifact: MintArtifact) =>
           files: checked.files.map((file) => file.path),
           inputSchema: checked.inputSchema,
           outputSchema: checked.outputSchema,
-          ...(checked.signIn === undefined
-            ? {}
-            : { signIn: { ...checked.signIn, recipe: autofillRecipePath } }),
+          ...(signIn === undefined ? {} : { signIn: signIn.metadata }),
           ...(checked.questions === undefined ? {} : { questions: checked.questions }),
           ...(checked.acceptedConfirms === undefined
             ? {}
