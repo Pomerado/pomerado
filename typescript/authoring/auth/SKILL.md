@@ -35,8 +35,8 @@ or settings the task does not concern.
 
 # The login URL you record
 
-The `loginUrl` you pass on `authenticate` is kept with the sign-in's screens, and every run opens
-it to sign in. It must work in a new browser with no cookies. Follow the site's own sign-in link as a
+The `loginUrl` you pass on `authenticate` is published with the tool, and every run opens it to
+sign in. It must work in a new browser with no cookies. Follow the site's own sign-in link as a
 signed-out visitor sees it: record its exact `href`, read before you click it, never a trimmed,
 rebuilt or guessed copy. Never copy cookies or session values into it. When that link works only
 with one-time values or this browser's session values in it, record the page that shows the link
@@ -225,8 +225,8 @@ attribute.
     `YYYY` or `YY` for the year. A part may be a text box, a select or a custom dropdown: name the
     select, or the dropdown's own control (its combobox or the button that opens its list), never
     an option. The host fills the saved date into whatever control it finds, choosing the option
-    whose label or value matches, and keeps the format and the control's shape with the sign-in's
-    screens, never the date. Every date layout, dropdowns included, is a screen you map.
+    whose label or value matches, and records the format and the control's shape with the tool,
+    never the date. Every date layout, dropdowns included, is a screen you map.
   - `slot: "zip"` for a ZIP or postal code the site checks to prove the account.
   - `slot: "recovery_code"` for a backup or recovery code field. The host fills a saved one only
     while recovery codes are the method in force, else asks the caller. Never ask for one yourself.
@@ -245,8 +245,8 @@ attribute.
   `recovery_code` for "use a backup code", each with
   the selector of the control that picks it) and name as `submit` the one the request, the caller,
   the saved preference or the owner picked, as above. The tool's runs pick again from that list. A method's selector
-  is kept with the sign-in's screens, so it never names the masked phone number or address the
-  option shows (such as `***-1234`): use the method's own words or a stable attribute.
+  publishes with the tool, so it never names the masked phone number or address the option shows
+  (such as `***-1234`): use the method's own words or a stable attribute.
   A screen that offers a password route beside a code the site sends is a method choice too: list
   `password` with each code method it offers, each with its own control, and name the picked
   route as `submit`. So is a control that switches which identifier the screen asks for, when this
@@ -259,8 +259,7 @@ attribute.
   drop-down.
 - `submitKey: "Enter"`, in place of `submit`: a code or password screen whose form has no submit
   control and submits on Enter. The host presses Enter in the step's last field.
-- Every selector and submit you send is kept with the sign-in's screens, as is each screen's page
-  address.
+- Every selector and submit you send publishes with the tool, as does each screen's page address.
   None may name this account's username, email or phone: not a "Continue as …" button's text, a
   data attribute holding it, or a placeholder for it. Name a control by its role, label or a stable
   attribute. The host refuses a step that names it (`selector_names_contact`), and a screen whose
@@ -430,7 +429,7 @@ sign-in's recorded controls/form no longer show a password entry awaiting sign-i
 password controls on the account page do not fail this check. It also checks that this sign-in
 submitted the login's identifier with its password, code or protected approval (after a hand-off,
 that the person marked it done), then marks it verified; a Personal login locks to this site then.
-The marker is kept with the sign-in's screens.
+The marker is part of the published tool.
 Business work waits for a verified sign-in.
 
 # Popup sign-in
@@ -464,8 +463,8 @@ the same field on the same screen three times in a row ends sign-in in this buil
 
 Every sign-in you record ends with a deterministic sign-in check, sent as `signInStep.signedIn`: a
 marker every signed-in account shows and a signed-out page never does. Never put an account's
-name, email or number in it: the check is kept with the sign-in's screens and runs for every login,
-and the host refuses one that names this account. Where the marker must show is under "Signed in" above.
+name, email or number in it: the check publishes with the tool and runs for every login, and the
+host refuses one that names this account. Where the marker must show is under "Signed in" above.
 
 - Prefer stable attributes and names (`aria-label`, a role, visible text, a test id) over
   generated class names such as `css-1q2w3e`.
@@ -492,6 +491,8 @@ pomerado:section auth.marker-checks:end --> When it reports the signed-out page 
   it: the result reports `freshLoad`, and when it is false a notice says why. When the new tab
   showed the sign-in form, the site keeps its session only in page memory or session storage, and
   the host signs in automatically at each operation start.
+
+The published tool records the check with its screens.
 
 ## A sign-in refusal found by operation code
 

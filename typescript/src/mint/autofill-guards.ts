@@ -5,16 +5,16 @@ import type { AutofillSignInState } from "../runtime/autofill-state.js";
 import { type AutofillHost, autofillRecovery, refusedStep, result } from "./autofill-results.js";
 import { namesMaskedContact } from "./sign-in-guards.js";
 
-// What an autofill sign-in keeps with its screens never names one account: a signed-in check runs
-// for every login, and a method's selector is copied into its screen.
+// What an autofill sign-in publishes with the tool never names one account: a signed-in check runs
+// for every login, and a method's selector is copied into the recipe.
 
 type Host = AutofillHost;
 
 /** What the minter reads when a recorded selector, or a signed-in check, names this account. */
 export const identityNotices = {
   selectors:
-    "A screen's selectors and submit are kept with the sign-in's screens, so they never name this account's username, email, phone or account number (such as a \"Continue as …\" button or a data attribute holding it). Name each control by its role, label or a stable attribute, and send the step again.",
-  indicator: `The signed-in check names this account's own identity, which is kept with the sign-in's screens and fails for every other login. Name a marker every signed-in account shows, such as a sign-out control or the account menu, never the account's name, email or number, ${autofillRecovery}.`,
+    "A screen's selectors and submit publish with the tool, so they never name this account's username, email, phone or account number (such as a \"Continue as …\" button or a data attribute holding it). Name each control by its role, label or a stable attribute, and send the step again.",
+  indicator: `The signed-in check names this account's own identity, which publishes with the tool and fails for every other login. Name a marker every signed-in account shows, such as a sign-out control or the account menu, never the account's name, email or number, ${autofillRecovery}.`,
 } as const;
 
 /** The login's identifiers this sign-in knows: the held login's and the owner's answers. */
@@ -64,7 +64,7 @@ const holdsIdentity = (indicator: AutofillSignedIn, values: readonly string[]) =
 
 /**
  * A refusal of a signed-in check that names the account's own identity, or undefined. The check
- * is kept with the sign-in's screens and runs for every login.
+ * ships with the tool and runs for every login.
  */
 export const identityRefusal = (h: Host, open: AutofillSignInState, indicator: AutofillSignedIn) =>
   holdsIdentity(indicator, identityValues(h, open))
@@ -84,7 +84,7 @@ export const maskedMethodRefusal = (h: Host, step: Pick<AutofillStep, "methods" 
     h,
     "selector_names_contact",
     Math.max(masked, 0),
-    "A method's selector is kept with the sign-in's screens, so it never names the masked phone number or address the option shows. Name each option by its method's own words or a stable attribute, and send the step again.",
+    "A method's selector publishes with the tool, so it never names the masked phone number or address the option shows. Name each option by its method's own words or a stable attribute, and send the step again.",
   );
 };
 
@@ -120,7 +120,7 @@ export const stepIdentityRefusal = (
       h,
       "page_names_contact",
       0,
-      `This screen's address names this account's identity, and the sign-in's screens would keep it, so the host typed nothing. Use an account-independent route and inspect its sign-in screens.`,
+      `This screen's address names this account's identity, and the recipe would publish it with the tool, so the host typed nothing. Use an account-independent route and inspect its sign-in screens.`,
     );
   return Effect.succeed(undefined);
 };
