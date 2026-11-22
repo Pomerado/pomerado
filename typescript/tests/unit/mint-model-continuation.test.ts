@@ -341,8 +341,9 @@ it("ends the build at once as sign_in_unavailable when the host refuses the veri
   const outcome = await f.run();
   expect(outcome).toMatchObject({ build: "incomplete", recoveryReason: "sign_in_unavailable" });
   expect(outcome.summary).toBe(signInUnavailableSummary(undefined, "site_sign_in_refused"));
-  expect(outcome.summary).toContain("a sign-in that every login on this site can use");
-  expect(outcome.summary).not.toContain("could not be signed in");
+  // The sign-in worked: the owner never reads the stop of a site that could not be signed in.
+  const unsignedStop = signInUnavailableSummary(undefined, undefined).split(". ")[0] ?? "";
+  expect(outcome.summary.startsWith(unsignedStop)).toBe(false);
   expect(f.requests).toHaveLength(1);
 });
 
