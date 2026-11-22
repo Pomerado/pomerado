@@ -197,8 +197,10 @@ quantity plus the input, or to the input, with that control under the add's comm
 refuse with `InvalidInput` naming the site's state before the commit mark, as the caller-input
 skill says for a page's state that rules the task out.
 
-Where the build runs test cases (testing skill), prefer including an item already in the cart
-and, for a checkout, a cart under the store's minimum.
+Where the build runs test cases (testing skill), prefer including an item already in the cart,
+an item the site shows as unavailable, and an item shown at a discounted price, and, for a
+checkout, a cart under the store's minimum and a limit below the total. These are suggestions:
+a build that can't find such a case on the site goes on without it.
 
 An example item that is out of stock doesn't end the build. The tool returns that as the site's
 refusal for the item, and the build publishes on it as the writes skill says.

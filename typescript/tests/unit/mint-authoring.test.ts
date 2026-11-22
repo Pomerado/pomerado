@@ -1127,7 +1127,7 @@ it("has cart tools carry over sibling handling, refuse the caller's input first 
     "Run each refusal of the caller's own input as soon as the page shows what it needs, before any check of the page's state that fails the run.",
     "Check only the options the tool sets or the caller asked for; read any other preselected option, except a membership, subscription, trial or safety default the tool turns off, as page state and name it in the confirm, rather than failing.",
     "Check the caller's limit against the total the page shows before the purchase click. When tax, fees or shipping aren't shown until after it, check the limit against what is shown, name in the confirm what isn't included yet, and don't refuse for it.",
-    "Where the build runs test cases (testing skill), prefer including an item already in the cart and, for a checkout, a cart under the store's minimum.",
+    "Where the build runs test cases (testing skill), prefer including an item already in the cart, an item the site shows as unavailable, and an item shown at a discounted price, and, for a checkout, a cart under the store's minimum and a limit below the total. These are suggestions: a build that can't find such a case on the site goes on without it.",
     "and return the state the site shows, in its own words, as the refusal for the item,",
     'A delivery speed left unset, or asked for as "standard", takes the free option the page offers that arrives soonest, for each shipment, in place of the tier the site presents as standard; with no free option, ask the caller which to use, showing each fee.',
   ]) {
@@ -1726,7 +1726,7 @@ it("renders the pinned standalone authoring", async () => {
     ["ca80679c4488dec4ee85052fb39f1493b6d5f8ca4a5df9b56d10a2e96078e848", "pagination"],
     ["b0220727e7f21e1c5d10101e74996ddb3d2d4e18061ac85c807203ed4ab0f695", "forms"],
     ["3cd1434cdea838aee3b06589f685812620c48d2aba277f86622d6bb45282cb40", "writes"],
-    ["3c704ebf62f31a58bcfc21e23889a794cd0005885afc692b4638c9e182022bc9", "cart"],
+    ["ddd936570df7e84c40602f97ce34c0d227d3c075b1d5cadf35cc87f85a3a9ded", "cart"],
     ["a0c9ea62be24b9fcf921daf77c6c9aa93c65c3869ee8cbcad42d8e1698c32f05", "caller-input"],
     ["3573b3f6005645d27cb02a140d3d212ffeb30272c47d05f9851b37824d2beb11", "publication"],
     ["257b832d4c786c59dc1589b8df7fa8b5836625366511d990445399c8b164e300", "workspace/AGENTS.md"],

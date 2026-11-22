@@ -1417,6 +1417,81 @@ it("stops a value-free check before a press that has the site send a link", asyn
   expect(site.clicks).toEqual([]);
 });
 
+it("counts a press that leads to a code page as sending, though the sign-in left that page by other ways", async () => {
+  const start: Screen = { path: "/", boxes: [], buttons: ["#continue"], texts: ["welcome back"] };
+  const texted: Screen = { path: "/code", boxes: [{ selector: "#code", kind: "code" }], buttons: ["#other-ways"] };
+  const ways: Screen = { path: "/ways", boxes: [], buttons: ["#email", "#call"], texts: ["other ways"] };
+  const called: Screen = { path: "/call", boxes: [{ selector: "#code", kind: "code" }], buttons: ["#verify"] };
+  const methods = [
+    { method: "email" as const, selector: "#email" },
+    { method: "call" as const, selector: "#call" },
+  ];
+  const library = libraryOf([
+    { fingerprint: arrival(start), step: stepAt("/", [], "#continue") },
+    { fingerprint: arrival(texted), step: stepAt("/code", [], "#other-ways") },
+    { fingerprint: arrival(ways), step: stepAt("/ways", [], "#call", { methods }) },
+    { fingerprint: arrival(called, "we called you"), step: stepAt("/call", [code], "#verify") },
+  ]);
+  // A value-free check stops before the press that has the site text a code.
+  const check = scriptedSite({ start, texted }, (_at, clicked) => (clicked === "#continue" ? "texted" : undefined));
+  expect(await replay(check, library, { valueFree: true })).toMatchObject({ outcome: "unsent", reason: "values_needed" });
+  expect(check.clicks).toEqual([]);
+  // A page slow to leave it never gets that press again.
+  const slow = scriptedSite({ start }, () => undefined);
+  expect(await replay(slow, library)).toMatchObject({ reason: "state_repeated" });
+  expect(slow.clicks).toEqual(["#continue"]);
+});
+
+// A sign-in whose text the site couldn't send: its code page showed a notice, dismissed by OK, and
+// the sign-in went on by other ways to a call, whose code went into the same box. The page whose
+// text went holds that box alone.
+const texting: Screen = { path: "/", boxes: [], buttons: ["#sms"], texts: ["welcome back"] };
+const textedCode: Screen = { path: "/code", boxes: [{ selector: "#code", kind: "code" }], buttons: ["#other-ways", "#verify"] };
+const otherWays: Screen = { path: "/ways", boxes: [], buttons: ["#email", "#call"], texts: ["other ways"] };
+const sendsText = stepAt("/", [], "#sms", { methods: [{ method: "sms", selector: "#sms" }] });
+const callInstead = stepAt("/ways", [], "#call", {
+  methods: [
+    { method: "email", selector: "#email" },
+    { method: "call", selector: "#call" },
+  ],
+});
+
+it("waits for a texted code page to hold still before typing a code recorded for another way, so a late notice goes first", async () => {
+  const notice: Screen = { ...textedCode, buttons: ["#ok", ...(textedCode.buttons ?? [])] };
+  const library = libraryOf([
+    { fingerprint: arrival(texting), step: sendsText },
+    { fingerprint: arrival(notice), step: stepAt("/code", [], "#ok") },
+    { fingerprint: arrival(textedCode), step: stepAt("/code", [], "#other-ways") },
+    { fingerprint: arrival(otherWays), step: callInstead },
+    { fingerprint: arrival(textedCode), step: stepAt("/code", [code], "#verify") },
+  ]);
+  // The notice draws a few reads after the box.
+  let pressedAt = 0;
+  const site = scriptedSite({ start: texting, code: (looks) => (looks < pressedAt + 4 ? textedCode : notice) }, (_at, clicked) => {
+    if (clicked !== "#sms") return "home";
+    pressedAt = site.site.looks;
+    return "code";
+  });
+  const ended = await replay(site, library, { hostMethod: "sms" });
+  expect(ended).toMatchObject({ outcome: "signed_in" });
+  expect(site.clicks).toEqual(["#sms", "#ok"]);
+  expect(ended.asked).toEqual([]);
+});
+
+it("never presses again a press on a code page that the page kept, as it may have the site send once more", async () => {
+  const library = libraryOf([
+    { fingerprint: arrival(texting), step: sendsText },
+    { fingerprint: arrival(textedCode), step: stepAt("/code", [], "#resend") },
+    { fingerprint: arrival(textedCode), step: stepAt("/code", [], "#other-ways") },
+    { fingerprint: arrival(otherWays), step: callInstead },
+    { fingerprint: arrival(textedCode, "we called you"), step: stepAt("/code", [code], "#verify") },
+  ]);
+  const resendOnly: Screen = { ...textedCode, buttons: ["#resend"] };
+  const site = scriptedSite({ start: texting, code: resendOnly }, (_at, clicked) => (clicked === "#sms" ? "code" : undefined));
+  expect(await replay(site, library, { hostMethod: "sms" })).toMatchObject({ reason: "state_repeated" });
+  expect(site.clicks).toEqual(["#sms", "#resend"]);
+});
+
 it("hands the browser to a person at a hand-off state after the presses before it, then checks the marker", async () => {
   const start: Screen = { path: "/", boxes: [], buttons: ["#sign-in"], texts: ["welcome"] };
   const provider: Screen = { path: "/sso", boxes: [{ selector: "#user", kind: "identifier" }], buttons: ["#next"] };
@@ -1769,13 +1844,14 @@ it("goes on in a learned look-alike of the state just acted in, once the page he
   expect(ended).toMatchObject({ outcome: "signed_in", loginProved: true });
   expect(learned.clicks).toEqual(["#continue", "#text-me", "#verify"]);
   expect(learned.fills).toEqual(["email", "code"]);
-  // With no learned transition, the page is the state just acted in: its press goes once more.
+  // With no learned transition, the page is the state just acted in: a press on a code page, which
+  // may have the site send once more, never goes again.
   const unlearned = scriptedSite(pages, (_at, clicked) => next[clicked]);
   expect(await replay(unlearned, libraryOf([emailState, askText], [textCode]))).toMatchObject({
     outcome: "unclear",
     reason: "state_repeated",
   });
-  expect(unlearned.clicks).toEqual(["#continue", "#text-me", "#text-me"]);
+  expect(unlearned.clicks).toEqual(["#continue", "#text-me"]);
   expect(unlearned.fills).toEqual(["email"]);
   // Nor with one learned after another state than the one just acted in.
   const elsewhere = scriptedSite(pages, (_at, clicked) => next[clicked]);
@@ -1784,7 +1860,7 @@ it("goes on in a learned look-alike of the state just acted in, once the page he
     outcome: "unclear",
     reason: "state_repeated",
   });
-  expect(elsewhere.clicks).toEqual(["#continue", "#text-me", "#text-me"]);
+  expect(elsewhere.clicks).toEqual(["#continue", "#text-me"]);
   expect(elsewhere.fills).toEqual(["email"]);
 });
 
