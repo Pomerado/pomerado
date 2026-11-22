@@ -214,3 +214,39 @@ test("a code page right after the username, before any password, gets no code", 
   expect(asked).toEqual([]);
   expect(posts.filter((post) => post.startsWith("/verify"))).toEqual([]);
 });
+
+/**
+ * A page after the password asking to remember the device, recorded so, that asks about the
+ * browser at the run, with a library of the login state and that page recorded in one sign-in
+ * (`led`) and one where no sign-in learned the page after the login state (`apart`).
+ */
+const reworded = async (page: Page) => {
+  const trust = (word: string) =>
+    `<h1>Remember this ${word}?</h1><p>You won't need a code here next time.</p><form method="post" action="/trust"><button id="remember" name="remember" value="yes">Remember</button><button id="not-now" name="remember" value="no">Not now</button></form>`;
+  const pages: Record<string, string> = { "/login": loginPage, "/trust": trust("device"), "/home": '<p id="account">Your account</p>' };
+  const posts = await serve(page, pages, { "/login": "/trust", "/trust": "/home" });
+  const step: AutofillRecipeStep = { page: `${site}/trust`, fields: [], submit: "#not-now" };
+  const led = await recorded(page, [login, step]);
+  const fingerprint = led.states[1]?.fingerprint;
+  if (fingerprint === undefined) throw new Error("The page after the password was not recorded");
+  const apart = appendSignInStates(await recorded(page, [login]), { states: [{ fingerprint, step }], signedIn: { selector: "#account" } });
+  if ("refused" in apart) throw new Error(apart.refused);
+  pages["/trust"] = trust("browser");
+  await page.goto("about:blank");
+  posts.length = 0;
+  return { posts, led, apart: apart.library };
+};
+
+test("a page after the password whose question the site reworded is taken by its control where the login state led to it", async ({ page }) => {
+  const { posts, led } = await reworded(page);
+  const { ended } = await replay(page, led, {});
+  expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(posts).toEqual([`/login username=${username}&password=${password}`, "/trust remember=no"]);
+});
+
+test("a reworded page after the password that no sign-in learned after the login state stays unknown", async ({ page }) => {
+  const { posts, apart } = await reworded(page);
+  const { ended } = await replay(page, apart, {});
+  expect(ended).toMatchObject({ outcome: "unclear", reason: "unknown_state" });
+  expect(posts).toEqual([`/login username=${username}&password=${password}`]);
+});
