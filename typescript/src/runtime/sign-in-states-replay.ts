@@ -8,6 +8,7 @@ import {
   type AutofillSlot,
   type AutofillStep,
   hostSubmits,
+  type PrimaryIdentifierKind,
 } from "../destinations/autofill-step.js";
 import {
   addsDismiss,
@@ -87,6 +88,16 @@ export interface SignInStatesReplayInput<
    * itself, though a state it ranks first may press its recorded method there.
    */
   readonly rankMethod?: SignInMethodChoice | undefined;
+  /**
+   * How the login signs in, as its host knows it before its values are read: with a password or a
+   * code alone (`way`), and the kind of identifier it signs in with (`kind`). It orders known states
+   * sharing a look after the login's own route, as a host picks a tool's sign-in path for a login:
+   * first one on its way, then one whose first identifier takes its kind (`ranked`). A code login
+   * never takes a state that types a password. Absent, neither orders anything.
+   */
+  readonly loginWay?:
+    | { readonly way: "password" | "code"; readonly kind?: PrimaryIdentifierKind | undefined }
+    | undefined;
   /** The page as a state, as `observeSignInState` reads it. */
   readonly observe: Effect.Effect<ObservedState | undefined, E>;
   readonly quiet?: StatesQuiet | undefined;
@@ -531,6 +542,53 @@ const verifyMarker = <E extends YieldableError, V extends string, L extends Auto
 /** `matchState`'s refusal where none of the login's own states shows, as an unknown state. */
 const ownStateNotShown = "own_state_not_shown";
 
+/** Whether a state's step types a password. */
+const typesPassword = (state: StateEntry) =>
+  state.step.fields.some((field) => "slot" in field && field.slot === "password");
+
+/** Whether the login may take a state: one that types a password never, for a code login (`loginWay`). */
+const forLogin = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  state: StateEntry,
+) => run.input.loginWay?.way !== "code" || !typesPassword(state);
+
+/**
+ * A state and the states it leads to, through the states after them, nearest first: the sign-in
+ * on from it, judged whole as a tool's sign-in path is.
+ */
+const onFrom = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  state: StateEntry,
+) => {
+  const { states, transitions } = run.input.library;
+  const on = [state];
+  for (const at of on)
+    for (const { from, to } of transitions) {
+      const next = from === at.key ? states.find((known) => known.key === to) : undefined;
+      if (next !== undefined && !on.includes(next)) on.push(next);
+    }
+  return on;
+};
+
+/**
+ * Whether the first identifier field of the sign-in on from a state (`onFrom`) takes the login's
+ * kind: there is none, the login's is a username, whose shape no field can tell, or the field
+ * accepts that kind, or a username alone, which any login's identifier is.
+ */
+const takesKind = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  state: StateEntry,
+  kind: PrimaryIdentifierKind,
+) => {
+  const accepts = onFrom(run, state)
+    .flatMap((known) => known.step.fields)
+    .flatMap((field) => ("accepts" in field ? [field.accepts.filter((taken) => taken !== "private_identifier")] : []))
+    .find((taken) => taken.length > 0);
+  return (
+    accepts === undefined || kind === "username" || accepts.includes(kind) || accepts.every((taken) => taken === "username")
+  );
+};
+
 /**
  * Known states that share one look (`alike`), in the order this login takes them. Where its
  * own route, the states it last signed in through (`choices.states`), holds a state with that look
@@ -543,8 +601,13 @@ const ownStateNotShown = "own_state_not_shown";
  * at the start one no state leads to (`next`), then the most recently learned, as a library holds
  * its states in the order learned. Given the page's look (`page`), a state whose recorded instruction and ways stand
  * further from the page's than another's do (`toldApart`) goes after the rest, next after the
- * login's own route; one recorded without them is never moved by them. In place (`inPlace`), the
- * route takes no part, as a step-up is no part of the login's own sign-in.
+ * login's own route; one recorded without them is never moved by them. Given how the login signs
+ * in (`loginWay`), next comes, among the states `next` holds, where a sign-in branches, one on its
+ * way, as a host takes a tool's path of the login's way: for a password login one that types a
+ * password or leads to one (`onFrom`), for a code login one that leads to none; then one whose
+ * first identifier takes its kind (`takesKind`); and a code login takes no state that types a
+ * password (`forLogin`). In place (`inPlace`), the route takes no part, as a step-up is no part of
+ * the login's own sign-in.
  */
 const ranked = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -555,7 +618,10 @@ const ranked = <E extends YieldableError, V extends string, L extends AutofillLo
 ) => {
   const route = run.input.choices?.states ?? [];
   const method = run.input.choices?.method ?? run.input.rankMethod;
+  const { loginWay } = run.input;
+  const kind = loginWay?.kind;
   const { states } = run.input.library;
+  const taken = candidates.filter((state) => forLogin(run, state));
   // The state last acted in, when it is not looked for again, leaves the route no say: where its
   // page stays, the route goes no further there, so a look-alike a repair learned after it may go on.
   const last = run.visited.at(-1);
@@ -563,7 +629,11 @@ const ranked = <E extends YieldableError, V extends string, L extends AutofillLo
   const own =
     run.input.inPlace !== true &&
     states.some(
-      (state) => (state.key !== last || candidates.includes(state)) && route.includes(state.key) && alike(state),
+      (state) =>
+        (state.key !== last || candidates.includes(state)) &&
+        route.includes(state.key) &&
+        alike(state) &&
+        forLogin(run, state),
     );
   const picks = (state: StateEntry) =>
     method !== undefined && state.step.methods?.find((option) => option.selector === state.step.submit)?.method === method;
@@ -575,15 +645,22 @@ const ranked = <E extends YieldableError, V extends string, L extends AutofillLo
     return index > at ? index - at : route.length + index;
   };
   const told = (state: StateEntry) => (page === undefined ? undefined : toldApart(state.fingerprint, page));
-  const nearest = Math.min(...candidates.flatMap((state) => told(state) ?? []));
+  const nearest = Math.min(...taken.flatMap((state) => told(state) ?? []));
+  // Only where the sign-in branches: among the states the last one led to, or at the start those
+  // no state leads to (`next`), so a look-alike from earlier or later in a sign-in never goes first.
+  const branch = (state: StateEntry, fits: () => boolean) => Number(!(next.has(state.key) && fits()));
   const order = (state: StateEntry) => [
     own ? along(state) : 0,
     Number((told(state) ?? nearest) > nearest),
+    loginWay === undefined
+      ? 0
+      : branch(state, () => onFrom(run, state).some(typesPassword) === (loginWay.way === "password")),
+    kind === undefined ? 0 : branch(state, () => takesKind(run, state, kind)),
     Number(!picks(state)),
     Number(!next.has(state.key)),
     -states.indexOf(state),
   ];
-  return candidates
+  return taken
     .filter((state) => !own || route.includes(state.key))
     .map((state) => ({ state, by: order(state) }))
     .sort((a, b) => {
@@ -871,7 +948,11 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
         (codeSent && loose && takesCodeIn(run, state) && sameBoxes(state, fingerprint))) &&
       (after !== undefined || run.input.inPlace !== true || leadsToNewMarker(run, state));
     const candidates = states.filter(
-      (state) => state !== skip && told(state) && (!codeSent || next.has(state.key) || (loose && takesCodeIn(run, state))),
+      (state) =>
+        state !== skip &&
+        told(state) &&
+        forLogin(run, state) &&
+        (!codeSent || next.has(state.key) || (loose && takesCodeIn(run, state))),
     );
     const alike = ranked(run, candidates, told, next, fingerprint);
     let refused: string | undefined;
