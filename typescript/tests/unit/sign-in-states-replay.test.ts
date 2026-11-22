@@ -26,7 +26,7 @@ import {
   stateEntry,
 } from "../../src/destinations/sign-in-states.js";
 import { makeInputAsker } from "../../src/inputs/callback.js";
-import type { SiteAnswer } from "../../src/runtime/autofill-replay-steps.js";
+import type { HostedSignIn, SiteAnswer } from "../../src/runtime/autofill-replay-steps.js";
 import type { AutofillHooks } from "../../src/runtime/autofill-state.js";
 import { codeRowFields } from "../../src/runtime/autofill-unrecorded-code.js";
 import type { InputAnswers } from "../../src/runtime/input-request.js";
@@ -1594,6 +1594,7 @@ const replayOnClock = (
     readonly valueFree?: boolean;
     readonly from?: SignInStatesStop;
     readonly choices?: SignInStatesChoices | undefined;
+    readonly hosted?: HostedSignIn<TestFailure>;
   } = {},
 ) => {
   const events: Readonly<Record<string, unknown>>[] = [];
@@ -1630,6 +1631,7 @@ const replayOnClock = (
           timing: { stepWaitMs: 30_000, pollMs: 250 },
           sent: { current: false },
           ...(extra.from === undefined ? {} : { from: extra.from }),
+          ...(extra.hosted === undefined ? {} : { hosted: extra.hosted }),
         }),
       );
       for (let polls = 0; polls < 1_000; polls++) {
@@ -1685,6 +1687,39 @@ it("looks at a checkpoint page once it held still, long before the step wait, an
   expect(looks[0]).toBeLessThan(3_000);
   expect(endedAt).toBeLessThan(5_000);
   expect(lookEvents(events)).toEqual([{ stage: "challenge_look", look: "early", outcome: "cleared" }]);
+});
+
+it("looks for a challenge over a press that went once the box was typed, and the host may send the last step again", async () => {
+  const passwordOnly: Screen = { path: "/", boxes: [{ selector: "#password", kind: "password" }], buttons: ["#go"] };
+  const library = libraryOf(
+    [{ fingerprint: arrival({ ...passwordOnly, boxes: [...passwordOnly.boxes, { selector: "#code", kind: "code" }] }), step: stepAt("/", [password, code], "#go") }],
+    [{ fingerprint: arrival(passwordOnly), step: stepAt("/", [password], "#go") }],
+  );
+  // A challenge covers the page's button once the password is typed, in a state another one holds.
+  const site = scriptedSite({ start: passwordOnly, veiled: { ...passwordOnly, buttons: [] } }, (_at, clicked) =>
+    clicked === "#go" ? "home" : undefined,
+  );
+  const fill = site.hooks.fill;
+  const veiling = {
+    ...site,
+    hooks: {
+      ...site.hooks,
+      fill: (request: Parameters<typeof fill>[0]) =>
+        Effect.map(fill(request), (report) => {
+          if (request.step.submit === undefined) site.site.screen = "veiled";
+          return report;
+        }),
+    },
+  };
+  const { looks, challenge } = lookingAt(site, "veiled", "start");
+  let resent = 0;
+  const hosted: HostedSignIn<TestFailure> = { resubmit: () => (gate) => Effect.tap(gate, () => void (resent += 1)) };
+  const { ended, endedAt } = await replayOnClock(veiling, library, challenge, Effect.void, true, false, { hosted });
+  expect(ended).toMatchObject({ outcome: "signed_in" });
+  expect(site.clicks).toEqual(["#go"]);
+  expect(looks).toHaveLength(1);
+  expect(resent).toBe(1);
+  expect(endedAt).toBeLessThan(10_000);
 });
 
 it("keeps waiting for a slow page whose first state shows at 20 s after a look found nothing", async () => {

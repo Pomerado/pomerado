@@ -64,6 +64,8 @@ export interface AutofillHooks<E = unknown, V extends string = string> {
     readonly inspection: AutofillInspection;
     /** The open sign-in's record of the identifier boxes it typed (core's fill `typedBoxes`). */
     readonly typedBoxes?: TypedBox[];
+    /** More boxes of the step's screen go in a later fill (core's fill `moreToType`). */
+    readonly moreToType?: true;
   }) => Effect.Effect<AutofillStepReport>;
   /**
    * Clicks again the submit of the open sign-in's `blocked` screen, typing nothing, after its

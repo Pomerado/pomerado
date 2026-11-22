@@ -44,6 +44,7 @@ import {
   askOne,
   type AutofillReplayInput,
   type AutofillReplayOutcome,
+  fillFailure,
   isTwoFactorOption,
   stepDiagnostic,
   valuesNeeded,
@@ -355,7 +356,10 @@ const placedRow = <E extends YieldableError, V extends string, L extends Autofil
 
 /**
  * `shownOn` within the step wait: controls not found yet, as on a page that redraws, are looked
- * for again as a recipe screen's are; any other refusal stands at once.
+ * for again as a recipe screen's are; any other refusal stands at once. Controls a challenge may
+ * hide get the host's challenge look once they stayed missing `landingSettleMs`, and at the step
+ * wait, as a recipe screen's wait has it (`challengeLook`): a challenge it can't clear ends the
+ * replay, and one it cleared gives the controls the step wait again.
  */
 const shownWithin = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -363,10 +367,25 @@ const shownWithin = <E extends YieldableError, V extends string, L extends Autof
   step: AutofillStep,
 ) =>
   Effect.gen(function* () {
-    const until = (yield* now) + run.replay.timing.stepWaitMs;
+    const start = yield* now;
+    let until = start + run.replay.timing.stepWaitMs;
+    let gate = run.input.hooks.challenge;
+    let looked = false;
     for (;;) {
       const shown = yield* shownOn(run, state, step);
-      if (shown !== "not_found" || (yield* now) >= until) return shown;
+      if (shown !== "not_found") return shown;
+      const at = yield* now;
+      const look = at >= until ? "deadline" : !looked && at - start >= landingSettleMs ? "early" : undefined;
+      if (gate !== undefined && look !== undefined) {
+        looked = true;
+        const challenge = yield* lookForChallenge(run, gate, look);
+        if (typeof challenge === "object") return challenge;
+        if (challenge === "cleared") {
+          gate = undefined;
+          until = (yield* now) + run.replay.timing.stepWaitMs;
+        }
+      }
+      if ((yield* now) >= until) return shown;
       yield* pause(run);
     }
   });
@@ -650,7 +669,8 @@ const learnedNext = <E extends YieldableError, V extends string, L extends Autof
 
 /**
  * The host's challenge look (`gate`), heard as `challenge_look`: `cleared`, `none`, or the
- * replay's end at a challenge the host can't clear (`challenge_unsolved`).
+ * replay's end at a challenge the host can't clear (`challenge_unsolved`). Once it cleared one, the
+ * host may send the step the replay ran last again (`hosted.resubmit`), as after a recipe screen's.
  */
 const lookForChallenge = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -658,7 +678,7 @@ const lookForChallenge = <E extends YieldableError, V extends string, L extends 
   look: "early" | "deadline",
 ) =>
   Effect.gen(function* () {
-    const challenge = yield* gate;
+    const challenge = yield* run.replay.clearThenResubmit(gate);
     yield* run.input.emit({ stage: "challenge_look", look, outcome: challenge?.outcome ?? "none" });
     if (challenge === undefined) return "none" as const;
     if (challenge.outcome === "cleared") return "cleared" as const;
@@ -1690,11 +1710,14 @@ const sendsOnPress = <E extends YieldableError, V extends string, L extends Auto
  * known state the page shows after a box or while a press waits (`holdStill`) is taken, keeping
  * what was typed. A fill that failed with nothing yet sent, as when the page redrew its form under
  * it, has the state looked for once more in the replay (`gone`), as a recipe screen gone unsent is.
- * The last box goes in with the state's own submit, in one fill, as a recipe screen's do, so the
- * fill's guards around its click hold for what it typed, such as closing a list the box opened over
- * the submit; never in a state another known state holds, nor one with methods, nor where the page
- * doesn't show that submit with the box at once. A press so refused with the box still unsent, as
- * one the page took away once the box was typed, goes as after the box alone.
+ * Its boxes go in with the state's own submit, in one fill, as a recipe screen's do, so the fill's
+ * guards around its click hold for what it typed, such as closing a list a box opened over the
+ * submit; never in a state another known state holds, nor one with methods. Where the page doesn't
+ * show them all with that submit at once, each box goes alone, with no time for the page to send it
+ * itself before the last (`moreToType`), and the last with the submit where the page shows it then.
+ * A press so refused with the box still unsent, as one the page took away once the box was typed,
+ * goes as after the box alone. A press alone after boxes the state typed goes with them, by the
+ * host's click again, which types nothing (`clickAgain`), so its guards on those boxes hold too.
  */
 const actIn = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -1734,30 +1757,38 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
       if (step.approval !== undefined) return (yield* approve(run, state, inspection)) ?? acted();
       const full = actedStep(run, state);
       let fuller: { readonly state: StateEntry; readonly observed: ObservedState } | undefined;
-      const groups = actions(full.fields.filter((field) => !typed.has(field.slot)));
+      const joins =
+        hostSubmits(full) &&
+        step.methods === undefined &&
+        !input.library.states.some((other) => containsFingerprint(state, other));
+      const typingOf = (fields: AutofillStep["fields"], last: boolean): AutofillStep => ({
+        fields,
+        ...(full.popup === undefined ? {} : { popup: full.popup }),
+        ...(full.dismiss === undefined ? {} : { dismiss: full.dismiss }),
+        ...(full.rejectedMarkers === undefined ? {} : { rejectedMarkers: full.rejectedMarkers }),
+        ...(last && full.submitKey !== undefined ? { submitKey: full.submitKey } : {}),
+      });
+      const pressingOf = (fields: AutofillStep["fields"]): AutofillStep =>
+        full.submitKey !== undefined
+          ? typingOf(fields, true)
+          : { ...typingOf(fields, true), ...screenSubmit(full), ...(step.choice === undefined ? {} : { choice: step.choice }) };
+      const untyped = full.fields.filter((field) => !typed.has(field.slot));
+      const alone = actions(untyped);
+      const whole = joins && alone.length > 1 ? yield* shownOn(run, state, pressingOf(untyped)) : undefined;
+      const groups = typeof whole === "object" ? [untyped] : alone;
       for (const [index, fields] of groups.entries()) {
-        const keyed = index === groups.length - 1 && full.submitKey !== undefined;
-        const typing: AutofillStep = {
-          fields,
-          ...(full.popup === undefined ? {} : { popup: full.popup }),
-          ...(full.dismiss === undefined ? {} : { dismiss: full.dismiss }),
-          ...(full.rejectedMarkers === undefined ? {} : { rejectedMarkers: full.rejectedMarkers }),
-          ...(keyed ? { submitKey: full.submitKey } : {}),
-        };
-        const pressing: AutofillStep | undefined =
-          index === groups.length - 1 &&
-          !keyed &&
-          full.submit !== undefined &&
-          step.methods === undefined &&
-          !input.library.states.some((other) => containsFingerprint(state, other))
-            ? { ...typing, ...screenSubmit(full), ...(step.choice === undefined ? {} : { choice: step.choice }) }
-            : undefined;
-        const ready = pressing === undefined ? undefined : yield* shownOn(run, state, pressing);
+        const last = index === groups.length - 1;
+        const keyed = last && full.submitKey !== undefined;
+        const typing = typingOf(fields, last);
+        const pressing = last && joins && !keyed ? pressingOf(fields) : undefined;
+        const ready =
+          typeof whole === "object" ? whole : pressing === undefined ? undefined : yield* shownOn(run, state, pressing);
         const asked = typeof ready === "object" && pressing !== undefined ? pressing : typing;
         const here = typeof ready === "object" ? ready : yield* shownWithin(run, state, typing);
         if (typeof here === "string") return stopped(run, here);
+        if ("ended" in here) return here;
         const next = asked === typing ? undefined : learnedNext(run, state)[0]?.step;
-        const failed = yield* replay.runStep(asked, here, undefined, false, undefined, step.refills ?? [], next);
+        const failed = yield* replay.runStep(asked, here, undefined, false, undefined, step.refills ?? [], next, !last);
         // Any other submit the fill failed ends the state, as a press alone would.
         const unpressed =
           asked !== typing && failed === "submit_refused" && fields.some((field) => replay.state.filled.has(field.slot));
@@ -1808,8 +1839,10 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
         return acted();
       }
       const method = step.methods === undefined ? undefined : yield* methodFor(run, step);
+      const typedHere = full.fields.filter((field) => typed.has(field.slot));
+      const again = typedHere.length > 0 ? input.hooks.resubmit : undefined;
       const press: AutofillStep = {
-        fields: [],
+        fields: again === undefined ? [] : typedHere,
         ...screenSubmit(full),
         ...(method === undefined ? {} : { submit: method.selector }),
         ...(method?.option === undefined ? {} : { option: method.option }),
@@ -1825,8 +1858,13 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
         full.fields.every((field) => field.slot === "email" || field.slot === "username");
       const once = yield* shownOn(run, state, press);
       const here = once === "not_found" && !enterInstead ? yield* shownWithin(run, state, press) : once;
+      if (typeof here === "object" && "ended" in here) return here;
       const failed =
-        typeof here === "string" ? here : yield* replay.runStep(press, here);
+        typeof here === "string"
+          ? here
+          : again === undefined
+            ? yield* replay.runStep(press, here)
+            : yield* clickAgain(run, again, press, here);
       if ((failed === "not_found" || failed === "submit_refused") && enterInstead) {
         run.gone = true;
         yield* input.emit({ stage: "retried", reason: "submit_gone_after_typing" });
@@ -1859,6 +1897,30 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
       }
       return acted(press, method);
     }
+  });
+
+/**
+ * A state's press with the boxes it typed, by the host's click again (`resubmit`), which types
+ * nothing, as the fill that typed them would press: each box must still hold what was typed, and
+ * each box of a split code one character, the submit is found in their form and guarded for them,
+ * and a click another element catches goes from the keyboard. What was typed counts as sent from
+ * the press on, as a press alone after typing does (`settleCarried`), and the press is the step the
+ * replay ran last. Why it did not go, or undefined.
+ */
+const clickAgain = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  resubmit: NonNullable<Run<E, V, L>["input"]["hooks"]["resubmit"]>,
+  press: AutofillStep,
+  inspection: AutofillInspection,
+) =>
+  Effect.gen(function* () {
+    const { replay, input } = run;
+    settleCarried(replay);
+    replay.firstCause.submitted();
+    const report = yield* resubmit({ step: press, inspection });
+    yield* input.emit(stepDiagnostic(press, report));
+    replay.progress.ran.push(press);
+    return fillFailure(report);
   });
 
 /**
@@ -1948,6 +2010,7 @@ const actAgain = <E extends YieldableError, V extends string, L extends Autofill
     yield* input.emit({ stage: "retried", reason: `state_${again.again}` });
     const here = yield* shownWithin(run, state, step);
     if (typeof here === "string") return stopped(run, here);
+    if ("ended" in here) return here;
     if (again.again === "link") {
       replay.progress.linkAsked = true;
       const opened = yield* openPastedLink(run.as, here);

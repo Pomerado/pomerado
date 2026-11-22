@@ -214,6 +214,8 @@ const closedInPlace = <E extends YieldableError, V extends string, L extends Aut
 /**
  * One observed screen: admitted by the host, filled and submitted. Why it did not complete, or
  * undefined. `planned` is the recorded screen's `refills`, and `next` the recorded screen after it.
+ * With `moreToType`, more boxes of the screen go in a later fill, so its page gets no time to send
+ * these itself (the fill's `moreToType`).
  * A code screen that closed in place counts as sent only once the marker or `next` shows
  * (`closedInPlace`).
  */
@@ -226,6 +228,7 @@ export const runReplayStep = <E extends YieldableError, V extends string, L exte
   corrected: ReadonlySet<AutofillSlot> = new Set(),
   planned: readonly AutofillSecret[] = [],
   next?: AutofillRecipeStep,
+  moreToType = false,
 ) =>
   Effect.gen(function* () {
     const {
@@ -329,7 +332,13 @@ export const runReplayStep = <E extends YieldableError, V extends string, L exte
       session,
       step,
       inspection.page,
-      yield* hooks.fill({ step, values: filled, inspection, typedBoxes: progress.typedBoxes }),
+      yield* hooks.fill({
+        step,
+        values: filled,
+        inspection,
+        typedBoxes: progress.typedBoxes,
+        ...(moreToType ? { moreToType: true as const } : {}),
+      }),
       next,
     );
     yield* timeExecutionStage(

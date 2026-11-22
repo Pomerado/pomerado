@@ -1449,7 +1449,7 @@ const screensSignIn = (fake: ScriptedSite) => {
 };
 
 it("signs a run in through its screens, going on with the login from the screen the check without it stopped on", async () => {
-  // A replay of screens types each box alone, the last with the submit.
+  // A replay of screens types the screen's boxes and presses its submit in one fill.
   const typed: string[] = [];
   const fake = scriptedSite({
     entry: "login",
@@ -1467,9 +1467,8 @@ it("signs a run in through its screens, going on with the login from the screen 
     "open:/login",
     "ask:missing_credentials",
     "fill:login",
-    "fill:login",
   ]);
-  expect(fake.filled("login")).toEqual([[login.username], [login.password]]);
+  expect(fake.filled("login")).toEqual([[login.username, login.password]]);
 });
 
 it("fails a run whose site shows a screen its screens don't know, before typing anything", async () => {

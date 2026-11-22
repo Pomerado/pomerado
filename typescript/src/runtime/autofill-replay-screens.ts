@@ -251,11 +251,12 @@ const inspectSettled = <E extends YieldableError, V extends string>(
 type ChallengeGate<V extends string> = NonNullable<AutofillHooks<unknown, V>["challenge"]>;
 /**
  * Runs the challenge gate's look at the page and, once it cleared a challenge, may send the screen
- * the replay last submitted again before the awaited screen's wait goes on.
+ * the replay last submitted again before the awaited screen's wait goes on. A replay of sign-in
+ * states awaits no one screen, so it names none.
  */
 export type ClearThenResubmit<E = unknown, V extends string = string> = (
   gate: ChallengeGate<V>,
-  awaited: AutofillStep,
+  awaited?: AutofillStep,
 ) => Effect.Effect<Effect.Effect.Success<ChallengeGate<V>>, E>;
 
 /**

@@ -145,6 +145,7 @@ export const makeSignInBrowser = (options: {
       readonly inspection: AutofillInspection;
       readonly values: readonly string[];
       readonly typedBoxes?: TypedBox[];
+      readonly moreToType?: true;
     }) =>
       fillAutofillStep({ ...input, page, keyboard: options.keyboard, typing: "keyboard" }).pipe(
         // The session's record counts what `rememberTyping` counts: a fill that typed.

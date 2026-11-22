@@ -55,6 +55,7 @@ const hostOn = async (page: Page) => {
   const hooks: AutofillHooks<TestFailure> = {
     inspect: (step) => browser.inspect(step),
     fill: (input) => browser.fill(input),
+    resubmit: (input) => browser.resubmit(input),
     check: (indicator, screens, challengeScreens, at) =>
       browser.confirm(indicator, screens, challengeScreens ?? screens, at?.origin),
     confirm: (indicator, _identifiers, screens, challengeScreens, at) =>
@@ -202,7 +203,7 @@ test("a login page that comes back typed beside a new code box gets no code, and
   expect(posts).toHaveLength(1);
 });
 
-test("an email box whose own suggestion list covers its Continue has the list closed, and signs in", async ({ page }) => {
+test("an email box whose own suggestion list covers its Continue signs in, alone or in a state a fuller one holds", async ({ page }) => {
   const identifier = `<form method="post" action="/login" style="position:relative"><p style="margin:0;height:40px"><label>Email<input id="username" name="username" aria-controls="suggest" aria-expanded="false"></label></p><ul id="suggest" role="listbox" hidden style="position:absolute;top:40px;left:0;width:400px;height:120px;margin:0;background:#fff"><li role="option">${username}@example.test</li></ul><p style="margin:0"><button id="next">Continue</button></p></form><script>
 const box = document.getElementById("username"), list = document.getElementById("suggest");
 box.addEventListener("input", () => { list.hidden = false; box.setAttribute("aria-expanded", "true"); });
@@ -210,20 +211,25 @@ box.addEventListener("keydown", (event) => { if (event.key === "Escape") { list.
 </script>`;
   const passwordPage =
     '<form method="post" action="/password"><label>Password<input id="password" name="password" type="password"></label><button id="sign-in">Sign in</button></form>';
+  // The same login page with its password box drawn, as a page that draws it once it knows the login.
+  const both = identifier.replace("</p><ul", '</p><p style="margin:0;height:40px"><label>Password<input id="pw" type="password"></label></p><ul');
   const posts = await serve(
     page,
-    { "/login": identifier, "/password": passwordPage, "/home": '<p id="account">Your account</p>' },
+    { "/login": identifier, "/both": both, "/password": passwordPage, "/home": '<p id="account">Your account</p>' },
     { "/login": "/password", "/password": "/home" },
   );
-  const library = await recorded(page, [
-    { page: `${site}/login`, fields: [{ selector: "#username", accepts: ["username"] }], submit: "#next" },
-    { page: `${site}/password`, fields: [{ selector: "#password", slot: "password" }], submit: "#sign-in" },
-  ]);
-  await page.goto("about:blank");
-  posts.length = 0;
-  const { ended } = await replay(page, library, {});
-  expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
-  expect(posts).toEqual([`/login username=${username}`, `/password password=${password}`]);
+  const emailStep: AutofillRecipeStep = { page: `${site}/login`, fields: [{ selector: "#username", accepts: ["username"] }], submit: "#next" };
+  const passwordStep: AutofillRecipeStep = { page: `${site}/password`, fields: [{ selector: "#password", slot: "password" }], submit: "#sign-in" };
+  // With a fuller state that holds the email one, the press goes alone, with the box it typed.
+  const fuller: AutofillRecipeStep = { ...emailStep, page: `${site}/both`, fields: [...emailStep.fields, { selector: "#pw", slot: "password" }] };
+  for (const steps of [[emailStep, passwordStep], [emailStep, fuller, passwordStep]]) {
+    const library = await recorded(page, steps);
+    await page.goto("about:blank");
+    posts.length = 0;
+    const { ended } = await replay(page, library, {});
+    expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+    expect(posts).toEqual([`/login username=${username}`, `/password password=${password}`]);
+  }
 });
 
 test("a code page right after the username, before any password, gets no code", async ({ page }) => {

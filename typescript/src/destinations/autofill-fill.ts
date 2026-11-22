@@ -421,6 +421,12 @@ interface CallInput {
    */
   readonly settleMs?: number;
   /**
+   * More boxes of the step's screen go in a later fill, as a replay of sign-in states types a box
+   * alone before the rest of its state: the page is to send nothing yet, so a step with no submit
+   * gets no time to send what was typed itself (`sendWindow`).
+   */
+  readonly moreToType?: true;
+  /**
    * Whether the submit call reads the page's alerts just before its click, so its report counts
    * the ones after it that are new (`newAlerts`). The read waits for every frame, so only a host
    * that reads the count asks; a read that takes longer than `alertsBeforeMs` counts nothing.
@@ -735,7 +741,7 @@ const awaitNewDocument = (
 
 /** How long a step with fields gives its page to send what was typed itself (`pageSendMs`). */
 const sendWindow = (input: CallInput) =>
-  input.step.fields.length > 0 ? Math.min(input.settleMs ?? 5_000, pageSendMs) : 0;
+  input.step.fields.length > 0 && input.moreToType !== true ? Math.min(input.settleMs ?? 5_000, pageSendMs) : 0;
 
 /**
  * The step's submit call, judged against the controls as the host last judged them and guarded,

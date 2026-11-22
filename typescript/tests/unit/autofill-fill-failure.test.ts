@@ -276,3 +276,37 @@ it("refuses a page that keeps changing its controls while the submit stays disab
   expect(submitCalls).toBe(5);
   expect(Date.now() - started).toBeLessThan(4_000);
 }, 10_000);
+
+it("gives the page no time to send a box typed before more of its screen", async () => {
+  const site = "https://member.example.com";
+  const target = {
+    ownerUrl: site,
+    documentOrigin: site,
+    actions: [`${site}/session`],
+    methods: ["post"],
+    editable: true,
+    control: "text" as const,
+  };
+  // Each look whether the page sent what was typed, a step with no submit's.
+  let looks = 0;
+  const report = await Effect.runPromise(
+    fillAutofillStep({
+      step: { fields: [{ slot: "email", selector: "#email" }] },
+      values: ["owner@example.test"],
+      inspection: { ...inspection, targets: { fields: [target], submit: null } },
+      page: {
+        targetId: "primary",
+        execute: (code: string) =>
+          Effect.sync(() => {
+            if (!code.includes("const readsOnly = true")) return { focused: true, url: inspection.page };
+            looks++;
+            return { submit: "none", url: inspection.page };
+          }),
+      },
+      keyboard: { insertText: () => Effect.succeed("inserted" as const) },
+      moreToType: true,
+    }),
+  );
+  expect(report).toMatchObject({ outcome: "filled", fields: [{ slot: "email", status: "filled" }], submit: "none" });
+  expect(looks).toBe(1);
+});
