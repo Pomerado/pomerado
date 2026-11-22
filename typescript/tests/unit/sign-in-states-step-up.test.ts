@@ -179,7 +179,10 @@ it("views a library as the login's recipe without a step-up recorded after its s
     steps: [{ submit: "#continue" }, { submit: "#go" }, { submit: "#confirm" }],
     signedIn: { selector: "#records" },
   });
-  expect(States.signInStatesStepUpRecipe(append(signInStatesOf({}, []), own).library)).toBeUndefined();
+  // A library with no step-up, in place, as the login's recipe.
+  expect(States.signInStatesStepUpRecipe(append(signInStatesOf({}, []), own).library)).toEqual(
+    signInStatesRecipe(append(signInStatesOf({}, []), own).library),
+  );
 });
 
 it("never takes a step-up's state as a sign-in's first screen from the entry URL", async () => {
@@ -245,5 +248,16 @@ it("gives each step-up's own recipe, from the step-up's first state to its marke
     { steps: [{ submit: "#next" }, { submit: "#pay" }], signedIn: { selector: "#billing" } },
   ]);
   expect(States.signInStatesStepUps(append(signInStatesOf({}, []), own).library)).toEqual([]);
+  // A step-up recorded from the site's own password state, where a replay in place went on from it,
+  // starts there.
+  const fromPassword = append(append(signInStatesOf({}, []), own).library, {
+    stepUp: true,
+    from: library.states[1]?.key,
+    states: [{ fingerprint: { top: site, boxes: [], submit: false, message: "confirm it is you", buttons: ["#ack"] }, step: step("/records/ack", { selector: "#ack-box", slot: "password" }, "#ack") }],
+    signedIn: { selector: "#records" },
+  }).library;
+  expect(States.signInStatesStepUps(fromPassword)).toMatchObject([
+    { steps: [{ submit: "#go" }, { submit: "#ack" }], signedIn: { selector: "#records" } },
+  ]);
   expect(both.states.filter(States.isStepUpEntry).length).toBe(3);
 });

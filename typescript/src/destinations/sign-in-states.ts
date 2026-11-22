@@ -639,33 +639,39 @@ export const signInStatesRecipe = (
 };
 
 /**
- * The library as a step-up's recipe, as a replay in place reads it: the steps of every state, a
- * step-up's and the site's own sign-in's, in library order, and the step-up marker the login
- * reached last (`choices.signedIn`), else the newest. Undefined with no state or no step-up marker.
+ * The library as a replay in place reads it: the steps of every state, a step-up's and the site's
+ * own sign-in's, in library order, and the step-up marker the login reached last
+ * (`choices.signedIn`), else the newest step-up marker; with none, the marker
+ * `signInStatesRecipe` takes. Undefined with no state or no marker.
  */
 export const signInStatesStepUpRecipe = (
   library: SignInStates,
   choices?: SignInStatesChoices,
 ): AutofillRecipe | undefined => {
-  const markers = library.signedIn.filter((entry) => entry.stepUp === true);
-  return recipeOf(library, library.states, markers.find((entry) => entry.key === choices?.signedIn) ?? markers.at(-1));
+  const picked = (markers: readonly SignedInEntry[]) =>
+    markers.find((entry) => entry.key === choices?.signedIn) ?? markers.at(-1);
+  const own = library.signedIn.filter((entry) => entry.stepUp !== true);
+  return recipeOf(library, library.states, picked(library.signedIn.filter(isStepUpEntry)) ?? picked(own));
 };
 
 /**
  * Each step-up's recipe, one for each step-up marker in library order: the step-up states that
- * lead to that marker, in library order, so the first is where that step-up starts, and the
+ * lead to that marker, and a state of the site's own sign-in a step-up was recorded from
+ * (`ObservedSignIn.from`), in library order, so the first is where that step-up starts; and the
  * marker. None for a library with no step-up.
  */
 export const signInStatesStepUps = (library: SignInStates): readonly AutofillRecipe[] => {
   const tagged = new Set(library.states.filter(isStepUpEntry).map((entry) => entry.key));
+  const states = new Set(library.states.map((entry) => entry.key));
   return library.signedIn.filter(isStepUpEntry).flatMap((marker) => {
     const leads = new Set([marker.key]);
     const queue = [marker.key];
+    // Back through the step-up's own states, to the site's state it went on from, if any.
     for (const at of queue)
       for (const { from, to } of library.transitions)
-        if (to === at && tagged.has(from) && !leads.has(from)) {
+        if (to === at && states.has(from) && !leads.has(from)) {
           leads.add(from);
-          queue.push(from);
+          if (tagged.has(from)) queue.push(from);
         }
     const recipe = recipeOf(library, library.states.filter((entry) => leads.has(entry.key)), marker);
     return recipe === undefined ? [] : [recipe];

@@ -1894,8 +1894,7 @@ export const replaySignInStates = <
     // The login's own marker, then the newest first, as the recipe view takes the newest.
     const markers = [...picked, ...library.signedIn.filter((marker) => !picked.includes(marker)).reverse()];
     const recipe =
-      (input.inPlace === true ? signInStatesStepUpRecipe(library, input.choices) : undefined) ??
-      signInStatesRecipe(library, input.choices);
+      input.inPlace === true ? signInStatesStepUpRecipe(library, input.choices) : signInStatesRecipe(library, input.choices);
     if (recipe === undefined)
       return {
         outcome: "unsent",
