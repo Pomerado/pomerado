@@ -504,9 +504,6 @@ for (const [limit, partial] of [
   ["script", [1, 2, 3, 4, 5]],
 ] as const)
   test(`a local build whose code screen has six one-character boxes limited by ${limit} sends back a step that names boxes ${partial.join(", ")}, signs in once the step names all six in order, and a run in a new session signs in through them`, async () => {
-    // A run's replay of the screens asks for the code again on script-limited boxes before it
-    // presses Verify; the replay's fix for that removes this marker.
-    test.fail(limit === "script", "the replay of screens asks for the code twice on these boxes");
     test.info().annotations.push({
       type: "slow",
       description: "Original SDKs, Chromium, a scripted build with a password and a six-box code screen, then a run",
@@ -2541,7 +2538,7 @@ test("a sign-in whose login URL is on another site is refused at publication by 
       signInFindings: [{ rule: "foreign_origin", part: "entryUrl" }],
     });
     expect(String(refused?.["instruction"])).toContain(
-      "Not published: the sign-in this tool would publish fails the host's sign-in version check. signInFindings names each rule and the part of the sign-in recipe or login URL it refused, never a value. The host changed nothing. Run authenticate again so the sign-in records without those parts: start from the site's stable sign-in page as loginUrl, name no account in a selector, page or marker, leave out any step or account page that signs out, and use a signed-in marker that only signed-in pages show. Then call finish_build again with the same executionId. The host refuses every time until the sign-in passes.",
+      "Not published: the sign-in this tool would publish fails the host's sign-in version check. signInFindings names each rule and the part of the sign-in's screens, recipe or login URL it refused, never a value. The host changed nothing. Run authenticate again so the sign-in records without those parts: start from the site's stable sign-in page as loginUrl, name no account in a selector, page or marker, leave out any step or account page that signs out, and use a signed-in marker that only signed-in pages show. Then call finish_build again with the same executionId. The host refuses every time until the sign-in passes.",
     );
     // The refusal names no value: neither the login URL nor its host, nor the login.
     for (const value of [identityHost, shopAccount.username, shopAccount.password])
