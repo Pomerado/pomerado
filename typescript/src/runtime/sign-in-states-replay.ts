@@ -422,8 +422,9 @@ const plainly = (state: StateEntry, page: StateFingerprint) => sameFingerprint(s
 
 /**
  * Whether a page that has a state's look only as read on its top origin (`readsOn`) is not that
- * state: another state has the page's look plainly (`plainly`), or the state's controls don't show
- * there or the origin rule refuses them (`shownOn`), which leaves no refusal of its own.
+ * state: another state the login may take (`forLogin`) has the page's look plainly (`plainly`), or
+ * the state's controls don't show there or the origin rule refuses them (`shownOn`), which leaves
+ * no refusal of its own.
  */
 const apartFrom = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -431,7 +432,8 @@ const apartFrom = <E extends YieldableError, V extends string, L extends Autofil
   page: StateFingerprint,
 ) =>
   Effect.gen(function* () {
-    if (run.input.library.states.some((other) => other !== state && plainly(other, page))) return true;
+    if (run.input.library.states.some((other) => other !== state && forLogin(run, other) && plainly(other, page)))
+      return true;
     const admission = run.admission;
     const shown = yield* shownOn(run, state, resolved(run, state.step));
     run.admission = admission;
@@ -854,8 +856,9 @@ const learnedAlike = <E extends YieldableError, V extends string, L extends Auto
 ) =>
   Effect.gen(function* () {
     const plain = (state: StateEntry) => plainly(state, fingerprint) || inPopup(run, state);
-    // One the page has the look of only as read on its top origin (`readsOn`) only where none other is.
-    const told = learnedNext(run, after).some(plain)
+    // One the page has the look of only as read on its top origin (`readsOn`) only where none other
+    // the login may take (`forLogin`) is.
+    const told = learnedNext(run, after).some((state) => forLogin(run, state) && plain(state))
       ? plain
       : (state: StateEntry) => sameFingerprint(fingerprint, state) || inPopup(run, state);
     const learned = learnedNext(run, after).filter(told);
@@ -1971,9 +1974,12 @@ const lookAgain = <E extends YieldableError, V extends string, L extends Autofil
     // where nothing sets them apart (`apartFrom`).
     const apart = (kept || grows) && readsOn(shape, state) && (yield* apartFrom(run, state, shape));
     if ((kept && !apart) || toldByText) return { kind: "same" as const, text };
-    // One the page has the look of only as read on its top origin (`readsOn`) only where none other has it.
+    // One the page has the look of only as read on its top origin (`readsOn`) only where none other
+    // the login may take (`forLogin`) has it.
     const plain = (known: StateEntry) => plainly(known, shape);
-    const alike = run.input.library.states.some((known) => known !== state && plain(known)) ? plain : looksLike(shape);
+    const alike = run.input.library.states.some((known) => known !== state && forLogin(run, known) && plain(known))
+      ? plain
+      : looksLike(shape);
     for (const other of ranked(
       run,
       run.input.library.states.filter((known) => known !== state && alike(known)),
