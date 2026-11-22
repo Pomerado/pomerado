@@ -187,6 +187,25 @@ export const admitScreenOrigin = (
 };
 
 /**
+ * Whether a screen recorded on `recorded` shows in frames on it on the page `live`: `recorded` is
+ * on `live`'s registrable domain, and every control sits in a frame on `recorded`, with every frame
+ * above it on that origin or `live`. `frames` lists the controls as `admitScreenOrigin` takes them.
+ */
+export const framedOn = (
+  recorded: string | undefined,
+  live: string,
+  frames: readonly (readonly string[])[] | undefined,
+): boolean =>
+  recorded !== undefined &&
+  frames !== undefined &&
+  frames.length > 0 &&
+  frames.every(
+    ([own, ...above]) =>
+      own === recorded && above.every((origin) => origin === recorded || origin === live),
+  ) &&
+  onSite(live, recorded);
+
+/**
  * An exact recorded screen: its own origin, frames on it on the site's own page with no relation,
  * or the login's pinned workspace under a relation.
  */
@@ -200,18 +219,7 @@ const admitExactScreen = (
   const { relation, pinned, siteOrigin } = context;
   const recorded = recordedScreenOrigin(step, undefined);
   if (live === recorded) return { admitted: true };
-  if (
-    relation === undefined &&
-    live === siteOrigin &&
-    recorded !== undefined &&
-    onSite(siteOrigin, recorded) &&
-    frames !== undefined &&
-    frames.length > 0 &&
-    frames.every(
-      ([own, ...above]) =>
-        own === recorded && above.every((origin) => origin === recorded || origin === live),
-    )
-  )
+  if (relation === undefined && live === siteOrigin && framedOn(recorded, live, frames))
     return { admitted: true };
   if (relation !== undefined && pinned !== undefined && live === pinned) return { admitted: true };
   if (sibling && (pinned === undefined || !context.identifierSent))
