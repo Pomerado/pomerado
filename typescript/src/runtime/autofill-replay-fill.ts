@@ -12,6 +12,7 @@ import { maySend } from "../destinations/autofill-refusal.js";
 import {
   armStep,
   type AutofillSecret,
+  isExtraSecret,
   isSecret,
   namedFields,
   recordStep,
@@ -368,6 +369,12 @@ export const runReplayStep = <E extends YieldableError, V extends string, L exte
         input.sent.current = true;
         noteMaySent(step, sentBefore, sent.maySent, progress.refilled);
       }
+    } else {
+      // An extra is never held as filled (`armStep`): one typed with no send, as a replay of states
+      // types before it presses, keeps its value now as the evidence a refusal of that press names.
+      for (const [index, field] of step.fields.entries())
+        if (isExtraSecret(field.slot) && filled[index] !== undefined)
+          retryState.lastFilled[field.slot] = filled[index];
     }
     yield* input.emit(stepDiagnostic(step, stepReport));
     progress.ran.push(step);
