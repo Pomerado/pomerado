@@ -233,7 +233,7 @@ const reportCallFailure = (
 };
 
 /** Inspect a screen, once more after a short settle when its page call failed. */
-const inspectSettled = <E extends YieldableError, V extends string>(
+export const inspectSettled = <E extends YieldableError, V extends string>(
   input: Pick<AutofillReplayInput<E, V>, "hooks" | "emit" | "correlation">,
   step: AutofillStep,
 ) =>
@@ -401,7 +401,7 @@ const landedReason = (shown: boolean, cantTellLanding: boolean, cantTellEntry: b
  * values, or the sign-in that follows a read of the page signed out (`readSignedOut`) still needs
  * its screen. `entry` keeps the page's shape (`entryShape`) and since when.
  */
-const entryCantTell = <V extends string>(
+export const entryCantTell = <V extends string>(
   progress: ScreenWaitProgress<V>,
   entry: { at: OffScreens | undefined },
   shape: string | undefined,
@@ -449,7 +449,7 @@ const entryCanStop = <E extends YieldableError, V extends string>(
  * element count and text length (`pageState`), so a page still drawing its login form keeps the
  * check waiting; none while it has not parsed. A browser without a page state gives its address.
  */
-const entryShape = <E extends YieldableError, V extends string>(
+export const entryShape = <E extends YieldableError, V extends string>(
   input: Pick<AutofillReplayInput<E, V>, "hooks" | "credentials" | "readSignedOut" | "entryUrl">,
   progress: ScreenWaitProgress<V>,
   here: AutofillSignedInCheck,
@@ -534,7 +534,7 @@ const inPlaceShape = <E extends YieldableError, V extends string>(
  * before its script sends the browser on, so only a form that stayed shown needs the login, and
  * the wait sees the page leave meanwhile; nothing is typed into a page that is leaving.
  */
-const holdsShown = <V extends string>(
+export const holdsShown = <V extends string>(
   input: Pick<AutofillReplayInput, "credentials">,
   progress: ScreenWaitProgress<V>,
   step: AutofillStep,
@@ -587,9 +587,25 @@ const holdShown = <V extends string>(
  */
 const ambiguousWhileRedrawn = <V extends string>(
   progress: ScreenWaitProgress<V>,
-  refusal: AutofillRefusal,
+  refusal: { readonly reason: string },
   due: boolean,
 ) => refusal.reason === "ambiguous_match" && progress.ran.length > 0 && !due;
+
+/**
+ * Whether a screen's wait reads a refusal as its screen not shown yet, and goes on waiting: its
+ * controls absent (`not_found`), not yet editable (`not_editable`), or in a pop-up that closed
+ * (`popup_missing`), or matching more than one element on a page that redraws
+ * (`ambiguousWhileRedrawn`).
+ */
+export const notShownYet = <V extends string>(
+  progress: ScreenWaitProgress<V>,
+  refusal: { readonly reason: string },
+  due: boolean,
+) =>
+  refusal.reason === "not_found" ||
+  refusal.reason === "not_editable" ||
+  refusal.reason === "popup_missing" ||
+  ambiguousWhileRedrawn(progress, refusal, due);
 
 /** What a screen's wait reads of the replay's input. */
 type ScreenWaitInput<E extends YieldableError, V extends string> = Pick<
@@ -663,13 +679,7 @@ export const makeReplayScreenWait = <
       }
       // Failing again, the page's signed-in check decides before the replay ends.
       if (inspected.reason === "page_unavailable") return { pageError: inspected } as const;
-      if (
-        inspected.reason !== "not_found" &&
-        inspected.reason !== "not_editable" &&
-        inspected.reason !== "popup_missing" &&
-        !ambiguousWhileRedrawn(progress, inspected, due)
-      )
-        return { found: inspected } as const;
+      if (!notShownYet(progress, inspected, due)) return { found: inspected } as const;
       if (rejection !== undefined) {
         const rejected = yield* rejection(due);
         if (rejected === "extra_retried") return rejected;

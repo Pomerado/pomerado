@@ -1521,14 +1521,24 @@ it("hands the browser to a person at a hand-off state after the presses before i
     outcome: "unsent",
     reason: "handoff_not_signed_in",
   });
-  // A page of another look, as a provider's own account picker, never signs in as one that can't tell.
+  // A page of another look, as a provider's own account picker, is the hand-off once it settled,
+  // as at a recipe's hand-off screen, and never signs in as one that can't tell.
   const picker: Screen = { path: "/sso/accounts", boxes: [], texts: ["choose an account"], labels: ["~"] };
-  const other = scriptedSite({ start, picker }, (_at, clicked) => (clicked === "#sign-in" ? "picker" : undefined));
-  const hooks = { ...other.hooks, confirmCantTell: () => Effect.void };
-  expect(await replay({ ...other, hooks }, library, { valueFree: true, handOff: () => undefined })).toMatchObject({
-    outcome: "unsent",
-    reason: "unknown_state",
-  });
+  const other = () => scriptedSite({ start, picker }, (_at, clicked) => (clicked === "#sign-in" ? "picker" : undefined));
+  const left = other();
+  const hooks = { ...left.hooks, confirmCantTell: () => Effect.void };
+  const unsigned = await replay({ ...left, hooks }, library, { valueFree: true, handOff: () => undefined });
+  expect(unsigned).toMatchObject({ outcome: "unsent", reason: "handoff_not_signed_in" });
+  expect(unsigned.asked).toEqual(["signed_in"]);
+  const signed = other();
+  expect(
+    await replay(signed, library, {
+      valueFree: true,
+      handOff: () => {
+        signed.site.screen = "home";
+      },
+    }),
+  ).toMatchObject({ outcome: "signed_in", handedOff: true });
 });
 
 it("appends only what a library did not hold, leaving every stored entry as it was", () => {
@@ -1915,26 +1925,6 @@ it("stops where a page that typed its value comes back fresh, whatever look-alik
   }
 });
 
-it("never takes a learned look-alike that presses alone before the step wait, while a press may be under way", async () => {
-  // A page slow to answer a press, where a sign-in learned another press alone that the library
-  // knows sends nothing: the first press may still be under way.
-  const sendPage: Screen = { path: "/send", boxes: [], buttons: ["#send", "#other"], texts: ["one moment"] };
-  let sentAt: number | undefined;
-  const sending = (looks: number) => {
-    sentAt ??= looks;
-    return looks - sentAt < 12 ? sendPage : passwordScreen;
-  };
-  const next: Readonly<Record<string, string>> = { "#continue": "send", "#send": "sending", "#other": "sending", "#go": "home" };
-  const site = scriptedSite({ start: emailScreen, send: sendPage, sending }, (_at, clicked) => next[clicked]);
-  const send = { fingerprint: arrival(sendPage), step: stepAt("/send", [], "#send") };
-  const library = libraryOf(
-    [emailState, send, { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") }],
-    [emailState, send, { fingerprint: arrival(sendPage), step: stepAt("/send", [], "#other") }],
-  );
-  expect((await replayOnClock(site, library)).ended).toMatchObject({ outcome: "signed_in" });
-  expect(site.clicks).toEqual(["#continue", "#send", "#go"]);
-});
-
 it("never takes a learned look-alike that asks for an approval or picks a method", async () => {
   // The identifier's page comes back fresh after a state between, where a sign-in learned an
   // approval, or a method choice, with its look after that state.
@@ -2138,7 +2128,7 @@ it("goes on in the look-alike of an earlier state a repair walked from the state
   expect(before.fills).toEqual(["email"]);
 });
 
-it("presses a learned look-alike's other control at the step wait, in place of pressing the same one again", async () => {
+it("presses a learned look-alike's other control once the page settled, in place of pressing the same one again", async () => {
   const pick: Screen = { path: "/pick", boxes: [], buttons: ["#a", "#b"], texts: ["how do you want to sign in"] };
   const pickA = { fingerprint: arrival(pick), step: stepAt("/pick", [], "#a") };
   const pickB = { fingerprint: arrival(pick), step: stepAt("/pick", [], "#b") };
@@ -2149,10 +2139,12 @@ it("presses a learned look-alike's other control at the step wait, in place of p
   const { ended, events } = await replayOnClock(timedSite, libraryOf([emailState, pickA, pickB, typesPassword]), challenge);
   expect(ended).toMatchObject({ outcome: "signed_in", loginProved: true });
   expect(timedSite.clicks).toEqual(["#continue", "#a", "#b", "#go"]);
-  expect((at.get("#b") ?? 0) - (at.get("#a") ?? 0)).toBeGreaterThanOrEqual(30_000);
-  // The look before the press-only look-alike runs at the step wait, and is heard so.
+  // As a recipe presses its next screen's button, once the page held still 1.5 s, not at the step wait.
+  expect((at.get("#b") ?? 0) - (at.get("#a") ?? 0)).toBeGreaterThanOrEqual(1_500);
+  expect((at.get("#b") ?? 0) - (at.get("#a") ?? 0)).toBeLessThan(3_000);
+  // The look before the press-only look-alike runs once the page settled, and is heard so.
   expect(looks).toHaveLength(1);
-  expect(lookEvents(events)).toEqual([{ stage: "challenge_look", look: "deadline", outcome: "none" }]);
+  expect(lookEvents(events)).toEqual([{ stage: "challenge_look", look: "early", outcome: "none" }]);
 });
 
 it("takes no learned look-alike after an approval, as on a page like an earlier state's", async () => {
@@ -3386,4 +3378,106 @@ it("presses in place a pop-up screen that only presses, once the typed one befor
   expect(ended).toMatchObject({ outcome: "signed_in", visited: library.states.map((state) => state.key) });
   expect(site.fills).toEqual(["email"]);
   expect(site.clicks).toEqual(["#next", "#keep"]);
+});
+
+// A known state's controls, a hand-off, a page drawn in phases and a value-free check get the waits
+// a recipe screen's wait gives them.
+
+it("waits for a box the page enables late, or could not read once, before typing it", async () => {
+  const library = libraryOf([{ fingerprint: arrival(combined), step: stepAt("/", [email, password], "#continue") }]);
+  for (const [reason, times] of [["not_editable", 3], ["page_unavailable", 1]] as const) {
+    const site = scriptedSite({ start: combined }, () => "home");
+    let refusals = times;
+    // Once the email is typed, the password box is refused a while, as a form enables it late.
+    const lateBox: AutofillHooks<TestFailure>["inspect"] = (step) =>
+      step.fields.some((field) => field.selector === "#password") && site.site.typed.has("#email") && refusals > 0
+        ? Effect.sync((): AutofillRefusal => {
+            refusals -= 1;
+            return { outcome: "refused", reason, target: 0 };
+          })
+        : site.hooks.inspect(step);
+    expect(await replay({ ...site, hooks: { ...site.hooks, inspect: lateBox } }, library)).toMatchObject({ outcome: "signed_in" });
+    expect(site.fills).toEqual(["email", "password"]);
+  }
+});
+
+it("presses again a button the page kept disabled in a state that typed nothing, until the step wait", async () => {
+  const notice: Screen = { path: "/notice", boxes: [], buttons: ["#go-on"], texts: ["one more thing"] };
+  const library = libraryOf([{ fingerprint: arrival(notice), step: stepAt("/notice", [], "#go-on") }]);
+  const disabledFor = async (times: number) => {
+    const site = scriptedSite({ start: notice }, () => "home");
+    let disabled = times;
+    const fill: AutofillHooks<TestFailure>["fill"] = (request) =>
+      disabled > 0
+        ? Effect.sync((): AutofillStepReport => {
+            disabled -= 1;
+            return { outcome: "filled", fields: [], submit: "stayed_disabled", url: `${origin}/notice` };
+          })
+        : site.hooks.fill(request);
+    return { ended: await replay({ ...site, hooks: { ...site.hooks, fill } }, library), site, left: () => disabled };
+  };
+  const enabled = await disabledFor(2);
+  expect(enabled.ended).toMatchObject({ outcome: "signed_in" });
+  expect(enabled.site.clicks).toEqual(["#go-on"]);
+  // A button that never enables ends the sign-in at the step wait, as before.
+  const never = await disabledFor(Number.POSITIVE_INFINITY);
+  expect(never.ended).toMatchObject({ outcome: "unsent", reason: "submit_stayed_disabled" });
+  expect(never.site.clicks).toEqual([]);
+});
+
+it("waits out a page of boxes no state knows, as one drawing in phases, until the step wait", async () => {
+  const drawing: Screen = { path: "/password", boxes: [{ selector: "#zip", kind: "zip" }], texts: ["one moment"] };
+  let shownAt: number | undefined;
+  const phased = (looks: number) => {
+    shownAt ??= looks;
+    return looks - shownAt < 30 ? drawing : passwordScreen;
+  };
+  const site = scriptedSite({ start: emailScreen, password: phased }, (_at, clicked) =>
+    clicked === "#continue" ? "password" : "home",
+  );
+  expect(await replay(site, twoStates)).toMatchObject({ outcome: "signed_in", loginProved: true });
+  expect(site.fills).toEqual(["email", "password"]);
+  // A page that stays so still ends as a state no one knows.
+  const stays = scriptedSite({ start: emailScreen, drawing }, (_at, clicked) => (clicked === "#continue" ? "drawing" : "home"));
+  expect(await replay(stays, twoStates)).toMatchObject({ outcome: "unclear", reason: "unknown_state" });
+});
+
+it("holds a form a value-free check found until it stayed shown, as a signed-in page may show one a moment", async () => {
+  // The site sends a signed-in browser on from its login form a moment after it drew it.
+  let drawnAt: number | undefined;
+  const passing = (looks: number) => {
+    drawnAt ??= looks;
+    if (looks - drawnAt > 10) site.site.screen = "home";
+    return emailScreen;
+  };
+  const site = scriptedSite({ start: passing }, () => undefined);
+  expect(await replay(site, twoStates, { valueFree: true, stepWaitMs: 5_000 })).toMatchObject({
+    outcome: "signed_in",
+    alreadySignedIn: true,
+  });
+  // A form that stays shown still stops for the login's values.
+  const stays = scriptedSite({ start: emailScreen }, () => undefined);
+  expect(await replay(stays, twoStates, { valueFree: true, stepWaitMs: 5_000 })).toMatchObject({
+    outcome: "unsent",
+    reason: "values_needed",
+  });
+});
+
+it("ends a value-free check on a login entry that settled with no state, marker or password box, as one that can't tell", async () => {
+  const picker: Screen = { path: "/sign-in", boxes: [], buttons: ["#account-one"], texts: ["choose an account"] };
+  const site = () => scriptedSite({ start: picker }, () => undefined);
+  const check = site();
+  const hooks = { ...check.hooks, confirmCantTell: () => Effect.void };
+  expect(await replay({ ...check, hooks }, twoStates, { valueFree: true })).toMatchObject({
+    outcome: "signed_in",
+    alreadySignedIn: true,
+    cantTell: true,
+  });
+  expect(check.clicks).toEqual([]);
+  // A sign-in with the login's values still needs a known state there.
+  const signIn = site();
+  expect(await replay({ ...signIn, hooks: { ...signIn.hooks, confirmCantTell: () => Effect.void } }, twoStates)).toMatchObject({
+    outcome: "unsent",
+    reason: "unknown_state",
+  });
 });
