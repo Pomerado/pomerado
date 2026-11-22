@@ -55,7 +55,7 @@ const hostOn = async (page: Page) => {
   const hooks: AutofillHooks<TestFailure> = {
     inspect: (step) => browser.inspect(step),
     fill: (input) => browser.fill(input),
-    resubmit: (input) => browser.resubmit(input),
+    ...(browser.resubmit === undefined ? {} : { resubmit: browser.resubmit }),
     check: (indicator, screens, challengeScreens, at) =>
       browser.confirm(indicator, screens, challengeScreens ?? screens, at?.origin),
     confirm: (indicator, _identifiers, screens, challengeScreens, at) =>

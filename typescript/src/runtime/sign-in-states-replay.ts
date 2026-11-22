@@ -1773,8 +1773,9 @@ const sendsOnPress = <E extends YieldableError, V extends string, L extends Auto
  * Its boxes go in with the state's own submit, in one fill, as a recipe screen's do, so the fill's
  * guards around its click hold for what it typed, such as closing a list a box opened over the
  * submit; never in a state another known state holds, nor one with methods. Where the page doesn't
- * show them all with that submit at once, each box goes alone, with no time for the page to send it
- * itself before the last (`moreToType`), and the last with the submit where the page shows it then.
+ * show them all with that submit at once, or a value is held for one of them, each box goes alone,
+ * with no time for the page to send it itself before the last (`moreToType`), and the last with the
+ * submit where the page shows it then.
  * A press so refused with the box still unsent, as one the page took away once the box was typed,
  * goes as after the box alone. A press alone after boxes the state typed goes with them, by the
  * host's click again, which types nothing (`clickAgain`), so its guards on those boxes hold too.
@@ -1834,7 +1835,11 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
           : { ...typingOf(fields, true), ...screenSubmit(full), ...(step.choice === undefined ? {} : { choice: step.choice }) };
       const untyped = full.fields.filter((field) => !typed.has(field.slot));
       const apart = actions(untyped);
-      const whole = joins && apart.length > 1 ? yield* shownOn(run, state, pressingOf(untyped)) : undefined;
+      // A value held for one of its boxes goes in that box's own fill (`heldFor`).
+      const whole =
+        joins && apart.length > 1 && !untyped.some((field) => run.held.has(field.slot))
+          ? yield* shownOn(run, state, pressingOf(untyped))
+          : undefined;
       const groups = typeof whole === "object" ? [untyped] : apart;
       const alone = (typeof whole === "object" ? [] : groups)
         .flat()
