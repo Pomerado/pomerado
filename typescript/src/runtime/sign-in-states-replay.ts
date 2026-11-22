@@ -204,12 +204,13 @@ interface Run<E extends YieldableError, V extends string, L extends AutofillLogi
 
 /**
  * A known state the page shows, told by its control and address alone (`byControl`), with its
- * code typed by place into the row the page shows (`byPlace`), or as recorded.
+ * code typed by place into the row the page shows (`byPlace`), learned after the login's own state
+ * of its look whose box is gone (`newer`, `matchState`), or as recorded.
  */
 type Shown = {
   readonly state: StateEntry;
   readonly inspection: AutofillInspection;
-  readonly by?: "control" | "row";
+  readonly by?: "control" | "row" | "newer";
 };
 type Ended<V extends string> = { readonly ended: SignInStatesOutcome<V> };
 /**
@@ -526,10 +527,11 @@ const ownStateNotShown = "own_state_not_shown";
  * besides the one it last acted in, unless that one is looked for again, only its own are taken,
  * in their order there from the last state it acted in that the route holds, then the earlier ones:
  * a login never goes on along another login's route, so one whose own state no longer shows stops
- * there, for a repair of its own. Otherwise first a state whose picked method is the login's
- * (`choices.method`, else `rankMethod`), then one the last state led to, or at the start one no
- * state leads to (`next`), then the most recently learned, as a library holds its states in the
- * order learned. Given the page's look (`page`), a state whose recorded instruction and ways stand
+ * there, for a repair of its own, but where a box its own state types is gone and a look-alike
+ * learned after it shows by the step wait (`matchState`). Otherwise first a state whose picked
+ * method is the login's (`choices.method`, else `rankMethod`), then one the last state led to, or
+ * at the start one no state leads to (`next`), then the most recently learned, as a library holds
+ * its states in the order learned. Given the page's look (`page`), a state whose recorded instruction and ways stand
  * further from the page's than another's do (`toldApart`) goes after the rest, next after the
  * login's own route; one recorded without them is never moved by them. In place (`inPlace`), the
  * route takes no part, as a step-up is no part of the login's own sign-in.
@@ -820,7 +822,11 @@ const byPlace = <E extends YieldableError, V extends string, L extends AutofillL
  * shows and the origin rule refused one whose controls showed (`admission`), that refusal
  * (`refusedOrigin`). A state noted without its question (`untold`) is taken so only on a page with
  * no message, and else, or acted in again, apart, before one that came back (`askedHere`). None is
- * taken where the page asks a question this replay answered (`askedBefore`).
+ * taken where the page asks a question this replay answered (`askedBefore`). Where the login's own
+ * route left other logins' states out and none of its own shows by the step wait (`waited`), for a
+ * box its own state types that is gone, as one the site renamed, a look-alike learned after its
+ * own that types too, presses the same submit and picks no method is taken in its place, the first
+ * whose controls show in the order a login with no route there takes them (`newer`).
  */
 const matchState = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -828,6 +834,7 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
   after: StateEntry | undefined,
   skip: StateEntry | undefined,
   loose: boolean,
+  waited = false,
 ) =>
   Effect.gen(function* () {
     const { states, transitions } = run.input.library;
@@ -872,8 +879,31 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
       if (row !== undefined) return row;
     }
     // Where the login's own route left other logins' states out, none of its own showing by the
-    // step wait is a page it does not know, for a repair of its own to go on from.
-    if (alike.length < candidates.length && refused === "not_found") return ownStateNotShown;
+    // step wait is a page it does not know, for a repair of its own to go on from, unless a box its
+    // own state types is gone, as one the site renamed, and a look-alike learned after its own
+    // that types too, presses the same submit and picks no method shows then. A page that lost
+    // only a press, such as a method's, keeps to the route, as does another form drawn in place of
+    // its own, whose submit is its own.
+    if (alike.length < candidates.length && refused === "not_found") {
+      const [first] = alike;
+      const lost = waited && first !== undefined ? yield* run.input.hooks.inspect(resolved(run, first.step)) : undefined;
+      if (lost !== undefined && "outcome" in lost && lost.reason === "not_found" && typeof lost.target === "number") {
+        const own = Math.max(...alike.map((state) => states.indexOf(state)));
+        const newer = candidates.filter(
+          (state) =>
+            states.indexOf(state) > own &&
+            state.step.submit === first?.step.submit &&
+            state.step.methods === undefined &&
+            resolved(run, state.step).fields.length > 0,
+        );
+        for (const state of ranked(run, newer, (other) => newer.includes(other), next, fingerprint)) {
+          const shown = yield* shownOn(run, state, resolved(run, state.step));
+          if (typeof shown !== "string" && !askedBefore(run, shown))
+            return { state, inspection: shown, by: "newer" } satisfies Shown;
+        }
+      }
+      return ownStateNotShown;
+    }
     return candidates.length > 0 || !loose ? refused : yield* byControl(run, fingerprint, after, skip, next);
   });
 
@@ -1139,8 +1169,9 @@ const returnedReason = <E extends YieldableError, V extends string, L extends Au
  * waits for a screen. The marker signs in. Once anything may have gone out, a recorded error marker
  * of a state acted in stops the replay as that rejection, whatever else the page shows. A known
  * state is taken once its controls show and pass its origin rule, in the order this login takes
- * them (`ranked`); where the login's own route left another login's out, none of its own showing
- * is an unknown state; a known state whose controls show on a host the origin rule refuses for this
+ * them (`ranked`); where the login's own route left another login's out, none of its own showing,
+ * nor by the step wait one learned after it for a box it types that is gone (`matchState`), is an
+ * unknown state; a known state whose controls show on a host the origin rule refuses for this
  * login ends it at once (`refusedOrigin`), as a recipe screen does. In place, once the controls of a
  * state acted in within a pop-up went from it, a state it led to there that shows is taken
  * (`inPopup`, `learnedAlike`). One acted in before something went out showing again stops it
@@ -1255,7 +1286,7 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
           const loose =
             capped || (at - held.since >= Math.max(quiet.quietMs, landingSettleMs) && byControlRead !== text);
           if (loose) byControlRead = text;
-          const shown = yield* matchState(run, shape, after, acted?.acted, loose);
+          const shown = yield* matchState(run, shape, after, acted?.acted, loose, capped);
           refused = typeof shown === "object" ? undefined : shown;
           if (typeof shown === "object") {
             // A known state on a host this login may not type on ends it at once, as at a recipe
@@ -2080,7 +2111,7 @@ const walk = <E extends YieldableError, V extends string, L extends AutofillLogi
         stage: "state",
         state: arrived.state.key,
         ...("by" in arrived && arrived.by !== undefined
-          ? { reason: arrived.by === "row" ? "code_row" : "same_control" }
+          ? { reason: arrived.by === "row" ? "code_row" : arrived.by === "newer" ? "newer_look_alike" : "same_control" }
           : {}),
       });
       const done = yield* actIn(run, arrived, arrived.observed);
