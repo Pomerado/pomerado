@@ -1,7 +1,7 @@
 import { Clock, Duration, Effect } from "effect";
 import type { YieldableError } from "effect/Cause";
 import type { AutofillRecipeStep } from "../destinations/autofill-recipe.js";
-import type { SignInMethodChoice } from "../destinations/autofill-contracts.js";
+import { handOffPrompt, type SignInMethodChoice } from "../destinations/autofill-contracts.js";
 import { urlOrigin } from "../destinations/autofill-refusal.js";
 import {
   type AutofillInspection,
@@ -10,6 +10,7 @@ import {
   hostSubmits,
 } from "../destinations/autofill-step.js";
 import {
+  addsDismiss,
   blankFingerprint,
   containsFingerprint,
   describeFingerprint,
@@ -400,13 +401,15 @@ const ownStateNotShown = "own_state_not_shown";
  * besides the one it last acted in, unless that one is looked for again, only its own are taken,
  * in their order there from the last state it acted in that the route holds, then the earlier ones:
  * a login never goes on along another login's route, so one whose own state no longer shows stops
- * there, for a repair of its own. Otherwise first a state whose picked method is the login's
- * (`choices.method`, else `rankMethod`), then one the last state led to, or at the start one no
- * state leads to (`next`), then the most recently learned, as a library holds its states in the
- * order learned. Given the page's look (`page`), a state whose recorded instruction and ways stand
- * further from the page's than another's do (`toldApart`) goes after the rest, next after the
- * login's own route; one recorded without them is never moved by them. In place (`inPlace`), the
- * route takes no part, as a step-up is no part of the login's own sign-in.
+ * there, for a repair of its own; a look-alike that only adds a dismiss to one of its own
+ * (`addsDismiss`) counts as its own, at that state's place and before it, so a notice that came to
+ * cover every login's state costs one repair. Otherwise first a state whose picked method is the
+ * login's (`choices.method`, else `rankMethod`), then one the last state led to, or at the start
+ * one no state leads to (`next`), then the most recently learned, as a library holds its states in
+ * the order learned. Given the page's look (`page`), a state whose recorded instruction and ways
+ * stand further from the page's than another's do (`toldApart`) goes after the rest, next after
+ * the login's own route; one recorded without them is never moved by them. In place (`inPlace`),
+ * the route takes no part, as a step-up is no part of the login's own sign-in.
  */
 const ranked = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -429,24 +432,27 @@ const ranked = <E extends YieldableError, V extends string, L extends AutofillLo
     );
   const picks = (state: StateEntry) =>
     method !== undefined && state.step.methods?.find((option) => option.selector === state.step.submit)?.method === method;
+  const twinOf = (state: StateEntry) =>
+    states.find((other) => route.includes(other.key) && alike(other) && addsDismiss(state, other));
   // Along the route from the last state acted in that it holds, so a look the route holds twice
   // goes on, after a page of another login's too.
   const at = route.indexOf([...run.visited].reverse().find((key) => route.includes(key)) ?? "");
   const along = (state: StateEntry) => {
-    const index = route.indexOf(state.key);
+    const index = route.indexOf(route.includes(state.key) ? state.key : (twinOf(state)?.key ?? ""));
     return index > at ? index - at : route.length + index;
   };
   const told = (state: StateEntry) => (page === undefined ? undefined : toldApart(state.fingerprint, page));
   const nearest = Math.min(...candidates.flatMap((state) => told(state) ?? []));
   const order = (state: StateEntry) => [
     own ? along(state) : 0,
+    Number(own && twinOf(state) === undefined),
     Number((told(state) ?? nearest) > nearest),
     Number(!picks(state)),
     Number(!next.has(state.key)),
     -states.indexOf(state),
   ];
   return candidates
-    .filter((state) => !own || route.includes(state.key))
+    .filter((state) => !own || route.includes(state.key) || twinOf(state) !== undefined)
     .map((state) => ({ state, by: order(state) }))
     .sort((a, b) => {
       const at = a.by.findIndex((value, index) => value !== b.by[index]);
@@ -1417,8 +1423,39 @@ const approve = <E extends YieldableError, V extends string, L extends AutofillL
   });
 
 /**
- * Whether a state's press may have the site send a code or link: a state it led to takes one, or
- * one it led to through states that take nothing, as a "code sent" page before the code's box.
+ * A hand-off state, as the recipe replay's hand-off screen: a replay that may not hand off
+ * (`handOff`) stops there for values (`valuesNeeded`); one that may asks the person one
+ * `browser_handoff` question, with no values, and then only a marker that may sign it in and
+ * verifies (`markersNow`, `verifyMarker`) does so (`handedOff`), never a page that can't tell; else
+ * it ends `handoff_not_signed_in`.
+ */
+const handOff = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  inspection: AutofillInspection,
+) =>
+  Effect.gen(function* () {
+    const { replay, input } = run;
+    if (input.handOff !== true) return stopped(run, valuesNeeded);
+    const done = yield* askOne(input, {
+      id: "signed_in",
+      type: "browser_handoff",
+      prompt: handOffPrompt(input.site),
+      show_inputs: [],
+    });
+    if (done?.type !== "browser_handoff") return stopped(run, "approval_declined");
+    replay.state.steps.push({ page: inspection.page, fields: [], approval: "handoff" });
+    for (const marker of markersNow(run))
+      if (yield* verifyMarker(run, marker))
+        return {
+          ended: { ...signedIn(run, marker).ended, alreadySignedIn: false, loginProved: false, handedOff: true },
+        } as Ended<V>;
+    return stopped(run, "handoff_not_signed_in");
+  });
+
+/**
+ * Whether a state's press may have the site send a code or link: a state it led to takes one or an
+ * approval other than a hand-off, which the site sends nothing for, or one it led to through states
+ * that take nothing, as a "code sent" page before the code's box.
  * With `alone`, never through a state with its look, which is another press on its page, such as
  * one another sign-in learned there.
  */
@@ -1436,7 +1473,7 @@ const sendsOnPress = <E extends YieldableError, V extends string, L extends Auto
       const next = states.find((other) => other.key === to);
       if (next === undefined) continue;
       if (
-        next.step.approval !== undefined ||
+        (next.step.approval !== undefined && next.step.approval !== "handoff") ||
         next.step.fields.some((field) => "slot" in field && field.slot === "code")
       )
         return true;
@@ -1476,6 +1513,8 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
     });
     for (;;) {
       const step = state.step;
+      // Before the value-free stop, as a hand-off takes no value.
+      if (step.approval === "handoff") return yield* handOff(run, inspection);
       if (
         replay.valueFree &&
         (step.fields.length > 0 ||
@@ -1486,7 +1525,6 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
         return stopped(run, valuesNeeded);
       if (step.choice !== undefined && !(input.hosted?.allowedChoices ?? []).includes(step.choice))
         return stopped(run, "sign_in_choice_not_allowed", { choice: step.choice });
-      if (step.approval === "handoff") return stopped(run, "unsupported_state");
       if (step.approval !== undefined) return (yield* approve(run, state, inspection)) ?? acted();
       const full = resolved(run, step);
       let fuller: { readonly state: StateEntry; readonly observed: ObservedState } | undefined;

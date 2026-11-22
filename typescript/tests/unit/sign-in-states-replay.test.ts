@@ -2097,9 +2097,10 @@ it("goes on along the login's own route where known states share a look, never a
 it("takes on every login's route a look-alike a repair learned that only adds a dismiss, before the state it adds to", async () => {
   const plain = { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") };
   const dismissing = { ...plain, step: stepAt("/password", [password], "#go", { dismiss: "#reject" }) };
-  const library = libraryOf([emailState, plain], [emailState, dismissing]);
   const own = { states: [keyOf(emailState), keyOf(plain)] };
-  for (const banner of [true, false]) {
+  // Learned after the login's own state, or before it, as one another login recorded with the notice up.
+  const libraries = [libraryOf([emailState, plain], [emailState, dismissing]), libraryOf([emailState, dismissing], [emailState, plain])];
+  for (const [library, banner] of libraries.flatMap((library) => [true, false].map((up) => [library, up] as const))) {
     const site = scriptedSite({ start: emailScreen, password: { ...passwordScreen, buttons: ["#go", "#reject"] } }, (_at, clicked) =>
       clicked === "#continue" ? "password" : "home",
     );
