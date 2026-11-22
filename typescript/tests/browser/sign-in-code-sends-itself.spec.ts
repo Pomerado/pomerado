@@ -35,12 +35,16 @@ const boxes = [1, 2, 3, 4, 5, 6]
 
 /**
  * The code screen: six boxes and a Verify button, or, `inForm`, the boxes alone in a form. The
- * sixth digit sends the code once, and so does each click of Verify, which is counted, and each
- * Enter in a box. An accepted code puts the account in place of the screen, or of the form, which
- * hides; an expired one signs the session out. Each box's key downs are kept, with whether each
- * was trusted.
+ * sixth digit sends the code once, unless the page doesn't send it itself (`sendsItself` false),
+ * and so does each click of Verify, which is counted, and each Enter in a box. An accepted code
+ * puts the account in place of the screen, or below the form, or below the boxes and Verify
+ * (`keepsBoxes`), which hide; an expired one signs the session out. Each box's key downs are
+ * kept, with whether each was trusted.
  */
-const codeScreen = (inForm: boolean) => `<main id="view"><p>Enter the code we sent you</p>${inForm ? `<form>${boxes}</form>` : `${boxes}<button id="verify" type="button">Verify</button>`}</main>
+const codeScreen = ({ inForm, sendsItself, keepsBoxes }: { inForm: boolean; sendsItself: boolean; keepsBoxes: boolean }) => {
+  const verify = `${boxes}<button id="verify" type="button">Verify</button>`;
+  const screen = inForm ? `<form>${boxes}</form>` : keepsBoxes ? `<div class="screen">${verify}</div>` : verify;
+  return `<main id="view"><p>Enter the code we sent you</p>${screen}</main>
 <script>
 const view = document.getElementById("view");
 const boxes = [...document.querySelectorAll(".otp")];
@@ -51,10 +55,10 @@ let sent = false;
 const check = () =>
   fetch("/api/code", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code: typed() }) })
     .then((response) => {
-      const form = document.querySelector("form");
-      // A form hides itself and shows the account below it, its boxes left in the document.
-      if (response.ok && form !== null) {
-        form.hidden = true;
+      const screen = document.querySelector("form, .screen");
+      // A form, or the boxes with Verify, hide and show the account below, the boxes left in the document.
+      if (response.ok && screen !== null) {
+        screen.hidden = true;
         view.insertAdjacentHTML("beforeend", '<p id="account">Signed in</p>');
       } else view.innerHTML = response.ok ? '<p id="account">Signed in</p>' : '<p id="signed-out">Your code expired</p>';
     });
@@ -64,7 +68,7 @@ boxes.forEach((box, index) => box.addEventListener("keydown", (event) => {
 }));
 boxes.forEach((box, index) => box.addEventListener("input", () => {
   if (box.value !== "" && boxes[index + 1]) boxes[index + 1].focus();
-  if (sent || !/^[0-9]{6}$/.test(typed())) return;
+  if (!${sendsItself} || sent || !/^[0-9]{6}$/.test(typed())) return;
   sent = true;
   check();
 }));
@@ -73,6 +77,7 @@ document.getElementById("verify")?.addEventListener("click", () => {
   check();
 });
 </script>`;
+};
 
 /**
  * A code screen with one code box in no form and no submit, beside a button that asks for a new
@@ -109,7 +114,10 @@ for (const kind of ["input", "blur"]) box.addEventListener(kind, () => sendsOn.i
  * The site: the code screen at /verify, `screen` or the six boxes. It keeps each code check and
  * answers it `checkMs` later, the first as accepted and any later one as expired.
  */
-const serve = async (page: Page, { inForm = false, checkMs = 600, screen = codeScreen(inForm) } = {}) => {
+const serve = async (
+  page: Page,
+  { inForm = false, checkMs = 600, sendsItself = true, keepsBoxes = false, screen = codeScreen({ inForm, sendsItself, keepsBoxes }) } = {},
+) => {
   const checks: string[] = [];
   await page.route(`${site}/**`, async (route) => {
     const request = route.request();
@@ -220,12 +228,20 @@ class TestFailure extends Data.TaggedError("TestFailure")<{ readonly code: strin
  * A sign-in of the screen as one recorded state with no submit, typing `fields`, on a host that
  * presses Enter after typing such a state (`resubmit`) and, unless `codeSent` is false, reads the
  * tab's own requests for a code the page sent (`codeSent`, `checksCodeSent`). Each step event
- * goes to `events`.
+ * goes to `events`. The state's step adds `submitted`, its submit and whether its page sends it.
  */
 const runStates = async (
   page: Page,
   fields: readonly { readonly selector: string; readonly slot: "code" }[] = recipe.steps[0].fields,
-  { codeSent: checks = true, events = [] }: { readonly codeSent?: boolean; readonly events?: unknown[] } = {},
+  {
+    codeSent: checks = true,
+    events = [],
+    submitted = {},
+  }: {
+    readonly codeSent?: boolean;
+    readonly events?: unknown[];
+    readonly submitted?: { readonly submit?: string; readonly pageSends?: true };
+  } = {},
 ) => {
   await page.goto(`${site}/verify`);
   const browser = await hostPage(page);
@@ -235,7 +251,7 @@ const runStates = async (
   const scanned = await Effect.runPromise(observe);
   if (scanned === undefined) throw new Error("The scan read nothing");
   const recorded = appendSignInStates(signInStatesOf({}, []), {
-    states: [{ fingerprint: scanned.fingerprint, step: { page: `${site}/verify`, fields } }],
+    states: [{ fingerprint: scanned.fingerprint, step: { page: `${site}/verify`, fields, ...submitted } }],
     signedIn: recipe.signedIn,
   });
   if ("refused" in recorded) throw new Error(recorded.refused);
@@ -351,5 +367,52 @@ test("a recorded code state with one box in no form and no submit, whose box sen
   expect(await runStates(page, loneCode)).toBe("signed_in");
   expect(checks).toEqual([code]);
   expect(await page.evaluate(() => Reflect.get(window, "keys"))).toEqual([...code]);
+  await expect(page.locator("#account")).toBeVisible();
+});
+
+// The code state as a recording keeps it when its page sent the code itself and took Verify away:
+// with Verify, which its replay presses only when the page doesn't send the code itself. Its page
+// hides the boxes once the site takes the code, as this test host gives no page call a time limit
+// for a box the page takes out of the document while a look reads it.
+const sentByPage = { submit: "#verify", pageSends: true } as const;
+
+test("a recorded code state whose page sent the code itself gets its Verify pressed once, when the page doesn't send it", async ({
+  page,
+}) => {
+  const checks = await serve(page, { sendsItself: false, keepsBoxes: true });
+  const events: unknown[] = [];
+  expect(await runStates(page, recipe.steps[0].fields, { submitted: sentByPage, events })).toBe("signed_in");
+  expect(events).toContainEqual({ stage: "retried", reason: "submit_after_typing" });
+  expect(checks).toEqual([code]);
+  expect(await page.evaluate(() => Reflect.get(window, "clicks"))).toBe(1);
+  await expect(page.locator("#account")).toBeVisible();
+});
+
+test("a recorded code state whose page sends the code itself gets no Verify press while the site checks it", async ({
+  page,
+}) => {
+  // The site takes 9 s to check, longer than the replay holds before it presses Verify.
+  const checks = await serve(page, { checkMs: 9_000, keepsBoxes: true });
+  const events: unknown[] = [];
+  expect(await runStates(page, recipe.steps[0].fields, { submitted: sentByPage, events })).toBe("signed_in");
+  expect(events).toContainEqual({ stage: "key_skipped", key: "submit", reason: "page_sent" });
+  expect(checks).toEqual([code]);
+  expect(await page.evaluate(() => Reflect.get(window, "clicks"))).toBe(0);
+  await expect(page.locator("#account")).toBeVisible();
+});
+
+test("a recorded code state whose page sent the code itself gets no Verify press on a host that can't tell a code the page sent", async ({
+  page,
+}) => {
+  // The page sent the code itself and keeps its Verify on screen while the site checks it, which
+  // a host that reads no requests could not tell from a page that never sent it.
+  const checks = await serve(page, { checkMs: 9_000, keepsBoxes: true });
+  const events: unknown[] = [];
+  expect(
+    await runStates(page, recipe.steps[0].fields, { submitted: sentByPage, codeSent: false, events }),
+  ).toBe("signed_in");
+  expect(checks).toEqual([code]);
+  expect(await page.evaluate(() => Reflect.get(window, "clicks"))).toBe(0);
+  expect(events).toContainEqual({ stage: "key_skipped", key: "submit", reason: "no_code_sent_check" });
   await expect(page.locator("#account")).toBeVisible();
 });
