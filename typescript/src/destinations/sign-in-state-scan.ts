@@ -1,17 +1,21 @@
 import { Effect, Schema } from "effect";
-import { primaryPageCode } from "../runtime/host-execute.js";
+import { pageCode, primaryPageCode } from "../runtime/host-execute.js";
 import { hostOnSiteSource, siteDomain } from "../runtime/same-site.js";
 import { workspaceHost } from "../runtime/workspace-origin.js";
 import { namedForCodeCode } from "../runtime/autofill-unrecorded-code.js";
-import { choicesCode, codeRowCode } from "./autofill-page-code.js";
+import type { AutofillPopup } from "./autofill-contracts.js";
+import { choicesCode, codeRowCode, openPopupsCode } from "./autofill-page-code.js";
 import type { AutofillPage } from "./autofill-step.js";
 import {
   blankFingerprint,
   BoxKind,
   BoxTakes,
   fingerprintOf,
+  heldOpener,
   type ObservedState,
+  type SignInStates,
   type StateBox,
+  withOpenerLook,
 } from "./sign-in-states.js";
 
 export { type ObservedBox, type ObservedState, stateAfter } from "./sign-in-states.js";
@@ -350,15 +354,74 @@ const scanFrame = `({ deep, dismissed }) => {
   return { ...result, ...told() };
 }`;
 
-/** One host call over the primary tab's frames on the site or a configured sign-in origin. */
+/**
+ * Where the scan reads a sign-in in a pop-up the primary tab opened: the one an inspection found
+ * (`targetId`), as a build records a step in a pop-up; else the newest still open on one of
+ * `origins`, as a replay reads one, or the primary tab where none is. With `opener`, the primary
+ * tab is read beside a pop-up too (`ObservedState.opener`).
+ */
+export interface SignInStatePopup {
+  readonly origins: readonly string[];
+  readonly targetId?: string | undefined;
+  readonly opener?: true | undefined;
+}
+
+/** Where a build reads the state of a step in a pop-up: the pop-up its inspection found. */
+export const stepPopup = (
+  step: { readonly popup?: AutofillPopup | undefined },
+  inspection: { readonly popupTargetId?: string | undefined },
+): SignInStatePopup | undefined =>
+  step.popup === undefined
+    ? undefined
+    : {
+        origins: [step.popup.origin],
+        ...(inspection.popupTargetId === undefined ? {} : { targetId: inspection.popupTargetId }),
+      };
+
+/**
+ * Where a replay of `library` reads the page: in a pop-up on the origin of any state recorded with
+ * a pop-up's own look, with the primary tab beside it where a state holds an opener's look
+ * (`heldOpener`). None for a library with no state of a pop-up's own look, read on its primary
+ * tab alone.
+ */
+export const statesPopup = (library: SignInStates): SignInStatePopup | undefined => {
+  const origins = library.states.flatMap((state) =>
+    state.fingerprint.popup === true && state.step.popup !== undefined ? [state.step.popup.origin] : [],
+  );
+  return origins.length === 0
+    ? undefined
+    : { origins: [...new Set(origins)], ...(library.states.some(heldOpener) ? { opener: true as const } : {}) };
+};
+
+/**
+ * Page code binding `shown`: the pop-up the scan reads (`SignInStatePopup`), else the primary tab,
+ * and `popupOrigins`, the origins whose frames count in a pop-up besides the sign-in's own.
+ */
+const shownCode = (popup: SignInStatePopup | undefined) =>
+  popup === undefined
+    ? "const shown = primary;\nconst popupOrigins = [];"
+    : `const popupOrigins = ${JSON.stringify(popup.origins)};
+${
+  popup.targetId === undefined
+    ? `${openPopupsCode("primary", "popupOrigins", "popups")}
+const shown = popups.at(-1) ?? primary;`
+    : pageCode(popup.targetId, "shown")
+}`;
+
+/**
+ * One host call over the frames of the primary tab, or of the pop-up it reads (`shownCode`), on
+ * the site or a configured sign-in origin, or in a pop-up on its own.
+ */
 const scanCode = (
   targetId: string,
   siteHost: string,
   authenticationOrigins: readonly string[],
+  popup: SignInStatePopup | undefined,
   deep: boolean,
   dismiss: readonly string[],
 ) =>
   `${primaryPageCode(targetId)}
+${shownCode(popup)}
 const onSiteHost = ${hostOnSiteSource(siteHost)};
 const authenticationOrigins = ${JSON.stringify(authenticationOrigins)};
 // A frame's own address, or for an about:blank or about:srcdoc frame, the first one above it with
@@ -375,7 +438,8 @@ const signInOrigin = (address) => {
   } catch {
     return undefined;
   }
-  return onSiteHost(url.hostname) || authenticationOrigins.includes(url.origin) ? url.origin : undefined;
+  return onSiteHost(url.hostname) || authenticationOrigins.includes(url.origin) ||
+    (shown !== primary && popupOrigins.includes(url.origin)) ? url.origin : undefined;
 };
 const frameShows = async (frame) => {
   for (let scope = frame; scope.parentFrame() !== null; scope = scope.parentFrame())
@@ -383,7 +447,7 @@ const frameShows = async (frame) => {
   return true;
 };
 const frames = [];
-for (const frame of primary.frames()) {
+for (const frame of shown.frames()) {
   if (frames.length >= 20) break;
   try {
     const origin = signInOrigin(frameAddress(frame));
@@ -408,7 +472,7 @@ for (const frame of primary.frames()) {
     continue;
   }
 }
-return { url: primary.url(), frames };`;
+return { url: shown.url(), frames, popup: shown !== primary };`;
 
 const ScannedBox = Schema.Struct({
   kind: BoxKind,
@@ -421,6 +485,7 @@ const ScannedBox = Schema.Struct({
 });
 const Scan = Schema.Struct({
   url: Schema.String,
+  popup: Schema.Boolean,
   frames: Schema.Array(
     Schema.Struct({
       origin: Schema.String,
@@ -438,14 +503,26 @@ const Scan = Schema.Struct({
   ),
 });
 
+interface ObserveInput {
+  readonly page: AutofillPage;
+  readonly siteOrigin: string;
+  readonly authenticationOrigins: readonly string[];
+  readonly workspace?: { readonly parent: string } | undefined;
+  readonly identifiers?: readonly string[] | undefined;
+  readonly popup?: SignInStatePopup | undefined;
+  readonly dismiss?: readonly string[] | undefined;
+}
+
 /**
- * Reads the page as a sign-in state (see `scanFrame`). A frame or the top page on a workspace host
- * of the tool's relation, other than the site's own origin, reads as `workspace`. A word of any
- * text that is one of the sign-in's own `identifiers`, or an address's part before "@", is masked
- * as a name is. Undefined when the page could not be read, or its top page is no web page.
+ * Reads the page as a sign-in state (see `scanFrame`), on the primary tab, or in a pop-up it opened
+ * (`SignInStatePopup`), whose look is marked `popup`, with the primary tab read beside it by a
+ * second call where `opener` asks. A frame or the top page on a workspace host of the tool's
+ * relation, other than the site's own origin, reads as `workspace`. A word of any text that is one
+ * of the sign-in's own `identifiers`, or an address's part before "@", is masked as a name is.
+ * Undefined when the page could not be read, or its top page is no web page.
  *
- * A page with no empty box that shows a modal dialog reads as that dialog, its heading as the
- * message and its buttons, and one with a notice that holds a control of `dismiss`, a library's
+ * A page with no empty box that shows a modal dialog over it reads as that dialog, its heading as
+ * the message and its buttons, and one with a notice that holds a control of `dismiss`, a library's
  * steps' own, reads apart from it; either keeps the page as read whole as its instruction and ways,
  * where a look with no box keeps neither otherwise, so a look read before compares with it
  * (`sameFingerprint`). A page whose only boxes are codes picked from checkboxes keeps the page as a
@@ -454,14 +531,24 @@ const Scan = Schema.Struct({
  * again through its open shadow roots (`deep`), as a page whose sign-in form sits in web components
  * shows nothing to a read of its document alone: no look ever read so is stored or matched.
  */
-export const observeSignInState = (input: {
-  readonly page: AutofillPage;
-  readonly siteOrigin: string;
-  readonly authenticationOrigins: readonly string[];
-  readonly workspace?: { readonly parent: string } | undefined;
-  readonly identifiers?: readonly string[] | undefined;
-  readonly dismiss?: readonly string[] | undefined;
-}): Effect.Effect<ObservedState | undefined> => {
+export const observeSignInState = (input: ObserveInput): Effect.Effect<ObservedState | undefined> =>
+  input.popup?.opener !== true
+    ? observePage(input)
+    : observePage(input).pipe(
+        Effect.flatMap((observed) =>
+          observed?.fingerprint.popup !== true
+            ? Effect.succeed(observed)
+            : observePage({ ...input, popup: undefined }).pipe(
+                Effect.map((opener) =>
+                  opener === undefined
+                    ? observed
+                    : { ...observed, fingerprint: withOpenerLook(observed.fingerprint, opener.fingerprint), opener },
+                ),
+              ),
+        ),
+      );
+
+const observePage = (input: ObserveInput): Effect.Effect<ObservedState | undefined> => {
   const scan = (deep: boolean) =>
     input.page
       .execute(
@@ -469,22 +556,22 @@ export const observeSignInState = (input: {
           input.page.targetId,
           siteDomain(input.siteOrigin) ?? URL.parse(input.siteOrigin)?.hostname ?? "",
           input.authenticationOrigins,
+          input.popup,
           deep,
           [...new Set(input.dismiss ?? [])].slice(0, 8),
         ),
         15,
       )
       .pipe(Effect.flatMap(Schema.decodeUnknown(Scan)));
-  return scan(false)
-    .pipe(
-      Effect.flatMap((light) => {
-        const read = readingOf(input, light);
-        return read !== undefined && blankFingerprint(read.fingerprint) && light.frames.some((frame) => frame.shadowed === true)
-          ? Effect.map(scan(true), (deep) => readingOf(input, deep))
-          : Effect.succeed(read);
-      }),
-      Effect.orElseSucceed(() => undefined),
-    );
+  return scan(false).pipe(
+    Effect.flatMap((light) => {
+      const read = readingOf(input, light);
+      return read !== undefined && blankFingerprint(read.fingerprint) && light.frames.some((frame) => frame.shadowed === true)
+        ? Effect.map(scan(true), (deep) => readingOf(input, deep))
+        : Effect.succeed(read);
+    }),
+    Effect.orElseSucceed(() => undefined),
+  );
 };
 
 /** The page as `scanFrame` read it in each frame, as a state (`observeSignInState`). */
@@ -560,6 +647,7 @@ const readingOf = (
   return {
     fingerprint: fingerprintOf({
       top: named(top),
+      ...(scan.popup ? { popup: true } : {}),
       boxes: empty.map(written),
       submit: empty.some((box) => box.submit),
       ...(pickedOnly

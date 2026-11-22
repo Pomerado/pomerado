@@ -9,6 +9,7 @@ import {
   type SignInLogin,
   type SignInRecipe,
 } from "../destinations/sign-in-recipe.js";
+import { type SignInStatePopup, statesPopup } from "../destinations/sign-in-state-scan.js";
 import {
   type ObservedState,
   type SignInStates,
@@ -116,13 +117,15 @@ export interface SignInReplayBrowser<E> extends SignInBrowser<E> {
   readonly clearSiteData?: () => Effect.Effect<void, E>;
   /**
    * The page as a sign-in state (`observeSignInState`), with the login's `identifiers` masked and,
-   * under a workspace relation, its workspace hosts read as one, a page with no box read apart from
-   * each notice a control of `dismiss` sits in. A browser without it reads no state, so a replay of
+   * under a workspace relation, its workspace hosts read as one, read in a pop-up the primary tab
+   * opened where `popup` says (`SignInStatePopup`), and a page with no box read apart from each
+   * notice a control of `dismiss` sits in. A browser without it reads no state, so a replay of
    * screens finds none it knows.
    */
   readonly observe?: (
     workspace: { readonly parent: string } | undefined,
     identifiers: readonly string[],
+    popup?: SignInStatePopup,
     dismiss?: readonly string[],
   ) => Effect.Effect<ObservedState | undefined, E>;
 }
@@ -485,7 +488,12 @@ export const signInForRun = <E>(input: SignInBy & {
               ...shared,
               library: input.states,
               observe: (
-                input.browser.observe?.(input.states.workspace, identifiers, signInDismisses(input.states)) ??
+                input.browser.observe?.(
+                  input.states.workspace,
+                  identifiers,
+                  statesPopup(input.states),
+                  signInDismisses(input.states),
+                ) ??
                 Effect.succeed(undefined)
               ).pipe(Effect.mapError((error) => new ReplayBrowserFailed({ error }))),
               ...(stop === undefined ? {} : { from: stop }),

@@ -1489,9 +1489,9 @@ it("reads a run's screens apart from each notice its screens' steps dismiss", as
     },
   });
   const dismissed: (readonly string[] | undefined)[] = [];
-  const observe: NonNullable<SignInReplayBrowser<never>["observe"]> = (workspace, identifiers, dismiss) => {
+  const observe: NonNullable<SignInReplayBrowser<never>["observe"]> = (workspace, identifiers, popup, dismiss) => {
     dismissed.push(dismiss);
-    return observeOn(fake)(workspace, identifiers, dismiss);
+    return observeOn(fake)(workspace, identifiers, popup, dismiss);
   };
   const result = await screensSignIn(fake, loginScreens({ ...loginStep, dismiss: "#accept-cookies" }), observe);
   expect(result).toEqual(Either.right({ alreadySignedIn: false }));

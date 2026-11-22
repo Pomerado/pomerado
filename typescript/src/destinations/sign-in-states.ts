@@ -57,12 +57,16 @@ export type StateBox = typeof StateBox.Type;
  * its main message and its buttons, normalized so a name, an address or a number never shows. A
  * state with boxes keeps its main instruction (`instruction`) and the ways in it offers, its
  * buttons and links (`ways`), normalized alike, which only order states of one look
- * (`toldApart`); a look read before it kept them has neither. A state with no box read in a dialog
- * is told by the dialog's message and buttons, and keeps the page behind it as its instruction and
- * ways (`inDialog`), which no other look with no box has.
+ * (`toldApart`); a look read before it kept them has neither. A look read in a pop-up the primary
+ * tab opened is marked `popup`, with the pop-up's origin as `top`; a pop-up state recorded before
+ * pop-ups were read holds the look of the tab that opened it (`heldOpener`). A core before the one
+ * that reads `popup` leaves out a state that has it, as it leaves out any field it does not know.
+ * A state with no box read in a dialog is told by the dialog's message and buttons, and keeps the
+ * page behind it as its instruction and ways (`inDialog`), which no other look with no box has.
  */
 export const StateFingerprint = Schema.Struct({
   top: Origin,
+  popup: Schema.optional(Schema.Literal(true)),
   boxes: Schema.Array(StateBox).pipe(Schema.maxItems(24)),
   submit: Schema.Boolean,
   message: Schema.optional(Label),
@@ -75,14 +79,33 @@ export type StateFingerprint = typeof StateFingerprint.Type;
 const Key = Schema.String.pipe(Schema.pattern(/^[0-9a-f]{32}$/u));
 const Marker = LegacyAutofillRecipe.fields.signedIn;
 
-/** A recorded step on an absolute page, or a workspace step on a path. */
-const StateStep = HandOffRecipeStep.pipe(
+/**
+ * A recorded step on an absolute page, or a workspace step on a path. `pageSends` marks a code
+ * screen whose page sent the code itself as it was recorded, beside the submit or submit key the
+ * page took away then: a replay types the code alone and, on a host that tells a code the page
+ * sent itself, presses that control only when the page didn't send it. A recipe never holds it. A core before this one leaves out a state that has it,
+ * as it leaves out any field it does not know, so a host records it only once every core that
+ * replays its libraries is this one or later (`AutofillSignInState.recordsPageSends`).
+ */
+const StateStep = Schema.extend(
+  HandOffRecipeStep,
+  Schema.Struct({ pageSends: Schema.optional(Schema.Literal(true)) }),
+).pipe(
+  Schema.filter(
+    (step) =>
+      step.pageSends === undefined ||
+      step.submit !== undefined ||
+      step.submitKey !== undefined ||
+      "a pageSends step names a submit or submit key",
+  ),
   Schema.filter(
     (step) =>
       (step.origin === "workspace" ? step.page.startsWith("/") : URL.parse(step.page) !== null) ||
       "a workspace step's page is a path, and any other step's an absolute URL",
   ),
 );
+/** A state's step: a recipe's, which may say the page sends it itself (`pageSends`). */
+export type SignInStateStep = typeof StateStep.Type;
 
 const strict = { parseOptions: { onExcessProperty: "error" } } as const;
 /**
@@ -144,6 +167,7 @@ const keyOf = (content: unknown) =>
 /** A fingerprint in its one written form: boxes, buttons and ways sorted. */
 export const fingerprintOf = (fingerprint: StateFingerprint): StateFingerprint => ({
   top: fingerprint.top,
+  ...(fingerprint.popup === true ? { popup: true } : {}),
   boxes: [...fingerprint.boxes].sort((a, b) => byCodeUnit(canonical(a), canonical(b))),
   submit: fingerprint.submit,
   ...(fingerprint.message === undefined ? {} : { message: fingerprint.message }),
@@ -175,6 +199,39 @@ const takesFits = (a: BoxTakes | undefined, b: BoxTakes | undefined) =>
 /** How many code fields a known state's step types, one for each box of a row. */
 const codesOf = (step: AutofillRecipeStep | undefined) =>
   step?.fields.filter((field) => "slot" in field && field.slot === "code").length ?? 0;
+/**
+ * Whether a known state sits in a pop-up and holds the look of the tab that opened it, as one
+ * recorded before pop-ups were read does: a page is compared with it by that tab's look.
+ */
+export const heldOpener = (look: Look) => {
+  const { fingerprint, step } = lookOf(look);
+  return step?.popup !== undefined && fingerprint.popup !== true;
+};
+/** Each page's look read in a pop-up, or taken from one, by the look its opener showed then. */
+const openerLooks = new WeakMap<StateFingerprint, StateFingerprint>();
+/**
+ * A copy of a page's look read in a pop-up, held with the look the tab that opened the pop-up
+ * showed beside it (`opener`), which a state that holds an opener's look is compared with.
+ */
+export const withOpenerLook = (look: StateFingerprint, opener: StateFingerprint | undefined) => {
+  if (opener === undefined) return look;
+  const copy = { ...look };
+  openerLooks.set(copy, opener);
+  return copy;
+};
+/** The look the tab that opened a page's pop-up showed beside it (`withOpenerLook`), else the page's own. */
+export const openerLook = (look: StateFingerprint) => openerLooks.get(look) ?? look;
+/**
+ * Two looks as they compare: a page's beside a state that holds an opener's look (`heldOpener`)
+ * by the look its opener showed (`openerLook`), with its step.
+ */
+const facing = (a: Look, b: Look): readonly [Look, Look] => {
+  const opened = (look: Look): Look => {
+    const { fingerprint, step } = lookOf(look);
+    return { fingerprint: openerLook(fingerprint), step };
+  };
+  return [heldOpener(b) ? opened(a) : a, heldOpener(a) ? opened(b) : b];
+};
 /**
  * Two looks' boxes paired, and those of each left: each with one alike by `key`; else, as a look
  * read before code rows and boxes named for a code were read so held it, a code box of either with
@@ -350,6 +407,7 @@ const readings = (look: Look): readonly Look[] => {
   if (!inDialog(fingerprint) && !pickedOnly(fingerprint)) return [look];
   const whole: StateFingerprint = {
     top: fingerprint.top,
+    ...(fingerprint.popup === true ? { popup: true } : {}),
     boxes: [],
     submit: false,
     ...(fingerprint.instruction === undefined ? {} : { message: fingerprint.instruction }),
@@ -360,11 +418,13 @@ const readings = (look: Look): readonly Look[] => {
 /**
  * Whether two looks are one: alike by text and their boxes (`pairedLooks`), their identifier boxes
  * taking values alike (`takesAgree`), as either reads (`readings`), so a page read in a dialog is
- * still the page behind it, as a look read before held it.
+ * still the page behind it, as a look read before held it; a page beside a state that holds an
+ * opener's look by its opener's (`facing`).
  */
-export const sameFingerprint = (a: Look, b: Look) =>
-  readings(a).some((left) =>
-    readings(b).some((right) => {
+export const sameFingerprint = (a: Look, b: Look) => {
+  const [x, y] = facing(a, b);
+  return readings(x).some((left) =>
+    readings(y).some((right) => {
       if (textBesideBoxes(lookOf(left).fingerprint) !== textBesideBoxes(lookOf(right).fingerprint)) return false;
       const rest = pairedLooks(left, right);
       return (
@@ -374,6 +434,7 @@ export const sameFingerprint = (a: Look, b: Look) =>
       );
     }),
   );
+};
 /**
  * The controls a library's steps dismiss a covering notice by (`dismiss`), each once: the scan
  * reads a page with no box apart from the notices they sit in (`observeSignInState`).
@@ -403,18 +464,19 @@ export const blankFingerprint = (fingerprint: StateFingerprint) =>
   (fingerprint.buttons ?? []).length === 0;
 
 /**
- * Whether `outer` holds every box of `inner` and more, on the same top origin, as looks compare
- * (`pairedLooks`, `takesAgree`): a page that may still grow from `inner` into `outer`, as a sign-in
- * whose password box draws late.
+ * Whether `outer` holds every box of `inner` and more, on the same top origin, in a pop-up or not
+ * alike, as looks compare (`facing`, `pairedLooks`, `takesAgree`): a page that may still grow from
+ * `inner` into `outer`, as a sign-in whose password box draws late.
  */
 export const containsFingerprint = (inner: Look, outer: Look) => {
-  const [held, holding] = [lookOf(inner).fingerprint, lookOf(outer).fingerprint];
-  if (held.top !== holding.top || held.boxes.length === 0) return false;
-  const rest = pairedLooks(inner, outer);
+  const [x, y] = facing(inner, outer);
+  const [held, holding] = [lookOf(x).fingerprint, lookOf(y).fingerprint];
+  if (held.top !== holding.top || held.popup !== holding.popup || held.boxes.length === 0) return false;
+  const rest = pairedLooks(x, y);
   return (
     rest.held.length === 0 &&
     rest.holding.length > 0 &&
-    takesAgree(unfolded(inner, rest.folded), unfolded(outer, rest.folded), true)
+    takesAgree(unfolded(x, rest.folded), unfolded(y, rest.folded), true)
   );
 };
 
@@ -453,7 +515,7 @@ export const describeFingerprint = (fingerprint: StateFingerprint) => {
           fingerprint.message === undefined ? "" : `; new message "${fingerprint.message}"`
         }`
       : `no box; message "${fingerprint.message ?? ""}"; buttons ${JSON.stringify(fingerprint.buttons ?? [])}`;
-  return `A sign-in state on ${fingerprint.top}: ${shown}.`;
+  return `A sign-in state ${fingerprint.popup === true ? "in a pop-up " : ""}on ${fingerprint.top}: ${shown}.`;
 };
 
 /** A text as its shape alone: each word "~" and each number "#". */
@@ -495,6 +557,7 @@ export const fingerprintShape = (fingerprint: StateFingerprint, page?: string, k
   const url = page === undefined ? null : URL.parse(page);
   return {
     ...(url === null ? {} : { host: url.host, path: pathShape(url.host, url.pathname, known) }),
+    ...(fingerprint.popup === true ? { popup: true } : {}),
     boxes: fingerprintOf(fingerprint).boxes.map((box) =>
       box.label === undefined ? box : { ...box, label: textShape(box.label) },
     ),
@@ -508,7 +571,7 @@ export type FingerprintShape = ReturnType<typeof fingerprintShape>;
 /** The entry for a state, keyed by its fingerprint, step and whether a step-up's. */
 export const stateEntry = (
   fingerprint: StateFingerprint,
-  step: AutofillRecipeStep,
+  step: SignInStateStep,
   source: "recorded" | "derived" = "recorded",
   stepUp?: true,
 ): StateEntry => {
@@ -553,13 +616,18 @@ export interface ObservedBox extends StateBox {
 
 /**
  * The page as read: `fingerprint` from its empty boxes, or from its message and buttons when it
- * shows none; every counted box (`boxes`); and its visible texts, normalized (`texts`).
+ * shows none; every counted box (`boxes`); and its visible texts, normalized (`texts`). A page
+ * read in a pop-up may hold the tab that opened it as read beside it (`opener`), for the states
+ * that hold an opener's look (`heldOpener`).
  */
 export interface ObservedState {
   readonly fingerprint: StateFingerprint;
   readonly boxes: readonly ObservedBox[];
   readonly texts: readonly string[];
+  readonly opener?: ObservedState | undefined;
 }
+/** The page as the tab that opened its pop-up read beside it (`opener`), else as read. */
+export const openerOf = (observed: ObservedState) => observed.opener ?? observed;
 
 /** The page's boxes as read now, less those it held filled already when read as `reached`. */
 const standingBoxes = (reached: ObservedState, now: ObservedState) => {
@@ -571,14 +639,15 @@ const standingBoxes = (reached: ObservedState, now: ObservedState) => {
   });
 };
 /**
- * The page's boxes as they stand since `reached`: the empty ones, and the ones filled since; a code
- * box keeps what the identifier boxes a look read before held there took (`takes`), so it still
- * pairs with them (`paired`).
+ * The page's boxes as they stand since `reached`, as `standingFingerprint` reads them; a code box
+ * keeps what the identifier boxes a look read before held there took (`takes`), so it still pairs
+ * with them (`paired`).
  */
-export const standingFingerprint = (reached: ObservedState, now: ObservedState): StateFingerprint => {
+const standingLook = (reached: ObservedState, now: ObservedState): StateFingerprint => {
   const boxes = standingBoxes(reached, now);
   return fingerprintOf({
     top: now.fingerprint.top,
+    ...(now.fingerprint.popup === true ? { popup: true } : {}),
     boxes: boxes.map(({ frame, kind, count, takes }) => ({
       frame,
       kind,
@@ -588,24 +657,38 @@ export const standingFingerprint = (reached: ObservedState, now: ObservedState):
     submit: boxes.some((box) => box.submit),
   });
 };
+/**
+ * The page's boxes as they stand since `reached`: the empty ones, and the ones filled since; read
+ * in a pop-up beside its opener, with the opener's alike (`withOpenerLook`).
+ */
+export const standingFingerprint = (reached: ObservedState, now: ObservedState): StateFingerprint =>
+  reached.opener === undefined && now.opener === undefined
+    ? standingLook(reached, now)
+    : withOpenerLook(standingLook(reached, now), standingLook(openerOf(reached), openerOf(now)));
 const boxText = ({ frame, kind, count }: StateBox) => canonical({ frame, kind, count });
 /**
- * Whether two looks show the same boxes on the same top origin, whatever their text, as boxes pair
- * by place (`pairedLooks`), their identifier boxes taking values alike (`takesAgree`), as either
- * reads (`readings`).
+ * Whether two looks show the same boxes on the same top origin, in a pop-up or not alike, whatever
+ * their text, as boxes pair by place (`facing`, `pairedLooks`), their identifier boxes taking values
+ * alike (`takesAgree`); with `asRead`, as either reads too (`readings`), as a stored look is matched
+ * with a page, never where a state acted in is judged to stand still, as a look with codes picked
+ * from checkboxes reads as any page with no box then.
  */
-export const sameBoxes = (a: Look, b: Look) =>
-  readings(a).some((left) =>
-    readings(b).some((right) => {
+export const sameBoxes = (a: Look, b: Look, asRead = false) => {
+  const [x, y] = facing(a, b);
+  return (asRead ? readings(x) : [x]).some((left) =>
+    (asRead ? readings(y) : [y]).some((right) => {
+      const [held, holding] = [lookOf(left).fingerprint, lookOf(right).fingerprint];
       const rest = pairedLooks(left, right, true);
       return (
-        lookOf(left).fingerprint.top === lookOf(right).fingerprint.top &&
+        held.top === holding.top &&
+        held.popup === holding.popup &&
         rest.held.length === 0 &&
         rest.holding.length === 0 &&
         takesAgree(unfolded(left, rest.folded), unfolded(right, rest.folded))
       );
     }),
   );
+};
 /**
  * Whether an identifier box the page shows empty takes an email alone where the box on its frame,
  * when read as `reached`, took a phone alone, or the reverse: a phone box where an email box was.
@@ -635,16 +718,23 @@ export const takesLost = (reached: ObservedState, now: ObservedState) => {
  * after its submit, is that state's boxes and the first such text; the same boxes alone are that
  * state again; anything else is the page's own fingerprint. Where an identifier box takes the other
  * kind alone (`takesLost`), the boxes are as they stand now, each with what it takes now. Text
- * counts beside boxes nowhere else.
+ * counts beside boxes nowhere else. Read in a pop-up beside its opener, it holds the opener's
+ * alike (`withOpenerLook`).
  */
-export const stateAfter = (reached: ObservedState | undefined, now: ObservedState): StateFingerprint => {
+export const stateAfter = (reached: ObservedState | undefined, now: ObservedState): StateFingerprint =>
+  reached?.opener === undefined && now.opener === undefined
+    ? pageAfter(reached, now)
+    : withOpenerLook(pageAfter(reached, now), pageAfter(reached && openerOf(reached), openerOf(now)));
+const pageAfter = (reached: ObservedState | undefined, now: ObservedState): StateFingerprint => {
   if (reached === undefined || reached.fingerprint.boxes.length === 0) return now.fingerprint;
-  const { top, boxes, submit } = reached.fingerprint;
-  const plain = fingerprintOf({ top, boxes, submit });
-  if (!sameBoxes(standingFingerprint(reached, now), plain)) return now.fingerprint;
+  const { top, popup, boxes, submit } = reached.fingerprint;
+  const marked = popup === true ? { popup } : {};
+  const plain = fingerprintOf({ top, ...marked, boxes, submit });
+  if (!sameBoxes(standingLook(reached, now), plain)) return now.fingerprint;
   const shown = takesLost(reached, now)
     ? fingerprintOf({
         top,
+        ...marked,
         boxes: standingBoxes(reached, now).map(({ frame, kind, count, takes }) => ({
           frame,
           kind,
@@ -703,6 +793,8 @@ const ObservedShape = Schema.Struct({
  * a replay's own before a repair went on, are left out, and `from` is the known state the repair
  * went on from. A noted step followed by one with no note, a step count that is not the recipe's,
  * or no note at all fails with the first step that has none (`missingFingerprint`), never quietly.
+ * A recorded step whose page sent it itself (`pageSends`) marks its recipe step so, when that step
+ * names a submit or submit key.
  */
 export const observedSignInOf = (
   steps: readonly object[],
@@ -722,7 +814,11 @@ export const observedSignInOf = (
     ...(from === undefined ? {} : { from }),
     states: recipe.steps.slice(first).map((step, index) => ({
       fingerprint: noted[first + index] as StateFingerprint,
-      step,
+      step:
+        Reflect.get(steps[first + index] ?? {}, "pageSends") === true &&
+        (step.submit !== undefined || step.submitKey !== undefined)
+          ? { ...step, pageSends: true as const }
+          : step,
     })),
     signedIn: recipe.signedIn,
   };
@@ -739,6 +835,16 @@ export const decodeSignInStateEntry = (stored: unknown): SignInStateEntry | unde
   const value = typeof stored === "string" ? Option.getOrUndefined(Schema.decodeUnknownOption(Schema.parseJson())(stored)) : stored;
   const entry = Option.getOrUndefined(Schema.decodeUnknownOption(SignInStateEntry)(value));
   return entry !== undefined && keyed(entry) === entry.key ? entry : undefined;
+};
+
+/**
+ * Stored entries read back (`decodeSignInStateEntry`), and how many of them this host could not
+ * read and left out (`dropped`), for a host to report: a transition to or from one left out then
+ * leads nowhere.
+ */
+export const decodeSignInStateEntries = (stored: readonly unknown[]) => {
+  const entries = stored.flatMap((entry) => decodeSignInStateEntry(entry) ?? []);
+  return { entries, dropped: stored.length - entries.length };
 };
 
 /** A library: the site's header, and its entries of each kind in the order they were stored. */
@@ -891,7 +997,7 @@ export interface ObservedSignIn {
   readonly stepUp?: true | undefined;
   readonly states: readonly {
     readonly fingerprint: StateFingerprint;
-    readonly step: AutofillRecipeStep;
+    readonly step: SignInStateStep;
   }[];
   readonly signedIn: AutofillSignedIn;
 }
@@ -904,8 +1010,10 @@ export const maximumStates = 64;
  * as they are, and those entries (`added`), none when it knew them all. A state is known by its
  * key, its fingerprint and step alike. A sign-in that stopped before it signed in (`to`) leads to
  * the oldest known state of its own sign-in with that look, a step-up's for a step-up, and adds no
- * marker. Refused: a workspace step in a library with no workspace; a state that shows nothing to
- * tell it by; a `to` no such state looks like (`unknown_state`); and a library that would pass
+ * marker. Refused: a workspace step in a library with no workspace, or a new entry this core can't
+ * read back from its stored bytes (`decodeSignInStateEntry`), as a step with a field no reader
+ * knows, which a reader would leave out (`unsupported_step`); a state that shows nothing to tell it
+ * by; a `to` no such state looks like (`unknown_state`); and a library that would pass
  * `maximumStates`.
  */
 export const appendSignInStates = (
@@ -938,6 +1046,8 @@ export const appendSignInStates = (
     [...library.states, ...library.transitions, ...library.signedIn].map((entry) => entry.key),
   );
   const added = fresh.filter((entry) => !known.has(entry.key) && known.add(entry.key));
+  if (added.some((entry) => decodeSignInStateEntry(signInStateEntryText(entry)) === undefined))
+    return { refused: "unsupported_step" };
   const growth = added.filter((entry) => entry.kind === "state").length;
   if (library.states.length + growth > maximumStates) return { refused: "library_full" };
   return {

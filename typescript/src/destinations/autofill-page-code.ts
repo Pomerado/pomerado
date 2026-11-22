@@ -1324,20 +1324,26 @@ const keySubmitCode = `const keySubmit = async (field) => {
 const documentStartCode = `const documentStart = () =>
   primary.mainFrame().evaluate(() => performance.timeOrigin).catch(() => undefined);`;
 
+/**
+ * Page code: the pages `opener` opened that are still open on an origin of `origins`, page code for
+ * an array of origins, oldest first, as `name`.
+ */
+export const openPopupsCode = (opener: string, origins: string, name: string) => `const ${name} = [];
+for (const candidate of context.pages()) {
+  if (candidate === ${opener} || candidate.isClosed()) continue;
+  if (await candidate.opener() !== ${opener}) continue;
+  let origin;
+  try { origin = new URL(candidate.url()).origin; } catch { continue; }
+  if (${origins}.includes(origin)) ${name}.push(candidate);
+}`;
+
 /** Resolves only a real child of the stable primary opener, on the recorded origin. */
 export const autofillPageCode = (targetId: string, popup: AutofillPopup | undefined) =>
   popup === undefined
     ? primaryPageCode(targetId)
     : `${pageCode(targetId, "opener")}
 const popupOrigin = ${JSON.stringify(popup.origin)};
-const matches = [];
-for (const candidate of context.pages()) {
-  if (candidate === opener || candidate.isClosed()) continue;
-  if (await candidate.opener() !== opener) continue;
-  let origin;
-  try { origin = new URL(candidate.url()).origin; } catch { continue; }
-  if (origin === popupOrigin) matches.push(candidate);
-}
+${openPopupsCode("opener", "[popupOrigin]", "matches")}
 if (matches.length !== 1) return {
   error: matches.length === 0 ? "popup_missing" : "popup_ambiguous", target: "popup"
 };
@@ -1638,13 +1644,7 @@ export const autofillSignedInCode = (
 ) =>
   `${primaryPageCode(targetId)}
 const popupOrigins = ${JSON.stringify(popups.map((popup) => popup.origin))};
-const openPopups = [];
-for (const candidate of context.pages()) {
-  if (candidate === primary || candidate.isClosed() || await candidate.opener() !== primary) continue;
-  let origin;
-  try { origin = new URL(candidate.url()).origin; } catch { continue; }
-  if (popupOrigins.includes(origin)) openPopups.push(candidate);
-}
+${openPopupsCode("primary", "popupOrigins", "openPopups")}
 const onSiteHost = ${hostOnSiteSource(siteHost)};
 const onSite = (frame) => {
   let host = "";
