@@ -785,6 +785,56 @@ const byControl = <E extends YieldableError, V extends string, L extends Autofil
   });
 
 /**
+ * Once anything this sign-in typed may have reached the site, where no known state has the page's
+ * whole look, the known state a page with no box is by the control it presses, as a page after the
+ * login whose words the site changed, such as one asking to remember the browser: only one the
+ * state just acted in led to (`learnedNext`) that presses only (`pressesOnly`), whose control is
+ * neither that state's submit nor one of its methods, so nothing that state sent goes out again;
+ * with the page's top origin, whatever its message and buttons, at the host and path the last
+ * marker check read, neither address with a hash, and never one acted in that came back
+ * (`returnedTo`). They are taken in the order this login takes states of one look (`ranked`), the
+ * first whose control shows as `byControl` takes one.
+ */
+const ledToByControl = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  fingerprint: StateFingerprint,
+  after: StateEntry | undefined,
+  next: ReadonlySet<string>,
+) =>
+  Effect.gen(function* () {
+    const { page } = run;
+    if (
+      after === undefined ||
+      fingerprint.boxes.length > 0 ||
+      page === undefined ||
+      !hashless(page) ||
+      (!mayHaveSent(run) && run.replay.sent.maySent.size === 0)
+    )
+      return undefined;
+    const pressed = [after.step.submit, ...(after.step.methods ?? []).map((option) => option.selector)];
+    const here = (state: StateEntry) =>
+      state.fingerprint.top === fingerprint.top &&
+      pressesOnly(run, state) &&
+      !pressed.includes(state.step.submit) &&
+      hashless(state.step.page) &&
+      sameAddress(page, state.step.page);
+    const pressing: StateEntry[] = [];
+    for (const state of learnedNext(run, after))
+      if (here(state) && !(yield* returnedTo(run, state))) pressing.push(state);
+    for (const state of ranked(run, pressing, here, next)) {
+      const inspection = yield* shownOn(run, state, resolved(run, state.step));
+      if (
+        typeof inspection !== "string" &&
+        inspection.url !== undefined &&
+        hashless(inspection.url) &&
+        sameAddress(inspection.page, state.step.page)
+      )
+        return { state, inspection, by: "control" } satisfies Shown;
+    }
+    return undefined;
+  });
+
+/**
  * A code state of the page's look whose recorded boxes never showed (`missing`, in the order this
  * login takes them), with its code typed by place into the row of code boxes the page shows
  * instead: the first whose step types a code alone, one character a box, into as many fields as
@@ -824,7 +874,8 @@ const byPlace = <E extends YieldableError, V extends string, L extends AutofillL
  * page shows again, with no other, is `returned`, unless a sign-in learned it after the last one
  * (`learnedNext`). With `loose`, states of its look none of whose recorded controls showed may be a
  * code state typed by place into the row the page shows (`byPlace`); with no state of its whole
- * look, a page with no box may be a state told by its control and address alone (`byControl`);
+ * look, a page with no box may be a state told by its control and address alone (`byControl`),
+ * else, once anything may have gone out, one the state just acted in led to (`ledToByControl`);
  * its refusals count for nothing, so a page no state is still ends as an unknown state. Where none
  * shows and the origin rule refused one whose controls showed (`admission`), that refusal
  * (`refusedOrigin`). A state noted without its question (`untold`) is taken so only on a page with
@@ -911,7 +962,11 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
       }
       return ownStateNotShown;
     }
-    return candidates.length > 0 || !loose ? refused : yield* byControl(run, fingerprint, after, skip, next);
+    if (candidates.length > 0 || !loose) return refused;
+    // A state the one just acted in led to is looked for only where `byControl` finds none, as it
+    // finds none once anything may have gone out, so every page it takes is taken as before.
+    const known = yield* byControl(run, fingerprint, after, skip, next);
+    return known ?? (yield* ledToByControl(run, fingerprint, after, next));
   });
 
 const signedIn = <E extends YieldableError, V extends string, L extends AutofillLogin>(

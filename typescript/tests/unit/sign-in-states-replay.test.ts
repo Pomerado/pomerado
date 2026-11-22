@@ -693,13 +693,30 @@ it("never takes a state by its control where the page's main message differs or 
   expect(site.clicks).toEqual(["button.go", "#go"]);
 });
 
-it("never takes a state by its control once anything may have reached the site", async () => {
+it("takes by its control, once the login went out, only a state the state just acted in led to", async () => {
   const stay: Screen = { path: "/stay", boxes: [], buttons: ["#yes"], texts: ["stay signed in"], labels: ["~"] };
-  const library = libraryOf([typedEmail, typedPassword, { fingerprint: arrival(stay), step: stepAt("/stay", [], "#yes") }]);
+  const stayState = { fingerprint: arrival(stay), step: stepAt("/stay", [], "#yes") };
   const next: Readonly<Record<string, string>> = { "#continue": "password", "#go": "stay", "#yes": "home" };
-  const site = scriptedSite({ start: emailScreen, password: passwordScreen, stay: { ...stay, labels: ["~ ~"] } }, (_at, clicked) => next[clicked]);
-  expect(await replay(site, library)).toMatchObject({ outcome: "unclear", reason: "unknown_state" });
-  expect(site.clicks).toEqual(["#continue", "#go"]);
+  const reworded = { ...stay, texts: ["stay signed in on this browser"], labels: ["~ ~"] };
+  const site = (shown: Screen) =>
+    scriptedSite({ start: emailScreen, password: passwordScreen, stay: shown }, (_at, clicked) => next[clicked]);
+  // The password state led to it: taken whatever its words, and heard as told by its control.
+  const led = libraryOf([typedEmail, typedPassword, stayState]);
+  const events: Readonly<Record<string, unknown>>[] = [];
+  const taken = site(reworded);
+  expect(await replay(taken, led, { events })).toMatchObject({ outcome: "signed_in" });
+  expect(taken.clicks).toEqual(["#continue", "#go", "#yes"]);
+  expect(events).toContainEqual({ stage: "state", state: led.states[2]?.key, reason: "same_control" });
+  // A state no sign-in learned after the password state, though its control shows at its address.
+  const apart = libraryOf([typedEmail, typedPassword], [stayState]);
+  const notLed = site(reworded);
+  expect(await replay(notLed, apart)).toMatchObject({ outcome: "unclear", reason: "unknown_state" });
+  expect(notLed.clicks).toEqual(["#continue", "#go"]);
+  // Nor one that presses the password state's own submit, which would send the password again.
+  const again = libraryOf([typedEmail, typedPassword, { fingerprint: arrival(stay), step: stepAt("/stay", [], "#go") }]);
+  const own = site({ ...reworded, buttons: ["#go"] });
+  expect(await replay(own, again)).toMatchObject({ outcome: "unclear", reason: "unknown_state" });
+  expect(own.clicks).toEqual(["#continue", "#go"]);
 });
 
 it("tells, at a state no one knows, its shape and the stored ones it was told from, value-free", async () => {
