@@ -368,7 +368,7 @@ test("two code rows alike but for their boxes' role and labels read as two looks
   });
 });
 
-test("code boxes told by the rule a fill reads a row by, or by a name, read as code boxes, and still match a look that read them one by one", async ({
+test("code boxes told by the rule a fill reads a row by read as code boxes, and still match a look that read them one by one", async ({
   page,
 }) => {
   const verify = (boxes: string) =>
@@ -381,7 +381,8 @@ test("code boxes told by the rule a fill reads a row by, or by a name, read as c
     split: `<div>${digit.repeat(3)}</div><span>-</span><div>${digit.repeat(3)}</div>`,
     script: `<div>${six(() => '<input inputmode="numeric" style="width:2em">')}</div>`,
     marked: six(() => '<span><input autocomplete="one-time-code" maxlength="1"><span class="caret"></span></span>'),
-    named: '<input type="text" name="code">',
+    // A box whose name holds a code word, beside a username, reads as an identifier box, as before.
+    client: '<input type="text" name="username"><input type="text" name="clientCode">',
     // Boxes the page switches on in turn, each once the one before it holds a digit.
     switched: `<div>${digit}${'<input inputmode="numeric" maxlength="1" disabled>'.repeat(5)}</div>`,
   };
@@ -394,11 +395,14 @@ test("code boxes told by the rule a fill reads a row by, or by a name, read as c
     split: [{ ...row, takes: "other" }],
     script: [{ ...row, takes: "other" }],
     marked: [row],
-    named: [{ frame: site, kind: "code", role: "textbox", takes: "other" }],
+    client: [
+      { frame: site, kind: "identifier", takes: "other" },
+      { frame: site, kind: "identifier", takes: "other" },
+    ],
     switched: [{ ...row, takes: "other" }],
   });
-  // A look read before, with each box one by one or a box named for a code as an identifier box,
-  // matches each page's look now; a page with one box that takes a name never matches a row.
+  // A look read before, with each box one by one, matches each page's look now; a page with one box
+  // that takes a name never matches a row.
   const before = (boxes: readonly StateBox[]) => fingerprintOf({ top: site, boxes, submit: true });
   const identifiers = (count: number) => Array.from({ length: count }, () => ({ frame: site, kind: "identifier" as const, takes: "other" as const }));
   const now = (name: string) => before(read[name] ?? []);
@@ -407,7 +411,6 @@ test("code boxes told by the rule a fill reads a row by, or by a name, read as c
     expect(sameFingerprint(before(identifiers(1)), now(name))).toBe(false);
   }
   expect(sameFingerprint(before(Array.from({ length: 6 }, () => ({ frame: site, kind: "code" as const }))), now("marked"))).toBe(true);
-  expect(sameFingerprint(before(identifiers(1)), now("named"))).toBe(true);
   expect(sameFingerprint(before([{ frame: site, kind: "code", role: "textbox" }]), now("separated"))).toBe(false);
   // A look read before held a switched row's first box alone: it matches where its step types as
   // many codes as the row has boxes, as a minter records such a row, or one code a fill spreads
@@ -513,10 +516,10 @@ test("a page with no box reads apart from a notice whose control the library dis
 test("a code picked from four or more named checkboxes, on a page with no text box, reads as a code box and still matches a look read before", async ({
   page,
 }) => {
-  const pictures = (count: number) =>
-    ["apple", "boat", "cat", "dog", "egg", "fish"].slice(0, count).map((name) => `<input type="checkbox" aria-label="${name}">`).join("");
-  const body = (grid: string, extra = "") =>
-    `<h1>Pick your pictures</h1><form action="/verify" method="post"><div>${grid}</div>
+  const named = (names: readonly string[]) => names.map((name) => `<input type="checkbox" aria-label="${name}">`).join("");
+  const pictures = (count: number) => named(["apple", "boat", "cat", "dog", "egg", "fish"].slice(0, count));
+  const body = (grid: string, extra = "", heading = "Pick the pictures of your code") =>
+    `<h1>${heading}</h1><form action="/verify" method="post"><div>${grid}</div>
       <label><input type="checkbox"> Remember this device</label>${extra}<button>Continue</button></form>`;
   const shown = await (await open(page, { [site]: body(pictures(6)) }))();
   const before = await (await open(page, { [site]: body("") }))();
@@ -535,6 +538,16 @@ test("a code picked from four or more named checkboxes, on a page with no text b
   expect(three.fingerprint.boxes).toEqual([]);
   const typed = await (await open(page, { [site]: body(pictures(6), '<input type="email" name="email">') }))();
   expect(typed.fingerprint.boxes).toEqual([{ frame: site, kind: "identifier", takes: "email" }]);
+  // A topic picker is no code: its names are words and the page names no code. Digits are one,
+  // whatever the page says.
+  const topics = await (
+    await open(page, { [site]: body(named(["Sports", "Music", "Travel", "Food", "Movies", "Books"]), "", "Pick your interests") })
+  )();
+  expect(topics.fingerprint.boxes).toEqual([]);
+  const digits = await (
+    await open(page, { [site]: body(named(["1", "2", "3", "4", "5", "6"]), "", "Pick your numbers") })
+  )();
+  expect(digits.fingerprint.boxes).toEqual([{ frame: site, kind: "code", role: "checkbox" }]);
 });
 
 test("a picture code box on a sign-in form reads as before, marked, so a page that shows it only at times reads as one look", async ({

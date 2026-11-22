@@ -2,8 +2,8 @@ import { Effect, Schema } from "effect";
 import { pageCode, primaryPageCode } from "../runtime/host-execute.js";
 import { hostOnSiteSource, siteDomain } from "../runtime/same-site.js";
 import { workspaceHost } from "../runtime/workspace-origin.js";
-import { namedForCodeCode } from "../runtime/autofill-unrecorded-code.js";
-import type { AutofillPopup } from "./autofill-contracts.js";
+import { codeWords } from "../runtime/autofill-unrecorded-code.js";
+import { type AutofillPopup, digitNames } from "./autofill-contracts.js";
 import { choicesCode, codeRowCode, openPopupsCode } from "./autofill-page-code.js";
 import type { AutofillPage } from "./autofill-step.js";
 import {
@@ -81,17 +81,19 @@ const normalized = (text: string, limit: number, logins: readonly string[]) =>
  * document or shadow root outside one, as boxes split three and three or set apart by a separator
  * are; or as many boxes the page's script holds to one character each, side by side on one line;
  * or such a row whose first box alone takes typing, the page switching each later one on in turn.
- * A box named for a code (`namedForCodeCode`) is a code box too. Each is read so only where the
- * rule before it read each of its boxes alike, as code boxes, or as identifier boxes taking one
- * kind, counted as they were; a code box read where the rule before read identifier boxes says
- * what they took (`takes`), so a look read before compares with it (`sameFingerprint`).
+ * Each is read so only where the rule before it read each of its boxes alike, as code boxes, or as
+ * identifier boxes taking one kind, counted as they were; a code box read where the rule before
+ * read identifier boxes says what they took (`takes`), so a look read before compares with it
+ * (`sameFingerprint`).
  *
  * A picture code box, a site's own picture CAPTCHA on a sign-in form, which a gate fills and no
  * step ever names, reads as the rule before read it with role `captcha`, so a look that shows it
  * pairs with one that doesn't (`sameFingerprint`). A frame with no box that takes typing reads a
  * code picked from four or more named checkboxes in one container, as a code step's choices are
  * read (`choicesCode`), as a code box with role `checkbox`, empty while none is ticked, and tells
- * itself as a page with no box too. A page with no box reads apart from each notice, a dialog,
+ * itself as a page with no box too: only where each is named by one digit or letter, or the frame's
+ * heading or own text names a code by a word a code box's name may hold (`codeWords`), so a list
+ * of topics to pick is no code. A page with no box reads apart from each notice, a dialog,
  * region or aside, that holds one of the `dismissed` controls, as it reads apart from a modal
  * dialog (`dialog`).
  *
@@ -241,36 +243,15 @@ const scanFrame = `({ deep, dismissed }) => {
   for (const element of left) {
     if (grouped.has(element)) continue;
     const kind = kindOf(element);
-    const pictured = pictureCode(element);
-    // A box named for a code that the rule before read as an identifier, or as none said; a picture
-    // code box reads as the rule before read it, marked by its role.
-    const box = (kind === undefined || kind === "identifier") && !pictured && (${namedForCodeCode})(element)
-      ? { kind: "code", role: roleOf(element), labels: [labelOf(element)], takes: takesOf(element), empty: element.value === "", submit: submitIn(formOf(element)), form: formOf(element) }
-      : { kind: kind ?? "identifier", ...(kind === "code" ? { role: roleOf(element), labels: [labelOf(element)] } : {}),
-        ...((kind ?? "identifier") === "identifier" ? { takes: takesOf(element) } : {}), ...(pictured ? { role: "captcha" } : {}),
-        empty: element.value === "", submit: submitIn(formOf(element)), form: formOf(element) };
+    // A picture code box reads as the rule before read it, marked by its role.
+    const box = { kind: kind ?? "identifier", ...(kind === "code" ? { role: roleOf(element), labels: [labelOf(element)] } : {}),
+      ...((kind ?? "identifier") === "identifier" ? { takes: takesOf(element) } : {}), ...(pictureCode(element) ? { role: "captcha" } : {}),
+      empty: element.value === "", submit: submitIn(formOf(element)), form: formOf(element) };
     if (kind === undefined) unhinted.push({ box, required: element.required, at: boxes.indexOf(element) });
     else found.push(box);
   }
   for (const { box, required } of unhinted.sort((a, b) => a.at - b.at))
     if (required || box.submit || found.some((other) => other.form !== null && other.form === box.form)) found.push(box);
-  // A code picked from named checkboxes, on a frame with no box that takes typing: each widest
-  // container the old step reads such a code from (\`choicesCode\`) that holds four or more.
-  const checkboxes = 'input[type="checkbox"], [role="checkbox"]';
-  const choices = boxes.length === 0 ? all(checkboxes).filter(shows) : [];
-  if (choices.length >= 4 && choices.length <= 60)
-    for (const choice of choices) {
-      if (found.some((box) => box.grid?.contains(choice))) continue;
-      let grid;
-      for (let at = choice.parentElement; at !== null && at.querySelectorAll(checkboxes).length <= 30; at = at.parentElement) {
-        const read = (${choicesCode})(at);
-        if (read !== null && read.choices.length >= 4) grid = { at, read };
-        else if (grid !== undefined) break;
-      }
-      if (grid !== undefined)
-        found.push({ kind: "code", role: "checkbox", labels: [labelOf(grid.at)], grid: grid.at, form: formOf(grid.at), submit: submitIn(formOf(grid.at)),
-          empty: !grid.read.choices.some((each) => each.checked === true || each.getAttribute("aria-checked") === "true") });
-    }
   // Every visible text of its own outside a control, which the host normalizes: what is new after
   // a press tells a notice the site showed beside the same boxes. Text is read by the block it sits
   // in, so a name in an inline element of its own, as "Not <b>Sam</b>?", is masked within the
@@ -303,12 +284,37 @@ const scanFrame = `({ deep, dismissed }) => {
       last = block;
     }
   }
-  const result = { boxes: found.map(({ form, grid, ...box }) => box), texts: [...own.values()].map((text) => text.slice(0, 2000)) };
   const headings = ["h1", "h2", '[role="heading" i]', "h3", "p"];
   const firstSaid = (within) => headings
     .map((selector) => within(selector).find((element) => shows(element) && element.innerText.trim() !== ""))
     .find((element) => element !== undefined)?.innerText.slice(0, 2000);
   const said = firstSaid(all);
+  // A code picked from named checkboxes, on a frame with no box that takes typing: each widest
+  // container the old step reads such a code from (\`choicesCode\`) that holds four or more, each
+  // named by one digit or letter, or on a frame whose heading or own text names a code.
+  const digits = ${JSON.stringify(digitNames)};
+  const single = (name) => {
+    const key = name.normalize("NFKC").toLowerCase();
+    return /^(?:[0-9]|\\p{L})$/u.test(digits.includes(key) ? String(digits.indexOf(key)) : key);
+  };
+  const namesCode = [said ?? "", ...own.values()].some((text) =>
+    text.toLowerCase().split(/[^\\p{L}]+/u).some((word) => ${JSON.stringify(codeWords)}.includes(word)));
+  const checkboxes = 'input[type="checkbox"], [role="checkbox"]';
+  const choices = boxes.length === 0 ? all(checkboxes).filter(shows) : [];
+  if (choices.length >= 4 && choices.length <= 60)
+    for (const choice of choices) {
+      if (found.some((box) => box.grid?.contains(choice))) continue;
+      let grid;
+      for (let at = choice.parentElement; at !== null && at.querySelectorAll(checkboxes).length <= 30; at = at.parentElement) {
+        const read = (${choicesCode})(at);
+        if (read !== null && read.choices.length >= 4) grid = { at, read };
+        else if (grid !== undefined) break;
+      }
+      if (grid !== undefined && (namesCode || grid.read.names.every(single)))
+        found.push({ kind: "code", role: "checkbox", labels: [labelOf(grid.at)], grid: grid.at, form: formOf(grid.at), submit: submitIn(formOf(grid.at)),
+          empty: !grid.read.choices.some((each) => each.checked === true || each.getAttribute("aria-checked") === "true") });
+    }
+  const result = { boxes: found.map(({ form, grid, ...box }) => box), texts: [...own.values()].map((text) => text.slice(0, 2000)) };
   const controlText = (element) => (element.getAttribute("aria-label") || element.innerText || element.value || "").slice(0, 500);
   const pressed = 'button, [role="button" i], input[type="submit" i], input[type="button" i]';
   const buttonsIn = (within) => within(pressed).filter(shows).map(controlText).filter((label) => label.trim() !== "").slice(0, 8);

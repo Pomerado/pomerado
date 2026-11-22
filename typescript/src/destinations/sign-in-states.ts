@@ -35,9 +35,10 @@ const Label = Schema.String.pipe(Schema.maxLength(200));
  * its role (`role`, as `textbox` or `spinbutton`) and its label's shape (`label`), so two code
  * screens whose boxes differ in either are two looks; an identifier box also what it takes
  * (`takes`), so an email box and a phone box are two looks. A look read before boxes had them has
- * none of them. A code box that says what it takes is one a look read before code rows and boxes
- * named for a code were read so held as identifier boxes taking that (`paired`). A code box with
- * role `checkbox` is a code picked from named checkboxes, on a page with no box that takes typing.
+ * none of them. A code row that says what it takes is one of identifier boxes, which a look read
+ * before code rows were read held one by one, as identifier boxes taking that (`paired`). A code
+ * box with role `checkbox` is a code picked from named checkboxes, on a page with no box that takes
+ * typing.
  * A box with role `captcha` is a picture code box, a site's own picture CAPTCHA on a sign-in form,
  * which a gate fills, never a step, read as before it was told apart (`paired`).
  */
@@ -234,14 +235,13 @@ const facing = (a: Look, b: Look): readonly [Look, Look] => {
 };
 /**
  * Two looks' boxes paired, and those of each left: each with one alike by `key`; else, as a look
- * read before code rows and boxes named for a code were read so held it, a code box of either with
- * as many boxes of the other's frame, each with no count: a row of `count` with that many code
- * boxes, as one-character boxes read one by one, or identifier boxes taking what it says they took
- * (`takes`); a lone code box that says what it took with one identifier box. A row whose look read
- * before held its first box alone, as a page that switches each box on in turn showed it, pairs with
- * that one box where the other look's step types as many codes as the row has boxes, or one code
- * the fill spreads across the row from its first box (`codes`). A row
- * pairs only with boxes read one by one, never with another row, whose role and label tell it.
+ * read before such code rows were read held it, a code row of either with as many boxes of the
+ * other's frame, each with no count: code boxes, as one-character boxes read one by one, or
+ * identifier boxes taking what it says they took (`takes`). A row of any kind pairs with a lone such
+ * box where the other look's step types as many codes as the row has boxes, or one code the fill
+ * spreads across the row from its first box (`codes`), as a look read before a page switched each
+ * box on in turn held its first box alone. A row pairs only with boxes read one by one, never with
+ * another row, whose role and label tell it.
  * A picture code box left pairs with a box of its kind and frame the other look holds, else with
  * none, as a site may show it only at times. `folded` holds every box paired so, whose takes are
  * never compared (`takesAgree`).
@@ -264,7 +264,7 @@ const paired = (
   const fold = (rows: StateBox[], alone: StateBox[], codesThere: number) => {
     for (let at = rows.length - 1; at >= 0; at -= 1) {
       const row = rows[at] as StateBox;
-      if (row.kind !== "code" || (row.count === undefined && row.takes === undefined)) continue;
+      if (row.kind !== "code" || row.count === undefined) continue;
       const kind = row.takes === undefined ? "code" : "identifier";
       const boxes = alone.filter(
         (box) =>
@@ -275,9 +275,9 @@ const paired = (
           (kind === "identifier" ? takesFits(box.takes, row.takes) : box.takes === undefined),
       );
       const taken =
-        boxes.length >= (row.count ?? 1)
-          ? boxes.slice(0, row.count ?? 1)
-          : row.count !== undefined && (codesThere === row.count || codesThere === 1)
+        boxes.length >= row.count
+          ? boxes.slice(0, row.count)
+          : codesThere === row.count || codesThere === 1
             ? boxes.slice(0, 1)
             : [];
       if (taken.length === 0) continue;

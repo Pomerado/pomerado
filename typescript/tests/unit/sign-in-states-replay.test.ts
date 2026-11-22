@@ -56,6 +56,8 @@ interface Screen {
     readonly role?: string;
     readonly label?: string;
     readonly takes?: BoxTakes;
+    /** A code row's box count, the row read as its first box. */
+    readonly count?: number;
   }[];
   /** A page with boxes: its main instruction and its ways, as the scan normalizes them. */
   readonly instruction?: string;
@@ -222,9 +224,10 @@ const scriptedSite = (
 };
 
 /** A box as a look holds it. */
-const lookOf = (screen: Screen, { kind, role, label, takes }: Screen["boxes"][number]) => ({
+const lookOf = (screen: Screen, { kind, role, label, takes, count }: Screen["boxes"][number]) => ({
   frame: screen.frame ?? origin,
   kind,
+  ...(count === undefined ? {} : { count }),
   ...(role === undefined ? {} : { role }),
   ...(label === undefined ? {} : { label }),
   ...(takes === undefined ? {} : { takes }),
@@ -410,31 +413,52 @@ const combined: Screen = {
 };
 const emailOnly: Screen = { path: "/", boxes: [{ selector: "#email", kind: "identifier" }], buttons: ["#continue"] };
 
-it("acts in a state read before as identifier boxes on a page now read as a code box, as it did then", async () => {
-  // A box named for a code, read before as an identifier box taking what it said, and now as a
-  // code box that says so: the code is typed, then Verify pressed, once.
-  const before: Screen = { path: "/verify", boxes: [{ selector: "#code", kind: "identifier", takes: "other" }], buttons: ["#verify"] };
-  const now: Screen = { ...before, boxes: [{ selector: "#code", kind: "code", role: "textbox", takes: "other" }] };
-  const codes = libraryOf([{ fingerprint: arrival(before), step: stepAt("/verify", [code], "#verify") }]);
+it("acts in a state read before as identifier boxes on a page now read as a code row, as it did then", async () => {
+  // A row of six one-character boxes, read before one by one as identifier boxes taking what each
+  // said, and now as one code row that says so: the code is typed, then Verify pressed, once.
+  const digits = Array.from({ length: 6 }, (_, at) => `#d${at}`);
+  const before: Screen = {
+    path: "/verify",
+    boxes: digits.map((selector) => ({ selector, kind: "identifier" as const, takes: "other" as const })),
+    buttons: ["#verify"],
+  };
+  const now: Screen = {
+    ...before,
+    boxes: [{ selector: "#d0", kind: "code", role: "textbox", count: 6, takes: "other" }],
+    unseen: digits.slice(1),
+  };
+  const codes = libraryOf([
+    { fingerprint: arrival(before), step: stepAt("/verify", digits.map((selector) => ({ selector, slot: "code" as const })), "#verify") },
+  ]);
   const verify = scriptedSite({ start: now }, (_at, clicked) => (clicked === "#verify" ? "home" : undefined));
   const verified = await replay(verify, codes);
   expect(verified).toMatchObject({ outcome: "signed_in" });
-  expect(verify.fills).toEqual(["code"]);
+  expect(verify.fills).toEqual(Array<string>(6).fill("code"));
   expect(verify.clicks).toEqual(["#verify"]);
   expect(verified.asked.filter((id) => id === "code")).toHaveLength(1);
-  // A username box whose name holds a code's word, read now as a code box: both boxes are typed.
-  const username = { selector: "#user", accepts: ["username" as const] };
-  const form: Screen = {
-    path: "/sign-in",
-    boxes: [{ selector: "#user", kind: "identifier", takes: "other" }, { selector: "#password", kind: "password" }],
-    buttons: ["#go"],
+});
+
+it("never holds a code picked from checkboxes as still showing on a page with no box", async () => {
+  // The code state's look also reads as a page with no box, which only matches a stored look.
+  const grid: Screen = {
+    path: "/verify",
+    boxes: [{ selector: "#grid", kind: "code", role: "checkbox" }],
+    buttons: ["#verify"],
+    instruction: "pick your code",
+    ways: ["~"],
   };
-  const read: Screen = { ...form, boxes: [{ selector: "#user", kind: "code", role: "textbox", takes: "other" }, { selector: "#password", kind: "password" }] };
-  const login = libraryOf([{ fingerprint: arrival(form), step: stepAt("/sign-in", [username, password], "#go") }]);
-  const signIn = scriptedSite({ start: read }, (_at, clicked) => (clicked === "#go" ? "home" : undefined));
-  expect(await replay(signIn, login)).toMatchObject({ outcome: "signed_in" });
-  expect(signIn.fills).toEqual(["username", "password"]);
-  expect(signIn.clicks).toEqual(["#go"]);
+  const elsewhere: Screen = { path: "/oops", boxes: [], texts: ["something went wrong"], labels: ["~ again"] };
+  const library = libraryOf([
+    { fingerprint: arrival(emailScreen), step: stepAt("/sign-in", [email], "#continue") },
+    { fingerprint: arrival(grid), step: stepAt("/verify", [{ selector: "#grid", slot: "code" }], "#verify") },
+  ]);
+  const site = scriptedSite({ start: emailScreen, code: grid, oops: elsewhere }, (at, clicked) =>
+    at === "start" && clicked === "#continue" ? "code" : clicked === "#verify" ? "oops" : undefined,
+  );
+  const ended = await replay(site, library);
+  expect(ended).toMatchObject({ outcome: "unclear", reason: "unknown_state" });
+  expect(ended.asked.filter((id) => id === "code")).toHaveLength(1);
+  expect(site.clicks).toEqual(["#continue", "#verify"]);
 });
 
 it("acts in a state recorded under a notice with the dismiss of one recorded with it, where the page read apart from the notice is both", async () => {
