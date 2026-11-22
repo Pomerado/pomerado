@@ -150,16 +150,17 @@ test("a library that appends an opener leading to a state it knows signs in from
   const [identifierState] = recorded.states;
   const openerStep: AutofillRecipeStep = { page: `${site}/login`, fields: [], submit: "#open-sign-in" };
 
-  // The opener, then the page it led to, read as the identifier state the library knows.
+  // The opener, then the page it led to, read as the identifier state the library knows; the
+  // marker it never reached is not stored.
   const learned = appended(
-    appendSignInStates(recorded, { states: [{ fingerprint: opener, step: openerStep }], to: identifier, signedIn: marker }),
+    appendSignInStates(recorded, { states: [{ fingerprint: opener, step: openerStep }], to: identifier, signedIn: { selector: "#elsewhere" } }),
   );
   const [openerState] = learned.added;
   expect(learned.added.map((entry) => entry.kind)).toEqual(["state", "transition"]);
   expect(learned.added[1]).toMatchObject({ from: openerState?.key, to: identifierState?.key });
   // A page no known state looks like is no place to lead to.
   expect(
-    appendSignInStates(recorded, { states: [{ fingerprint: opener, step: openerStep }], to: notFound, signedIn: marker }),
+    appendSignInStates(recorded, { states: [{ fingerprint: opener, step: openerStep }], to: notFound, signedIn: { selector: "#elsewhere" } }),
   ).toEqual({ refused: "unknown_state" });
 
   sent.length = 0;
