@@ -2761,6 +2761,7 @@ const withMarkers = (
 ) => {
   const opened: string[] = [];
   const confirmed: AutofillSignedIn[] = [];
+  const cantTell: number[] = [];
   const here = (indicator: AutofillSignedIn): AutofillSignedInCheck => {
     const url = `${origin}${screens[site.site.screen]?.path ?? "/home"}`;
     return (shows[site.site.screen] ?? []).includes(indicator.selector ?? "")
@@ -2776,9 +2777,9 @@ const withMarkers = (
         confirmed.push(indicator);
         return here(indicator);
       }),
-    confirmCantTell: () => Effect.void,
+    confirmCantTell: () => Effect.sync(() => void cantTell.push(1)),
   };
-  return { ...site, hooks, opened, confirmed };
+  return { ...site, hooks, opened, confirmed, cantTell };
 };
 
 /** A library that knows a sign-in's states and, beside them, a step-up's with its own marker. */
@@ -2856,7 +2857,7 @@ it("ends in place at once where the page shows no known state, opening, typing a
 });
 
 it("never ends a step-up in place by the site's own marker, nor on a page that can't tell", async () => {
-  const checking: Screen = { path: "/records", boxes: [], texts: ["one moment"] };
+  const checking: Screen = { path: "/checking", boxes: [], texts: ["one moment"] };
   const screens = { start: stepUpScreen, checking };
   const site = withMarkers(
     scriptedSite(screens, (_at, clicked) => (clicked === "#confirm" ? "checking" : undefined)),
@@ -2867,6 +2868,31 @@ it("never ends a step-up in place by the site's own marker, nor on a page that c
   expect(ended).toMatchObject({ outcome: "unclear", reason: "unknown_state" });
   expect(site.fills).toEqual(["password"]);
   expect(site.confirmed.every((marker) => marker.selector === "#records")).toBe(true);
+  expect(site.cantTell).toEqual([]);
+});
+
+it("never ends a step-up in place by a marker the page showed before it acted, though the step-up led to it", async () => {
+  // A step-up recorded with the site's own header as its marker, which shows all along.
+  const stepCode: Screen = { path: "/records/verify", boxes: [{ selector: "#step-code", kind: "code" }], buttons: ["#verify"] };
+  const library = withStepUp(
+    twoStates,
+    [
+      { fingerprint: arrival(stepUpScreen), step: stepAt("/records", [{ selector: "#step-password", slot: "password" }], "#confirm") },
+      { fingerprint: arrival(stepCode), step: stepAt("/records/verify", [{ selector: "#step-code", slot: "code" }], "#verify") },
+    ],
+    { selector: "#account" },
+  );
+  const screens = { start: stepUpScreen, code: stepCode, records: recordsScreen };
+  const site = withMarkers(
+    scriptedSite(screens, (_at, clicked) => (clicked === "#confirm" ? "code" : clicked === "#verify" ? "records" : undefined)),
+    screens,
+    { start: ["#account"], code: ["#account"], records: ["#account"] },
+  );
+  const ended = await replay(site, library, { inPlace: true });
+  expect(site.fills).toEqual(["password", "code"]);
+  expect(site.clicks).toEqual(["#confirm", "#verify"]);
+  expect(ended.asked).toEqual(["code"]);
+  expect(ended.outcome).not.toBe("signed_in");
 });
 
 it("still opens the entry URL and signs in by any marker when not in place", async () => {
@@ -2882,7 +2908,21 @@ it("still opens the entry URL and signs in by any marker when not in place", asy
   expect(site.fills).toEqual([]);
 });
 
-it("goes on in place from a value-free check's stop, else from the state the page shows, opening nothing", async () => {
+it("goes on in place from a value-free check's stop where it still shows, opening nothing", async () => {
+  const screens = { start: stepUpScreen, records: recordsScreen };
+  const site = withMarkers(
+    scriptedSite(screens, (_at, clicked) => (clicked === "#confirm" ? "records" : undefined)),
+    screens,
+    { start: ["#account"], records: ["#account", "#records"] },
+  );
+  const stop = { visited: [stepUpKey ?? ""], state: stepUpKey ?? "" };
+  const ended = await replay(site, stepUpLibrary, { inPlace: true, from: stop });
+  expect(ended).toMatchObject({ outcome: "signed_in", visited: [stepUpKey], fromStop: { continued: true } });
+  expect(site.fills).toEqual(["password"]);
+  expect(site.opened).toEqual([]);
+});
+
+it("goes on in place from the state the page shows where a value-free check's stop no longer shows, opening nothing", async () => {
   const screens = { start: stepUpScreen, records: recordsScreen };
   const site = withMarkers(
     scriptedSite(screens, (_at, clicked) => (clicked === "#confirm" ? "records" : undefined)),
@@ -3057,4 +3097,24 @@ it("still takes a state told by its text alone as gone once the page's look chan
   expect(ended).toMatchObject({ outcome: "signed_in" });
   expect(site.fills).toEqual(["password"]);
   expect(site.clicks).toEqual([]);
+it("presses in place a pop-up screen that only presses, once the typed one before it went from the pop-up", async () => {
+  const keepSignedIn: Screen = { path: "/keep", boxes: [], buttons: ["#keep"] };
+  const library = withStepUp(
+    signInStatesOf({}, []),
+    [
+      { fingerprint: popupLibrary.states[0]?.fingerprint as StateFingerprint, step: popupLibrary.states[0]?.step as AutofillRecipeStep },
+      {
+        fingerprint: popupLibrary.states[0]?.fingerprint as StateFingerprint,
+        step: { page: `${accounts}/keep`, fields: [], submit: "#keep", popup } as AutofillRecipeStep,
+      },
+    ],
+    { selector: "#account" },
+  );
+  const site = popupSite({ first: popupEmail, keep: keepSignedIn }, (_at, clicked) =>
+    clicked === "#next" ? "keep" : clicked === "#keep" ? "closed" : undefined,
+  );
+  const ended = await replay(site, library, { inPlace: true });
+  expect(ended).toMatchObject({ outcome: "signed_in", visited: library.states.map((state) => state.key) });
+  expect(site.fills).toEqual(["email"]);
+  expect(site.clicks).toEqual(["#next", "#keep"]);
 });

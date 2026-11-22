@@ -106,10 +106,12 @@ export interface SignInStatesReplayInput<
    * Whether the replay goes on from the page as it is (in place), for a session already signed in
    * that a later stage of the site, or a pop-up a page of the session opened, asks for the login
    * again (a step-up). It opens no entry URL and starts only in a known state the page shows
-   * (`shownHere`), else ends `state_not_shown` having done nothing. Only a marker the states it
-   * acted in led to signs it in (`markersNow`), checked on the page as it is, and never a page
-   * that can't tell. A state in a pop-up is told by its controls there (`inPopup`). The login's
-   * own picks come back as they were given. Absent, the replay opens the entry URL as before.
+   * (`shownHere`), else ends `state_not_shown` having done nothing, or at once with the origin
+   * rule's refusal of a state that shows. Only a marker the states it acted in led to, and that
+   * the page did not show before it acted, signs it in (`markersNow`), checked on the page as it
+   * is, and never a page that can't tell. A state in a pop-up is told by its controls there
+   * (`inPopup`). The login's own picks come back as they were given. Absent, the replay opens the
+   * entry URL as before.
    */
   readonly inPlace?: boolean | undefined;
 }
@@ -186,6 +188,11 @@ interface Run<E extends YieldableError, V extends string, L extends AutofillLogi
    * (`admitScreen`): the page is a sign-in on a host this login may not type on.
    */
   admission: string | undefined;
+  /**
+   * In place (`inPlace`), the markers the page showed before the replay acted, which tell nothing
+   * of a step-up's own sign-in (`markersNow`).
+   */
+  readonly shownBefore: Set<string>;
 }
 
 /**
@@ -348,8 +355,9 @@ const inPopup = <E extends YieldableError, V extends string, L extends AutofillL
 
 /**
  * The markers that may sign the replay in: each one, or in place (`inPlace`) only those the
- * states it acted in led to, through the states after them, so a page signed in already, as a
- * step-up's is, never ends it before it acted, and the marker of another sign-in never ends it.
+ * states it acted in led to, through the states after them, and the page did not show before it
+ * acted (`shownBefore`), so a page signed in already, as a step-up's is, never ends it, nor does
+ * the marker of another sign-in.
  */
 const markersNow = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -363,7 +371,7 @@ const markersNow = <E extends YieldableError, V extends string, L extends Autofi
         reached.add(to);
         queue.push(to);
       }
-  return run.markers.filter((marker) => reached.has(marker.key));
+  return run.markers.filter((marker) => reached.has(marker.key) && !run.shownBefore.has(marker.key));
 };
 
 /**
@@ -1112,8 +1120,10 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
           const shown = yield* matchState(run, shape, after, acted?.acted, loose);
           refused = typeof shown === "object" ? undefined : shown;
           if (typeof shown === "object") {
-            // A known state on a host this login may not type on ends it at once, as at a recipe screen.
-            if ("refusedOrigin" in shown) return stopped(run, shown.refusedOrigin);
+            // A known state on a host this login may not type on ends it at once, as at a recipe
+            // screen, after the step wait's last check, which may find the login's session still good.
+            if ("refusedOrigin" in shown)
+              return (yield* endCheck(run, read, stood, after, true)) ?? stopped(run, shown.refusedOrigin);
             if (!("returned" in shown)) return { ...shown, observed: read };
             if (!stood) return stopped(run, returnedReason(run, shown.returned));
             back = shown.returned;
@@ -1753,6 +1763,19 @@ const shownHere = <E extends YieldableError, V extends string, L extends Autofil
     }
   });
 
+/** In place (`inPlace`), the markers the page shows before the replay acts (`shownBefore`). */
+const noteShownBefore = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+) =>
+  Effect.gen(function* () {
+    for (const marker of run.markers) {
+      const onPage = { selector: marker.selector, urlPath: marker.urlPath };
+      if (onPage.selector === undefined && onPage.urlPath === undefined) continue;
+      const check = yield* run.input.hooks.check(onPage, run.as.recipe.steps, run.replay.state.steps);
+      if (check.signedIn) run.shownBefore.add(marker.key);
+    }
+  });
+
 /**
  * Replays a sign-in from a library of states on the run's own browser with the host's fill, from
  * the entry URL, or in place from the page as it is (`inPlace`): it matches the page to a known
@@ -1796,11 +1819,13 @@ export const replaySignInStates = <
       missing: undefined,
       hinted: false,
       admission: undefined,
+      shownBefore: new Set(),
     };
     const from = input.from === undefined ? undefined : yield* stillShown(run, input.from);
     const here = typeof from === "object" || input.inPlace !== true ? undefined : yield* shownHere(run);
     if (typeof from === "object") run.visited.push(...(input.from?.visited ?? []).slice(0, -1));
     else if (input.inPlace !== true) yield* input.hooks.open(input.entryUrl);
+    if (input.inPlace === true && typeof here !== "string") yield* noteShownBefore(run);
     const ended =
       typeof here === "string"
         ? stopped(run, here).ended
