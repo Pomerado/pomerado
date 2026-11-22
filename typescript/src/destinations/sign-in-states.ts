@@ -426,12 +426,14 @@ export const sameBoxes = (a: Look, b: Look) => {
 export const takesLost = (reached: ObservedState, now: ObservedState) => {
   const sole = (box: StateBox) => box.takes === "email" || box.takes === "phone";
   const before = reached.boxes.filter(sole);
-  const shown = now.boxes.filter((box) => box.empty && sole(box));
-  for (const box of shown) {
+  // Each box the page still shows as it was is paired first, so only the rest may have changed.
+  const changed = now.boxes.filter((box) => {
+    if (!box.empty || !sole(box)) return false;
     const at = before.findIndex((other) => other.frame === box.frame && other.takes === box.takes);
     if (at >= 0) before.splice(at, 1);
-  }
-  return shown.some((box) => {
+    return at < 0;
+  });
+  return changed.some((box) => {
     const at = before.findIndex((other) => other.frame === box.frame && other.takes !== box.takes);
     if (at >= 0) before.splice(at, 1);
     return at >= 0;

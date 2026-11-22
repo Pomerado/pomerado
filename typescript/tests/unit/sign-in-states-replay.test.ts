@@ -2719,3 +2719,27 @@ it("still stops as its credential came back where a box's label drew late, for a
     expect(site.fills).toEqual(["email"]);
   }
 });
+
+it("still stops as its credential came back where the page keeps a filled phone box beside the email box it cleared", async () => {
+  const both: Screen = {
+    path: "/sign-in",
+    boxes: [
+      { selector: "#phone", kind: "identifier", takes: "phone" },
+      { selector: "#email", kind: "identifier", takes: "email" },
+    ],
+    buttons: ["#continue"],
+  };
+  const look = { top: origin, boxes: [{ frame: origin, kind: "identifier" as const, takes: "email" as const }], submit: true };
+  for (const fingerprint of [unkinded(look), look]) {
+    const library = libraryOf([{ fingerprint, step: stepAt("/sign-in", [email], "#continue") }]);
+    const site = scriptedSite({ start: both, back: both }, () => "back");
+    // The phone box holds the site's own value throughout; only the email box is typed.
+    const observe = Effect.map(site.observe, (observed) => {
+      const boxes = observed.boxes.map((box, at) => (at === 0 ? { ...box, empty: false } : box));
+      const empty = boxes.filter((box) => box.empty).map(({ empty: _empty, submit: _submit, ...box }) => box);
+      return { ...observed, boxes, fingerprint: { ...observed.fingerprint, boxes: empty, submit: empty.length > 0 } };
+    });
+    expect(await replay({ ...site, observe }, library)).toMatchObject({ outcome: "unclear", reason: "credential_screen_returned" });
+    expect(site.fills).toEqual(["email"]);
+  }
+});
