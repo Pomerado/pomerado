@@ -251,13 +251,13 @@ export const statesPopup = (library: SignInStates): SignInStatePopup | undefined
 const shownCode = (popup: SignInStatePopup | undefined) =>
   popup === undefined
     ? "const shown = primary;\nconst popupOrigins = [];"
-    : `${
-        popup.targetId === undefined
-          ? `${openPopupsCode("primary", popup.origins, "popups")}
+    : `const popupOrigins = ${JSON.stringify(popup.origins)};
+${
+  popup.targetId === undefined
+    ? `${openPopupsCode("primary", "popupOrigins", "popups")}
 const shown = popups.at(-1) ?? primary;`
-          : pageCode(popup.targetId, "shown")
-      }
-const popupOrigins = ${JSON.stringify(popup.origins)};`;
+    : pageCode(popup.targetId, "shown")
+}`;
 
 /**
  * One host call over the frames of the primary tab, or of the pop-up it reads (`shownCode`), on

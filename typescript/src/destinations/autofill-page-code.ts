@@ -1298,16 +1298,16 @@ const documentStartCode = `const documentStart = () =>
   primary.mainFrame().evaluate(() => performance.timeOrigin).catch(() => undefined);`;
 
 /**
- * Page code: the pages `opener` opened that are still open on one of `origins`, oldest first, as
- * `name`.
+ * Page code: the pages `opener` opened that are still open on an origin of `origins`, page code for
+ * an array of origins, oldest first, as `name`.
  */
-export const openPopupsCode = (opener: string, origins: readonly string[], name: string) => `const ${name} = [];
+export const openPopupsCode = (opener: string, origins: string, name: string) => `const ${name} = [];
 for (const candidate of context.pages()) {
   if (candidate === ${opener} || candidate.isClosed()) continue;
   if (await candidate.opener() !== ${opener}) continue;
   let origin;
   try { origin = new URL(candidate.url()).origin; } catch { continue; }
-  if (${JSON.stringify(origins)}.includes(origin)) ${name}.push(candidate);
+  if (${origins}.includes(origin)) ${name}.push(candidate);
 }`;
 
 /** Resolves only a real child of the stable primary opener, on the recorded origin. */
@@ -1315,7 +1315,8 @@ export const autofillPageCode = (targetId: string, popup: AutofillPopup | undefi
   popup === undefined
     ? primaryPageCode(targetId)
     : `${pageCode(targetId, "opener")}
-${openPopupsCode("opener", [popup.origin], "matches")}
+const popupOrigin = ${JSON.stringify(popup.origin)};
+${openPopupsCode("opener", "[popupOrigin]", "matches")}
 if (matches.length !== 1) return {
   error: matches.length === 0 ? "popup_missing" : "popup_ambiguous", target: "popup"
 };
@@ -1615,7 +1616,7 @@ export const autofillSignedInCode = (
 ) =>
   `${primaryPageCode(targetId)}
 const popupOrigins = ${JSON.stringify(popups.map((popup) => popup.origin))};
-${openPopupsCode("primary", popups.map((popup) => popup.origin), "openPopups")}
+${openPopupsCode("primary", "popupOrigins", "openPopups")}
 const onSiteHost = ${hostOnSiteSource(siteHost)};
 const onSite = (frame) => {
   let host = "";
