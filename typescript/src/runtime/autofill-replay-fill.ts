@@ -69,6 +69,20 @@ const recordFilledValues = <E extends YieldableError, V extends string, L extend
     retryState.codeAttempts.current += 1;
 };
 /**
+ * Keeps what earlier boxes typed and no click sent, which a later press or the page itself sends
+ * (`settleCarried`), as the values a refusal names (`recordRejected`), as a step that types and
+ * sends keeps its own: a password typed alone before its button is never typed again once refused.
+ */
+const recordCarriedValues = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  session: ReplaySession<E, V, L>,
+) => {
+  for (const [slot, value] of session.state.filled)
+    if (rejectableSlot(slot))
+      session.retryState.lastFilled[
+        logicalRejectedField(slot, session.input.credentials?.primaryIdentifierKind)
+      ] = value;
+};
+/**
  * A code the step could not get after the site refused one, or after one that didn't sign in, ends
  * as that refusal, unless the host could not read a code it keeps for the login at all
  * (`credentialUnavailable`), which is its own.
@@ -248,6 +262,7 @@ export const runReplayStep = <E extends YieldableError, V extends string, L exte
     } = session;
     codeAgain ??= retryState.rejectedValues.code?.size ? "rejected" : undefined;
     // The replay went on: a screen before that no click sent sent itself, before the bound counts.
+    recordCarriedValues(session);
     settleCarried(session);
     const refused = retryRefusal(
       session,

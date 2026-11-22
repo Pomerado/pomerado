@@ -808,8 +808,9 @@ it("presses Enter once for each code typed, and still ends at the code retry bou
   expect(entered(events)).toBe(3);
 });
 
-it("asks again saying the code didn't sign in, and takes the same code, when the site showed no refusal", async () => {
+it("never takes the same code again when the code page stays with no refusal", async () => {
   // The site keeps its code page after the first press, with no error, and signs in on the second.
+  // The owner gives the same code again first, which is asked again and never typed.
   let pressed = 0;
   const site = scriptedSite({ start: codeScreen }, () => (++pressed > 1 ? "home" : undefined));
   const typed: string[] = [];
@@ -817,10 +818,13 @@ it("asks again saying the code didn't sign in, and takes the same code, when the
     Effect.sync(() => void typed.push(...call.values)).pipe(Effect.zipRight(site.hooks.fill(call)));
   const prompts: string[] = [];
   const library = libraryOf([{ fingerprint: arrival(codeScreen), step: stepAt("/verify", [code], "#verify") }]);
-  const ended = await replay({ ...site, hooks: { ...site.hooks, fill } }, library, { codes: ["135790"], prompts });
+  const ended = await replay({ ...site, hooks: { ...site.hooks, fill } }, library, {
+    codes: ["135790", "135790", "246802"],
+    prompts,
+  });
   expect(ended).toMatchObject({ outcome: "signed_in" });
-  expect(typed).toEqual(["135790", "135790"]);
-  expect(prompts[1]).toMatch(/^The last code didn't sign you in\. /u);
+  expect(typed).toEqual(["135790", "246802"]);
+  expect(prompts[1]).toMatch(/^The site refused the last code\. /u);
 });
 
 it("never types again a code the site refused, after a later code that only didn't sign in", async () => {
@@ -850,7 +854,7 @@ it("never types again a code the site refused, after a later code that only didn
   expect(ended).toMatchObject({ outcome: "unclear", reason: "code_rejected" });
   expect(typed).toEqual(["111111", "222222"]);
   expect(prompts[1]).toMatch(/^The site refused the last code\. /u);
-  expect(prompts[2]).toMatch(/^The last code didn't sign you in\. /u);
+  expect(prompts[2]).toMatch(/^The site refused the last code\. /u);
 });
 
 // The host's read of the site's answer at a code page that stayed, counted, with the texts it got.
@@ -881,11 +885,11 @@ it("reads the site's answer once at each code page that stayed, and never on a c
   let pressed = 0;
   const site = scriptedSite({ start: codeScreen }, () => (++pressed > 1 ? "home" : undefined));
   const library = libraryOf([{ fingerprint: arrival(codeScreen), step: stepAt("/verify", [code], "#verify") }]);
-  // Any answer but a locked account asks again as a code that didn't sign in.
+  // Any answer but a locked account asks again for a new code.
   const { reads, siteAnswer } = reading("refused");
   const prompts: string[] = [];
   expect(await replay(site, library, { siteAnswer, prompts })).toMatchObject({ outcome: "signed_in" });
-  expect(prompts[1]).toMatch(/^The last code didn't sign you in\. /u);
+  expect(prompts[1]).toMatch(/^The site refused the last code\. /u);
   expect(site.fills).toEqual(["code", "code"]);
   expect(reads.count).toBe(1);
   const quick = scriptedSite({ start: codeScreen }, () => "home");
