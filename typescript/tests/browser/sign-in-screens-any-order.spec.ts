@@ -75,7 +75,7 @@ const recorded = {
   },
 } as const;
 
-type Recipe = Parameters<typeof signInForRun>[0]["recipe"];
+type Recipe = NonNullable<Parameters<typeof signInForRun>[0]["recipe"]>;
 const recipeOf = (...steps: (keyof typeof recorded)[]): Recipe =>
   ({ version: 14, steps: steps.map((step) => recorded[step]), signedIn: { selector: "#account" } }) as Recipe;
 

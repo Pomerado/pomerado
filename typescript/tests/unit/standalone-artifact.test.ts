@@ -4,6 +4,11 @@ import { join } from "node:path";
 import { Effect, Either } from "effect";
 import { expect, it } from "vitest";
 import { signInRecipe, type RecordedSignInStep } from "../../src/destinations/sign-in-recipe.js";
+import {
+  appendSignInStates,
+  signInStateEntryText,
+  stateEntry,
+} from "../../src/destinations/sign-in-states.js";
 import { makeRunSecrets } from "../../src/inputs/secrets.js";
 import { prepareIntegration } from "../../src/standalone/mcp-package.js";
 import { readArtifact, writeArtifact } from "../../src/standalone/artifact-files.js";
@@ -71,6 +76,121 @@ it("writes a sign-in as auth-fill.json beside pomerado.json and reads it back", 
       outputSchema: { type: "object" },
       signIn: { recipe: "auth-fill.json", entryUrl: signIn.entryUrl },
     });
+  }));
+
+/** A sign-in recorded as screens: each screen's state as read before its step, and its marker. */
+const screensSignIn = (() => {
+  const origin = "https://example.test";
+  const recipe = signInRecipe(
+    [
+      {
+        page: `${origin}/login`,
+        fields: [{ selector: "#user", slot: "email" }],
+        submit: "#next",
+        submittedBy: "host",
+      },
+      {
+        page: `${origin}/password`,
+        fields: [{ selector: "#password", slot: "password" }],
+        submit: "#sign-in",
+        submittedBy: "host",
+      },
+    ],
+    { selector: "#account-menu" },
+  );
+  const added = appendSignInStates(
+    { states: [], transitions: [], signedIn: [] },
+    {
+      states: recipe.steps.map((step, index) => ({
+        fingerprint: {
+          top: origin,
+          boxes: [
+            index === 0
+              ? { frame: origin, kind: "identifier" as const, takes: "email" as const }
+              : { frame: origin, kind: "password" as const },
+          ],
+          submit: true,
+        },
+        step,
+      })),
+      signedIn: recipe.signedIn,
+    },
+  );
+  if ("refused" in added) throw new Error(added.refused);
+  return { recipe, states: added.library, entryUrl: `${origin}/login` };
+})();
+
+it("writes a sign-in's screens as sign-in-states.json, with no recipe, and reads them back", () =>
+  scratch(async (directory) => {
+    const restored = await run(
+      writeArtifact(directory, { ...source, signIn: screensSignIn }).pipe(
+        Effect.andThen(readArtifact(directory)),
+      ),
+    );
+    const { recipe: _recipe, ...screens } = screensSignIn;
+    expect(restored).toEqual({ ...source, signIn: screens });
+    expect((await readdir(directory)).sort()).toEqual(["pomerado.json", "sign-in-states.json", "src"]);
+    expect(JSON.parse(await readFile(join(directory, "pomerado.json"), "utf8"))).toEqual({
+      ...source,
+      files: ["src/main.mjs"],
+      entrypoint: "src/main.mjs",
+      signIn: { states: "sign-in-states.json", entryUrl: screensSignIn.entryUrl },
+    });
+    const stored = JSON.parse(await readFile(join(directory, "sign-in-states.json"), "utf8"));
+    expect(stored).toMatchObject({ format: 1 });
+    expect(stored.entries).toHaveLength(2 + 1 + 2);
+    // The same library writes the same bytes.
+    await scratch(async (other) => {
+      await run(writeArtifact(other, restored));
+      expect(await readFile(join(other, "sign-in-states.json"), "utf8")).toBe(
+        await readFile(join(directory, "sign-in-states.json"), "utf8"),
+      );
+    });
+  }));
+
+it("refuses screens it cannot read, as a recipe, before a run signs in", () =>
+  scratch(async (directory) => {
+    await run(writeArtifact(directory, { ...source, signIn: screensSignIn }));
+    const path = join(directory, "sign-in-states.json");
+    const stored = await readFile(path, "utf8");
+    const refusal = async () => {
+      const read = await Effect.runPromise(Effect.either(Effect.scoped(readArtifact(directory))));
+      if (Either.isRight(read) || !(read.left instanceof SignInRunFailed)) throw new Error("read");
+      return { code: read.left.code, reason: read.left.reason };
+    };
+    // An entry whose key is not its content's, as an edit leaves it.
+    await writeFile(path, stored.replace("#next", "#other"));
+    expect(await refusal()).toEqual({ code: "MissingRecipe", reason: "invalid" });
+    await writeFile(path, stored.replace('"format": 1,', '"format": 2,'));
+    expect(await refusal()).toEqual({ code: "MissingRecipe", reason: "unknown_version" });
+    // A library with no marker signs nothing in.
+    const parsed = JSON.parse(stored) as { entries: { kind: string }[] };
+    await writeFile(
+      path,
+      JSON.stringify({ ...parsed, entries: parsed.entries.filter((entry) => entry.kind !== "signed_in") }),
+    );
+    expect(await refusal()).toEqual({ code: "MissingRecipe", reason: "invalid" });
+    // A workspace step in a library with no workspace, which the library would leave out.
+    const workspaceStep = stateEntry(
+      { top: "workspace", boxes: [{ frame: "workspace", kind: "password" }], submit: true },
+      { origin: "workspace", page: "/password", fields: [{ selector: "#password", slot: "password" }], submit: "#go" },
+    );
+    await writeFile(
+      path,
+      JSON.stringify({ ...parsed, entries: [...parsed.entries, JSON.parse(signInStateEntryText(workspaceStep))] }),
+    );
+    expect(await refusal()).toEqual({ code: "MissingRecipe", reason: "invalid" });
+    await rm(path);
+    expect(await refusal()).toEqual({ code: "MissingRecipe", reason: "missing" });
+  }));
+
+it("refuses a sign-in with neither screens nor a recipe before writing it", () =>
+  scratch(async (directory) => {
+    const written = run(
+      writeArtifact(directory, { ...source, signIn: { entryUrl: screensSignIn.entryUrl } } as never),
+    );
+    await expect(written).rejects.toThrow(/a sign-in holds its screens or its recipe/);
+    expect(await readdir(directory)).toEqual([]);
   }));
 
 it("keeps the questions publication reviewed in pomerado.json and reads them back", () =>

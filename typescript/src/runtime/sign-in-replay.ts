@@ -9,6 +9,11 @@ import {
   type SignInLogin,
   type SignInRecipe,
 } from "../destinations/sign-in-recipe.js";
+import {
+  type ObservedState,
+  type SignInStates,
+  signInStatesRecipe,
+} from "../destinations/sign-in-states.js";
 import type { CredentialRejectedField, WebsiteCredentials } from "./authentication.js";
 import {
   askCredentialCorrection,
@@ -29,6 +34,7 @@ import { typedValues } from "./autofill-values.js";
 import { logicalRejectedField } from "./autofill-rejection.js";
 import type { InputAsker } from "./input-request.js";
 import { makeRunLogin } from "./run-login.js";
+import { replaySignInStates, type SignInStatesStop } from "./sign-in-states-replay.js";
 import { trustedUrl } from "./sign-in-origins.js";
 import { entryNamesAddress, pinnedWorkspaceOrigin, workspaceRelation } from "./workspace-origin.js";
 
@@ -107,7 +113,34 @@ export interface SignInReplayBrowser<E> extends SignInBrowser<E> {
    * the run at the first such refusal.
    */
   readonly clearSiteData?: () => Effect.Effect<void, E>;
+  /**
+   * The page as a sign-in state (`observeSignInState`), with the login's `identifiers` masked and,
+   * under a workspace relation, its workspace hosts read as one. A browser without it reads no
+   * state, so a replay of screens finds none it knows.
+   */
+  readonly observe?: (
+    workspace: { readonly parent: string } | undefined,
+    identifiers: readonly string[],
+  ) => Effect.Effect<ObservedState | undefined, E>;
 }
+
+/**
+ * What a sign-in replays: its screens (`states`), or the recipe an integration saved before
+ * builds recorded screens.
+ */
+export type SignInBy =
+  | { readonly states: SignInStates; readonly recipe?: undefined }
+  | { readonly recipe: SignInRecipe; readonly states?: undefined };
+
+/**
+ * The recipe a sign-in's checks read, its marker and screens: the screens' own recipe view
+ * (`signInStatesRecipe`), else the saved recipe; "invalid" or "unknown_version" for one this host
+ * can't read.
+ */
+export const signInChecks = (by: SignInBy): SignInRecipe | "invalid" | "unknown_version" =>
+  by.states === undefined
+    ? decodeSignInRecipe(JSON.stringify(by.recipe) ?? "")
+    : (signInStatesRecipe(by.states) ?? "invalid");
 
 /**
  * A private workspace event: `relearned` when this replay admitted another workspace than the
@@ -317,8 +350,10 @@ const unanswered = (_cause: unknown, field?: string) =>
   new SignInRunFailed({ code: "NeedsInput", reason: field ?? "sign_in_value" });
 
 /**
- * Signs a run in with the integration's recipe before its operation runs, on the shared replay. It
- * first replays without values and asks nothing when the session already shows signed in.
+ * Signs a run in before its operation runs, with the integration's screens on core's replay of
+ * states, or, for an integration saved before builds recorded screens, its recipe on the shared
+ * replay. It first replays without values and asks nothing when the session already shows signed
+ * in; a replay of screens that stopped for the login's values goes on from that screen.
  * Otherwise it reads the login once (`login`), replays with it, asking the owner (`ask`) for any
  * code, date of birth, ZIP or security answer the screens need, and corrects a rejected username
  * or password at most twice per field, never sending a rejected value again, in this sign-in or in
@@ -332,8 +367,7 @@ const unanswered = (_cause: unknown, field?: string) =>
  * another workspace's sign-in before this login sent anything (`workspace_unverified`) clears the
  * site's data and starts again once, when the browser can, and otherwise fails the run.
  */
-export const signInForRun = <E>(input: {
-  readonly recipe: SignInRecipe;
+export const signInForRun = <E>(input: SignInBy & {
   readonly entryUrl: string;
   readonly browser: SignInReplayBrowser<E>;
   /** The owner's login; a login question left unanswered fails the run `NeedsInput`. */
@@ -367,7 +401,7 @@ export const signInForRun = <E>(input: {
   E | SignInRunFailed
 > =>
   Effect.gen(function* () {
-    const recipe = decodeSignInRecipe(JSON.stringify(input.recipe) ?? "");
+    const recipe = signInChecks(input);
     if (recipe === "invalid" || recipe === "unknown_version")
       return yield* new SignInRunFailed({ code: "MissingRecipe", reason: recipe });
     if (!trustedUrl(input.siteOrigin, input.browser.authenticationOrigins, input.entryUrl))
@@ -397,6 +431,8 @@ export const signInForRun = <E>(input: {
     const given = { current: {} };
     let held = runLogin.held();
     let cleared = false;
+    /** Where the value-free replay of screens stopped for the login's values, taken once. */
+    let from: SignInStatesStop | undefined;
     while (true) {
       // A login an earlier sign-in of this run had rejected is corrected before anything is typed.
       const before = held === undefined ? undefined : rejectedBefore(held, retryState);
@@ -410,34 +446,53 @@ export const signInForRun = <E>(input: {
         input.workspaceOrigin,
         input.onWorkspaceEvent,
       );
+      const shared = {
+        hooks,
+        entryUrl: input.entryUrl,
+        credentials: held,
+        retryState,
+        ask: input.ask,
+        answers: { given },
+        broker,
+        site: input.site,
+        correlation: undefined,
+        emit: () => Effect.void,
+        failures: {
+          unanswered,
+          unavailable: (_operation: string, detail: { readonly context?: Readonly<Record<string, unknown>> }) =>
+            new SignInRunFailed({
+              code: "NeedsInput",
+              reason:
+                typeof detail.context?.["check"] === "string"
+                  ? detail.context["check"]
+                  : "sign_in_value",
+            }),
+        },
+        sent: { current: false },
+        ...(workspace === undefined ? {} : { workspace }),
+        ...(input.timing === undefined ? {} : { timing: input.timing }),
+      };
+      const stop = from;
+      from = undefined;
+      const identifiers = held === undefined || held.username === "" ? [] : [held.username];
       const replayed = yield* Effect.scoped(
-        replayAutofillRecipe({
-          recipe,
-          hooks,
-          entryUrl: input.entryUrl,
-          credentials: held,
-          retryState,
-          ask: input.ask,
-          answers: { given },
-          broker,
-          site: input.site,
-          correlation: undefined,
-          emit: () => Effect.void,
-          failures: {
-            unanswered,
-            unavailable: (_operation, detail) =>
-              new SignInRunFailed({
-                code: "NeedsInput",
-                reason:
-                  typeof detail.context?.["check"] === "string"
-                    ? detail.context["check"]
-                    : "sign_in_value",
-              }),
-          },
-          sent: { current: false },
-          ...(workspace === undefined ? {} : { workspace }),
-          ...(input.timing === undefined ? {} : { timing: input.timing }),
-        }),
+        input.states === undefined
+          ? replayAutofillRecipe({ ...shared, recipe })
+          : replaySignInStates({
+              ...shared,
+              library: input.states,
+              observe: (
+                input.browser.observe?.(input.states.workspace, identifiers) ??
+                Effect.succeed(undefined)
+              ).pipe(Effect.mapError((error) => new ReplayBrowserFailed({ error }))),
+              ...(stop === undefined ? {} : { from: stop }),
+            }).pipe(
+              Effect.tap((ended) =>
+                Effect.sync(() => {
+                  from = ended.stop?.();
+                }),
+              ),
+            ),
       ).pipe(
         Effect.catchTag("ReplayBrowserFailed", (failure) => Effect.fail(failure.error)),
       );
