@@ -21,7 +21,11 @@ import { publicationScope } from "../../src/mint/publication-review.js";
 import { reviewDenied } from "../../src/mint/review-context.js";
 import { memoryPublicationDecisions } from "../../src/standalone/publication-decisions.js";
 import { makeOpenAIMinter } from "../../src/mint/openai.js";
-import { signInUnavailableSummary } from "../../src/mint/sign-in-failure.js";
+import {
+  signInAnswer,
+  signInFeedbackOf,
+  signInUnavailableSummary,
+} from "../../src/mint/sign-in-failure.js";
 import { Deadline } from "../../src/runtime/deadline.js";
 
 const cleanups: (() => Promise<void>)[] = [];
@@ -344,7 +348,63 @@ it("ends the build at once as sign_in_unavailable when the host refuses the veri
   // The sign-in worked: the owner never reads the stop of a site that could not be signed in.
   const unsignedStop = signInUnavailableSummary(undefined, undefined).split(". ")[0] ?? "";
   expect(outcome.summary.startsWith(unsignedStop)).toBe(false);
+  expect(outcome.diagnostics.join("\n")).toContain('"spentSignIn":"site_sign_in_refused"');
   expect(f.requests).toHaveLength(1);
+});
+
+// A retained receipt never keeps such a build going: the browser is still signed in, so live work
+// and publication would rest on the refused sign-in.
+it("ends the build at once when the host refuses the verified sign-in, even with a retained receipt", async () => {
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", execution),
+        call(
+          "execute",
+          { ...execution, purpose: "authenticate", target: "liveBrowser" },
+          "authenticate",
+        ),
+        call("execute", { ...execution, purpose: "explore", target: "liveBrowser" }),
+        call("finish_build", publication),
+      ][index] ?? prose(),
+    {
+      reviewAndExecute: (submitted, beforeDispatch = () => Effect.void) =>
+        submitted.purpose === "authenticate"
+          ? Effect.fail(new MintFailure({ code: "Unavailable", spentSignIn: "site_sign_in_refused" }))
+          : beforeDispatch(readAllow).pipe(
+              Effect.as({
+                executionId: "execution_one",
+                status: "completed" as const,
+                effect: "verified" as const,
+                resultRef: "protected_result",
+                observations: { value: "public" },
+              }),
+            ),
+    },
+  );
+  const outcome = await f.run();
+  expect(outcome).toMatchObject({ build: "incomplete", recoveryReason: "sign_in_unavailable" });
+  expect(outcome.summary).toBe(signInUnavailableSummary(undefined, "site_sign_in_refused"));
+  expect(f.counts()).toMatchObject({ published: 0 });
+  expect(f.requests).toHaveLength(2);
+});
+
+// The agent hears that the sign-in worked and was sent, never the stop of a sign-in the host
+// started none of.
+it("answers a refused site sign-in with its own code, notice and fields", () => {
+  const refused = signInFeedbackOf({ spentSignIn: "site_sign_in_refused" });
+  const spent = signInFeedbackOf({ spentSignIn: "relogin_spent" });
+  if (refused === undefined || spent === undefined) throw new Error("No sign-in feedback");
+  expect(refused.nextStep).toBe("report_sign_in_unavailable");
+  expect(refused.notice.startsWith(spent.notice.split(":")[0] ?? "")).toBe(false);
+  const answer = signInAnswer({ spentSignIn: "site_sign_in_refused" }, refused, "now");
+  expect(answer.code).toBe("site_sign_in_refused");
+  expect(answer.fields).toMatchObject({
+    nextStep: "report_sign_in_unavailable",
+    spentSignIn: "site_sign_in_refused",
+    buildOutcome: "sign_in_unavailable",
+  });
+  expect(answer.fields).not.toHaveProperty("credentialSent");
 });
 
 // Every sign-in verified, but the site lost its signed-in session on a page load, and the host

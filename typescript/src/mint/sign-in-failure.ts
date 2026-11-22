@@ -280,7 +280,8 @@ const refusalFeedback = (failure: SignInDiagnostic, refusal: HostRefusal) => {
  */
 const spentSignInFeedback = (spent: SpentSignIn | undefined, sessionLoss?: SessionLoss) => ({
   nextStep: "report_sign_in_unavailable" as const,
-  credentialSent: false as const,
+  // A sign-in the host refused for every login on the site was sent, and verified.
+  ...(spent === "site_sign_in_refused" ? {} : { credentialSent: false as const }),
   notice:
     sessionLoss !== undefined
       ? `The host could not keep the site signed in: ${sessionLossReason[sessionLoss]}${spent === undefined ? "" : `, and ${spentReason[spent]}`}. The host sent nothing again. ${unavailableInBuild} Report that the site did not keep its signed-in session, with this cause.`
