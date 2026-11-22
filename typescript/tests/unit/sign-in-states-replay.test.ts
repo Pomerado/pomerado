@@ -462,6 +462,17 @@ it("never types into a state whose box sits in a frame off its recorded origin",
   expect(inFrame.fills).toEqual([]);
 });
 
+it("takes a state recorded on its sign-in host where the site's own page shows its form in a frame on that host", async () => {
+  const auth = "https://auth.example.test";
+  const framed: Screen = { ...emailScreen, frame: auth };
+  const library = libraryOf([
+    { fingerprint: { ...arrival(framed), top: auth }, step: stepAt("/sign-in", [email], "#continue", { page: `${auth}/sign-in` }) },
+  ]);
+  const site = scriptedSite({ start: framed }, () => "home");
+  expect(await replay(site, library)).toMatchObject({ outcome: "signed_in" });
+  expect(site.fills).toEqual(["email"]);
+});
+
 it("presses once more a press that typed no secret when the page kept its state", async () => {
   const start: Screen = { path: "/", boxes: [], buttons: ["#sign-in"], texts: ["welcome"] };
   const library = libraryOf([

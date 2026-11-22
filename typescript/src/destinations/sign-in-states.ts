@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { Option, Schema } from "effect";
+import { framedOn } from "../runtime/workspace-origin.js";
 import {
   type AutofillRecipe,
   autofillRecipe,
@@ -164,9 +165,20 @@ export type Look =
   | { readonly fingerprint: StateFingerprint; readonly step?: AutofillRecipeStep | undefined };
 const lookOf = (look: Look) => ("fingerprint" in look ? look : { fingerprint: look, step: undefined });
 /**
- * Two looks as they compare by text and place: their code boxes' role and label where both give
- * them, else neither, so a state recorded before code boxes had them matches every page it matched
- * then; what identifier boxes take never, as `takesAgree` compares it.
+ * A look read on `top`, another look's top origin, where a screen recorded there runs on its page
+ * (`framedOn`): every box in a frame on `top`, an origin on the look's own top's registrable domain,
+ * as a site's page shows its sign-in host's form. Else the look as it is. The replay's origin rule
+ * still judges each control, and each frame above it, before anything is typed.
+ */
+const readOn = (fingerprint: StateFingerprint, top: string): StateFingerprint =>
+  fingerprint.top !== top && framedOn(top, fingerprint.top, fingerprint.boxes.map((box) => [box.frame]))
+    ? { ...fingerprint, top }
+    : fingerprint;
+/**
+ * Two looks as they compare by text and place: either read on the other's top origin (`readOn`);
+ * their code boxes' role and label where both give them, else neither, so a state recorded before
+ * code boxes had them matches every page it matched then; what identifier boxes take never, as
+ * `takesAgree` compares it.
  */
 const comparable = (a: StateFingerprint, b: StateFingerprint): readonly [StateFingerprint, StateFingerprint] => {
   const labels = labelled(a) && labelled(b);
@@ -174,7 +186,7 @@ const comparable = (a: StateFingerprint, b: StateFingerprint): readonly [StateFi
     ...fingerprint,
     boxes: fingerprint.boxes.map(({ role, label, takes: _takes, ...box }) => ({ ...box, ...(labels ? { role, label } : {}) })),
   });
-  return [plain(a), plain(b)];
+  return [plain(readOn(a, b.top)), plain(readOn(b, a.top))];
 };
 /** Each frame's identifier boxes by what they take. */
 const takenOn = (fingerprint: StateFingerprint) => {
@@ -425,11 +437,11 @@ export const standingFingerprint = (reached: ObservedState, now: ObservedState):
 };
 const boxText = ({ frame, kind, count }: StateBox) => canonical({ frame, kind, count });
 /**
- * Whether two looks show the same boxes on the same top origin, whatever their text, their
- * identifier boxes taking values alike (`takesAgree`).
+ * Whether two looks show the same boxes on the same top origin, as looks compare (`comparable`),
+ * whatever their text, their identifier boxes taking values alike (`takesAgree`).
  */
 export const sameBoxes = (a: Look, b: Look) => {
-  const [left, right] = [lookOf(a).fingerprint, lookOf(b).fingerprint];
+  const [left, right] = comparable(lookOf(a).fingerprint, lookOf(b).fingerprint);
   return (
     left.top === right.top &&
     canonical(fingerprintOf(left).boxes.map(boxText)) === canonical(fingerprintOf(right).boxes.map(boxText)) &&
