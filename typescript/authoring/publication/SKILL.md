@@ -167,8 +167,8 @@ Publication refuses a tool for any of these:
     search, by its exact path in its `purpose` and in `coverage` (testing skill).
 - **Write options.** Each option on the path is an input even when the caller left the choice to
   you; the script never takes the first, the alphabetically first or a hard-wired value.
-- **Login URL.** A signed-in tool publishes the `loginUrl` you signed in from, and every run opens
-  it. Check it is the site's own sign-in link as you clicked it (auth skill): no `state`, `nonce`,
+- **Login URL.** The `loginUrl` you signed in from is kept with the sign-in's screens, and every run
+  opens it. Check it is the site's own sign-in link as you clicked it (auth skill): no `state`, `nonce`,
   `code_challenge`, `code`, `session_state`, signed token, or device or session identifier such as
   a `did`, `device_id` or session id in its query or fragment, and no identity provider's
   authorize endpoint. If it is not, follow that link again, call `authenticate` again with it as
