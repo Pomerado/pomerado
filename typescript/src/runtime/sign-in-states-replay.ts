@@ -1507,8 +1507,9 @@ const actions = (fields: AutofillStep["fields"]) =>
   }, []);
 
 /**
- * The value held for a box typed alone (`held`), handed to that box's fill as it starts: from then
- * on the fill settles the recovery codes it took.
+ * The value held for a box typed alone (`held`), handed to that box's fill as it starts, with the
+ * kind it was resolved as: from then on the fill settles the recovery codes it took. The box is the
+ * one typed now, which may be another state's than the box it was resolved for.
  */
 const heldFor = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -1520,7 +1521,11 @@ const heldFor = <E extends YieldableError, V extends string, L extends AutofillL
   if (box === undefined || held === undefined) return undefined;
   return Effect.sync(() => {
     run.held.delete(box.slot);
-    return { ...held, step: { ...typing, fields: held.step.fields } } satisfies StepValues;
+    const fields = typing.fields.map((field, index) => ({
+      ...field,
+      slot: held.step.fields[index]?.slot ?? field.slot,
+    }));
+    return { ...held, step: { ...typing, fields } } satisfies StepValues;
   });
 };
 
@@ -1742,7 +1747,11 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
       const alone = groups
         .flat()
         .filter((field) => field.slot !== "code" && field.slot !== "private_answer");
-      const unheld = alone.filter((field) => !run.held.has(field.slot));
+      // One box a slot: a second box of that slot resolves at its own fill.
+      const unheld = alone.filter(
+        (field, index) =>
+          !run.held.has(field.slot) && alone.findIndex((other) => other.slot === field.slot) === index,
+      );
       if (alone.length > 1 && unheld.length > 0) {
         const all: AutofillStep = {
           fields: unheld,

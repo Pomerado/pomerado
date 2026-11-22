@@ -27,8 +27,16 @@ const password = "synthetic-password";
 
 test.describe.configure({ timeout: 120_000 });
 
-/** The site: `/verify` shows `form`, `/home` the account. Each post, and where it leads. */
-const serve = async (page: Page, form: string, next: (sent: Record<string, string>) => string) => {
+/**
+ * The site: `/verify` shows `form`, each other path its own in `forms`, and `/home` the account.
+ * Each post, and where it leads.
+ */
+const serve = async (
+  page: Page,
+  form: string,
+  next: (sent: Record<string, string>) => string,
+  forms: Readonly<Record<string, string>> = {},
+) => {
   const posted: Record<string, string>[] = [];
   await page.route(`${site}/**`, async (route) => {
     const request = route.request();
@@ -38,20 +46,24 @@ const serve = async (page: Page, form: string, next: (sent: Record<string, strin
       await route.fulfill({ contentType: "text/html", body: `<script>location.replace(${JSON.stringify(next(sent))})</script>` });
       return;
     }
-    const home = new URL(request.url()).pathname === "/home";
-    await route.fulfill({ contentType: "text/html", body: home ? '<p id="account">Your account</p>' : form });
+    const path = new URL(request.url()).pathname;
+    await route.fulfill({ contentType: "text/html", body: path === "/home" ? '<p id="account">Your account</p>' : (forms[path] ?? form) });
   });
   return posted;
 };
 
 /**
- * The host's hooks and scan on `page`, the screens of `/verify` as each `look` shows them after
- * it, and a replay with the host's ledger of the login's recovery codes: a code is held from the
+ * The host's hooks and scan on `page`, the screens at each `path` (`/verify` when absent) as each
+ * `look` shows them after it, and a replay with the host's ledger of the login's recovery codes: a code is held from the
  * take until it is given back. `settled` is each settle the replay reports with a code in it.
  */
 const signInOn = async (
   page: Page,
-  screens: readonly { readonly look?: string; readonly fields: AutofillRecipeStep["fields"] }[],
+  screens: readonly {
+    readonly path?: string;
+    readonly look?: string;
+    readonly fields: AutofillRecipeStep["fields"];
+  }[],
 ) => {
   const host = await hostPage(page);
   const { keyboard } = await hostKeyboard(page);
@@ -69,12 +81,12 @@ const signInOn = async (
   };
   const observe = observeSignInState({ page: host, siteOrigin: site, authenticationOrigins: [] });
   const states = [];
-  for (const { look, fields } of screens) {
-    await page.goto(`${site}/verify`);
+  for (const { path = "/verify", look, fields } of screens) {
+    await page.goto(`${site}${path}`);
     if (look !== undefined) await page.evaluate(look);
     const shown = await Effect.runPromise(observe);
     if (shown === undefined) throw new Error("The scan read nothing");
-    states.push({ fingerprint: shown.fingerprint, step: { page: `${site}/verify`, fields, submit: "#verify" } });
+    states.push({ fingerprint: shown.fingerprint, step: { page: `${site}${path}`, fields, submit: "#verify" } });
   }
   const appended = appendSignInStates(signInStatesOf({}, []), { states, signedIn: { selector: "#account" } });
   if ("refused" in appended) throw new Error(appended.refused);
@@ -170,6 +182,8 @@ test("a recovery code goes back untyped when the ZIP code on its screen goes una
   expect(settled).toEqual([{ codes: [codes[0]], reached: true }]);
 });
 
+// Main takes no recovery code before its box, so it has none to give back here: this case covers
+// the give-back, not a fault of main's.
 test("a recovery code taken for a box the page moved on from goes back unspent", async ({ page }) => {
   // The ZIP code alone signs this login in: the page moves on once it is typed.
   const moves = '<script>document.getElementById("zip").addEventListener("input", (event) => { if (event.target.value.length === 5) setTimeout(() => location.replace("/home"), 300); });</script>';
@@ -201,3 +215,21 @@ for (const slot of ["code", "recovery_code"] as const)
     expect(asked).toEqual([slot]);
     expect(posted).toEqual([{ zip, second: answer, password }]);
   });
+
+test("a recovery code held for a page that moved on goes into the recovery code box of the page shown next", async ({ page }) => {
+  // Once the ZIP code is typed the site moves to /next, whose recovery code box has its own id,
+  // beside an unrelated box with the id the first page's had.
+  const moves = '<script>document.getElementById("zip").addEventListener("input", (event) => { if (event.target.value.length === 5) setTimeout(() => location.replace("/next"), 300); });</script>';
+  const next =
+    '<form method="post" action="/next"><label>Nickname<input id="recovery-code" name="nickname"></label><label>Backup code<input id="backup" name="backup"></label><button id="verify">Verify</button></form>';
+  const posted = await serve(page, recoveryForm(moves), (sent) => (sent["backup"] === codes[0] ? "/home" : "/next"), { "/next": next });
+  const { signIn, held, settled } = await signInOn(page, [
+    { fields: [recoveryFields[1], recoveryFields[0]] },
+    { path: "/next", fields: [{ selector: "#backup", slot: "recovery_code" }] },
+  ]);
+  const signedIn = await signIn({ username: "owner", password, zip }, {});
+  expect(Either.isRight(signedIn) && signedIn.right.outcome).toBe("signed_in");
+  expect(posted).toEqual([{ nickname: "", backup: codes[0] }]);
+  expect(settled).toEqual([{ codes: [codes[0]], reached: true }]);
+  expect([...held]).toEqual([codes[0]]);
+});
