@@ -37,7 +37,7 @@ import type { AutofillSignInState } from "./autofill-state.js";
 import { maySend } from "../destinations/autofill-refusal.js";
 import { recordedRejections } from "./autofill-rejection.js";
 import { approvalNumber, approvalScreen, openPastedLink, withApprovalNumber } from "./autofill-replay-approval.js";
-import { settleCarried } from "./autofill-replay-fill.js";
+import { settleCarried, type StepValues } from "./autofill-replay-fill.js";
 import { landingSettleMs } from "./autofill-replay-pages.js";
 import { stillShows, unrecordedCode } from "./autofill-replay-code-screen.js";
 import { alreadySignedIn, makeReplay, type Replay, workspaceOf } from "./autofill-replay-session.js";
@@ -183,6 +183,13 @@ interface Run<E extends YieldableError, V extends string, L extends AutofillLogi
   gone: boolean;
   /** The states whose site's answer the host gave. */
   readonly answered: Set<string>;
+  /**
+   * Each value resolved before its state's first box was typed, by its box's slot, until a fill of
+   * a box of that kind takes it (`heldFor`): in a fuller state, the state looked for again, or the
+   * state of the next page, that box gets the held value and nothing is asked again. A recovery
+   * code held when the replay ends, with no such box shown, goes back unspent (`giveBackHeld`).
+   */
+  readonly held: Map<AutofillSlot, StepValues>;
   /** The page's address as the last marker check read it, for an unknown state's shape. */
   page: string | undefined;
   /** The page's look as last read, and the known state of that look whose controls did not show. */
@@ -1598,6 +1605,40 @@ const actions = (fields: AutofillStep["fields"]) =>
     return [...groups, [field]];
   }, []);
 
+/**
+ * The value held for a box typed alone (`held`), handed to that box's fill as it starts, with the
+ * kind it was resolved as: from then on the fill settles the recovery codes it took. The box is the
+ * one typed now, which may be another state's than the box it was resolved for.
+ */
+const heldFor = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  fields: AutofillStep["fields"],
+  typing: AutofillStep,
+) => {
+  const [box] = fields;
+  const held = box === undefined || fields.length > 1 ? undefined : run.held.get(box.slot);
+  if (box === undefined || held === undefined) return undefined;
+  return Effect.sync(() => {
+    run.held.delete(box.slot);
+    const fields = typing.fields.map((field, index) => ({
+      ...field,
+      slot: held.step.fields[index]?.slot ?? field.slot,
+    }));
+    return { ...held, step: { ...typing, fields } } satisfies StepValues;
+  });
+};
+
+/** The recovery codes taken for values still held go back unspent: no box took them. */
+const giveBackHeld = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+) =>
+  Effect.suspend(() => {
+    const taken = [...run.held.values()].flatMap((held) => held.recoveryCodes);
+    run.held.clear();
+    if (taken.length === 0) return Effect.void;
+    return run.input.hosted?.settleRecoveryCodes?.(taken, false) ?? Effect.void;
+  });
+
 const codeMethods: ReadonlySet<string> = new Set(["sms", "call", "email", "totp"]);
 /** The methods by which the site sends something once picked: a code, or a push. */
 const sendMethods: ReadonlySet<string> = new Set(["sms", "call", "email", "push"]);
@@ -1763,6 +1804,10 @@ const sendsOnPress = <E extends YieldableError, V extends string, L extends Auto
  * known state the page shows after a box or while a press waits (`holdStill`) is taken, keeping
  * what was typed. A fill that failed with nothing yet sent, as when the page redrew its form under
  * it, has the state looked for once more in the replay (`gone`), as a recipe screen gone unsent is.
+ * The value of each box typed alone, but a code or security answer, is resolved before the first
+ * box is typed and held until that box's fill (`held`), so a value nobody gives ends the replay
+ * with nothing typed. A code is asked only at its own box, as the site may send it only then, and a
+ * security answer, as the host counts a saved one by the screen it fills.
  */
 const actIn = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -1803,6 +1848,31 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
       const full = actedStep(run, state);
       let fuller: { readonly state: StateEntry; readonly observed: ObservedState } | undefined;
       const groups = actions(full.fields.filter((field) => !typed.has(field.slot)));
+      const alone = groups
+        .flat()
+        .filter((field) => field.slot !== "code" && field.slot !== "private_answer");
+      // One box a slot: a second box of that slot resolves at its own fill.
+      const unheld = alone.filter(
+        (field, index) =>
+          !run.held.has(field.slot) && alone.findIndex((other) => other.slot === field.slot) === index,
+      );
+      if (alone.length > 1 && unheld.length > 0) {
+        const all: AutofillStep = {
+          fields: unheld,
+          ...(full.popup === undefined ? {} : { popup: full.popup }),
+        };
+        const here = yield* shownWithin(run, state, all);
+        if (typeof here === "string") return stopped(run, here);
+        const values = yield* replay.values(all, here);
+        if (typeof values === "string") return stopped(run, values);
+        for (const [index, field] of unheld.entries())
+          run.held.set(field.slot, {
+            values: values.values.slice(index, index + 1),
+            step: { fields: values.step.fields.slice(index, index + 1) },
+            // A step takes a recovery code only for its recovery code box.
+            recoveryCodes: field.slot === "recovery_code" ? values.recoveryCodes : [],
+          });
+      }
       for (const [index, fields] of groups.entries()) {
         const keyed = index === groups.length - 1 && full.submitKey !== undefined;
         const typing: AutofillStep = {
@@ -1814,7 +1884,16 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
         };
         const here = yield* shownWithin(run, state, typing);
         if (typeof here === "string") return stopped(run, here);
-        const failed = yield* replay.runStep(typing, here, undefined, false, undefined, step.refills ?? []);
+        const failed = yield* replay.runStep(
+          typing,
+          here,
+          undefined,
+          false,
+          undefined,
+          step.refills ?? [],
+          undefined,
+          heldFor(run, fields, typing),
+        );
         if (failed !== undefined) {
           if (run.gone || replay.progress.anythingSent || replay.sent.maySent.size > 0)
             return stopped(run, failed);
@@ -2166,6 +2245,7 @@ export const replaySignInStates = <
       visited: [],
       gone: false,
       answered: new Set(),
+      held: new Map(),
       page: undefined,
       seen: undefined,
       missing: undefined,
@@ -2229,7 +2309,8 @@ const linkAfter = <E extends YieldableError, V extends string, L extends Autofil
  * state. One that then signs in names the page (`unrecordedCode`). Where the state acted in last
  * led to an emailed link's approval (`linkAfter`), once its identifier or password went out, the
  * page takes the code as the recipe replay's link screen does (`onLinkScreen`): never the host
- * generator's, and with no code given, the link's own question is asked as in its state.
+ * generator's, and with no code given, the link's own question is asked as in its state. A
+ * recovery code still held once it ends goes back unspent.
  */
 const walk = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -2314,7 +2395,7 @@ const walk = <E extends YieldableError, V extends string, L extends AutofillLogi
       if ("ended" in done) return named(withStop(run, done.ended, arrived.state, last));
       last = done;
     }
-  });
+  }).pipe(Effect.ensuring(giveBackHeld(run)));
 
 /**
  * A value-free replay's stop for values in `state`, the state it reached last, with where it
