@@ -236,13 +236,14 @@ export const isCodeRow = (
 
 /**
  * One-character boxes that are never a code's, beyond the code field's word rule: a password box,
- * as a PIN's, one for a date of birth, one named for a social security number or a birth date, and
- * one whose `aria-label` holds the word PIN.
+ * as a PIN's, one for a date of birth, in any autofill section, one named for a social security
+ * number or a birth date, and one whose `aria-label` holds the word PIN or opens with it.
  */
 const notOtherRowKind = `:not(${anyOf([
   '[type="password" i]',
-  '[autocomplete^="bday" i]',
+  '[autocomplete*="bday" i]',
   '[aria-label~="pin" i]',
+  '[aria-label^="pin" i]',
   ...["ssn", "social", "birth", "dob"].flatMap((word) => [
     `[name*="${word}" i]`,
     `[id*="${word}" i]`,

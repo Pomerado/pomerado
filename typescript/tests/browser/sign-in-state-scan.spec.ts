@@ -248,9 +248,11 @@ test("two code rows alike but for their boxes' role and labels read as two looks
   for (const [box, found] of [
     ['inputmode="numeric"', true],
     ['autocomplete="bday-day"', false],
+    ['autocomplete="section-signup bday-day"', false],
     ['name="ssn-last4"', false],
     ['type="password"', false],
     ['aria-label="PIN digit"', false],
+    ['aria-label="PIN: digit"', false],
   ] as const) {
     await open(page, { [site]: `<form>${`<span><input ${box} maxlength="1"></span>`.repeat(6)}</form>` });
     const counted = await inspect({ fields: codeRowFields(6, true) }, []);
