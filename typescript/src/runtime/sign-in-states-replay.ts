@@ -1626,7 +1626,8 @@ const handOff = <E extends YieldableError, V extends string, L extends AutofillL
 /**
  * Whether a state's press may have the site send a code or link: a state it led to takes one or an
  * approval other than a hand-off, which the site sends nothing for, or one it led to through states
- * that take nothing, as a "code sent" page before the code's box.
+ * that take nothing, as a "code sent" page before the code's box; never through a method choice,
+ * whose own pick has the site send, so a press that only opens the choice sends nothing.
  * With `alone`, never through a state with its look, which is another press on its page, such as
  * one another sign-in learned there.
  */
@@ -1648,8 +1649,8 @@ const sendsOnPress = <E extends YieldableError, V extends string, L extends Auto
         next.step.fields.some((field) => "slot" in field && field.slot === "code")
       )
         return true;
-      if (next.step.fields.length === 0 && !(alone && sameFingerprint(next, state)))
-        queue.push(to);
+      const pressOnly = next.step.fields.length === 0 && next.step.methods === undefined;
+      if (pressOnly && !(alone && sameFingerprint(next, state))) queue.push(to);
     }
   return false;
 };
