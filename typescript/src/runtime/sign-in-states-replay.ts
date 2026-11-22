@@ -1869,11 +1869,12 @@ const enterAfterTyping = <E extends YieldableError, V extends string, L extends 
 
 /**
  * What the state just acted in, showing again, asks (`Again`): its press once more, typing nothing;
- * a new code from the caller in its code boxes, with its submit, bounded as the recipe replay bounds
- * a refused code's retries (`runStep` with `rejected`), or, where the site showed no refusal, as a
- * code that didn't sign in (`returned`), which is never counted refused, so the same code may go
- * in again, and a state with no submit gets its Enter (`enterAfterTyping`); or the emailed link the
- * site's answer named, pasted and opened as an approval's (`openPastedLink`), once per sign-in.
+ * a new code from the caller in its code boxes, with its submit, the last code counted refused
+ * whether or not the site showed a refusal, so it never goes in again, and bounded as the recipe
+ * replay bounds a refused code's retries (`runStep` with `rejected`), each code typed again one try
+ * even when nothing showed it went out, and a state with no submit gets its Enter
+ * (`enterAfterTyping`); or the emailed link the site's answer named, pasted and opened as an
+ * approval's (`openPastedLink`), once per sign-in.
  */
 const actAgain = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -1898,13 +1899,18 @@ const actAgain = <E extends YieldableError, V extends string, L extends Autofill
       const opened = yield* openPastedLink(run.as, here);
       return opened === "opened" ? { acted: state, reached: last.reached } : stopped(run, opened);
     }
-    if (again.again === "code" && again.explicit) replay.recordRejected(["code"]);
+    if (again.again === "code") replay.recordRejected(["code"]);
+    const tries = replay.codeAttempts.current;
     const failed =
       again.again === "code"
-        ? yield* replay.runStep(step, here, again.explicit ? "rejected" : "returned", again.explicit)
+        ? yield* replay.runStep(step, here, "rejected", again.explicit)
         : yield* replay.runStep(step, here);
     if (failed !== undefined) return stopped(run, failed);
-    if (again.again === "code") yield* enterAfterTyping(run, state, step, last.reached, true);
+    if (again.again === "code") {
+      yield* enterAfterTyping(run, state, step, last.reached, true);
+      // A box that sends itself, and that the site empties, shows no send: the code still counts.
+      if (replay.codeAttempts.current === tries) replay.codeAttempts.current += 1;
+    }
     return { acted: state, reached: last.reached } satisfies Acted;
   });
 
