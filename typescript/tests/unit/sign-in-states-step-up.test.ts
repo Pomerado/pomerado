@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { Data, Effect, Either, Schema, Struct } from "effect";
 import { expect, it } from "vitest";
 import type { AutofillRecipeStep } from "../../src/destinations/autofill-recipe.js";
@@ -204,9 +205,11 @@ it("keys a step-up's entries apart from the same sign-in's, and stores every oth
   expect(tagged.filter((entry) => entry.kind !== "transition").every((entry) => "stepUp" in entry && entry.stepUp === true)).toBe(true);
   expect(tagged.map((entry) => entry.key).filter((key) => untagged.some((entry) => entry.key === key))).toEqual([]);
   expect(untagged.map(signInStateEntryText).some((text) => text.includes("stepUp"))).toBe(false);
-  // An entry recorded before the tag keeps its bytes and its key.
+  // An entry recorded before the tag keeps its bytes and its key, the hash of its content alone.
+  const content = '{"selector":"#account"}';
+  const key = createHash("sha256").update(content).digest("hex").slice(0, 32);
   expect(signInStateEntryText(untagged.find((entry) => entry.kind === "signed_in") as SignInStateEntry)).toBe(
-    '{"format":1,"key":"0b364417c2dfa2038a3c1b72fe50110a","kind":"signed_in","selector":"#account"}',
+    `{"format":1,"key":"${key}","kind":"signed_in","selector":"#account"}`,
   );
   expect(tagged.map(signInStateEntryText).map(decodeSignInStateEntry)).toEqual(tagged);
 });
