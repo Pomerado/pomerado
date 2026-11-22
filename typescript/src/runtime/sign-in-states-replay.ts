@@ -19,8 +19,10 @@ import {
   fingerprintText,
   type Look,
   type ObservedState,
+  readsOn,
   sameBoxes,
   sameFingerprint,
+  sameScreen,
   type SignedInEntry,
   type SignInStates,
   type SignInStatesChoices,
@@ -452,6 +454,7 @@ const askedHere = <E extends YieldableError, V extends string, L extends Autofil
     const told = (state: StateEntry) =>
       untold(state) &&
       lookedFor(state, fingerprint) &&
+      !readsOn(fingerprint, state) &&
       (!run.visited.includes(state.key) || next.has(state.key)) &&
       (after !== undefined || run.input.inPlace !== true || leadsToNewMarker(run, state));
     const answered = [...run.asked.values()].flat().map((visit) => visit.question);
@@ -612,7 +615,7 @@ const returnedTo = <E extends YieldableError, V extends string, L extends Autofi
   Effect.gen(function* () {
     if (!run.replay.progress.anythingSent && run.replay.sent.maySent.size === 0) return false;
     for (const other of run.input.library.states) {
-      if (!run.visited.includes(other.key) || !sameFingerprint(other, state)) continue;
+      if (!run.visited.includes(other.key) || !sameScreen(other, state)) continue;
       if (other === state) return true;
       if (typeof (yield* shownOn(run, other, resolved(run, other.step))) !== "string") return true;
     }
@@ -688,7 +691,12 @@ const learnedAlike = <E extends YieldableError, V extends string, L extends Auto
   allowed: { readonly typing: boolean; readonly pressing: boolean; readonly sent: boolean },
 ) =>
   Effect.gen(function* () {
-    const told = (state: StateEntry) => sameFingerprint(fingerprint, state) || inPopup(run, state);
+    const plain = (state: StateEntry) =>
+      (sameFingerprint(fingerprint, state) && !readsOn(fingerprint, state)) || inPopup(run, state);
+    // One the page has the look of only as read on its top origin (`readsOn`) only where none other is.
+    const told = learnedNext(run, after).some(plain)
+      ? plain
+      : (state: StateEntry) => sameFingerprint(fingerprint, state) || inPopup(run, state);
     const learned = learnedNext(run, after).filter(told);
     for (const next of ranked(run, learned, told, undefined, fingerprint)) {
       const types = resolved(run, next.step).fields.length > 0;
@@ -841,8 +849,10 @@ const byPlace = <E extends YieldableError, V extends string, L extends AutofillL
  * box may be a state told by its control and address alone (`byControl`);
  * its refusals count for nothing, so a page no state is still ends as an unknown state. Where none
  * shows and the origin rule refused one whose controls showed (`admission`), that refusal
- * (`refusedOrigin`). A state noted without its question (`untold`) is taken so only on a page with
- * no message, and else, or acted in again, apart, before one that came back (`askedHere`). None is
+ * (`refusedOrigin`). Where no state has the page's look, one it has only as read on that state's
+ * top origin (`readsOn`) is taken where it shows and is admitted, its refusals counting for
+ * nothing. A state noted without its question (`untold`) is taken so only on a page with no
+ * message, and else, or acted in again, apart, before one that came back (`askedHere`). None is
  * taken where the page asks a question this replay answered (`askedBefore`). Where the login's own
  * route left other logins' states out and none of its own shows by the step wait (`waited`), for a
  * box its own state types that is gone, as one the site renamed, a look-alike learned after its
@@ -874,14 +884,17 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
     const learned = learnedNext(run, after);
     const codeSent = sent && showsCode(fingerprint);
     // In place, a state in a pop-up where the route leads is told by its controls, not the look.
-    const told = (state: StateEntry) =>
+    const shows = (state: StateEntry) =>
       ((sameFingerprint(state, fingerprint) && (fingerprint.message === undefined || !untold(state))) ||
         (inPopup(run, state) && next.has(state.key)) ||
         (codeSent && loose && takesCodeIn(run, state) && sameBoxes(state, fingerprint))) &&
       (after !== undefined || run.input.inPlace !== true || leadsToNewMarker(run, state));
-    const candidates = states.filter(
-      (state) => state !== skip && told(state) && (!codeSent || next.has(state.key) || (loose && takesCodeIn(run, state))),
-    );
+    // A state of the page's look only as the page reads on its top origin (`readsOn`).
+    const framed = (state: StateEntry) => readsOn(fingerprint, state) && !(inPopup(run, state) && next.has(state.key));
+    const told = (state: StateEntry) => shows(state) && !framed(state);
+    const taken = (state: StateEntry) =>
+      state !== skip && (!codeSent || next.has(state.key) || (loose && takesCodeIn(run, state)));
+    const candidates = states.filter((state) => told(state) && taken(state));
     const alike = ranked(run, candidates, told, next, fingerprint);
     let refused: string | undefined;
     let returned: StateEntry | undefined;
@@ -919,6 +932,24 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
     if (asked !== undefined) return asked;
     if (returned !== undefined) return waited || !pending ? { returned: returned as StateEntry } : refused;
     if (run.admission !== undefined) return { refusedOrigin: run.admission };
+    // Where no state has the page's look, one it has only as read on its top origin, as a site's
+    // page that frames a sign-in host's form, is taken where its controls show and the origin rule
+    // admits them, never one acted in that came back. Its refusals count for nothing, so the page
+    // ends as it did before it had that look.
+    if (candidates.length === 0) {
+      const reading = states.filter((state) => framed(state) && shows(state) && taken(state));
+      let back: StateEntry | undefined;
+      for (const state of ranked(run, reading, (other) => reading.includes(other), next, fingerprint)) {
+        if (yield* returnedTo(run, state)) {
+          back ??= state;
+          continue;
+        }
+        const shown = yield* shownOn(run, state, resolved(run, state.step));
+        if (typeof shown !== "string" && !askedBefore(run, shown)) return { state, inspection: shown } satisfies Shown;
+      }
+      run.admission = undefined;
+      if (back !== undefined) return { returned: back };
+    }
     if (missing[0] !== undefined) run.missing = missing[0].key;
     if (loose && refused === "not_found" && run.input.codeRowByPlace !== false) {
       const row = yield* byPlace(run, missing);
@@ -1501,10 +1532,13 @@ const lookAgain = <E extends YieldableError, V extends string, L extends Autofil
       state.fingerprint.boxes.length === 0 && sameFingerprint(observed.fingerprint, seenLook(run, state));
     if (sameFingerprint(shape, state) || (notice && sameBoxes(shape, state)) || toldByText)
       return { kind: "same" as const, text };
+    // One the page has the look of only as read on its top origin (`readsOn`) only where none other has it.
+    const plain = (known: StateEntry) => sameFingerprint(known, shape) && !readsOn(shape, known);
+    const alike = run.input.library.states.some((known) => known !== state && plain(known)) ? plain : looksLike(shape);
     for (const other of ranked(
       run,
-      run.input.library.states.filter((known) => known !== state && sameFingerprint(known, shape)),
-      looksLike(shape),
+      run.input.library.states.filter((known) => known !== state && alike(known)),
+      alike,
     )) {
       if (yield* returnedTo(run, other)) continue;
       const shown = yield* shownOn(run, other, resolved(run, other.step));
@@ -2056,7 +2090,7 @@ const stillShown = <E extends YieldableError, V extends string, L extends Autofi
     const state = states.find((known) => known.key === from.state);
     if (state === undefined || from.visited.at(-1) !== from.state) return "state_unknown";
     const before = from.visited.slice(0, -1);
-    if (states.some((known) => before.includes(known.key) && sameFingerprint(known, state))) return "state_alike";
+    if (states.some((known) => before.includes(known.key) && sameScreen(known, state))) return "state_alike";
     if (ranked({ ...run, visited: before }, [state], looksLike(state)).length === 0) return "state_not_own";
     const read = yield* run.input.observe;
     if (read === undefined) return "page_unread";

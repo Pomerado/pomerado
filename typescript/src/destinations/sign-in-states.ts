@@ -232,26 +232,37 @@ const takesAgree = (inner: Look, outer: Look, within = false) => {
   return !((all(boxes, "phone") && all(fields, "email")) || (all(boxes, "email") && all(fields, "phone")));
 };
 /**
- * A page's look, one given with no step, read on the top origin of a known state's, one given with
- * its step, where a screen recorded there runs on that page (`framedOn`): every box of the page in
- * a frame on that origin, on the page's own registrable domain, as a site's page shows its sign-in
- * host's form. Any other look as it is. The replay's origin rule still judges each control, and
- * each frame above it, before anything is typed.
+ * Whether a page's look, one given with no step, reads on the top origin of a known state's, one
+ * given with its step, as a screen recorded there runs on that page (`framedOn`): their top origins
+ * differ, and every box of the page sits in a frame on the state's, on the page's own registrable
+ * domain, as a site's page shows its sign-in host's form. The look leaves out the rest of that
+ * rule, which the replay's origin rule judges before anything is typed.
  */
-const readOn = (look: Look, state: Look): StateFingerprint => {
+export const readsOn = (look: Look, state: Look) => {
   const [{ fingerprint, step }, known] = [lookOf(look), lookOf(state)];
-  const { top } = known.fingerprint;
-  return step === undefined &&
+  return (
+    step === undefined &&
     known.step !== undefined &&
-    fingerprint.top !== top &&
-    framedOn(top, fingerprint.top, fingerprint.boxes.map((box) => [box.frame]))
-    ? { ...fingerprint, top }
-    : fingerprint;
+    fingerprint.top !== known.fingerprint.top &&
+    framedOn(known.fingerprint.top, fingerprint.top, fingerprint.boxes.map((box) => [box.frame]))
+  );
 };
+/** A look as it compares with another (`readsOn`). */
+const readOn = (look: Look, other: Look): StateFingerprint =>
+  readsOn(look, other) ? { ...lookOf(look).fingerprint, top: lookOf(other).fingerprint.top } : lookOf(look).fingerprint;
 export const sameFingerprint = (a: Look, b: Look) => {
   const [left, right] = comparable(readOn(a, b), readOn(b, a));
   return fingerprintText(left) === fingerprintText(right) && takesAgree(a, b);
 };
+/**
+ * Whether two known states are one screen: of one look, or one's own look, as a page, reads on the
+ * other's top origin and then has the other's look (`readsOn`), as a screen recorded on a sign-in
+ * host's page and again on the site's page that frames it does.
+ */
+export const sameScreen = (a: StateEntry, b: StateEntry) =>
+  sameFingerprint(a, b) ||
+  sameFingerprint(a, { ...b, fingerprint: readOn(b.fingerprint, a) }) ||
+  sameFingerprint({ ...a, fingerprint: readOn(a.fingerprint, b) }, b);
 /**
  * Whether `twin` is `state` with a `dismiss` added and nothing else: one look and one step but for
  * the covering notice's control `twin` clicks, which a fill clicks only where the page shows it.
@@ -751,10 +762,10 @@ export const maximumStates = 64;
  * The library with a recorded sign-in's new entries appended after every existing one, which stay
  * as they are, and those entries (`added`), none when it knew them all. A state is known by its
  * key, its fingerprint and step alike. A sign-in that stopped before it signed in (`to`) leads to
- * the oldest known state of its own sign-in with that look, a step-up's for a step-up, and adds no
- * marker. Refused: a workspace step in a library with no workspace; a state that shows nothing to
- * tell it by; a `to` no such state looks like (`unknown_state`); and a library that would pass
- * `maximumStates`.
+ * the oldest known state of its own sign-in with that look and top origin, never one the page only
+ * reads on (`readsOn`), a step-up's for a step-up, and adds no marker. Refused: a workspace step in
+ * a library with no workspace; a state that shows nothing to tell it by; a `to` no such state looks
+ * like (`unknown_state`); and a library that would pass `maximumStates`.
  */
 export const appendSignInStates = (
   library: SignInStates,
@@ -771,7 +782,10 @@ export const appendSignInStates = (
     to === undefined
       ? undefined
       : library.states.find(
-          (state) => (state.stepUp === true) === (observed.stepUp === true) && sameFingerprint(state, to),
+          (state) =>
+            (state.stepUp === true) === (observed.stepUp === true) &&
+            state.fingerprint.top === to.top &&
+            sameFingerprint(state, to),
         );
   if (to !== undefined && led === undefined) return { refused: "unknown_state" };
   const states = observed.states.map(({ fingerprint, step }) => stateEntry(fingerprint, step, "recorded", observed.stepUp));
