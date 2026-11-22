@@ -222,7 +222,8 @@ interface AutofillRecordedStep {
   /**
    * A code screen whose page sent the code itself and took its `submit` or `submitKey` away in
    * place before the host pressed it (`closedInPlace`), on a sign-in that keeps that control
-   * (`recordsPageSends`): its screens press it only when the page didn't send.
+   * (`recordsPageSends`): its screens press it only on a host that tells a code the page sent
+   * itself (`checksCodeSent`), and only when the page didn't send.
    */
   readonly pageSends?: true;
   readonly submittedBy?: "host" | "minter";
@@ -310,7 +311,8 @@ export interface AutofillSignInState<E = unknown, V extends string = string> {
    * Whether a code screen that sent itself and took its submit away in place keeps that submit or
    * submit key, marked `pageSends`, rather than losing it (`recordStep`). A core before the one
    * that reads `pageSends` leaves out a state that has it, so a host sets this once every core
-   * that replays the screens it records is this one or later.
+   * that replays the screens it records is this one or later, and only when its fill tells a code
+   * the page sent itself (`codeSent`, `checksCodeSent`), as the recipe keeps that submit too.
    */
   readonly recordsPageSends?: boolean;
 }

@@ -1825,8 +1825,8 @@ const sendsOnPress = <E extends YieldableError, V extends string, L extends Auto
  * what was typed. A fill that failed with nothing yet sent, as when the page redrew its form under
  * it, has the state looked for once more in the replay (`gone`), as a recipe screen gone unsent is.
  * A state whose page sent what was typed itself as it was recorded (`pageSends`) is typed as one
- * with no submit, and gets its own submit or submit key only once the page held unsent
- * (`enterAfterTyping`).
+ * with no submit, and gets its own submit or submit key only once the page held unsent, and only
+ * on a host that tells a code the page sent itself (`enterAfterTyping`).
  * The value of each box typed alone, but a code or security answer, is resolved before the first
  * box is typed and held until that box's fill (`held`), so a value nobody gives ends the replay
  * with nothing typed. A code is asked only at its own box, as the site may send it only then, and a
@@ -2035,8 +2035,9 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
  * typed again (`retry`) counts as one try of the code retry bound, as a submit would; the Tab
  * counts nothing more. A state whose page sent what was typed itself as it was recorded
  * (`pageSends`) gets its own submit or submit key there in place of Enter, under the same holds,
- * whatever its form shows, and no Tab after it. The replay then waits for the next state as after
- * any typing.
+ * whatever its form shows, and no Tab after it, but only on a host that tells a code the page sent
+ * itself (`checksCodeSent`): another host presses nothing there. The replay then waits for the
+ * next state as after any typing.
  */
 const enterAfterTyping = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -2088,10 +2089,11 @@ const enterAfterTyping = <E extends YieldableError, V extends string, L extends 
     if (typeof here === "string") return yield* skipped(own ? "submit" : "Enter", here);
     if (!own && (here.screen.submitKey?.submitControls ?? 0) > 0)
       return yield* skipped("Enter", "submit_control");
-    // Nothing else shows that a box in no form sent its code: a host that can't tell presses no key.
+    // Nothing else shows that a page sent its code itself, or that a box in no form did: a host
+    // that can't tell presses nothing.
     const checked = input.hooks.checksCodeSent === true;
-    if (!own && codeOnly && !checked && (here.targets.submit?.submitMethod ?? null) === null)
-      return yield* skipped("Enter", "no_code_sent_check");
+    if (!checked && (own || (codeOnly && (here.targets.submit?.submitMethod ?? null) === null)))
+      return yield* skipped(own ? "submit" : "Enter", "no_code_sent_check");
     const pressed = yield* resubmit({ step: keyed, inspection: here });
     const sent = maySend(pressed);
     if (sent) yield* input.emit({ stage: "retried", reason: own ? "submit_after_typing" : "enter_after_typing" });
@@ -2120,9 +2122,9 @@ const enterAfterTyping = <E extends YieldableError, V extends string, L extends 
  * whether or not the site showed a refusal, so it never goes in again, and bounded as the recipe
  * replay bounds a refused code's retries (`runStep` with `rejected`), each code typed again one try
  * even when nothing showed it went out, and a state with no submit gets its Enter, or a state whose
- * page sends the code itself (`pageSends`) its code typed alone and then its own submit
- * (`enterAfterTyping`); or the emailed link the site's answer named, pasted and opened as an
- * approval's (`openPastedLink`), once per sign-in.
+ * page sends the code itself (`pageSends`) its code typed alone and then, on a host that tells a
+ * code the page sent itself, its own submit (`enterAfterTyping`); or the emailed link the site's
+ * answer named, pasted and opened as an approval's (`openPastedLink`), once per sign-in.
  */
 const actAgain = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,

@@ -400,3 +400,19 @@ test("a recorded code state whose page sends the code itself gets no Verify pres
   expect(await page.evaluate(() => Reflect.get(window, "clicks"))).toBe(0);
   await expect(page.locator("#account")).toBeVisible();
 });
+
+test("a recorded code state whose page sent the code itself gets no Verify press on a host that can't tell a code the page sent", async ({
+  page,
+}) => {
+  // The page sent the code itself and keeps its Verify on screen while the site checks it, which
+  // a host that reads no requests could not tell from a page that never sent it.
+  const checks = await serve(page, { checkMs: 9_000, keepsBoxes: true });
+  const events: unknown[] = [];
+  expect(
+    await runStates(page, recipe.steps[0].fields, { submitted: sentByPage, codeSent: false, events }),
+  ).toBe("signed_in");
+  expect(checks).toEqual([code]);
+  expect(await page.evaluate(() => Reflect.get(window, "clicks"))).toBe(0);
+  expect(events).toContainEqual({ stage: "key_skipped", key: "submit", reason: "no_code_sent_check" });
+  await expect(page.locator("#account")).toBeVisible();
+});

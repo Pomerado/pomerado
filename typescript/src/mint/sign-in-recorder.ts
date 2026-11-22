@@ -408,8 +408,6 @@ export const makeSignInRecorder = (input: {
       filled: new Map(),
       submittedSlots: new Set(),
       sentIdentifiers: {},
-      // This host's own core replays the screens it records, so it keeps a self-sent code's submit.
-      recordsPageSends: true,
     };
     h.autofillSignIn.current = state;
     entry = at;
