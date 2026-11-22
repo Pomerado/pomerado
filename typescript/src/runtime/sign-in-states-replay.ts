@@ -102,6 +102,16 @@ export interface SignInStatesReplayInput<
    * does, so the page is left for it to record.
    */
   readonly codeRowByPlace?: boolean | undefined;
+  /**
+   * Whether the replay goes on from the page as it is (in place), for a session already signed in
+   * that a later stage of the site, or a pop-up a page of the session opened, asks for the login
+   * again (a step-up). It opens no entry URL and starts only in a known state the page shows
+   * (`shownHere`), else ends `state_not_shown` having done nothing. Only a marker the states it
+   * acted in led to signs it in (`markersNow`), checked on the page as it is, and never a page
+   * that can't tell. A state in a pop-up is told by its controls there (`inPopup`). The login's
+   * own picks come back as they were given. Absent, the replay opens the entry URL as before.
+   */
+  readonly inPlace?: boolean | undefined;
 }
 
 /**
@@ -171,6 +181,11 @@ interface Run<E extends YieldableError, V extends string, L extends AutofillLogi
    * is never stored as a pick (`choices.method`); the route that signed in is kept as any route is.
    */
   hinted: boolean;
+  /**
+   * The origin rule's refusal of a known state whose controls showed, at the look matched last
+   * (`admitScreen`): the page is a sign-in on a host this login may not type on.
+   */
+  admission: string | undefined;
 }
 
 /**
@@ -266,6 +281,7 @@ const shownOn = <E extends YieldableError, V extends string, L extends AutofillL
     if (placed.has(state) && step.fields.length > 0 && !(yield* placedRow(run, state, inspection)))
       return "ambiguous_match" as const;
     const refused = yield* admitScreen(run.as, run.replay, state.step, inspection.page, inspection);
+    if (refused !== undefined) run.admission = refused;
     return refused ?? inspection;
   });
 
@@ -321,6 +337,52 @@ const shownWithin = <E extends YieldableError, V extends string, L extends Autof
 /** Whether a known state has the whole look `look`, its step telling what its boxes take (`Look`). */
 const looksLike = (look: Look) => (state: StateEntry) => sameFingerprint(state, look);
 
+/**
+ * In place (`inPlace`), whether a state sits in a pop-up, where it is told by its controls there:
+ * the page read is the one that opened it, which tells nothing of the pop-up.
+ */
+const inPopup = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  state: StateEntry,
+) => run.input.inPlace === true && state.step.popup !== undefined;
+
+/**
+ * The markers that may sign the replay in: each one, or in place (`inPlace`) only those the
+ * states it acted in led to, through the states after them, so a page signed in already, as a
+ * step-up's is, never ends it before it acted, and the marker of another sign-in never ends it.
+ */
+const markersNow = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+) => {
+  if (run.input.inPlace !== true) return run.markers;
+  const reached = new Set(run.visited);
+  const queue = [...reached];
+  for (const at of queue)
+    for (const { from, to } of run.input.library.transitions)
+      if (from === at && !reached.has(to)) {
+        reached.add(to);
+        queue.push(to);
+      }
+  return run.markers.filter((marker) => reached.has(marker.key));
+};
+
+/**
+ * A marker verified in full; in place (`inPlace`) on the page as it is, its account page
+ * (`openPath`) never opened, as the task's page must stay.
+ */
+const verifyMarker = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  marker: SignedInEntry,
+) =>
+  run.replay.verify(
+    run.input.inPlace === true
+      ? {
+          ...(marker.selector === undefined ? {} : { selector: marker.selector }),
+          ...(marker.urlPath === undefined ? {} : { urlPath: marker.urlPath }),
+        }
+      : marker,
+  );
+
 /** `matchState`'s refusal where none of the login's own states shows, as an unknown state. */
 const ownStateNotShown = "own_state_not_shown";
 
@@ -335,7 +397,8 @@ const ownStateNotShown = "own_state_not_shown";
  * state leads to (`next`), then the most recently learned, as a library holds its states in the
  * order learned. Given the page's look (`page`), a state whose recorded instruction and ways stand
  * further from the page's than another's do (`toldApart`) goes after the rest, next after the
- * login's own route; one recorded without them is never moved by them.
+ * login's own route; one recorded without them is never moved by them. In place (`inPlace`), the
+ * route takes no part, as a step-up is no part of the login's own sign-in.
  */
 const ranked = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -350,9 +413,12 @@ const ranked = <E extends YieldableError, V extends string, L extends AutofillLo
   // The state last acted in, when it is not looked for again, leaves the route no say: where its
   // page stays, the route goes no further there, so a look-alike a repair learned after it may go on.
   const last = run.visited.at(-1);
-  const own = states.some(
-    (state) => (state.key !== last || candidates.includes(state)) && route.includes(state.key) && alike(state),
-  );
+  // In place, the route is the login's own sign-in's, of which a step-up is no part.
+  const own =
+    run.input.inPlace !== true &&
+    states.some(
+      (state) => (state.key !== last || candidates.includes(state)) && route.includes(state.key) && alike(state),
+    );
   const picks = (state: StateEntry) =>
     method !== undefined && state.step.methods?.find((option) => option.selector === state.step.submit)?.method === method;
   // Along the route from the last state acted in that it holds, so a look the route holds twice
@@ -455,12 +521,12 @@ const lookForChallenge = <E extends YieldableError, V extends string, L extends 
   });
 
 /**
- * The first learned look-alike of the state just acted in (`learnedNext`) that the page is and
- * whose controls show, in the order this login takes them (`ranked`): one that types something
- * once the page settled (`typing`), and a press alone only at the step wait where that state's own
- * press would be made once more (`pressing`), in its place, as before then it may answer that
- * press, still under way; never one that presses that state's own control, as that press would go
- * out once more after it.
+ * The first learned look-alike of the state just acted in (`learnedNext`) that the page is, or in
+ * place one in a pop-up (`inPopup`), and whose controls show, in the order this login takes them
+ * (`ranked`): one that types something once the page settled (`typing`), and a press alone only at
+ * the step wait where that state's own press would be made once more (`pressing`), in its place, as
+ * before then it may answer that press, still under way; never one that presses that state's own
+ * control, as that press would go out once more after it.
  */
 const learnedAlike = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -469,8 +535,9 @@ const learnedAlike = <E extends YieldableError, V extends string, L extends Auto
   allowed: { readonly typing: boolean; readonly pressing: boolean; readonly sent: boolean },
 ) =>
   Effect.gen(function* () {
-    const learned = learnedNext(run, after).filter((state) => sameFingerprint(fingerprint, state));
-    for (const next of ranked(run, learned, looksLike(fingerprint), undefined, fingerprint)) {
+    const told = (state: StateEntry) => sameFingerprint(fingerprint, state) || inPopup(run, state);
+    const learned = learnedNext(run, after).filter(told);
+    for (const next of ranked(run, learned, told, undefined, fingerprint)) {
       const types = resolved(run, next.step).fields.length > 0;
       if (!(types ? allowed.typing : allowed.pressing && next.step.submit !== after.step.submit)) continue;
       // After a press that may have had a code or link sent (`sent`), one that takes no code and
@@ -609,12 +676,15 @@ const byPlace = <E extends YieldableError, V extends string, L extends AutofillL
 /**
  * The known state the page shows: one whose fingerprint it is and whose recorded controls show,
  * one match each, on its recorded origin, in the order this login takes them (`ranked`), never
- * the state just acted in again. A state acted in before something went out that the
+ * the state just acted in again; in place, one in a pop-up (`inPopup`) that no state leads to, or
+ * that `after` led to, whatever the look. A state acted in before something went out that the
  * page shows again, with no other, is `returned`, unless a sign-in learned it after the last one
  * (`learnedNext`). With `loose`, states of its look none of whose recorded controls showed may be a
  * code state typed by place into the row the page shows (`byPlace`); with no state of its whole
  * look, a page with no box may be a state told by its control and address alone (`byControl`);
- * its refusals count for nothing, so a page no state is still ends as an unknown state.
+ * its refusals count for nothing, so a page no state is still ends as an unknown state. Where none
+ * shows and the origin rule refused one whose controls showed (`admission`), that refusal
+ * (`refusedOrigin`).
  */
 const matchState = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -625,6 +695,7 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
 ) =>
   Effect.gen(function* () {
     const { states, transitions } = run.input.library;
+    run.admission = undefined;
     // At the start, the states no state leads to, as a recorded sign-in's first.
     const next = new Set(
       after === undefined
@@ -632,8 +703,11 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
         : transitions.filter((t) => t.from === after.key).map((t) => t.to),
     );
     const learned = learnedNext(run, after);
-    const candidates = states.filter((state) => state !== skip && sameFingerprint(state, fingerprint));
-    const alike = ranked(run, candidates, looksLike(fingerprint), next, fingerprint);
+    // In place, a state in a pop-up where the route leads is told by its controls, not the look.
+    const told = (state: StateEntry) =>
+      sameFingerprint(state, fingerprint) || (inPopup(run, state) && next.has(state.key));
+    const candidates = states.filter((state) => state !== skip && told(state));
+    const alike = ranked(run, candidates, told, next, fingerprint);
     let refused: string | undefined;
     let returned: StateEntry | undefined;
     const missing: StateEntry[] = [];
@@ -648,6 +722,7 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
       if (shown === "not_found") missing.push(state);
     }
     if (returned !== undefined) return { returned: returned as StateEntry };
+    if (run.admission !== undefined) return { refusedOrigin: run.admission };
     if (missing[0] !== undefined) run.missing = missing[0].key;
     if (loose && refused === "not_found" && run.input.codeRowByPlace !== false) {
       const row = yield* byPlace(run, missing);
@@ -665,11 +740,11 @@ const signedIn = <E extends YieldableError, V extends string, L extends Autofill
 ): Ended<V> => {
   const { replay, visited } = run;
   const method = (run.hinted ? undefined : replay.progress.chosen) ?? run.input.choices?.method;
-  const choices: SignInStatesChoices = {
-    states: [...new Set(visited)],
-    ...(method === undefined ? {} : { method }),
-    signedIn: marker.key,
-  };
+  // In place, the route is a step-up's, never the login's own: its picks go back as given.
+  const choices: SignInStatesChoices | undefined =
+    run.input.inPlace === true
+      ? run.input.choices
+      : { states: [...new Set(visited)], ...(method === undefined ? {} : { method }), signedIn: marker.key };
   const sent = replay.progress.anythingSent;
   return {
     ended: {
@@ -679,7 +754,7 @@ const signedIn = <E extends YieldableError, V extends string, L extends Autofill
         : { alreadySignedIn: true }),
       ...workspaceOf(replay),
       visited,
-      choices,
+      ...(choices === undefined ? {} : { choices }),
     } as SignInStatesOutcome<V>,
   };
 };
@@ -758,8 +833,9 @@ const notFound = <E extends YieldableError, V extends string, L extends Autofill
 };
 
 /**
- * A signed-in marker on the page as it is, checked without opening anything, then verified in
- * full; a marker that shows but fails the full check, with no other that passes, stops the replay.
+ * A signed-in marker that may sign the replay in (`markersNow`) on the page as it is, checked
+ * without opening anything, then verified in full (`verifyMarker`); a marker that shows but fails
+ * the full check, with no other that passes, stops the replay.
  */
 const signedInHere = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -767,13 +843,13 @@ const signedInHere = <E extends YieldableError, V extends string, L extends Auto
   Effect.gen(function* () {
     const { replay, input } = run;
     let failed = false;
-    for (const marker of run.markers) {
+    for (const marker of markersNow(run)) {
       const onPage = { selector: marker.selector, urlPath: marker.urlPath };
       if (onPage.selector === undefined && onPage.urlPath === undefined) continue;
       const check = yield* input.hooks.check(onPage, run.as.recipe.steps, replay.state.steps);
       run.page = check.url;
       if (!check.signedIn) continue;
-      if (yield* replay.verify(marker)) return signedIn(run, marker);
+      if (yield* verifyMarker(run, marker)) return signedIn(run, marker);
       failed = true;
     }
     return failed ? stopped(run, "sign_in_check_failed") : undefined;
@@ -781,11 +857,12 @@ const signedInHere = <E extends YieldableError, V extends string, L extends Auto
 
 /**
  * Before a replay ends at a state no one knows, or with none shown, the recipe replay's last
- * check: each marker verified in full, opening its account page, then the host's look at a page
- * that can't tell (`alreadySignedIn`, `endedCantTell`). Never while the state just acted in still
- * stands, or the page shows a password or code box, as no signed-in page does: a repair goes on
- * from that page as it is. Before the step wait ran out (`waitedOut`), the can't-tell look keeps
- * the early guard (`mayCantTell`).
+ * check: each marker that may sign it in verified in full (`markersNow`, `verifyMarker`), opening
+ * its account page save in place, then the host's look at a page that can't tell
+ * (`alreadySignedIn`, `endedCantTell`). Never while the state just acted in still stands, or the
+ * page shows a password or code box, as no signed-in page does: a repair goes on from that page as
+ * it is. Before the step wait ran out (`waitedOut`), the can't-tell look keeps the early guard
+ * (`mayCantTell`).
  */
 const endCheck = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -798,7 +875,7 @@ const endCheck = <E extends YieldableError, V extends string, L extends Autofill
     const { replay } = run;
     if (stood || observed?.boxes.some((box) => box.kind === "password" || box.kind === "code"))
       return undefined;
-    for (const marker of run.markers) if (yield* replay.verify(marker)) return signedIn(run, marker);
+    for (const marker of markersNow(run)) if (yield* verifyMarker(run, marker)) return signedIn(run, marker);
     const marker = run.markers[0];
     if (marker === undefined || run.input.hooks.confirmCantTell === undefined || !mayCantTell(run, last, !waitedOut))
       return undefined;
@@ -813,10 +890,11 @@ const endCheck = <E extends YieldableError, V extends string, L extends Autofill
 
 /**
  * Whether a page that can't tell may sign in, as the recipe replay's screen wait decides
- * (`landedCantTell`): never on a browser that started empty before a password or code of the
- * library went in (`loginUnproved`), nor `early`, before the step wait ends, after a state whose
- * press leads to a code or an approval, as a code screen's wait never ends so; at its end a site
- * may have skipped its code, as the recipe replay's settle allows.
+ * (`landedCantTell`): never in place (`inPlace`), as a task's page can't tell; never on a browser
+ * that started empty before a password or code of the library went in (`loginUnproved`), nor
+ * `early`, before the step wait ends, after a state whose press leads to a code or an approval, as
+ * a code screen's wait never ends so; at its end a site may have skipped its code, as the recipe
+ * replay's settle allows.
  */
 const mayCantTell = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -824,6 +902,7 @@ const mayCantTell = <E extends YieldableError, V extends string, L extends Autof
   early: boolean,
 ) => {
   const { hooks, library } = run.input;
+  if (run.input.inPlace === true) return false;
   const unproved =
     hooks.startedEmpty === true &&
     hooks.signedInBefore !== true &&
@@ -918,7 +997,10 @@ const returnedReason = <E extends YieldableError, V extends string, L extends Au
  * of a state acted in stops the replay as that rejection, whatever else the page shows. A known
  * state is taken once its controls show and pass its origin rule, in the order this login takes
  * them (`ranked`); where the login's own route left another login's out, none of its own showing
- * is an unknown state. One acted in before something went out showing again stops it
+ * is an unknown state; a known state whose controls show on a host the origin rule refuses for this
+ * login ends it at once (`refusedOrigin`), as a recipe screen does. In place, once the controls of a
+ * state acted in within a pop-up went from it, a state it led to there that shows is taken
+ * (`inPopup`, `learnedAlike`). One acted in before something went out showing again stops it
  * (`returnedReason`), unless a sign-in learned a look-alike after the last (`learnedNext`) or the
  * state just acted in stands.
  * It stands while the page shows its boxes as they were, with or without a new text, or a notice
@@ -1030,6 +1112,8 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
           const shown = yield* matchState(run, shape, after, acted?.acted, loose);
           refused = typeof shown === "object" ? undefined : shown;
           if (typeof shown === "object") {
+            // A known state on a host this login may not type on ends it at once, as at a recipe screen.
+            if ("refusedOrigin" in shown) return stopped(run, shown.refusedOrigin);
             if (!("returned" in shown)) return { ...shown, observed: read };
             if (!stood) return stopped(run, returnedReason(run, shown.returned));
             back = shown.returned;
@@ -1051,6 +1135,20 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
             const said = yield* siteAnswer(run, state);
             if (said === "link") return { again: "link" } satisfies Again;
             if (said === "refused") return stopped(run, "credential_screen_returned");
+          }
+          // In place, a state in a pop-up stands on the page that opened it, which tells nothing:
+          // once its own controls went from the pop-up, a state it led to there that shows goes on.
+          if (
+            inPopup(run, state) &&
+            !codeMarked &&
+            (yield* shownOn(run, state, resolved(run, state.step))) === "not_found"
+          ) {
+            const next = yield* learnedAlike(run, state, shape, {
+              typing: true,
+              pressing: true,
+              sent: acted.sends === true || sendsOnPress(run, state, true),
+            });
+            if (next !== undefined) return { ...next, observed: read };
           }
           // A fresh page that settled looking like the state just acted in, a press that typed
           // nothing, with no answer of the site's to explain it, is a look-alike a sign-in learned
@@ -1155,7 +1253,8 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
  * After a box was typed, or while a press waits: `same` while the page shows the state's boxes,
  * grown or not, a notice state's beside its text; another known state it now shows in full with
  * what was typed (`fuller`), never one acted in before something went out; or `moved` once a box
- * of the state went.
+ * of the state went. In place, a state in a pop-up stays `same`, as the page read is the one that
+ * opened it (`inPopup`).
  */
 const lookAgain = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -1163,6 +1262,7 @@ const lookAgain = <E extends YieldableError, V extends string, L extends Autofil
   reached: ObservedState,
 ) =>
   Effect.gen(function* () {
+    if (inPopup(run, state)) return { kind: "same" as const, text: "" };
     const observed = yield* run.input.observe;
     if (observed === undefined) return { kind: "same" as const, text: "" };
     const shape = standingFingerprint(reached, observed);
@@ -1617,10 +1717,39 @@ const stillShown = <E extends YieldableError, V extends string, L extends Autofi
   });
 
 /**
+ * In place (`inPlace`), the known state the page shows as the replay starts, in the order this
+ * login takes them (`matchState`), one in a pop-up told by its controls there: the first look one
+ * shows at; else why not, the origin rule's refusal at once (`refusedOrigin`), else
+ * `state_not_shown` once the page's look held still `quietMs`, or `capMs` passed.
+ */
+const shownHere = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+) =>
+  Effect.gen(function* () {
+    const start = yield* now;
+    let held: { readonly text: string; readonly since: number } | undefined;
+    for (;;) {
+      const read = yield* run.input.observe;
+      const at = yield* now;
+      if (read !== undefined) {
+        run.seen = read.fingerprint;
+        const shown = yield* matchState(run, read.fingerprint, undefined, undefined, false);
+        if (typeof shown === "object" && "refusedOrigin" in shown) return shown.refusedOrigin;
+        if (typeof shown === "object" && !("returned" in shown)) return { ...shown, observed: read };
+      }
+      // A page the host can't read holds still as one look.
+      const text = read === undefined ? "" : fingerprintText(read.fingerprint);
+      if (held?.text !== text) held = { text, since: at };
+      if (at - held.since >= run.quiet.quietMs || at - start >= run.quiet.capMs) return "state_not_shown";
+      yield* pause(run);
+    }
+  });
+
+/**
  * Replays a sign-in from a library of states on the run's own browser with the host's fill, from
- * the entry URL: it matches the page to a known state, acts there one action at a time, and waits
- * for the next known state, until a signed-in marker verifies the login, a stop rule ends it, or
- * the page shows a state no one knows. Each box goes through the recipe replay's inspection and its
+ * the entry URL, or in place from the page as it is (`inPlace`): it matches the page to a known
+ * state, acts there one action at a time, and waits for the next known state, until a signed-in
+ * marker verifies the login, a stop rule ends it, or the page shows a state no one knows. Each box goes through the recipe replay's inspection and its
  * screen's origin rule (`admitScreen`), each value through its fill, and a secret goes out at most
  * once in a state. A recipe never runs here; this runs only for a library.
  */
@@ -1658,11 +1787,16 @@ export const replaySignInStates = <
       seen: undefined,
       missing: undefined,
       hinted: false,
+      admission: undefined,
     };
     const from = input.from === undefined ? undefined : yield* stillShown(run, input.from);
-    if (from === undefined || typeof from === "string") yield* input.hooks.open(input.entryUrl);
-    else run.visited.push(...(input.from?.visited ?? []).slice(0, -1));
-    const ended = yield* walk(run, typeof from === "object" ? from : undefined);
+    const here = typeof from === "object" || input.inPlace !== true ? undefined : yield* shownHere(run);
+    if (typeof from === "object") run.visited.push(...(input.from?.visited ?? []).slice(0, -1));
+    else if (input.inPlace !== true) yield* input.hooks.open(input.entryUrl);
+    const ended =
+      typeof here === "string"
+        ? stopped(run, here).ended
+        : yield* walk(run, typeof from === "object" ? from : here);
     if ("reason" in ended && ended.reason === "not_found") yield* notFound(run);
     return from === undefined
       ? ended
