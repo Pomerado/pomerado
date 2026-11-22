@@ -69,9 +69,8 @@ const recordFilledValues = <E extends YieldableError, V extends string, L extend
     retryState.codeAttempts.current += 1;
 };
 /**
- * A code the step could not get after the site refused one, or after one that didn't sign in, ends
- * as that refusal, unless the host could not read a code it keeps for the login at all
- * (`credentialUnavailable`), which is its own.
+ * A code the step could not get after the site refused one ends as that refusal, unless the host
+ * could not read a code it keeps for the login at all (`credentialUnavailable`), which is its own.
  */
 const codeRejectedAgain = (codeAgain: CodeRetry | undefined, unanswered: Unanswered) =>
   codeAgain !== undefined && unanswered.cause !== credentialUnavailable;
@@ -79,10 +78,9 @@ const codeRejectedAgain = (codeAgain: CodeRetry | undefined, unanswered: Unanswe
 const takesCode = (step: Pick<AutofillStep, "fields">) =>
   step.fields.some((field) => field.slot === "code");
 /**
- * Admission preserves each replay's unchanged-secret cap and the sign-in's code correction cap,
- * which a code that didn't sign in (`returned`) shares with one the site refused. Once a recorded
- * screen's planned code refill went out (`codeRefilled`), a code screen that came back takes no
- * third code unless the site showed it refused the code (`explicitCodeRejection`).
+ * Admission preserves each replay's unchanged-secret cap and the sign-in's code correction cap.
+ * Once a recorded screen's planned code refill went out (`codeRefilled`), a code screen that came
+ * back takes no third code unless the site showed it refused the code (`explicitCodeRejection`).
  */
 const retryRefusal = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   session: ReplaySession<E, V, L>,
@@ -95,10 +93,6 @@ const retryRefusal = <E extends YieldableError, V extends string, L extends Auto
 ) => {
   const { retryState, sent, progress, state } = session;
   if (codeAgain !== undefined && takesCode(asked) && retryState.codeAttempts.current >= 2)
-    return "code_rejected" as const;
-  // A code that didn't sign in is asked again within the owner's two re-asks, as a refused one is
-  // (`askedCode`), whoever gives it.
-  if (codeAgain === "returned" && takesCode(asked) && retryState.codeRequests.current >= 2)
     return "code_rejected" as const;
   if (
     codeAgain !== undefined &&
@@ -228,10 +222,9 @@ export interface StepValues {
 }
 
 /**
- * A screen's values (`StepValues`), or why it ends with nothing typed. A code asked again after
- * one that didn't sign in (`returned`) may be that same code: only the codes typed before the site
- * last showed it refused one are ruled out. Resolving sends nothing and spends no recovery code: a
- * code it took is spent or given back once its fill settles (`settleFilled`).
+ * A screen's values (`StepValues`), or why it ends with nothing typed. Resolving sends nothing and
+ * spends no recovery code: a code it took is spent or given back once its fill settles
+ * (`settleFilled`).
  */
 export const replayValues = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   session: ReplaySession<E, V, L>,
@@ -247,38 +240,23 @@ export const replayValues = <E extends YieldableError, V extends string, L exten
     // A code box on a recorded emailed link's screen (`linkCodeScreen`).
     const onLinkScreen =
       progress.linkCodeScreen !== undefined && codeScreenOf(inspection) === progress.linkCodeScreen;
-    const returned = codeAgain === "returned" && takesCode(asked);
-    const resolveValues = () =>
-      valuesFor(
-        input,
-        values,
-        progress.chosen,
-        asked,
-        codeAgain,
-        {
-          rejectedCodes: returned ? new Set(session.refusedCodes) : rejectedCodes,
-          codeRequests,
-          rejectedValues: retryState.rejectedValues,
-          correctionRequests: retryState.correctionRequests,
-        },
-        inspection.screen.fields,
-        // A code screen the recipe never recorded that refused a code may want one the site sent
-        // rather than the host's generator's, so its retries never spend a try on that.
-        !onLinkScreen && (codeAgain === undefined || progress.unrecordedCodeScreen === undefined),
-      );
-    if (returned) codeRequests.current += 1;
-    let resolved = yield* resolveValues();
-    // A code the site refused before, given again, is asked for once more within the two re-asks,
-    // as after a refusal (`askedCode`).
-    while (
-      returned &&
-      resolved instanceof Unanswered &&
-      resolved.cause === "code_already_rejected" &&
-      codeRequests.current < 2
-    ) {
-      codeRequests.current += 1;
-      resolved = yield* resolveValues();
-    }
+    const resolved = yield* valuesFor(
+      input,
+      values,
+      progress.chosen,
+      asked,
+      codeAgain,
+      {
+        rejectedCodes,
+        codeRequests,
+        rejectedValues: retryState.rejectedValues,
+        correctionRequests: retryState.correctionRequests,
+      },
+      inspection.screen.fields,
+      // A code screen the recipe never recorded that refused a code may want one the site sent
+      // rather than the host's generator's, so its retries never spend a try on that.
+      !onLinkScreen && (codeAgain === undefined || progress.unrecordedCodeScreen === undefined),
+    );
     if (resolved instanceof Unanswered)
       if (corrected.size > 0) return "extra_rejected" as const;
       // Nothing was typed, so the link's own question still stands.
@@ -401,11 +379,21 @@ export const runReplayStep = <E extends YieldableError, V extends string, L exte
 
 /**
  * The replay went on from a screen whose values no click sent, such as a code box that submits on
- * its last digit: they went out, so they count as submitted and its secrets as maybe sent.
+ * its last digit or boxes typed one at a time before their press: they went out, so they count as
+ * submitted, its secrets as maybe sent, and each as the value a refusal names (`recordRejected`),
+ * as a step that types and sends keeps its own.
  */
-export const settleCarried = (session: Pick<ReplaySession, "state" | "sent">) => {
-  for (const slot of submitFilled(session.state))
-    if (isSecret(slot)) session.sent.maySent.add(slot);
+export const settleCarried = (
+  session: Pick<ReplaySession, "state" | "sent" | "retryState"> & {
+    readonly input: Pick<ReplaySession["input"], "credentials">;
+  },
+) => {
+  const { state, retryState, input } = session;
+  for (const [slot, value] of state.filled)
+    if (rejectableSlot(slot))
+      retryState.lastFilled[logicalRejectedField(slot, input.credentials?.primaryIdentifierKind)] =
+        value;
+  for (const slot of submitFilled(state)) if (isSecret(slot)) session.sent.maySent.add(slot);
 };
 
 /** Corrects only visibly rejected secondary fields on their existing screen. */

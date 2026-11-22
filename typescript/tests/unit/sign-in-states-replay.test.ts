@@ -277,6 +277,8 @@ const replay = (
     readonly codes?: readonly string[];
     /** Each question's prompt, in order. */
     readonly prompts?: string[];
+    /** The host gives every code itself, a new one each time, as from an authenticator app. */
+    readonly hostCodes?: boolean;
     readonly codeRowByPlace?: boolean;
     readonly inPlace?: boolean;
     /** The replay may hand off: what the person does in the browser before marking it done. */
@@ -285,6 +287,7 @@ const replay = (
 ) => {
   const asked: string[] = [];
   let codesGiven = 0;
+  let hostGiven = 0;
   const ask = makeInputAsker((request) =>
     Effect.sync(
       () =>
@@ -327,10 +330,13 @@ const replay = (
           unanswered: (cause) => new TestFailure({ code: `unanswered:${String(cause)}` }),
           unavailable: () => new TestFailure({ code: "unavailable" }),
         },
-        ...(options.siteAnswer === undefined && options.hostMethod === undefined
+        ...(options.siteAnswer === undefined && options.hostMethod === undefined && options.hostCodes !== true
           ? {}
           : {
               hosted: {
+                ...(options.hostCodes === true
+                  ? { code: () => Effect.sync(() => ({ slot: "code" as const, value: String(100000 + ++hostGiven) })) }
+                  : {}),
                 ...(options.siteAnswer === undefined
                   ? {}
                   : {
@@ -808,8 +814,25 @@ it("presses Enter once for each code typed, and still ends at the code retry bou
   expect(entered(events)).toBe(3);
 });
 
-it("asks again saying the code didn't sign in, and takes the same code, when the site showed no refusal", async () => {
+it("ends at the code retry bound when the host gives each code and the page empties its box with no refusal", async () => {
+  // A box that sends its code itself, on a site that empties it after a wrong code, with no error,
+  // and that signs in only on a sixth code.
+  const site = scriptedSite({ start: codeScreen }, () => undefined);
+  const fill: typeof site.hooks.fill = (call) =>
+    Effect.map(site.hooks.fill(call), (report) => {
+      site.site.typed.clear();
+      if (site.fills.length >= 6) site.site.screen = "home";
+      return report;
+    });
+  const ended = await replay({ ...site, hooks: { ...site.hooks, fill } }, autoCode(), { hostCodes: true });
+  expect(ended).toMatchObject({ outcome: "unclear", reason: "code_rejected" });
+  expect(site.fills).toEqual(["code", "code", "code"]);
+  expect(ended.asked).toEqual([]);
+});
+
+it("never takes the same code again when the code page stays with no refusal", async () => {
   // The site keeps its code page after the first press, with no error, and signs in on the second.
+  // The owner gives the same code again first, which is asked again and never typed.
   let pressed = 0;
   const site = scriptedSite({ start: codeScreen }, () => (++pressed > 1 ? "home" : undefined));
   const typed: string[] = [];
@@ -817,13 +840,16 @@ it("asks again saying the code didn't sign in, and takes the same code, when the
     Effect.sync(() => void typed.push(...call.values)).pipe(Effect.zipRight(site.hooks.fill(call)));
   const prompts: string[] = [];
   const library = libraryOf([{ fingerprint: arrival(codeScreen), step: stepAt("/verify", [code], "#verify") }]);
-  const ended = await replay({ ...site, hooks: { ...site.hooks, fill } }, library, { codes: ["135790"], prompts });
+  const ended = await replay({ ...site, hooks: { ...site.hooks, fill } }, library, {
+    codes: ["135790", "135790", "246802"],
+    prompts,
+  });
   expect(ended).toMatchObject({ outcome: "signed_in" });
-  expect(typed).toEqual(["135790", "135790"]);
-  expect(prompts[1]).toMatch(/^The last code didn't sign you in\. /u);
+  expect(typed).toEqual(["135790", "246802"]);
+  expect(prompts[1]).toMatch(/^The site refused the last code\. /u);
 });
 
-it("never types again a code the site refused, after a later code that only didn't sign in", async () => {
+it("never types again a code the site refused, after a later code whose page stayed with no refusal", async () => {
   // The site refuses the first code at its marker, which goes once a code is typed again; the
   // second code then stays with no marker.
   const site = scriptedSite(
@@ -850,7 +876,7 @@ it("never types again a code the site refused, after a later code that only didn
   expect(ended).toMatchObject({ outcome: "unclear", reason: "code_rejected" });
   expect(typed).toEqual(["111111", "222222"]);
   expect(prompts[1]).toMatch(/^The site refused the last code\. /u);
-  expect(prompts[2]).toMatch(/^The last code didn't sign you in\. /u);
+  expect(prompts[2]).toMatch(/^The site refused the last code\. /u);
 });
 
 // The host's read of the site's answer at a code page that stayed, counted, with the texts it got.
@@ -881,11 +907,11 @@ it("reads the site's answer once at each code page that stayed, and never on a c
   let pressed = 0;
   const site = scriptedSite({ start: codeScreen }, () => (++pressed > 1 ? "home" : undefined));
   const library = libraryOf([{ fingerprint: arrival(codeScreen), step: stepAt("/verify", [code], "#verify") }]);
-  // Any answer but a locked account asks again as a code that didn't sign in.
+  // Any answer but a locked account asks again for a new code.
   const { reads, siteAnswer } = reading("refused");
   const prompts: string[] = [];
   expect(await replay(site, library, { siteAnswer, prompts })).toMatchObject({ outcome: "signed_in" });
-  expect(prompts[1]).toMatch(/^The last code didn't sign you in\. /u);
+  expect(prompts[1]).toMatch(/^The site refused the last code\. /u);
   expect(site.fills).toEqual(["code", "code"]);
   expect(reads.count).toBe(1);
   const quick = scriptedSite({ start: codeScreen }, () => "home");
@@ -2342,6 +2368,20 @@ it("orders states sharing a look by a host's method where the login names none, 
   expect(wentIn).toMatchObject({ outcome: "signed_in" });
   expect(wentIn.choices).not.toHaveProperty("method");
   expect(way.clicks).toEqual(["#continue", "#use-password", "#go"]);
+});
+
+it("takes the host's method at a method choice, as a saved authenticator seed's, over the login's remembered pick", async () => {
+  const choose: Screen = { path: "/choose", boxes: [], buttons: ["#text", "#app"], texts: ["how should we confirm it's you"] };
+  const methods = [
+    { method: "sms" as const, selector: "#text" },
+    { method: "totp" as const, selector: "#app" },
+  ];
+  const library = libraryOf([emailState, { fingerprint: arrival(choose), step: stepAt("/choose", [], "#text", { methods }) }]);
+  const site = scriptedSite({ start: emailScreen, choose }, (_at, clicked) => (clicked === "#continue" ? "choose" : "home"));
+  const ended = await replay(site, library, { hostMethod: "totp", choices: { method: "sms" } });
+  expect(ended).toMatchObject({ outcome: "signed_in" });
+  expect(site.clicks).toEqual(["#continue", "#app"]);
+  expect(ended.choices?.method).toBe("totp");
 });
 
 it("takes by a host's method only a state whose recorded press is that method, and keeps no method it led to", async () => {

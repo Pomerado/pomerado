@@ -152,11 +152,6 @@ const makeReplaySession = <E extends YieldableError, V extends string, L extends
     codeAttempts: { current: 0 },
   };
   const rejectedCodes = new Set(retryState.rejectedValues.code ?? []);
-  /**
-   * The codes this sign-in typed before the site last showed it refused one: never typed again,
-   * even where a later code only didn't sign in (`returned`), which may go in again itself.
-   */
-  const refusedCodes = new Set(rejectedCodes);
   const codeRequests = retryState.codeRequests;
   let rejectedFields: readonly RejectedMarker["slot"][] = [];
   const recordRejected = (fields: readonly RejectedMarker["slot"][]) => {
@@ -168,7 +163,6 @@ const makeReplaySession = <E extends YieldableError, V extends string, L extends
       (retryState.rejectedValues[logical] ??= new Set()).add(value);
       if (logical === "code") rejectedCodes.add(value);
     }
-    if (fields.includes("code")) for (const code of rejectedCodes) refusedCodes.add(code);
   };
   const observeRejections = Effect.gen(function* () {
     const observed = yield* recordedRejections(hooks, resolvedSteps(), input.correlation);
@@ -261,7 +255,6 @@ const makeReplaySession = <E extends YieldableError, V extends string, L extends
     values,
     retryState,
     rejectedCodes,
-    refusedCodes,
     codeRequests,
     progress,
     outcome,
@@ -497,8 +490,10 @@ export const makeReplay = <E extends YieldableError, V extends string, L extends
     /** The run holds none of the login's values: this replay is its value-free sign-in check. */
     valueFree: input.credentials === undefined,
     timing: session.timing,
+    input: session.input,
     state: session.state,
     sent: session.sent,
+    retryState: session.retryState,
     firstCause: session.firstCause,
     progress: session.progress,
     outcome: session.outcome,
