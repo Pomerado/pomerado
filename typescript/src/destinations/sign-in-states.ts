@@ -630,11 +630,27 @@ const recipeOf = (library: SignInStates, states: readonly StateEntry[], marker: 
 };
 
 /**
+ * States in the order a sign-in goes through them, as the transitions between them say: first
+ * those no other state leads to, then, turn by turn, each state once every state that leads to it
+ * is listed, each turn in library order; then the rest, such as a loop's, in library order.
+ */
+const routeOrder = (states: readonly StateEntry[], transitions: readonly TransitionEntry[]) => {
+  const keys = new Set(states.map((state) => state.key));
+  const links = transitions.filter(({ from, to }) => from !== to && keys.has(from) && keys.has(to));
+  const listed: StateEntry[] = [];
+  const ready = (state: StateEntry) =>
+    !listed.includes(state) &&
+    links.every(({ from, to }) => to !== state.key || listed.some((before) => before.key === from));
+  for (let turn = states.filter(ready); turn.length > 0; turn = states.filter(ready)) listed.push(...turn);
+  return [...listed, ...states.filter((state) => !listed.includes(state))];
+};
+
+/**
  * The library as one login's recipe, for the checks a host runs on a recipe's steps and marker:
- * the steps of its states but a step-up's (`stepUp`) in library order, written as
- * `autofillRecipe` writes them, and the marker the login reached last (`choices.signedIn`), else
- * the newest, never a step-up's. A view, never a recipe to store: it may hold more steps than a
- * recipe may. Undefined with no such state or marker.
+ * the steps of its states but a step-up's (`stepUp`) in the order a sign-in goes through them
+ * (`routeOrder`), written as `autofillRecipe` writes them, and the marker the login reached last
+ * (`choices.signedIn`), else the newest, never a step-up's. A view, never a recipe to store: it
+ * may hold more steps than a recipe may. Undefined with no such state or marker.
  */
 export const signInStatesRecipe = (
   library: SignInStates,
@@ -643,16 +659,16 @@ export const signInStatesRecipe = (
   const markers = library.signedIn.filter((entry) => entry.stepUp !== true);
   return recipeOf(
     library,
-    library.states.filter((entry) => entry.stepUp !== true),
+    routeOrder(library.states.filter((entry) => entry.stepUp !== true), library.transitions),
     markers.find((entry) => entry.key === choices?.signedIn) ?? markers.at(-1),
   );
 };
 
 /**
- * The library as a replay in place reads it: the steps of every state, a step-up's and the site's
- * own sign-in's, in library order, and the step-up marker the login reached last
- * (`choices.signedIn`), else the newest step-up marker; with none, the marker
- * `signInStatesRecipe` takes. Undefined with no state or no marker.
+ * The library as a replay in place reads it, as any replay reads one with no step-up: the steps of
+ * every state, a step-up's and the site's own sign-in's, in library order, and the step-up marker
+ * the login reached last (`choices.signedIn`), else the newest step-up marker; with none, the
+ * marker `signInStatesRecipe` takes. Undefined with no state or no marker.
  */
 export const signInStatesStepUpRecipe = (
   library: SignInStates,

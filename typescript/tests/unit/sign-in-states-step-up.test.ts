@@ -185,6 +185,20 @@ it("views a library as the login's recipe without a step-up recorded after its s
   );
 });
 
+it("views a library as the login's recipe in the order its sign-in goes through the states, wherever a later sign-in found one", () => {
+  const location = {
+    fingerprint: { top: site, boxes: [], submit: false, buttons: ["here"] },
+    step: { page: `${site}/location`, fields: [], submit: "#here" },
+  };
+  // A later sign-in found a location page at `at`; the library stores it last, after the pages it leads to.
+  const learned = (at: number) =>
+    signInStatesRecipe(
+      append(append(signInStatesOf({}, []), own).library, { ...own, states: own.states.toSpliced(at, 0, location) }).library,
+    )?.steps.map((recipeStep) => recipeStep.submit);
+  expect(learned(0)).toEqual(["#here", "#continue", "#go"]);
+  expect(learned(1)).toEqual(["#continue", "#here", "#go"]);
+});
+
 it("never takes a step-up's state as a sign-in's first screen from the entry URL", async () => {
   // The site remembers the login and opens on its own password page, which looks as the step-up does.
   const fake = fakeSite("/sign-in", "/password");
