@@ -159,4 +159,9 @@ test("a code page the library never recorded, after the password, is answered on
   expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
   expect(asked).toEqual(["code"]);
   expect(posts.filter((post) => post.startsWith("/verify"))).toEqual([`/verify code=${code}`]);
+  // The page's look and the state before it, for the host to have the page recorded.
+  expect(ended.unrecordedCode).toEqual({
+    fingerprint: expect.objectContaining({ boxes: [expect.objectContaining({ kind: "code" })] }),
+    after: library.states[0]?.key,
+  });
 });

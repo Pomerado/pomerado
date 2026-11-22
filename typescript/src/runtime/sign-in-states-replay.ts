@@ -149,6 +149,12 @@ export type SignInStatesOutcome<V extends string = string> = AutofillReplayOutco
   readonly choices?: SignInStatesChoices;
   readonly stop?: () => SignInStatesStop;
   readonly fromStop?: { readonly continued: true } | { readonly continued: false; readonly reason: string };
+  /**
+   * A replay that signed in after it gave the code on a page no state knew (`walk`): that page's
+   * fingerprint, and the key of the state acted in before it (`after`), with no selector or value,
+   * for a host to have the page recorded.
+   */
+  readonly unrecordedCode?: { readonly fingerprint: StateFingerprint; readonly after?: string };
   readonly unknownState?: {
     readonly fingerprint: StateFingerprint;
     readonly description: string;
@@ -2051,7 +2057,8 @@ export const replaySignInStates = <
  * reached gives where (`stop`). Once the login went out, a page no state knows with no password box
  * that shows a code box gets the code there, as a code screen a recipe never recorded does
  * (`unrecordedCode`), once and only while no code may have gone out, and the replay goes on; a
- * caller that records such a page itself (`codeRowByPlace: false`) gets the unknown state.
+ * caller that records such a page itself (`codeRowByPlace: false`) gets the unknown state. One that
+ * then signs in names the page (`unrecordedCode`).
  */
 const walk = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -2062,6 +2069,7 @@ const walk = <E extends YieldableError, V extends string, L extends AutofillLogi
     let last: Acted | undefined;
     let next = first;
     const probed = { current: false };
+    let answered: SignInStatesOutcome<V>["unrecordedCode"];
     for (;;) {
       const arrived = next ?? (yield* arrive(run, last));
       next = undefined;
@@ -2081,8 +2089,15 @@ const walk = <E extends YieldableError, V extends string, L extends AutofillLogi
           !unknown.boxes.some((box) => box.kind === "password")
             ? yield* unrecordedCode(run.as, run.replay, probed)
             : "none";
-        if (code === "ran") continue;
-        return code === "none" ? arrived.ended : stopped(run, code).ended;
+        if (code === "ran" && unknown !== undefined) {
+          const after = arrived.ended.unknownState?.after;
+          answered = { fingerprint: unknown, ...(after === undefined ? {} : { after }) };
+          continue;
+        }
+        if (code !== "none") return stopped(run, code).ended;
+        return answered !== undefined && arrived.ended.outcome === "signed_in"
+          ? { ...arrived.ended, unrecordedCode: answered }
+          : arrived.ended;
       }
       if (run.visited.length >= maximumStateVisits) return stopped(run, "state_limit").ended;
       run.visited.push(arrived.state.key);
