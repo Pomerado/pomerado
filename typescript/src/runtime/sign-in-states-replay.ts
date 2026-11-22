@@ -37,7 +37,7 @@ import type { AutofillSignInState } from "./autofill-state.js";
 import { maySend } from "../destinations/autofill-refusal.js";
 import { recordedRejections } from "./autofill-rejection.js";
 import { approvalNumber, openPastedLink, withApprovalNumber } from "./autofill-replay-approval.js";
-import { settleCarried } from "./autofill-replay-fill.js";
+import { settleCarried, type StepValues } from "./autofill-replay-fill.js";
 import { landingSettleMs } from "./autofill-replay-pages.js";
 import { alreadySignedIn, makeReplay, type Replay, workspaceOf } from "./autofill-replay-session.js";
 import {
@@ -51,7 +51,7 @@ import {
 import { admitScreen, noteExactSent } from "./autofill-replay-workspace.js";
 import { codeRowFields, isCodeRowByPlace } from "./autofill-unrecorded-code.js";
 import { isIdentifier, provesLogin, screenSubmit, submittedLoginProof } from "./autofill-state.js";
-import type { AutofillLogin } from "./autofill-values.js";
+import type { AutofillLogin, TakenRecoveryCode } from "./autofill-values.js";
 import { workspaceHost } from "./workspace-origin.js";
 
 // A sign-in replayed from a library of states, never from a recipe: the page is looked at again
@@ -1470,6 +1470,28 @@ const actions = (fields: AutofillStep["fields"]) =>
     return [...groups, [field]];
   }, []);
 
+/**
+ * The values `resolved` holds for the action `at` of `groups`, whose boxes it holds in a row,
+ * handed to that action's fill as it starts: from then on the fill settles the recovery codes they
+ * took, and they leave `untyped`.
+ */
+const handedValues = (
+  resolved: StepValues,
+  groups: readonly AutofillStep["fields"][],
+  at: number,
+  typing: AutofillStep,
+  untyped: Set<TakenRecoveryCode>,
+) =>
+  Effect.sync(() => {
+    const from = groups.slice(0, at).flat().length;
+    const to = from + typing.fields.length;
+    const values = resolved.values.slice(from, to);
+    const recoveryCodes = resolved.recoveryCodes.filter((taken) => values.includes(taken.code));
+    for (const taken of recoveryCodes) untyped.delete(taken);
+    const step = { ...typing, fields: resolved.step.fields.slice(from, to) };
+    return { values, step, recoveryCodes } satisfies StepValues;
+  });
+
 const codeMethods: ReadonlySet<string> = new Set(["sms", "call", "email", "totp"]);
 /** The methods by which the site sends something once picked: a code, or a push. */
 const sendMethods: ReadonlySet<string> = new Set(["sms", "call", "email", "push"]);
@@ -1628,13 +1650,24 @@ const sendsOnPress = <E extends YieldableError, V extends string, L extends Auto
  * known state the page shows after a box or while a press waits (`holdStill`) is taken, keeping
  * what was typed. A fill that failed with nothing yet sent, as when the page redrew its form under
  * it, has the state looked for once more in the replay (`gone`), as a recipe screen gone unsent is.
+ * Every value its boxes take is resolved before the first is typed, so a value nobody gives ends
+ * the replay with nothing typed; a recovery code taken for a box never typed goes back unspent. A
+ * security answer still resolves at its own box, as the host counts a saved one by the screen it
+ * fills.
  */
 const actIn = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
   shown: Shown,
   arrival: ObservedState,
-): Effect.Effect<Ended<V> | Acted, E> =>
-  Effect.gen(function* () {
+): Effect.Effect<Ended<V> | Acted, E> => {
+  const untyped = new Set<TakenRecoveryCode>();
+  const giveBack = Effect.suspend(() => {
+    const taken = [...untyped];
+    untyped.clear();
+    if (taken.length === 0) return Effect.void;
+    return run.input.hosted?.settleRecoveryCodes?.(taken, false) ?? Effect.void;
+  });
+  return Effect.gen(function* () {
     const { replay, input } = run;
     let { state } = shown;
     const { inspection } = shown;
@@ -1668,6 +1701,23 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
       const full = actedStep(run, state);
       let fuller: { readonly state: StateEntry; readonly observed: ObservedState } | undefined;
       const groups = actions(full.fields.filter((field) => !typed.has(field.slot)));
+      const early = groups.filter((fields) =>
+        fields.every((field) => field.slot !== "private_answer"),
+      );
+      yield* giveBack;
+      let resolved: StepValues | undefined;
+      if (early.length > 1) {
+        const all: AutofillStep = {
+          fields: early.flat(),
+          ...(full.popup === undefined ? {} : { popup: full.popup }),
+        };
+        const here = yield* shownWithin(run, state, all);
+        if (typeof here === "string") return stopped(run, here);
+        const values = yield* replay.values(all, here);
+        if (typeof values === "string") return stopped(run, values);
+        resolved = values;
+        for (const taken of values.recoveryCodes) untyped.add(taken);
+      }
       for (const [index, fields] of groups.entries()) {
         const keyed = index === groups.length - 1 && full.submitKey !== undefined;
         const typing: AutofillStep = {
@@ -1679,13 +1729,25 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
         };
         const here = yield* shownWithin(run, state, typing);
         if (typeof here === "string") return stopped(run, here);
-        const failed = yield* replay.runStep(typing, here, undefined, false, undefined, step.refills ?? []);
+        const at = early.indexOf(fields);
+        const failed = yield* replay.runStep(
+          typing,
+          here,
+          undefined,
+          false,
+          undefined,
+          step.refills ?? [],
+          undefined,
+          resolved === undefined || at === -1
+            ? undefined
+            : handedValues(resolved, early, at, typing, untyped),
+        );
         if (failed !== undefined) {
           if (run.gone || replay.progress.anythingSent || replay.sent.maySent.size > 0)
             return stopped(run, failed);
           run.gone = true;
           yield* input.emit({ stage: "retried", reason: "screen_gone" });
-          return { acted: state, reached, gone: true };
+          return { acted: state, reached, gone: true } satisfies Acted;
         }
         for (const field of fields) typed.add(field.slot);
         if (keyed) {
@@ -1773,7 +1835,8 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
       }
       return acted(press, method);
     }
-  });
+  }).pipe(Effect.ensuring(giveBack));
+};
 
 /**
  * After typing a state that names no submit nor submit key, whose page was to send what was typed
