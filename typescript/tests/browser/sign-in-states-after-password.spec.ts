@@ -202,6 +202,30 @@ test("a login page that comes back typed beside a new code box gets no code, and
   expect(posts).toHaveLength(1);
 });
 
+test("an email box whose own suggestion list covers its Continue has the list closed, and signs in", async ({ page }) => {
+  const identifier = `<form method="post" action="/login" style="position:relative"><p style="margin:0;height:40px"><label>Email<input id="username" name="username" aria-controls="suggest" aria-expanded="false"></label></p><ul id="suggest" role="listbox" hidden style="position:absolute;top:40px;left:0;width:400px;height:120px;margin:0;background:#fff"><li role="option">${username}@example.test</li></ul><p style="margin:0"><button id="next">Continue</button></p></form><script>
+const box = document.getElementById("username"), list = document.getElementById("suggest");
+box.addEventListener("input", () => { list.hidden = false; box.setAttribute("aria-expanded", "true"); });
+box.addEventListener("keydown", (event) => { if (event.key === "Escape") { list.hidden = true; box.setAttribute("aria-expanded", "false"); } });
+</script>`;
+  const passwordPage =
+    '<form method="post" action="/password"><label>Password<input id="password" name="password" type="password"></label><button id="sign-in">Sign in</button></form>';
+  const posts = await serve(
+    page,
+    { "/login": identifier, "/password": passwordPage, "/home": '<p id="account">Your account</p>' },
+    { "/login": "/password", "/password": "/home" },
+  );
+  const library = await recorded(page, [
+    { page: `${site}/login`, fields: [{ selector: "#username", accepts: ["username"] }], submit: "#next" },
+    { page: `${site}/password`, fields: [{ selector: "#password", slot: "password" }], submit: "#sign-in" },
+  ]);
+  await page.goto("about:blank");
+  posts.length = 0;
+  const { ended } = await replay(page, library, {});
+  expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(posts).toEqual([`/login username=${username}`, `/password password=${password}`]);
+});
+
 test("a code page right after the username, before any password, gets no code", async ({ page }) => {
   const identifier =
     '<form method="post" action="/login"><label>Username<input id="username" name="username"></label><button id="next">Next</button></form>';

@@ -165,12 +165,14 @@ const scriptedSite = (
           fills.push(field.slot);
           site.typed.set(field.selector, values[index] ?? "");
         });
+        // A submit gone once the boxes were typed is refused, as the host refuses it.
+        const gone = step.submit !== undefined && !controls().includes(step.submit);
         const pressed = step.submit ?? (step.submitKey === undefined ? undefined : "Enter");
-        if (pressed !== undefined) press(pressed);
+        if (pressed !== undefined && !gone) press(pressed);
         return {
           outcome: "filled",
           fields: step.fields.map((field) => ({ slot: field.slot, status: "filled" as const })),
-          submit: step.submit === undefined ? "none" : "clicked",
+          submit: step.submit === undefined ? "none" : gone ? "refused" : "clicked",
           url: page(),
         };
       }),
@@ -1173,7 +1175,7 @@ it("ends unclear when the press after a typed password lost its call's answer", 
   const library = libraryOf([{ fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") }]);
   const site = scriptedSite({ start: passwordScreen }, () => "home");
   const fill: typeof site.hooks.fill = (call) =>
-    call.step.fields.length > 0
+    call.step.submit === undefined
       ? site.hooks.fill(call)
       : Effect.succeed({ outcome: "uncertain", reason: "fill_call_failed", failureDetail: {} } as AutofillStepReport);
   expect(await replay({ ...site, hooks: { ...site.hooks, fill } }, library)).toMatchObject({ outcome: "unclear" });
@@ -1616,7 +1618,7 @@ const timed = (site: ReturnType<typeof scriptedSite>) => {
   const at = new Map<string, number>();
   const fill: AutofillHooks<TestFailure>["fill"] = (request) =>
     Effect.flatMap(Clock.currentTimeMillis, (ms) => {
-      at.set(request.step.submit ?? request.step.fields.map((field) => field.selector).join(), ms);
+      at.set(request.step.fields.map((field) => field.selector).join() || (request.step.submit ?? ""), ms);
       return site.hooks.fill(request);
     });
   return { timedSite: { ...site, hooks: { ...site.hooks, fill } }, at };
@@ -3295,17 +3297,18 @@ it("still takes a state told by its text alone as gone once the page's look chan
   const library = libraryOf([
     { fingerprint: arrival(drawnPasswordScreen), step: stepAt("/password", [password], "#go") },
   ]);
-  // The page sends what was typed itself, and its look changes before any press.
+  // The page sends what was typed itself, and its look changes before any press: the host refuses
+  // the submit, gone.
   const site = scriptedSite({ start: drawnPasswordScreen, home: { path: "/home", boxes: [] } }, () => undefined);
   const fill = site.hooks.fill;
   const sending = {
     ...site,
     hooks: {
       ...site.hooks,
-      fill: (request: Parameters<typeof fill>[0]) =>
-        Effect.map(fill(request), (report) => {
+      fill: ({ step: { submit, ...typing }, ...request }: Parameters<typeof fill>[0]) =>
+        Effect.map(fill({ ...request, step: typing }), (report): AutofillStepReport => {
           site.site.screen = "home";
-          return report;
+          return submit === undefined || report.outcome !== "filled" ? report : { ...report, submit: "refused" };
         }),
     },
   };

@@ -22,8 +22,9 @@ import type { AutofillHooks } from "../../src/runtime/autofill-state.js";
 import { typedValues } from "../../src/runtime/autofill-values.js";
 
 // A scripted sign-in site for a replay from states. Its fill acts on a step as core's own fill
-// does on a page: it clicks a covering notice's control the step names before it types, and a
-// notice still showing catches the submit's click; a submit another element covers goes only from
+// does on a page: it clicks a covering notice's control the step names before it types, and once
+// they are typed before its submit, and a notice still showing catches the submit's click; a
+// submit another element covers goes only from
 // the keyboard (`submitVia`); a native select picks only the step's `option`; a security question
 // is read only at the field's own `questionSelector`; and each value is typed as a host types it
 // (`typedValues`).
@@ -149,10 +150,12 @@ export const featureSite = (
       }),
     fill: ({ step, values }) =>
       Effect.sync((): AutofillStepReport => {
-        if (step.dismiss !== undefined && step.dismiss === shown().notice?.control && noticeShows()) {
+        const dismiss = () => {
+          if (step.dismiss === undefined || step.dismiss !== shown().notice?.control || !noticeShows()) return;
           actions.push(`dismiss ${step.dismiss}`);
           site.dismissed = true;
-        }
+        };
+        dismiss();
         const keyed = typedValues(step, values);
         step.fields.forEach((field, index) => {
           actions.push(`type ${field.selector}`);
@@ -161,6 +164,7 @@ export const featureSite = (
         });
         const pressed = step.submit ?? (step.submitKey === undefined ? undefined : "Enter");
         if (pressed === undefined) return report(step, "none");
+        dismiss();
         if (noticeShows() || (shown().covered === true && step.submitKey === undefined && step.submitVia !== "keyboard"))
           return report(step, "blocked");
         actions.push(step.option === undefined ? `press ${pressed}` : `select ${pressed} ${step.option}`);
