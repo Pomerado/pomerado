@@ -825,9 +825,11 @@ const byPlace = <E extends YieldableError, V extends string, L extends AutofillL
  * the state just acted in again; in place, one in a pop-up (`inPopup`) that no state leads to, or
  * that `after` led to, whatever the look. A state acted in before something went out that the
  * page shows again, with no other, is `returned`, unless a sign-in learned it after the last one
- * (`learnedNext`). With `loose`, states of its look none of whose recorded controls showed may be a
- * code state typed by place into the row the page shows (`byPlace`); with no state of its whole
- * look, a page with no box may be a state told by its control and address alone (`byControl`);
+ * (`learnedNext`), and before the step wait (`waited`) not while a look-alike so learned has yet to
+ * show, as a known next screen that looks the same as an earlier one may still be drawing. With
+ * `loose`, states of its look none of whose recorded controls showed may be a code state typed by
+ * place into the row the page shows (`byPlace`); with no state of its whole look, a page with no
+ * box may be a state told by its control and address alone (`byControl`);
  * its refusals count for nothing, so a page no state is still ends as an unknown state. Where none
  * shows and the origin rule refused one whose controls showed (`admission`), that refusal
  * (`refusedOrigin`). A state noted without its question (`untold`) is taken so only on a page with
@@ -874,6 +876,8 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
     const alike = ranked(run, candidates, told, next, fingerprint);
     let refused: string | undefined;
     let returned: StateEntry | undefined;
+    // A look-alike a sign-in learned after the last one whose controls have not shown yet.
+    let pending = false;
     const missing: StateEntry[] = [];
     for (const state of alike) {
       if (!learned.includes(state) && (yield* returnedTo(run, state))) {
@@ -886,11 +890,12 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
         return { state, inspection: shown } satisfies Shown;
       }
       refused ??= shown;
+      pending ||= learned.includes(state);
       if (shown === "not_found") missing.push(state);
     }
     const asked = yield* askedHere(run, fingerprint, after, next);
     if (asked !== undefined) return asked;
-    if (returned !== undefined) return { returned: returned as StateEntry };
+    if (returned !== undefined) return waited || !pending ? { returned: returned as StateEntry } : refused;
     if (run.admission !== undefined) return { refusedOrigin: run.admission };
     if (missing[0] !== undefined) run.missing = missing[0].key;
     if (loose && refused === "not_found" && run.input.codeRowByPlace !== false) {
