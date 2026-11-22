@@ -145,7 +145,6 @@ export const makeSignInBrowser = (options: {
       readonly inspection: AutofillInspection;
       readonly values: readonly string[];
       readonly typedBoxes?: TypedBox[];
-      readonly moreToType?: true;
     }) =>
       fillAutofillStep({ ...input, page, keyboard: options.keyboard, typing: "keyboard" }).pipe(
         // The session's record counts what `rememberTyping` counts: a fill that typed.
@@ -200,8 +199,8 @@ export const makeSignInBrowser = (options: {
         siteOrigin,
         authenticationOrigins,
       }),
-    observe: (workspace, identifiers) =>
-      observeSignInState({ page, siteOrigin, authenticationOrigins, workspace, identifiers }),
+    observe: (workspace, identifiers, popup) =>
+      observeSignInState({ page, siteOrigin, authenticationOrigins, workspace, identifiers, popup }),
   };
 };
 

@@ -12,6 +12,7 @@ import { maySend } from "../destinations/autofill-refusal.js";
 import {
   armStep,
   type AutofillSecret,
+  isExtraSecret,
   isSecret,
   namedFields,
   recordStep,
@@ -271,8 +272,6 @@ export const replayValues = <E extends YieldableError, V extends string, L exten
 /**
  * One observed screen: admitted by the host, filled and submitted. Why it did not complete, or
  * undefined. `planned` is the recorded screen's `refills`, and `next` the recorded screen after it.
- * With `moreToType`, more boxes of the screen go in a later fill, so its page gets no time to send
- * these itself (the fill's `moreToType`).
  * A code screen that closed in place counts as sent only once the marker or `next` shows
  * (`closedInPlace`). Its values are `replayValues`', or `given`, run once the screen is admitted,
  * for a caller that resolved them before it typed anything.
@@ -287,7 +286,6 @@ export const runReplayStep = <E extends YieldableError, V extends string, L exte
   planned: readonly AutofillSecret[] = [],
   next?: AutofillRecipeStep,
   given?: Effect.Effect<StepValues>,
-  moreToType = false,
 ) =>
   Effect.gen(function* () {
     const { input, hooks, retryState, sent, progress, rejectedCodes, state } = session;
@@ -355,13 +353,7 @@ export const runReplayStep = <E extends YieldableError, V extends string, L exte
       session,
       step,
       inspection.page,
-      yield* hooks.fill({
-        step,
-        values: filled,
-        inspection,
-        typedBoxes: progress.typedBoxes,
-        ...(moreToType ? { moreToType: true as const } : {}),
-      }),
+      yield* hooks.fill({ step, values: filled, inspection, typedBoxes: progress.typedBoxes }),
       next,
     );
     yield* timeExecutionStage(
@@ -378,6 +370,12 @@ export const runReplayStep = <E extends YieldableError, V extends string, L exte
         input.sent.current = true;
         noteMaySent(step, sentBefore, sent.maySent, progress.refilled);
       }
+    } else {
+      // An extra is never held as filled (`armStep`): one typed with no send, as a replay of states
+      // types before it presses, keeps its value now as the evidence a refusal of that press names.
+      for (const [index, field] of step.fields.entries())
+        if (isExtraSecret(field.slot) && filled[index] !== undefined)
+          retryState.lastFilled[field.slot] = filled[index];
     }
     yield* input.emit(stepDiagnostic(step, stepReport));
     progress.ran.push(step);

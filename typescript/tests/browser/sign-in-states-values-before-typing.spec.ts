@@ -11,11 +11,12 @@ import { replaySignInStates } from "../../src/runtime/sign-in-states-replay.js";
 import { makeSignInBrowser } from "../../src/standalone/authentication.js";
 import { hostKeyboard, hostPage } from "./autofill-host-page.js";
 
-// A run's sign-in replayed from its screens on local Chromium. Every value a screen's boxes take,
-// but a code or security answer, is resolved before its first box is typed, so a ZIP code nobody
-// gives types nothing and the recovery code beside it goes back unspent for the next run. A value
-// resolved early is held until its box is typed, so a screen the page grows into asks nothing
-// again, and a recovery code whose box the replay never typed goes back unspent.
+// A run's sign-in replayed from its screens on local Chromium, where the screen types each box
+// alone and then presses its button. Every value a screen's boxes take, but a code or security
+// answer, is resolved before its first box is typed, so a ZIP code nobody gives types nothing and
+// the recovery code beside it goes back unspent for the next run. A value resolved early is held
+// until its box is typed, so a screen the page grows into asks nothing again, and a recovery code
+// whose box the replay never typed goes back unspent.
 
 class TestFailure extends Data.TaggedError("TestFailure")<{ readonly code: string }> {}
 
@@ -161,10 +162,6 @@ const recoveryFields = [
   { selector: "#recovery-code", slot: "recovery_code" },
   { selector: "#zip", slot: "zip" },
 ] as const;
-// A fuller look of the recovery form, with a password box, which holds the screen without one.
-const withPassword =
-  'document.querySelector("form").insertAdjacentHTML("afterbegin", \'<label>Password<input id="password" name="password" type="password"></label>\')';
-const passwordField = { selector: "#password", slot: "password" } as const;
 
 test("a recovery code goes back untyped when the ZIP code on its screen goes unanswered, and the next run uses it", async ({ page }) => {
   const posted = await serve(page, recoveryForm(), (sent) => (sent["zip"] === zip ? "/home" : "/verify"));
@@ -188,14 +185,10 @@ test("a recovery code goes back untyped when the ZIP code on its screen goes una
 // Main takes no recovery code before its box, so it has none to give back here: this case covers
 // the give-back, not a fault of main's.
 test("a recovery code taken for a box the page moved on from goes back unspent", async ({ page }) => {
-  // The ZIP code alone signs this login in: the page moves on once it is typed. A fuller screen
-  // with a password box holds this one, so its boxes go one by one.
-  const moves = '<script>document.getElementById("zip").addEventListener("input", (event) => { if (event.target.value.length === 5) { document.body.innerHTML = "<p>Signing in</p>"; setTimeout(() => location.replace("/home"), 300); } });</script>';
+  // The ZIP code alone signs this login in: the page moves on once it is typed.
+  const moves = '<script>document.getElementById("zip").addEventListener("input", (event) => { if (event.target.value.length === 5) setTimeout(() => location.replace("/home"), 300); });</script>';
   const posted = await serve(page, recoveryForm(moves), () => "/verify");
-  const { signIn, held, settled } = await signInOn(page, [
-    { fields: [recoveryFields[1], recoveryFields[0]] },
-    { look: withPassword, fields: [recoveryFields[1], recoveryFields[0], passwordField] },
-  ]);
+  const { signIn, held, settled } = await signInOn(page, [{ fields: [recoveryFields[1], recoveryFields[0]] }]);
   const signedIn = await signIn({ username: "owner", password, zip }, {});
   expect(Either.isRight(signedIn) && signedIn.right.outcome).toBe("signed_in");
   expect(posted).toEqual([]);
@@ -226,13 +219,12 @@ for (const slot of ["code", "recovery_code"] as const)
 test("a recovery code held for a page that moved on goes into the recovery code box of the page shown next", async ({ page }) => {
   // Once the ZIP code is typed the site moves to /next, whose recovery code box has its own id,
   // beside an unrelated box with the id the first page's had.
-  const moves = '<script>document.getElementById("zip").addEventListener("input", (event) => { if (event.target.value.length === 5) { document.body.innerHTML = "<p>One moment</p>"; setTimeout(() => location.replace("/next"), 300); } });</script>';
+  const moves = '<script>document.getElementById("zip").addEventListener("input", (event) => { if (event.target.value.length === 5) setTimeout(() => location.replace("/next"), 300); });</script>';
   const next =
     '<form method="post" action="/next"><label>Nickname<input id="recovery-code" name="nickname"></label><label>Backup code<input id="backup" name="backup"></label><button id="verify">Verify</button></form>';
   const posted = await serve(page, recoveryForm(moves), (sent) => (sent["backup"] === codes[0] ? "/home" : "/next"), { "/next": next });
   const { signIn, held, settled } = await signInOn(page, [
     { fields: [recoveryFields[1], recoveryFields[0]] },
-    { look: withPassword, fields: [recoveryFields[1], recoveryFields[0], passwordField] },
     { path: "/next", fields: [{ selector: "#backup", slot: "recovery_code" }] },
   ]);
   const signedIn = await signIn({ username: "owner", password, zip }, {});
@@ -240,4 +232,19 @@ test("a recovery code held for a page that moved on goes into the recovery code 
   expect(posted).toEqual([{ nickname: "", backup: codes[0] }]);
   expect(settled).toEqual([{ codes: [codes[0]], reached: true }]);
   expect([...held]).toEqual([codes[0]]);
+});
+
+test("a code beside an identifier box is asked only once the identifier is typed, as its site sends the code then", async ({ page }) => {
+  // The site sends the code once the username is typed in full.
+  const form =
+    '<form method="post" action="/verify"><label>Username<input id="username" name="username"></label><label>Verification code<input id="code" name="code" autocomplete="one-time-code" inputmode="numeric"></label><button id="verify">Verify</button></form><script>document.getElementById("username").addEventListener("input", (event) => { if (event.target.value === "synthetic-user") window.codeSent(); });</script>';
+  const posted = await serve(page, form, (sent) => (sent["code"] === "123456" ? "/home" : "/verify"));
+  const { signIn, asked } = await signInOn(page, [
+    { fields: [{ selector: "#username", accepts: ["username"] }, { selector: "#code", slot: "code" }] },
+  ]);
+  await page.exposeFunction("codeSent", () => void asked.push("code sent"));
+  const signedIn = await signIn({ username: "synthetic-user", password }, { code: "123456" }, false);
+  expect(Either.isRight(signedIn) && signedIn.right.outcome).toBe("signed_in");
+  expect(asked).toEqual(["code sent", "code"]);
+  expect(posted).toEqual([{ username: "synthetic-user", code: "123456" }]);
 });

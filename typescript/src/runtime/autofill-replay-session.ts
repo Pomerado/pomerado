@@ -473,7 +473,6 @@ export const makeReplay = <E extends YieldableError, V extends string, L extends
     planned: readonly AutofillSecret[] = [],
     next?: AutofillRecipeStep,
     given?: Effect.Effect<StepValues>,
-    moreToType = false,
   ) =>
     runReplayStep(
       session,
@@ -485,7 +484,6 @@ export const makeReplay = <E extends YieldableError, V extends string, L extends
       planned,
       next,
       given,
-      moreToType,
     );
   const extras = (observed: readonly RejectedMarker["slot"][]) =>
     correctReplayExtras(session, run, observed);
@@ -532,6 +530,8 @@ export const makeReplay = <E extends YieldableError, V extends string, L extends
     clearThenResubmit,
     /** The sign-in's tries of a code the site refused or that didn't sign in, each sent once. */
     codeAttempts: session.retryState.codeAttempts,
+    /** The values the site refused, by field, which no correction gives again. */
+    rejectedValues: session.retryState.rejectedValues,
     verify: verifySignIn(session),
     endedCantTell: endedCantTell(session),
     observeRejections: session.observeRejections,

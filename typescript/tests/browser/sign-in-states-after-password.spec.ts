@@ -232,6 +232,19 @@ box.addEventListener("keydown", (event) => { if (event.key === "Escape") { list.
   }
 });
 
+test("a ZIP code page that signs in on its last digit, taking its button away, signs in", async ({ page }) => {
+  // On the fifth digit the page shows the account in place of the form, so its Verify is gone.
+  const zipPage =
+    '<form method="post" action="/zip"><label>ZIP code<input id="zip" name="zip" autocomplete="postal-code"></label><button id="verify">Verify</button></form><script>document.getElementById("zip").addEventListener("input", (event) => { if (event.target.value.length === 5) document.body.innerHTML = \'<p id="account">Your account</p>\'; });</script>';
+  const posts = await serve(page, { "/login": loginPage, "/zip": zipPage }, { "/login": "/zip" });
+  const library = await recorded(page, [login, { page: `${site}/zip`, fields: [{ selector: "#zip", slot: "zip" }], submit: "#verify" }]);
+  await page.goto("about:blank");
+  posts.length = 0;
+  const { ended } = await replay(page, library, { zip: "94105" });
+  expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(posts).toEqual([`/login username=${username}&password=${password}`]);
+});
+
 test("a code page right after the username, before any password, gets no code", async ({ page }) => {
   const identifier =
     '<form method="post" action="/login"><label>Username<input id="username" name="username"></label><button id="next">Next</button></form>';
