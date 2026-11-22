@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Either } from "effect";
 import { expect, it } from "vitest";
 import type {
   AutofillInspection,
@@ -12,6 +12,8 @@ import { makeRunSecrets } from "../../src/inputs/secrets.js";
 import type { SignInStep } from "../../src/mint/contracts.js";
 import { makeSignInRecorder } from "../../src/mint/sign-in-recorder.js";
 import type { WebsiteCredentials } from "../../src/runtime/authentication.js";
+import { mintSessionSignIns } from "../../src/runtime/session-sign-in.js";
+import { makeBoundableAsk, makeLocalSessionSignIn } from "../../src/standalone/session-sign-in.js";
 
 // A build's sign-in is read as a state before each screen it fills, so its verified sign-in
 // publishes as screens; one whose screen could not be read as a state publishes as unreadable.
@@ -178,4 +180,50 @@ it("publishes a sign-in whose screen read as no state twice as unreadable, with 
     expect(published).toMatchObject({ unreadable: true, entryUrl: `${origin}/login` });
     expect(published).not.toHaveProperty("states");
   }
+});
+
+it("fails a build's sign-in again with an unreadable sign-in where the page reads signed out, typing nothing", async () => {
+  const { published } = await record([]);
+  if (published === undefined) throw new Error("no published sign-in");
+  const calls: string[] = [];
+  const untouched = (call: string) =>
+    Effect.sync(() => {
+      calls.push(call);
+      throw new Error(`The sign-in again called ${call}`);
+    });
+  const session = makeLocalSessionSignIn({
+    browser: {
+      inspect: () => untouched("inspect"),
+      fill: () => untouched("fill"),
+      confirm: () =>
+        Effect.succeed<AutofillSignedInCheck>({
+          signedIn: false,
+          failed: "password_field_visible",
+          url: `${origin}/login`,
+        }),
+      authenticationOrigins: [],
+      open: () => untouched("open"),
+      markerVisible: () => Effect.succeed(false),
+    },
+    recorded: () => published,
+    login: {
+      login: {
+        held: () => login,
+        values: Effect.succeed(login),
+        correct: () => Effect.die("the login takes no correction"),
+      },
+    },
+    asks: makeBoundableAsk(makeInputAsker(() => Effect.die("nothing is asked"))),
+    secrets: makeRunSecrets(),
+    site: "example.test",
+    siteOrigin: origin,
+    limits: mintSessionSignIns,
+    scope: "check",
+  });
+  const again = await Effect.runPromise(Effect.either(session.ensureSignedIn("signed_out_mid_operation")));
+  expect(Either.isLeft(again) && again.left).toMatchObject({
+    refusal: "session_sign_in_failed",
+    failure: { code: "MissingRecipe" },
+  });
+  expect(calls).toEqual([]);
 });

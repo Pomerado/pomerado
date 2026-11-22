@@ -4,7 +4,11 @@ import { join } from "node:path";
 import { Effect, Either } from "effect";
 import { expect, it } from "vitest";
 import { signInRecipe, type RecordedSignInStep } from "../../src/destinations/sign-in-recipe.js";
-import { appendSignInStates } from "../../src/destinations/sign-in-states.js";
+import {
+  appendSignInStates,
+  signInStateEntryText,
+  stateEntry,
+} from "../../src/destinations/sign-in-states.js";
 import { makeRunSecrets } from "../../src/inputs/secrets.js";
 import { prepareIntegration } from "../../src/standalone/mcp-package.js";
 import { readArtifact, writeArtifact } from "../../src/standalone/artifact-files.js";
@@ -164,6 +168,16 @@ it("refuses screens it cannot read, as a recipe, before a run signs in", () =>
     await writeFile(
       path,
       JSON.stringify({ ...parsed, entries: parsed.entries.filter((entry) => entry.kind !== "signed_in") }),
+    );
+    expect(await refusal()).toEqual({ code: "MissingRecipe", reason: "invalid" });
+    // A workspace step in a library with no workspace, which the library would leave out.
+    const workspaceStep = stateEntry(
+      { top: "workspace", boxes: [{ frame: "workspace", kind: "password" }], submit: true },
+      { origin: "workspace", page: "/password", fields: [{ selector: "#password", slot: "password" }], submit: "#go" },
+    );
+    await writeFile(
+      path,
+      JSON.stringify({ ...parsed, entries: [...parsed.entries, JSON.parse(signInStateEntryText(workspaceStep))] }),
     );
     expect(await refusal()).toEqual({ code: "MissingRecipe", reason: "invalid" });
     await rm(path);

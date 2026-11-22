@@ -199,10 +199,18 @@ const replayedBy = (sign: RecordedSignIn): SignInBy | undefined =>
       ? undefined
       : { recipe: sign.recipe };
 
-/** The marker and screens a recorded sign-in's checks read (`signInChecks`); none for neither. */
+/**
+ * The marker and screens a recorded sign-in's checks read (`signInChecks`): its screens', else its
+ * recipe's, which an `unreadable` sign-in's checks still read though it replays nothing, so a page
+ * it finds signed out fails its sign-in again rather than going on; none for neither.
+ */
 const checksOf = (sign: RecordedSignIn) => {
-  const by = replayedBy(sign);
-  const checks = by === undefined ? undefined : signInChecks(by);
+  const checks =
+    sign.states !== undefined
+      ? signInChecks({ states: sign.states })
+      : sign.recipe === undefined
+        ? undefined
+        : signInChecks({ recipe: sign.recipe });
   return typeof checks === "string" ? undefined : checks;
 };
 

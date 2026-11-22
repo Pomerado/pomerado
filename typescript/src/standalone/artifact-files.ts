@@ -92,6 +92,12 @@ const decodeSignInStates = (text: string): SignInStates | "invalid" | "unknown_v
   }
   const entries = stored.right.entries.map(decodeSignInStateEntry);
   if (entries.some((entry) => entry === undefined)) return "invalid";
+  // A workspace step needs the library's workspace; the library would leave it out.
+  if (
+    stored.right.workspace === undefined &&
+    entries.some((entry) => entry?.kind === "state" && entry.step.origin === "workspace")
+  )
+    return "invalid";
   const library = signInStatesOf(stored.right, entries as SignInStateEntry[]);
   return library.states.length === 0 || library.signedIn.length === 0 ? "invalid" : library;
 };
