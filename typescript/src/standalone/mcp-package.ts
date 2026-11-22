@@ -20,13 +20,14 @@ startMcpCli(['serve', '--artifact', fileURLToPath(new URL('.', import.meta.url))
 const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 /**
  * Top-level names authored source may not use, compared in lower case. They cover the packaging
- * files, the sign-in recipe, the TOML that 0.1.2 wrote and its docs told users to copy into Codex,
+ * files, the sign-in's screens and an older integration's sign-in recipe, the TOML that 0.1.2 wrote and its docs told users to copy into Codex,
  * the folder that keeps keyed job records, and the project config an MCP client might load from
  * this folder.
  */
 const reserved = new Set([
   "deployment.json",
   "auth-fill.json",
+  "sign-in-states.json",
   "mcp.mjs",
   "mcp.json",
   "readme.md",
