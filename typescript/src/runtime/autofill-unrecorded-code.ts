@@ -214,17 +214,37 @@ export const codeBoxRow = <E>(
     };
     const inspection = yield* hooks.inspect(step);
     if ("outcome" in inspection) return inspection;
-    const fields = inspection.screen.fields;
-    const row =
-      fields.length === first.of &&
-      fields.every(
-        (field, index) =>
-          field.codeBox?.box === index + 1 &&
-          field.codeBox.of === first.of &&
-          !namesWholeOtherWord(field),
-      );
-    return row ? { step, inspection } : ambiguous;
+    return isCodeRow(inspection.screen.fields, first.of, true) ? { step, inspection } : ambiguous;
   });
+
+/**
+ * Whether inspected fields are a row of `count` code boxes in order, none naming a PIN
+ * (`namesWholeOtherWord`): with `row`, each the next box of a row of as many one-character boxes
+ * (`codeBox`).
+ */
+export const isCodeRow = (
+  fields: AutofillInspection["screen"]["fields"],
+  count: number,
+  row: boolean,
+) =>
+  fields.length === count &&
+  fields.every(
+    (field, index) =>
+      (!row || (field.codeBox?.box === index + 1 && field.codeBox.of === count)) &&
+      !namesWholeOtherWord(field),
+  );
+
+/**
+ * The code fields of a row of `count` code boxes taken by place, for a code screen whose recorded
+ * boxes never showed though the page shows its look: each box of a row of one-character boxes
+ * (`row`, by `maxlength` 1 and the code field's word rule), else each code field
+ * `unrecordedCodeStep` matches, the next in its frame's page order. A host's inspection of them
+ * passes `isCodeRow` before anything is typed.
+ */
+export const codeRowFields = (count: number, row: boolean) => {
+  const box = row ? `input[maxlength="1"]${notOtherKind}` : (unrecordedCodeStep.fields[0]?.selector ?? "");
+  return Array.from({ length: count }, (_, index) => ({ selector: `${box} >> nth=${index}`, slot: "code" as const }));
+};
 
 /**
  * Whether the inspected code screen is on a sign-in origin: a recorded screen's (`recorded`), or

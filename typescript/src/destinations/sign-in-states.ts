@@ -23,11 +23,18 @@ export type BoxKind = typeof BoxKind.Type;
 const Origin = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(2_000));
 const Label = Schema.String.pipe(Schema.maxLength(200));
 
-/** One visible empty box: its frame's origin, its kind, and a code row's box count. */
+/**
+ * One visible empty box: its frame's origin, its kind, and a code row's box count; a code box also
+ * its role (`role`, as `textbox` or `spinbutton`) and its label's shape (`label`), so two code
+ * screens whose boxes differ in either are two looks. A look read before code boxes had them has
+ * neither.
+ */
 export const StateBox = Schema.Struct({
   frame: Origin,
   kind: BoxKind,
   count: Schema.optional(Schema.Int.pipe(Schema.between(2, 12))),
+  role: Schema.optional(Schema.String.pipe(Schema.pattern(/^[a-z]{1,20}$/u))),
+  label: Schema.optional(Label),
 });
 export type StateBox = typeof StateBox.Type;
 
@@ -117,8 +124,26 @@ export const fingerprintOf = (fingerprint: StateFingerprint): StateFingerprint =
   ...(fingerprint.buttons === undefined ? {} : { buttons: [...fingerprint.buttons].sort() }),
 });
 export const fingerprintText = (fingerprint: StateFingerprint) => canonical(fingerprintOf(fingerprint));
-export const sameFingerprint = (a: StateFingerprint, b: StateFingerprint) =>
-  fingerprintText(a) === fingerprintText(b);
+/** Whether a look gives its code boxes' role and label, as one read since they had them does. */
+const labelled = (fingerprint: StateFingerprint) => fingerprint.boxes.some((box) => box.role !== undefined);
+/** A look without its code boxes' role and label, as one read before they had them. */
+const unlabelled = (fingerprint: StateFingerprint): StateFingerprint => ({
+  ...fingerprint,
+  boxes: fingerprint.boxes.map(({ role: _role, label: _label, ...box }) => box),
+});
+/**
+ * Two looks as they compare: in full when both give their code boxes' role and label, else both
+ * without them, so a state recorded before code boxes had them matches every page it matched then.
+ */
+const comparable = (a: StateFingerprint, b: StateFingerprint): readonly [StateFingerprint, StateFingerprint] =>
+  labelled(a) && labelled(b) ? [a, b] : [unlabelled(a), unlabelled(b)];
+export const sameFingerprint = (a: StateFingerprint, b: StateFingerprint) => {
+  const [left, right] = comparable(a, b);
+  return fingerprintText(left) === fingerprintText(right);
+};
+/** Whether two looks are one in full, their code boxes' role and label given and alike. */
+export const sameLabelledFingerprint = (a: StateFingerprint, b: StateFingerprint) =>
+  labelled(a) && labelled(b) && fingerprintText(a) === fingerprintText(b);
 /** Whether a fingerprint shows nothing to tell it by: no box, no message and no button. */
 export const blankFingerprint = (fingerprint: StateFingerprint) =>
   fingerprint.boxes.length === 0 &&
@@ -126,13 +151,15 @@ export const blankFingerprint = (fingerprint: StateFingerprint) =>
   (fingerprint.buttons ?? []).length === 0;
 
 /**
- * Whether `outer` holds every box of `inner` and more, on the same top origin: a page that may
- * still grow from `inner` into `outer`, as a sign-in whose password box draws late.
+ * Whether `outer` holds every box of `inner` and more, on the same top origin, as looks compare
+ * (`comparable`): a page that may still grow from `inner` into `outer`, as a sign-in whose
+ * password box draws late.
  */
 export const containsFingerprint = (inner: StateFingerprint, outer: StateFingerprint) => {
-  if (inner.top !== outer.top || inner.boxes.length === 0) return false;
-  const left = outer.boxes.map((box) => canonical(box));
-  for (const box of inner.boxes) {
+  const [held, holding] = comparable(inner, outer);
+  if (held.top !== holding.top || held.boxes.length === 0) return false;
+  const left = holding.boxes.map((box) => canonical(box));
+  for (const box of held.boxes) {
     const at = left.indexOf(canonical(box));
     if (at < 0) return false;
     left.splice(at, 1);
@@ -267,7 +294,7 @@ export const standingFingerprint = (reached: ObservedState, now: ObservedState):
   });
   return fingerprintOf({
     top: now.fingerprint.top,
-    boxes: boxes.map(({ frame, kind, count }) => ({ frame, kind, ...(count === undefined ? {} : { count }) })),
+    boxes: boxes.map(({ empty: _empty, submit: _submit, ...box }) => box),
     submit: boxes.some((box) => box.submit),
   });
 };

@@ -13,9 +13,10 @@ import {
 export { type ObservedBox, type ObservedState, stateAfter } from "./sign-in-states.js";
 
 // The page as a sign-in state: one host call reads each visible box on a sign-in origin, by its
-// frame's origin and the kind of value its own attributes say it takes, never its value. Only a
-// page with no empty box is told by text: its main message and its buttons, normalized on the
-// host so no name, address or number is kept.
+// frame's origin and the kind of value its own attributes say it takes, never its value, and a
+// code box by its role and its labels too. Only a page with no empty box is told by text: its main
+// message and its buttons, normalized on the host so no name, address or number is kept, as a code
+// box's labels are, save a lone number of one or two digits, a box's place.
 
 /**
  * A text as a state holds it, normalized here, never in the page, whose own code may change what
@@ -53,7 +54,8 @@ const normalized = (text: string, limit: number, logins: readonly string[]) =>
 /**
  * Page code, run in each frame: the visible boxes that take typing, with their kinds, whether each
  * holds a value, and whether a submit sits in its form; a row of one-character boxes is one code
- * box with its count. A box with no hint of its kind counts as an identifier only when required or
+ * box with its count. A code box also gives its role, its own or else its type's, and the labels
+ * of its boxes (`labels`): its `aria-label`, else its label elements' text, else its placeholder. A box with no hint of its kind counts as an identifier only when required or
  * in a form that has a submit or another counted box; a search box never counts. With no empty
  * box, the first visible h1, else h2, heading, h3 or paragraph, and up to eight buttons; these
  * and every visible text outside a control (`texts`) as they stand, which the host normalizes.
@@ -97,6 +99,12 @@ const scanFrame = `() => {
       named(element, ["email", "user", "login", "phone", "mobile"])) return "identifier";
     return undefined;
   };
+  const roleOf = (element) => {
+    const own = attribute(element, "role");
+    return /^[a-z]{1,20}$/.test(own) ? own : attribute(element, "type") === "number" ? "spinbutton" : "textbox";
+  };
+  const labelOf = (element) => (element.getAttribute("aria-label") ||
+    [...(element.labels ?? [])].map((label) => label.innerText).join(" ") || element.getAttribute("placeholder") || "").slice(0, 200);
   // One-character boxes in one parent, or each alone in its own wrapper in one parent.
   const rowOf = (element) => element.parentElement?.childElementCount === 1
     ? element.parentElement.parentElement : element.parentElement;
@@ -109,12 +117,12 @@ const scanFrame = `() => {
   const unhinted = [];
   for (const [, members] of rows)
     if (members.length >= 4 && members.length <= 12)
-      found.push({ kind: "code", count: members.length, empty: members.every((box) => box.value === ""), submit: submitIn(formOf(members[0])), form: formOf(members[0]) });
+      found.push({ kind: "code", count: members.length, role: roleOf(members[0]), labels: members.map(labelOf), empty: members.every((box) => box.value === ""), submit: submitIn(formOf(members[0])), form: formOf(members[0]) });
   const inRows = new Set([...rows.values()].filter((members) => members.length >= 4 && members.length <= 12).flat());
   for (const element of boxes) {
     if (inRows.has(element)) continue;
     const kind = kindOf(element);
-    const box = { kind: kind ?? "identifier", empty: element.value === "", submit: submitIn(formOf(element)), form: formOf(element) };
+    const box = { kind: kind ?? "identifier", ...(kind === "code" ? { role: roleOf(element), labels: [labelOf(element)] } : {}), empty: element.value === "", submit: submitIn(formOf(element)), form: formOf(element) };
     if (kind === undefined) unhinted.push({ box, required: element.required });
     else found.push(box);
   }
@@ -201,6 +209,8 @@ return { url: primary.url(), frames };`;
 const ScannedBox = Schema.Struct({
   kind: BoxKind,
   count: Schema.optional(Schema.Int.pipe(Schema.between(2, 12))),
+  role: Schema.optional(Schema.String),
+  labels: Schema.optional(Schema.Array(Schema.String)),
   empty: Schema.Boolean,
   submit: Schema.Boolean,
 });
@@ -259,11 +269,21 @@ export const observeSignInState = (input: {
         const boxes = frames.flatMap((frame) =>
           frame.boxes.slice(0, 200).map((box) => ({ frame: named(frame.origin), ...box })),
         );
-        const written = (box: (typeof boxes)[number]): StateBox => ({
-          frame: box.frame,
-          kind: box.kind,
-          ...(box.count === undefined ? {} : { count: box.count }),
-        });
+        const written = (box: (typeof boxes)[number]): StateBox => {
+          const label = (box.labels ?? [])
+            .slice(0, 12)
+            .map((text) => (/^[0-9]{1,2}$/u.test(text.trim()) ? text.trim() : normalized(text, 200, logins)))
+            .filter((text) => text !== "")
+            .join(" ")
+            .slice(0, 200);
+          return {
+            frame: box.frame,
+            kind: box.kind,
+            ...(box.count === undefined ? {} : { count: box.count }),
+            ...(box.role !== undefined && /^[a-z]{1,20}$/u.test(box.role) ? { role: box.role } : {}),
+            ...(label === "" ? {} : { label }),
+          };
+        };
         // At most the 24 empty boxes a `StateFingerprint` holds, so a long form, such as an account
         // page's, still reads as a state a library can keep.
         const empty = boxes.filter((box) => box.empty).slice(0, 24);
