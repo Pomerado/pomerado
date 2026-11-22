@@ -1298,17 +1298,24 @@ const returnedReason = <E extends YieldableError, V extends string, L extends Au
   state: StateEntry,
 ) => (typesSent(run, state) ? "credential_screen_returned" : "state_repeated");
 
-/** A hand-off state `state` led to that this replay has not acted in. */
+/**
+ * The hand-off state that is this login's next after `state`, which this replay has not acted in:
+ * one its own route (`choices.states`) holds right after `state`, else one `state` led to where
+ * every state it led to is a hand-off. Where `state` also led to a state of another kind, as an
+ * identifier screen leads one login to its password and another to a provider, a page that settled
+ * is no hand-off of a login whose route doesn't name it.
+ */
 const handOffAfter = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
   state: StateEntry,
 ) => {
   const { states, transitions } = run.input.library;
-  return states.find(
-    (next) =>
-      next.step.approval === "handoff" &&
-      !run.visited.includes(next.key) &&
-      transitions.some((t) => t.from === state.key && t.to === next.key),
+  const route = run.input.choices?.states ?? [];
+  const led = states.filter((next) => transitions.some((t) => t.from === state.key && t.to === next.key));
+  const handOffs = led.filter((next) => next.step.approval === "handoff" && !run.visited.includes(next.key));
+  return (
+    handOffs.find((next) => route.some((key, index) => key === state.key && route[index + 1] === next.key)) ??
+    (led.every((next) => next.step.approval === "handoff") ? handOffs[0] : undefined)
   );
 };
 
@@ -1319,7 +1326,8 @@ const handOffAfter = <E extends YieldableError, V extends string, L extends Auto
  * for a page that shows a code box while no code may have gone out, which the code probe after it
  * answers (`unrecordedCode`). Any other ends so only at the step wait, as a recipe screen's wait
  * gives a slow page the whole wait, with the host's challenge look once it held still
- * `landingSettleMs`.
+ * `landingSettleMs` and again at the step wait's end; its end check keeps the guard of a page
+ * that ends early (`mayCantTell`), as it had when it ended once it held still.
  */
 const endsEarly = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -1373,8 +1381,8 @@ const endsEarly = <E extends YieldableError, V extends string, L extends Autofil
  * replay's marker wait. As at a recipe's screens: a value-free check holds a state with boxes it
  * found, with nothing run, until the page's look stayed `landingSettleMs` (`holdsShown`), and
  * ends on its login entry that settled showing no known state of its look, no marker and no
- * password box as one that can't tell (`entryCantTell`); after a state that led to a hand-off, a
- * page with no known state of its look that settled `landingSettleMs`, or any at the step wait, is
+ * password box as one that can't tell (`entryCantTell`); after a state whose next is a hand-off
+ * (`handOffAfter`), a page with no known state of its look that settled `landingSettleMs`, or any at the step wait, is
  * that hand-off once the marker's full check failed there and the page settled again
  * (`handOffShown`). Before an unknown state, or none, the recipe replay's last check runs
  * (`endCheck`).
@@ -1405,8 +1413,8 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
     let waitedOut = false;
     // The last look a state was looked for by its control alone (`byControl`).
     let byControlRead: string | undefined;
-    // The hand-off state the state just acted in led to (`handOffAfter`), and whether the full
-    // marker check ran on a page that settled before it.
+    // The hand-off that is the login's next after the state just acted in (`handOffAfter`), and
+    // whether the full marker check ran on a page that settled before it.
     const handOff = acted === undefined ? undefined : handOffAfter(run, acted.acted);
     let lateChecked = false;
     // A value-free check's login entry, while it may end as one that can't tell (`entryCantTell`).
@@ -1426,6 +1434,8 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
       const read = yield* run.input.observe;
       const at = yield* now;
       stood = false;
+      // A page with boxes no known state has or holds, at the step wait (`endsEarly`).
+      let unknownBoxes = false;
       if (read !== undefined) {
         let back: StateEntry | undefined;
         observed = read;
@@ -1490,8 +1500,8 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
             back = shown.returned;
           }
         }
-        // A page that settled with no marker, and no known state of its look, after a state that
-        // led to a hand-off is that hand-off, wherever it is, as at a recipe's hand-off screen
+        // A page that settled with no marker, and no known state of its look, after a state whose
+        // next is a hand-off is that hand-off, wherever it is, as at a recipe's hand-off screen
         // (`handOffShown`): first the marker's full check (`signedInLate`), which may open the
         // account page, then a page that settles again.
         if (
@@ -1620,8 +1630,11 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
           still &&
           (capped || endsEarly(run, shape)) &&
           !run.input.library.states.some((state) => containsFingerprint(shape as StateFingerprint, state))
-        )
-          break;
+        ) {
+          if (endsEarly(run, shape)) break;
+          // At the step wait it ends after the host's deadline look, as any page there does.
+          unknownBoxes = true;
+        }
       }
       const waited = at - start >= replay.timing.stepWaitMs;
       // Held as long as a page that can't tell is before it signs in, so that check goes first.
@@ -1642,11 +1655,11 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
           challenged = true;
           start = yield* now;
         } else if (waited) {
-          waitedOut = true;
+          waitedOut = !unknownBoxes;
           break;
         }
       } else if (waited) {
-        waitedOut = true;
+        waitedOut = !unknownBoxes;
         break;
       }
       yield* pause(run);

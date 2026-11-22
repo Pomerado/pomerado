@@ -3505,8 +3505,16 @@ it("waits out a page of boxes no state knows, as one drawing in phases, until th
   expect(await replay(site, twoStates)).toMatchObject({ outcome: "signed_in", loginProved: true });
   expect(site.fills).toEqual(["email", "password"]);
   // A page that stays so still ends as a state no one knows.
-  const stays = scriptedSite({ start: emailScreen, drawing }, (_at, clicked) => (clicked === "#continue" ? "drawing" : "home"));
-  expect(await replay(stays, twoStates)).toMatchObject({ outcome: "unclear", reason: "unknown_state" });
+  const stays = () => scriptedSite({ start: emailScreen, drawing }, (_at, clicked) => (clicked === "#continue" ? "drawing" : "home"));
+  expect(await replay(stays(), twoStates)).toMatchObject({ outcome: "unclear", reason: "unknown_state" });
+  // The host looks for a challenge there once it settled and again at the step wait's end.
+  const looked = stays();
+  const { looks, challenge } = lookingAt(looked, "none", "none");
+  const { ended, endedAt, events } = await replayOnClock(looked, twoStates, challenge);
+  expect(ended).toMatchObject({ outcome: "unclear", reason: "unknown_state" });
+  expect(endedAt).toBeGreaterThanOrEqual(30_000);
+  expect(lookEvents(events).map((event) => event.look)).toEqual(["early", "deadline"]);
+  expect(looks).toHaveLength(2);
 });
 
 it("holds a form a value-free check found until it stayed shown, as a signed-in page may show one a moment", async () => {
@@ -3547,4 +3555,39 @@ it("ends a value-free check on a login entry that settled with no state, marker 
     outcome: "unsent",
     reason: "unknown_state",
   });
+});
+
+it("takes a page that settled for a hand-off only where the hand-off is the login's next state", async () => {
+  // An identifier screen leads one login to its password and another to a provider's hand-off.
+  const provider: Screen = { path: "/sso", boxes: [{ selector: "#user", kind: "identifier" }], buttons: ["#next"] };
+  const identifier = { fingerprint: arrival(emailScreen), step: stepAt("/sign-in", [email], "#continue") };
+  const typesPassword = { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") };
+  const handOff = { fingerprint: arrival(provider), step: stepAt("/sso", [], undefined, { approval: "handoff" }) };
+  const library = libraryOf([identifier, typesPassword], [identifier, handOff]);
+  const loading: Screen = { path: "/sign-in", boxes: [], texts: ["loading"] };
+  // After Continue, the page shows no box for 4 seconds, then the password screen.
+  const site = () =>
+    scriptedSite({ start: emailScreen, loading, password: passwordScreen }, (_at, clicked) =>
+      clicked === "#continue" ? "loading" : "home",
+    );
+  const drawn = (shown: ReturnType<typeof scriptedSite>) =>
+    Effect.gen(function* () {
+      while (shown.site.screen !== "loading") yield* Effect.sleep(Duration.millis(50));
+      yield* Effect.sleep(Duration.seconds(4));
+      shown.site.screen = "password";
+    });
+  for (const choices of [undefined, { states: [identifier, typesPassword].map(keyOf) }]) {
+    const own = site();
+    const { ended } = await replayOnClock(own, library, undefined, drawn(own), true, false, { choices });
+    expect(ended).toMatchObject({ outcome: "signed_in", loginProved: true });
+    expect(own.fills).toEqual(["email", "password"]);
+  }
+  // A login whose route names the hand-off next takes the page that settled for it.
+  const handed = site();
+  const { ended, endedAt, events } = await replayOnClock(handed, library, undefined, Effect.void, true, false, {
+    choices: { states: [identifier, handOff].map(keyOf) },
+  });
+  expect(ended).toMatchObject({ outcome: "unclear", reason: "values_needed" });
+  expect(endedAt).toBeLessThan(30_000);
+  expect(events).toContainEqual(expect.objectContaining({ reason: "settled_page" }));
 });
