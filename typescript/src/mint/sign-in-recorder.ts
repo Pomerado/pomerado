@@ -674,7 +674,7 @@ export const makeSignInRecorder = (input: {
             : undefined;
       const observed = yield* readState;
       yield* armStep(state, step, inspected, filled, secretIn);
-      if (observed !== undefined) noteSignInState(state, observed);
+      if (observed !== undefined) noteSignInState(state, observed, { questionShape: true });
       if (reasked !== undefined) noteRefill(state, reasked);
       afterSubmit = undefined;
       const report = yield* hooks.fill({ step, values: filled, inspection: inspected });
@@ -780,7 +780,7 @@ export const makeSignInRecorder = (input: {
           : {}),
         ...(step.popup === undefined ? {} : { popup: step.popup }),
       });
-      if (observed !== undefined) noteSignInState(open, observed);
+      if (observed !== undefined) noteSignInState(open, observed, { questionShape: true });
       return {
         approved: true as const,
         result: {
