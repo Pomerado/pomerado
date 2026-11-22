@@ -283,6 +283,8 @@ const replay = (
     readonly inPlace?: boolean;
     /** The replay may hand off: what the person does in the browser before marking it done. */
     readonly handOff?: () => void;
+    /** What the owner does off the page before confirming an approval. */
+    readonly approve?: () => void;
   } = {},
 ) => {
   const asked: string[] = [];
@@ -302,7 +304,7 @@ const replay = (
                 : question.type === "browser_handoff"
                   ? (options.handOff?.(), { done: true })
                   : question.type === "confirm"
-                  ? { confirmed: true }
+                  ? (options.approve?.(), { confirmed: true })
                   : question.id === "code" && options.codes !== undefined
                     ? (options.codes[Math.min(codesGiven++, options.codes.length - 1)] ?? "")
                     : String(246810 + asked.length),
@@ -1097,6 +1099,25 @@ it("asks for a new code when the site refuses one from a code box that sends its
     });
   expect(await replay({ ...site, hooks: { ...site.hooks, fill } }, library)).toMatchObject({ outcome: "signed_in" });
   expect(site.fills).toEqual(["code", "code"]);
+});
+
+it("takes an approval on another page of its recorded origin, as a recipe's approval screen is", async () => {
+  const approval: Screen = { path: "/approve", boxes: [], texts: ["approve the sign-in on your phone"] };
+  const library = libraryOf([
+    { fingerprint: arrival(emailScreen), step: stepAt("/sign-in", [email], "#continue") },
+    { fingerprint: arrival(approval), step: stepAt("/approve", [], undefined, { approval: "device" }) },
+  ]);
+  // This time the page holds a code of its own in its path and names the phone.
+  const named: Screen = { path: "/approve/a7f3", boxes: [], texts: ["approve the sign-in on ~ ~"] };
+  const site = scriptedSite({ start: emailScreen, named }, (at) => (at === "start" ? "named" : undefined));
+  const events: Readonly<Record<string, unknown>>[] = [];
+  const ended = await replay(site, library, { events, approve: () => void (site.site.screen = "home") });
+  expect(ended).toMatchObject({ outcome: "signed_in" });
+  expect(ended.asked).toEqual(["approved"]);
+  expect(events).toContainEqual({ stage: "state", state: library.states[1]?.key, reason: "approval_origin" });
+  // Never on a page of a state it recorded, such as the sign-in page come back with no box.
+  const back = scriptedSite({ start: emailScreen, back: { ...named, path: "/sign-in" } }, (at) => (at === "start" ? "back" : undefined));
+  expect(await replay(back, library)).toMatchObject({ outcome: "unclear", reason: "unknown_state", asked: [] });
 });
 
 it("never picks a sign-in method a second time when the page keeps the choice", async () => {

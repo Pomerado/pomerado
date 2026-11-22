@@ -3,6 +3,7 @@ import type { YieldableError } from "effect/Cause";
 import { type AutofillRecipeStep, handsOffSignIn } from "../destinations/autofill-recipe.js";
 import { handOffPrompt, type SignInMethodChoice } from "../destinations/autofill-contracts.js";
 import { urlOrigin } from "../destinations/autofill-refusal.js";
+import { resolvedPage } from "../destinations/sign-in-recipe.js";
 import {
   type AutofillInspection,
   type AutofillSlot,
@@ -35,7 +36,7 @@ import {
 import type { AutofillSignInState } from "./autofill-state.js";
 import { maySend } from "../destinations/autofill-refusal.js";
 import { recordedRejections } from "./autofill-rejection.js";
-import { approvalNumber, openPastedLink, withApprovalNumber } from "./autofill-replay-approval.js";
+import { approvalNumber, approvalScreen, openPastedLink, withApprovalNumber } from "./autofill-replay-approval.js";
 import { settleCarried } from "./autofill-replay-fill.js";
 import { landingSettleMs } from "./autofill-replay-pages.js";
 import { stillShows, unrecordedCode } from "./autofill-replay-code-screen.js";
@@ -212,14 +213,14 @@ interface Run<E extends YieldableError, V extends string, L extends AutofillLogi
 
 /**
  * A known state the page shows, told by its control and address alone (`byControl`), a method
- * choice by its methods' controls (`byMethods`), with its code typed by place into the row the page
- * shows (`byPlace`), learned after the login's own state of its look whose box is gone (`newer`,
- * `matchState`), or as recorded.
+ * choice by its methods' controls (`byMethods`), an approval by its recorded origin (`byApproval`),
+ * with its code typed by place into the row the page shows (`byPlace`), learned after the login's
+ * own state of its look whose box is gone (`newer`, `matchState`), or as recorded.
  */
 type Shown = {
   readonly state: StateEntry;
   readonly inspection: AutofillInspection;
-  readonly by?: "control" | "methods" | "row" | "newer";
+  readonly by?: "control" | "methods" | "origin" | "row" | "newer";
 };
 type Ended<V extends string> = { readonly ended: SignInStatesOutcome<V> };
 /**
@@ -821,6 +822,35 @@ const byMethods = <E extends YieldableError, V extends string, L extends Autofil
   });
 
 /**
+ * Where nothing else is, an approval the state just acted in led to, other than a hand-off, on a
+ * page with no box that the recipe replay admits as its approval screen (`approvalScreen`): its
+ * recorded page, or any other page of that page's origin that is no recorded state's page nor the
+ * entry, shows no password field, no credential screen that came back and no marker yet, as a
+ * site's approval page may hold a code of its own in its path; never one acted in, taken in the
+ * order this login takes them (`ranked`).
+ */
+const byApproval = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  fingerprint: StateFingerprint,
+  after: StateEntry | undefined,
+  next: ReadonlySet<string>,
+) =>
+  Effect.gen(function* () {
+    if (after === undefined || fingerprint.boxes.length > 0) return undefined;
+    const led = (state: StateEntry) =>
+      next.has(state.key) && state.step.approval !== undefined && state.step.approval !== "handoff";
+    const approvals = run.input.library.states.filter((state) => led(state) && !run.visited.includes(state.key));
+    for (const state of ranked(run, approvals, led, next, fingerprint)) {
+      const shown = yield* shownOn(run, state, resolved(run, state.step));
+      if (typeof shown === "string") continue;
+      const recorded = resolvedPage(state.step, run.replay.progress.workspace) ?? state.step.page;
+      if ((yield* approvalScreen(run.as, run.replay, state.step, recorded, shown.page)) === "admitted")
+        return { state, inspection: shown, by: "origin" } satisfies Shown;
+    }
+    return undefined;
+  });
+
+/**
  * A code state of the page's look whose recorded boxes never showed (`missing`, in the order this
  * login takes them), with its code typed by place into the row of code boxes the page shows
  * instead: the first whose step types a code alone, one character a box, into as many fields as
@@ -863,8 +893,9 @@ const byPlace = <E extends YieldableError, V extends string, L extends AutofillL
  * `loose`, states of its look none of whose recorded controls showed may be a code state typed by
  * place into the row the page shows (`byPlace`); with no state of its whole look, a page with no
  * box may be a state told by its control and address alone (`byControl`), else a method choice
- * told by its methods' controls (`byMethods`); their refusals count for nothing, so a page no
- * state is still ends as an unknown state. Where none
+ * told by its methods' controls (`byMethods`), else an approval `after` led to on its recorded
+ * origin (`byApproval`); their refusals count for nothing, so a page no state is still ends as an
+ * unknown state. Where none
  * shows and the origin rule refused one whose controls showed (`admission`), that refusal
  * (`refusedOrigin`). A state noted without its question (`untold`) is taken so only on a page with
  * no message, and else, or acted in again, apart, before one that came back (`askedHere`). None is
@@ -963,7 +994,11 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
       return ownStateNotShown;
     }
     if (candidates.length > 0 || !loose) return refused;
-    return (yield* byControl(run, fingerprint, after, skip, next)) ?? (yield* byMethods(run, fingerprint, next));
+    return (
+      (yield* byControl(run, fingerprint, after, skip, next)) ??
+      (yield* byMethods(run, fingerprint, next)) ??
+      (yield* byApproval(run, fingerprint, after, next))
+    );
   });
 
 const signedIn = <E extends YieldableError, V extends string, L extends AutofillLogin>(
@@ -2186,7 +2221,8 @@ const linkAfter = <E extends YieldableError, V extends string, L extends Autofil
 /**
  * The replay from the page it is on: each known state it shows in turn, from `first` when given,
  * as the state the page shows now. A value-free replay that stopped for values in a state it
- * reached gives where (`stop`). Once the password went out, a page no state knows that shows a code
+ * reached gives where (`stop`). Once the password went out, or for a login with no password once
+ * anything went out, as the recipe replay's last check probes, a page no state knows that shows a code
  * box, where the box typed last shows no more, gets the code there, as a code screen a recipe never
  * recorded does (`unrecordedCode`), once and only while no code may have gone out, and the replay
  * goes on; a caller that records such a page itself (`codeRowByPlace: false`) gets the unknown
@@ -2225,6 +2261,7 @@ const walk = <E extends YieldableError, V extends string, L extends AutofillLogi
         const code =
           unknown !== undefined &&
           (run.replay.sent.seenSent("password") ||
+            (run.input.credentials?.password === undefined && run.replay.progress.anythingSent) ||
             (link !== undefined && [...run.replay.state.submittedSlots].some(isIdentifier))) &&
           input.codeRowByPlace !== false &&
           typed !== undefined &&
@@ -2267,7 +2304,9 @@ const walk = <E extends YieldableError, V extends string, L extends AutofillLogi
                     ? "newer_look_alike"
                     : arrived.by === "methods"
                       ? "same_methods"
-                      : "same_control",
+                      : arrived.by === "origin"
+                        ? "approval_origin"
+                        : "same_control",
             }
           : {}),
       });

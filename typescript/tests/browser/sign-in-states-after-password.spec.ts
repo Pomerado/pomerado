@@ -4,6 +4,7 @@ import type { AutofillRecipeStep } from "../../src/destinations/autofill-recipe.
 import { observeSignInState } from "../../src/destinations/sign-in-state-scan.js";
 import { appendSignInStates, type SignInStates, signInStatesOf } from "../../src/destinations/sign-in-states.js";
 import { makeInputAsker } from "../../src/inputs/callback.js";
+import type { WebsiteCredentials } from "../../src/runtime/authentication.js";
 import type { AutofillHooks } from "../../src/runtime/autofill-state.js";
 import type { HostedSignIn } from "../../src/runtime/autofill-replay-steps.js";
 import type { InputAnswers } from "../../src/runtime/input-request.js";
@@ -89,6 +90,7 @@ const replay = async (
   library: SignInStates,
   answers: InputAnswers,
   hosted?: (hooks: AutofillHooks<TestFailure>) => HostedSignIn<TestFailure>,
+  credentials: WebsiteCredentials = { username, password },
 ) => {
   const { hooks, observe } = await hostOn(page);
   const asked: string[] = [];
@@ -99,7 +101,7 @@ const replay = async (
         observe,
         hooks,
         entryUrl: `${site}/login`,
-        credentials: { username, password },
+        credentials,
         ask: makeInputAsker((request) => Effect.sync(() => (asked.push(...request.questions.map((question) => question.id)), answers))),
         broker: { register: () => Effect.void, registeredSecretMatches: () => Effect.succeed([]) },
         site: "bank.example.test",
@@ -213,6 +215,23 @@ test("a code page right after the username, before any password, gets no code", 
   expect(ended).toMatchObject({ outcome: "unclear", reason: "unknown_state" });
   expect(asked).toEqual([]);
   expect(posts.filter((post) => post.startsWith("/verify"))).toEqual([]);
+});
+
+test("a code page right after the username of a login with no password is answered once and signs in", async ({ page }) => {
+  const identifier =
+    '<form method="post" action="/login"><label>Username<input id="username" name="username"></label><button id="next">Next</button></form>';
+  const posts = await serve(
+    page,
+    { "/login": identifier, "/verify": verify, "/home": '<p id="account">Your account</p>' },
+    { "/login": "/verify", "/verify": "/home" },
+  );
+  const library = await recorded(page, [{ page: `${site}/login`, fields: [{ selector: "#username", accepts: ["username"] }], submit: "#next" }]);
+  await page.goto("about:blank");
+  posts.length = 0;
+  const { ended, asked } = await replay(page, library, { code: "246810" }, undefined, { username });
+  expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(asked).toEqual(["code"]);
+  expect(posts.filter((post) => post.startsWith("/verify"))).toEqual(["/verify code=246810"]);
 });
 
 // A site that emailed a sign-in link when its states were learned shows a code box this time, where
