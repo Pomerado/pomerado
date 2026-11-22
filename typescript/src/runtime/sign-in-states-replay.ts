@@ -1287,8 +1287,7 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
 /**
  * After a box was typed, or while a press waits: `same` while the page shows the state's boxes,
  * grown or not, a notice state's beside its text, or, for a state told by its text alone, as one
- * whose boxes are drawn transparent, while the page still looks as the state does or as it did
- * when the state was reached; another known state it now shows in full with
+ * whose boxes are drawn transparent, while the page still looks as the state does; another known state it now shows in full with
  * what was typed (`fuller`), never one acted in before something went out; or `moved` once a box
  * of the state went. In place, a state in a pop-up stays `same`, as the page read is the one that
  * opened it (`inPopup`).
@@ -1306,10 +1305,8 @@ const lookAgain = <E extends YieldableError, V extends string, L extends Autofil
     const text = fingerprintText(shape);
     const notice = state.fingerprint.message !== undefined && state.fingerprint.boxes.length > 0;
     // A state told by its text alone, whose boxes the look never counts, stands while the page
-    // still looks as the state does, or as it did when the state was reached.
-    const toldByText =
-      state.fingerprint.boxes.length === 0 &&
-      (sameFingerprint(observed.fingerprint, state) || sameFingerprint(observed.fingerprint, reached.fingerprint));
+    // still looks as the state does.
+    const toldByText = state.fingerprint.boxes.length === 0 && sameFingerprint(observed.fingerprint, state);
     if (sameFingerprint(shape, state) || (notice && sameBoxes(shape, state)) || toldByText)
       return { kind: "same" as const, text };
     for (const other of ranked(

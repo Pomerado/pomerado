@@ -2876,7 +2876,7 @@ it("never ends a step-up in place by the site's own marker, nor on a page that c
   expect(site.cantTell).toEqual([]);
 });
 
-it("never ends a step-up in place by a marker the page showed before it acted, though the step-up led to it", async () => {
+it("acts in place in no state of a step-up recorded with only a marker the page shows all along", async () => {
   // A step-up recorded with the site's own header as its marker, which shows all along.
   const stepCode: Screen = { path: "/records/verify", boxes: [{ selector: "#step-code", kind: "code" }], buttons: ["#verify"] };
   const library = withStepUp(
@@ -2900,6 +2900,34 @@ it("never ends a step-up in place by a marker the page showed before it acted, t
   expect(site.fills).toEqual([]);
   expect(site.clicks).toEqual([]);
   expect(ended.asked).toEqual([]);
+});
+
+it("never ends a step-up in place by a marker the page showed before it acted, though the step-up also led to it", async () => {
+  // Two recordings share the step-up's first state: one through a code to its own marker, one
+  // straight to the site's header, which shows all along.
+  const stepCode: Screen = { path: "/records/verify", boxes: [{ selector: "#step-code", kind: "code" }], buttons: ["#verify"] };
+  const stepUp = { fingerprint: arrival(stepUpScreen), step: stepAt("/records", [{ selector: "#step-password", slot: "password" }], "#confirm") };
+  const library = withStepUp(
+    withStepUp(
+      twoStates,
+      [stepUp, { fingerprint: arrival(stepCode), step: stepAt("/records/verify", [{ selector: "#step-code", slot: "code" }], "#verify") }],
+      { selector: "#records" },
+    ),
+    [stepUp],
+    { selector: "#account" },
+  );
+  const screens = { start: stepUpScreen, code: stepCode, records: recordsScreen };
+  const site = withMarkers(
+    scriptedSite(screens, (_at, clicked) => (clicked === "#confirm" ? "code" : clicked === "#verify" ? "records" : undefined)),
+    screens,
+    { start: ["#account"], code: ["#account"], records: ["#account", "#records"] },
+    true,
+  );
+  const ended = await replay(site, library, { inPlace: true });
+  expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(site.fills).toEqual(["password", "code"]);
+  expect(ended.asked).toEqual(["code"]);
+  expect(site.confirmed).toEqual([{ selector: "#records" }]);
 });
 
 it("acts in place in no state that leads only to a marker the page already shows, as the login's own password state", async () => {
