@@ -257,12 +257,16 @@ test("a code page that also shows the account's header is answered as a code pag
   const code = "246810";
   const posted: string[] = [];
   const header = '<header><a id="account" href="/home">Your account</a></header>';
+  const button = '<button id="verify">Verify</button>';
+  const late = { button: false };
   await serveSite(
     page,
     {
       "/login": loginPage,
       "/verify": () =>
-        `${header}<form method="post" action="/verify"><label>Code<input id="code" name="code" autocomplete="one-time-code" inputmode="numeric"></label></form><script>setTimeout(() => document.querySelector("form").insertAdjacentHTML("beforeend", '<button id="verify" type="button" onclick="this.form.submit()">Verify</button>'), 1_000)</script>`,
+        `${header}<form method="post" action="/verify"><label>Code<input id="code" name="code" autocomplete="one-time-code" inputmode="numeric"></label>${late.button ? "" : button}</form>${
+          late.button ? `<script>setTimeout(() => document.querySelector("form").insertAdjacentHTML("beforeend", ${JSON.stringify(button)}), 1_000)</script>` : ""
+        }`,
       "/home": () =>
         `${header}<form><label>Current password<input id="current-password" type="password"></label><label>New password<input id="new-password" type="password"></label><button>Change password</button></form>`,
     },
@@ -278,6 +282,7 @@ test("a code page that also shows the account's header is answered as a code pag
       step: { page: `${site}/verify`, fields: [{ selector: "#code", slot: "code" }], submit: "#verify" },
     },
   ]);
+  late.button = true;
   const { result, asked } = await runSignIn(page, library, { code: [code] });
   expect(result).toMatchObject({ _tag: "Right" });
   expect(asked).toEqual(["login", "code"]);
