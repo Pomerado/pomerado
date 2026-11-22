@@ -2234,6 +2234,33 @@ it("acts in a login's own state with the dismiss of a look-alike that only adds 
   }
 });
 
+it("waits for a look-alike of an earlier state learned after the last one, where the login's route was kept before it", async () => {
+  // After the code, an offer draws a moment late over a page with the start page's look, where a
+  // repair learned to press its "no thanks"; the login's own route was kept before that repair.
+  const landing: Screen = { path: "/", boxes: [], buttons: ["#sign-in"], texts: ["welcome"] };
+  const start = { fingerprint: arrival(landing), step: stepAt("/", [], "#sign-in") };
+  const codeState = { fingerprint: arrival(codeScreen), step: stepAt("/verify", [code], "#verify") };
+  const noThanks = { fingerprint: arrival(landing), step: stepAt("/", [], "#no-thanks") };
+  const library = repairedFrom([start, emailState, codeState], codeState, [noThanks]);
+  const route = { states: [keyOf(start), keyOf(emailState), keyOf(codeState)] };
+  const next: Readonly<Record<string, string>> = { "#sign-in": "email", "#continue": "code", "#verify": "offer", "#no-thanks": "home" };
+  const offered = (drawnAfter: number) => {
+    let shownAt: number | undefined;
+    const offer = (looks: number): Screen => {
+      shownAt ??= looks;
+      return { ...landing, buttons: looks - shownAt > drawnAfter ? ["#sign-in", "#no-thanks"] : ["#sign-in"] };
+    };
+    return scriptedSite({ start: landing, email: emailScreen, code: codeScreen, offer }, (_at, clicked) => next[clicked]);
+  };
+  const late = offered(3);
+  expect(await replay(late, library, { choices: route })).toMatchObject({ outcome: "signed_in", loginProved: true });
+  expect(late.clicks).toEqual(["#sign-in", "#continue", "#verify", "#no-thanks"]);
+  // One whose "no thanks" never draws is the start page come back, at the step wait.
+  const never = offered(Number.POSITIVE_INFINITY);
+  expect(await replay(never, library, { choices: route })).toMatchObject({ outcome: "unclear", reason: "state_repeated" });
+  expect(never.clicks).toEqual(["#sign-in", "#continue", "#verify"]);
+});
+
 it("takes, for a login with no route there, the state of its own method, else the most recently learned", async () => {
   const methods = [
     { method: "sms" as const, selector: "#text" },
