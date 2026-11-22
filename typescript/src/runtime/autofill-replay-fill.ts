@@ -29,7 +29,7 @@ import {
   isSecondFactor,
   type RejectedMarker,
 } from "../destinations/autofill-recipe.js";
-import type { AutofillLogin } from "./autofill-values.js";
+import type { AutofillLogin, TakenRecoveryCode } from "./autofill-values.js";
 import {
   type CodeRetry,
   emptyReplayFields,
@@ -212,12 +212,70 @@ const closedInPlace = <E extends YieldableError, V extends string, L extends Aut
   });
 
 /**
+ * A step's values in field order, the step with the kind each field is sent as, and the recovery
+ * codes they took.
+ */
+export interface StepValues {
+  readonly values: readonly string[];
+  readonly step: AutofillStep;
+  readonly recoveryCodes: readonly TakenRecoveryCode[];
+}
+
+/**
+ * A screen's values (`StepValues`), or why it ends with nothing typed. Resolving sends nothing and
+ * spends no recovery code: a code it took is spent or given back once its fill settles
+ * (`settleFilled`).
+ */
+export const replayValues = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  session: ReplaySession<E, V, L>,
+  asked: AutofillStep,
+  inspection: AutofillInspection,
+  codeAgain: CodeRetry | undefined = session.retryState.rejectedValues.code?.size
+    ? "rejected"
+    : undefined,
+  corrected: ReadonlySet<AutofillSlot> = new Set(),
+) =>
+  Effect.gen(function* () {
+    const { input, retryState, progress, values, rejectedCodes, codeRequests } = session;
+    // A code box on a recorded emailed link's screen (`linkCodeScreen`).
+    const onLinkScreen =
+      progress.linkCodeScreen !== undefined && codeScreenOf(inspection) === progress.linkCodeScreen;
+    const resolved = yield* valuesFor(
+      input,
+      values,
+      progress.chosen,
+      asked,
+      codeAgain,
+      {
+        rejectedCodes,
+        codeRequests,
+        rejectedValues: retryState.rejectedValues,
+        correctionRequests: retryState.correctionRequests,
+      },
+      inspection.screen.fields,
+      // A code screen the recipe never recorded that refused a code may want one the site sent
+      // rather than the host's generator's, so its retries never spend a try on that.
+      !onLinkScreen && (codeAgain === undefined || progress.unrecordedCodeScreen === undefined),
+    );
+    if (resolved instanceof Unanswered)
+      if (corrected.size > 0) return "extra_rejected" as const;
+      // Nothing was typed, so the link's own question still stands.
+      else if (onLinkScreen && codeAgain === undefined) return "link_code_unanswered" as const;
+      else
+        return codeRejectedAgain(codeAgain, resolved)
+          ? ("code_rejected" as const)
+          : yield* input.failures.unanswered(resolved.cause, resolved.field);
+    return resolved satisfies StepValues;
+  });
+
+/**
  * One observed screen: admitted by the host, filled and submitted. Why it did not complete, or
  * undefined. `planned` is the recorded screen's `refills`, and `next` the recorded screen after it.
  * With `moreToType`, more boxes of the screen go in a later fill, so its page gets no time to send
  * these itself (the fill's `moreToType`).
  * A code screen that closed in place counts as sent only once the marker or `next` shows
- * (`closedInPlace`).
+ * (`closedInPlace`). Its values are `replayValues`', or `given`, run once the screen is admitted,
+ * for a caller that resolved them before it typed anything.
  */
 export const runReplayStep = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   session: ReplaySession<E, V, L>,
@@ -228,20 +286,11 @@ export const runReplayStep = <E extends YieldableError, V extends string, L exte
   corrected: ReadonlySet<AutofillSlot> = new Set(),
   planned: readonly AutofillSecret[] = [],
   next?: AutofillRecipeStep,
+  given?: Effect.Effect<StepValues>,
   moreToType = false,
 ) =>
   Effect.gen(function* () {
-    const {
-      input,
-      hooks,
-      retryState,
-      sent,
-      progress,
-      values,
-      rejectedCodes,
-      codeRequests,
-      state,
-    } = session;
+    const { input, hooks, retryState, sent, progress, rejectedCodes, state } = session;
     codeAgain ??= retryState.rejectedValues.code?.size ? "rejected" : undefined;
     // The replay went on: a screen before that no click sent sent itself, before the bound counts.
     settleCarried(session);
@@ -283,34 +332,8 @@ export const runReplayStep = <E extends YieldableError, V extends string, L exte
       progress.refilled.add("code");
       progress.codeRefilled = true;
     }
-    // A code box on a recorded emailed link's screen (`linkCodeScreen`).
-    const onLinkScreen =
-      progress.linkCodeScreen !== undefined && codeScreenOf(inspection) === progress.linkCodeScreen;
-    const resolved = yield* valuesFor(
-      input,
-      values,
-      progress.chosen,
-      asked,
-      codeAgain,
-      {
-        rejectedCodes,
-        codeRequests,
-        rejectedValues: retryState.rejectedValues,
-        correctionRequests: retryState.correctionRequests,
-      },
-      inspection.screen.fields,
-      // A code screen the recipe never recorded that refused a code may want one the site sent
-      // rather than the host's generator's, so its retries never spend a try on that.
-      !onLinkScreen && (codeAgain === undefined || progress.unrecordedCodeScreen === undefined),
-    );
-    if (resolved instanceof Unanswered)
-      if (corrected.size > 0) return "extra_rejected";
-      // Nothing was typed, so the link's own question still stands.
-      else if (onLinkScreen && codeAgain === undefined) return "link_code_unanswered";
-      else
-        return codeRejectedAgain(codeAgain, resolved)
-          ? "code_rejected"
-          : yield* input.failures.unanswered(resolved.cause, resolved.field);
+    const resolved = yield* (given ?? replayValues(session, asked, inspection, codeAgain, corrected));
+    if (typeof resolved === "string") return resolved;
     // The kinds the fields were sent as: an answer to a field that accepts several decides.
     const { values: filled, step, recoveryCodes } = resolved;
     noteCodeValues(rejectedCodes, step, filled);

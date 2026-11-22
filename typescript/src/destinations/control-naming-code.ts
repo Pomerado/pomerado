@@ -10,8 +10,9 @@ export const controlNamingCode = `const controlNaming = (element) => {
   const labels = "labels" in element && element.labels ? Array.from(element.labels) : [];
   const labelledBy = (element.getAttribute("aria-labelledby") ?? "")
     .split(/\\s+/).map((id) => element.ownerDocument.getElementById(id)).filter(Boolean);
+  // The copy goes in a document with no window, so its pictures never load again.
   const words = (node) => {
-    const copy = node.cloneNode(true);
+    const copy = document.implementation.createHTMLDocument("").importNode(node, true);
     for (const field of copy.querySelectorAll("input,textarea,select")) field.remove();
     return copy.textContent;
   };
