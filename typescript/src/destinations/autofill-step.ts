@@ -572,11 +572,16 @@ export interface AutofillInspection {
      */
     readonly submit: typeof Described.Type | null;
     /**
-     * A step's submit key: the key, the field it is pressed in (the last), and how many visible
-     * submit controls that field's form has, which Guardian reads to judge the key as the submit.
+     * A step's submit key: the key, the replay's code key in its place (`codeKey`), the field it is
+     * pressed in (the last), and how many visible submit controls that field's form has, which
+     * Guardian reads to judge the key as the submit.
      */
     readonly submitKey?:
-      | { readonly key: SubmitKey; readonly field: number; readonly submitControls: number }
+      | {
+          readonly key: SubmitKey | "Tab";
+          readonly field: number;
+          readonly submitControls: number;
+        }
       | undefined;
     /** Visible native and ARIA actions, links included, for a step that names no submit. */
     readonly buttons: readonly string[];
@@ -655,6 +660,12 @@ export type AutofillStepReport =
        * clicked through the site's own control laid over it (`click_layer`).
        */
       readonly via?: "keyboard" | "click_layer";
+      /**
+       * Host-only, on a `clicked` submit key: a request other than a navigation, a fetch, an XHR or
+       * a POST, left the page from the press until the page settled, as a page's own script sends
+       * a code on a key. A replay presses no other key in its box after it.
+       */
+      readonly requestSent?: true;
       /**
        * Host-only, on a `refused` submit of a step with a submit or a submit key whose every field
        * takes a code: once the host typed every field, and before it clicked anything, the step's
@@ -1175,7 +1186,7 @@ export const inspectAutofillStep = (input: {
           ? {}
           : {
               submitKey: {
-                key: step.submitKey,
+                key: step.codeKey ?? step.submitKey,
                 field: step.fields.length - 1,
                 submitControls: found.keySubmit.submitControls,
               },

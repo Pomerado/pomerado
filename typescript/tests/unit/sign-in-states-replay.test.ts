@@ -71,7 +71,8 @@ interface Screen {
 /**
  * A scripted site on fixture hooks: `next` says the screen a click on a screen goes to; `home` is
  * signed in. `looks` counts the page reads, for a screen that draws late. With `resubmit`, the host
- * can click a screen again, typing nothing, as for a submit key pressed in its last field.
+ * can click a screen again, typing nothing, as for a submit key pressed in its last field, and
+ * tells a code the page sent itself (`checksCodeSent`).
  */
 const scriptedSite = (
   screens: Readonly<Record<string, Screen | ((looks: number) => Screen)>>,
@@ -177,6 +178,7 @@ const scriptedSite = (
     ...(options.resubmit !== true
       ? {}
       : {
+          checksCodeSent: true,
           resubmit: ({ step }) =>
             Effect.sync((): AutofillStepReport => {
               press(step.codeKey ?? step.submit ?? step.submitKey ?? "");
