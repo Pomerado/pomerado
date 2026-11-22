@@ -2895,10 +2895,44 @@ it("never ends a step-up in place by a marker the page showed before it acted, t
     true,
   );
   const ended = await replay(site, library, { inPlace: true });
-  expect(site.fills).toEqual(["password", "code"]);
-  expect(site.clicks).toEqual(["#confirm", "#verify"]);
-  expect(ended.asked).toEqual(["code"]);
-  expect(ended.outcome).not.toBe("signed_in");
+  // Its every state leads only to that marker, so it acts in none of them.
+  expect(ended).toMatchObject({ outcome: "unsent", reason: "state_not_shown", visited: [] });
+  expect(site.fills).toEqual([]);
+  expect(site.clicks).toEqual([]);
+  expect(ended.asked).toEqual([]);
+});
+
+it("acts in place in no state that leads only to a marker the page already shows, as the login's own password state", async () => {
+  // A library of the site's own sign-in alone, whose marker, the site's header, shows on a step-up
+  // page that looks like its password state.
+  const portal: Screen = { path: "/records", boxes: [{ selector: "#password", kind: "password" }], buttons: ["#go"] };
+  const screens = { start: portal, records: recordsScreen };
+  const site = withMarkers(
+    scriptedSite(screens, (_at, clicked) => (clicked === "#go" ? "records" : undefined)),
+    screens,
+    { start: ["#account"], records: ["#account"] },
+    true,
+  );
+  const ended = await replay(site, twoStates, { inPlace: true });
+  expect(ended).toMatchObject({ outcome: "unsent", reason: "state_not_shown", visited: [] });
+  expect(site.fills).toEqual([]);
+  expect(site.clicks).toEqual([]);
+  // Nor from a value-free check's stop there that the page still shows.
+  const passwordKey = twoStates.states.at(-1)?.key ?? "";
+  const stop = { visited: [twoStates.states[0]?.key ?? "", passwordKey], state: passwordKey };
+  const fromStop = await replay(site, twoStates, { inPlace: true, from: stop });
+  expect(fromStop).toMatchObject({ outcome: "unsent", fromStop: { continued: false, reason: "marker_shown_before" } });
+  expect(site.fills).toEqual([]);
+  // Where the site signed out and shows its own sign-in, the same library signs in again in place.
+  const screensOut = { start: emailScreen, password: passwordScreen, records: recordsScreen };
+  const signedOut = withMarkers(
+    scriptedSite(screensOut, toPassword),
+    screensOut,
+    { records: ["#account"], home: ["#account"] },
+    true,
+  );
+  expect(await replay(signedOut, twoStates, { inPlace: true })).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(signedOut.fills).toEqual(["email", "password"]);
 });
 
 it("still opens the entry URL and signs in by any marker when not in place", async () => {
