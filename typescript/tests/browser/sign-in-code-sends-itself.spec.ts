@@ -36,8 +36,9 @@ const boxes = [1, 2, 3, 4, 5, 6]
 /**
  * The code screen: six boxes and a Verify button, or, `inForm`, the boxes alone in a form. The
  * sixth digit sends the code once, and so does each click of Verify, which is counted, and each
- * Enter in a box. An accepted code puts the account in place of the screen; an expired one signs
- * the session out. Each box's key downs are kept, with whether each was trusted.
+ * Enter in a box. An accepted code puts the account in place of the screen, or of the form, which
+ * hides; an expired one signs the session out. Each box's key downs are kept, with whether each
+ * was trusted.
  */
 const codeScreen = (inForm: boolean) => `<main id="view"><p>Enter the code we sent you</p>${inForm ? `<form>${boxes}</form>` : `${boxes}<button id="verify" type="button">Verify</button>`}</main>
 <script>
@@ -50,7 +51,12 @@ let sent = false;
 const check = () =>
   fetch("/api/code", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code: typed() }) })
     .then((response) => {
-      view.innerHTML = response.ok ? '<p id="account">Signed in</p>' : '<p id="signed-out">Your code expired</p>';
+      const form = document.querySelector("form");
+      // A form hides itself and shows the account below it, its boxes left in the document.
+      if (response.ok && form !== null) {
+        form.hidden = true;
+        view.insertAdjacentHTML("beforeend", '<p id="account">Signed in</p>');
+      } else view.innerHTML = response.ok ? '<p id="account">Signed in</p>' : '<p id="signed-out">Your code expired</p>';
     });
 boxes.forEach((box, index) => box.addEventListener("keydown", (event) => {
   window.keys.push({ box: index + 1, key: event.key, trusted: event.isTrusted });
