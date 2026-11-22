@@ -1725,8 +1725,11 @@ const handOff = <E extends YieldableError, V extends string, L extends AutofillL
 
 /**
  * Whether a state's press may have the site send a code or link: a state it led to takes one or an
- * approval other than a hand-off, which the site sends nothing for, or one it led to through states
- * that take nothing, as a "code sent" page before the code's box.
+ * approval other than a hand-off, which the site sends nothing for, or shows a code box where the
+ * pressed state's page shows none, or one it led to through states that take nothing, as a "code
+ * sent" page before the code's box. A press on a page that shows a code box already, as one that
+ * dismisses a notice there or opens other ways in, goes through no method choice, whose own pick
+ * has the site send.
  * With `alone`, never through a state with its look, which is another press on its page, such as
  * one another sign-in learned there.
  */
@@ -1736,6 +1739,8 @@ const sendsOnPress = <E extends YieldableError, V extends string, L extends Auto
   alone = false,
 ) => {
   const { states, transitions } = run.input.library;
+  const showsCode = (entry: StateEntry) => entry.fingerprint.boxes.some((box) => box.kind === "code");
+  const onCodePage = showsCode(state);
   const seen = new Set([state.key]);
   const queue = [state.key];
   for (const from of queue)
@@ -1745,11 +1750,12 @@ const sendsOnPress = <E extends YieldableError, V extends string, L extends Auto
       if (next === undefined) continue;
       if (
         (next.step.approval !== undefined && next.step.approval !== "handoff") ||
-        next.step.fields.some((field) => "slot" in field && field.slot === "code")
+        next.step.fields.some((field) => "slot" in field && field.slot === "code") ||
+        (!onCodePage && showsCode(next))
       )
         return true;
-      if (next.step.fields.length === 0 && !(alone && sameFingerprint(next, state)))
-        queue.push(to);
+      const pressOnly = next.step.fields.length === 0 && !(onCodePage && next.step.methods !== undefined);
+      if (pressOnly && !(alone && sameFingerprint(next, state))) queue.push(to);
     }
   return false;
 };
