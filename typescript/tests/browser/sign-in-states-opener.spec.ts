@@ -10,10 +10,12 @@ import {
   type StateFingerprint,
 } from "../../src/destinations/sign-in-states.js";
 import { makeInputAsker } from "../../src/inputs/callback.js";
+import { makeRunSecrets } from "../../src/inputs/secrets.js";
 import type { AutofillHooks } from "../../src/runtime/autofill-state.js";
 import type { InputAnswers } from "../../src/runtime/input-request.js";
+import { signInForRun } from "../../src/runtime/sign-in-replay.js";
 import { replaySignInStates } from "../../src/runtime/sign-in-states-replay.js";
-import { makeSignInBrowser } from "../../src/standalone/authentication.js";
+import { localSignInLogin, makeSignInBrowser } from "../../src/standalone/authentication.js";
 import { expectNotCarried, hostKeyboard, hostPage } from "./autofill-host-page.js";
 
 // A library of sign-in states that learned an opener after it was recorded: a sign-in that stopped
@@ -177,6 +179,257 @@ test("a library that appends an opener leading to a state it knows signs in from
   expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
   expect(ended.visited).toEqual([openerState?.key, ...recorded.states.map((state) => state.key)]);
   expect(sent).toEqual(["/login/identifier", "/login/password"]);
+});
+
+// Runs sign in from a library on the host's own page, as a run does (`signInForRun`): a code page
+// that also shows the account's header is still a code page, a date of birth the site refused is
+// asked for again and retyped alone, never an identifier, and a choice of account the page draws
+// late is waited for, never passed for the page after it before the step wait but by a login whose
+// own route never held it.
+
+/** A library of states, each with the look the host's scan read and its step, to `#account`. */
+const libraryOf = (states: readonly { readonly fingerprint: StateFingerprint; readonly step: AutofillRecipeStep }[]) =>
+  appended(appendSignInStates(signInStatesOf({}, []), { states, signedIn: { selector: "#account" } })).library;
+
+/**
+ * The site: each page in `pages` by its path, and each form post or fetch given to `post` with
+ * what it sent, the browser sent on to the path `post` names, if any.
+ */
+const serveSite = (
+  page: Page,
+  pages: Readonly<Record<string, () => string>>,
+  post: (path: string, form: URLSearchParams) => string | undefined,
+) =>
+  page.route(/^https:\/\//u, async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() !== "POST")
+      return route.fulfill({ contentType: "text/html", body: pages[path]?.() ?? "<p>Not found</p>" });
+    const next = post(path, new URLSearchParams(request.postData() ?? ""));
+    return route.fulfill({
+      contentType: "text/html",
+      body: next === undefined ? "" : `<script>location.replace(${JSON.stringify(next)})</script>`,
+    });
+  });
+
+const loginPage = () =>
+  '<form method="post" action="/session"><label>Username<input id="username" name="username"></label><label>Password<input id="password" name="password" type="password"></label><button id="sign-in">Sign in</button></form>';
+const loginStep: AutofillRecipeStep = {
+  page: `${site}/login`,
+  fields: [{ selector: "#username", accepts: ["username"] }, { selector: "#password", slot: "password" }],
+  submit: "#sign-in",
+};
+
+/** A run's sign-in with `library` from /login, answering each ask by its kind, in turn, from `answers`. */
+const runSignIn = async (page: Page, library: SignInStates, answers: Record<string, string[]> = {}) => {
+  const browser = await hostPage(page);
+  const { keyboard } = await hostKeyboard(page);
+  const secrets = makeRunSecrets();
+  const asked: string[] = [];
+  const ask = makeInputAsker((request) =>
+    Effect.sync(() => {
+      const question = request.questions[0];
+      const kind = question?.type === "credential" ? "login" : (question?.id ?? "");
+      asked.push(kind);
+      return kind === "login" ? { login: { username, password, saveLogin: false } } : { [kind]: answers[kind]?.shift() ?? "" };
+    }),
+  );
+  const result = await Effect.runPromise(
+    Effect.either(
+      signInForRun({
+        states: library,
+        entryUrl: `${site}/login`,
+        browser: makeSignInBrowser({ page: browser, keyboard, siteOrigin: site, authenticationOrigins: [], typing: { typed: false } }),
+        login: localSignInLogin({ ask, register: secrets.register, siteOrigin: site }),
+        ask,
+        secrets,
+        site: "app.example.com",
+        siteOrigin: site,
+        timing: { stepWaitMs: 8_000, pollMs: 250 },
+      }),
+    ),
+  );
+  expectNotCarried(browser.calls, password);
+  return { result, asked };
+};
+
+test("a code page that also shows the account's header is answered as a code page, though its button draws a moment or a few seconds after its box, and an account page with a password form signs in", async ({ page }) => {
+  const code = "246810";
+  const posted: string[] = [];
+  const header = '<header><a id="account" href="/home">Your account</a></header>';
+  const button = '<button id="verify">Verify</button>';
+  const late = { ms: 0 };
+  await serveSite(
+    page,
+    {
+      "/login": loginPage,
+      "/verify": () =>
+        `${header}<form method="post" action="/verify"><label>Code<input id="code" name="code" autocomplete="one-time-code" inputmode="numeric"></label>${late.ms > 0 ? "" : button}</form>${
+          late.ms > 0 ? `<script>setTimeout(() => document.querySelector("form").insertAdjacentHTML("beforeend", ${JSON.stringify(button)}), ${late.ms})</script>` : ""
+        }`,
+      "/home": () =>
+        `${header}<form><label>Current password<input id="current-password" type="password"></label><label>New password<input id="new-password" type="password"></label><button>Change password</button></form>`,
+    },
+    (path, form) => {
+      posted.push(path === "/verify" ? (form.get("code") ?? "") : path);
+      return path === "/session" || form.get("code") !== code ? "/verify" : "/home";
+    },
+  );
+  const library = libraryOf([
+    { fingerprint: await scanAt(page, "/login"), step: loginStep },
+    {
+      fingerprint: await scanAt(page, "/verify"),
+      step: { page: `${site}/verify`, fields: [{ selector: "#code", slot: "code" }], submit: "#verify" },
+    },
+  ]);
+  // A button drawn within the page's quiet second, then one drawn well after it.
+  for (const ms of [1_000, 2_500]) {
+    late.ms = ms;
+    posted.length = 0;
+    const { result, asked } = await runSignIn(page, library, { code: [code] });
+    expect(result).toMatchObject({ _tag: "Right" });
+    expect(asked).toEqual(["login", "code"]);
+    expect(posted).toEqual(["/session", code]);
+  }
+});
+
+test("an account page with a password form signs in at the step wait where a known state not reached yet has its boxes", async ({ page }) => {
+  const posted: string[] = [];
+  // Two password boxes each, the learned page's with no button, as a form sent with Enter.
+  const boxes = (first: string, second: string) =>
+    `<label>Current password<input id="${first}" type="password"></label><label>New password<input id="${second}" type="password"></label>`;
+  await serveSite(
+    page,
+    {
+      "/login": loginPage,
+      "/expired": () => `<form method="post" action="/expired">${boxes("old-password", "fresh-password")}</form>`,
+      "/home": () =>
+        `<header><a id="account" href="/home">Your account</a></header><form>${boxes("current-password", "new-password")}<button>Change password</button></form>`,
+    },
+    (path) => {
+      posted.push(path);
+      return "/home";
+    },
+  );
+  const library = libraryOf([
+    { fingerprint: await scanAt(page, "/login"), step: loginStep },
+    {
+      fingerprint: await scanAt(page, "/expired"),
+      step: { page: `${site}/expired`, fields: [{ selector: "#old-password", slot: "password" }] },
+    },
+  ]);
+  const { result, asked } = await runSignIn(page, library);
+  expect(result).toMatchObject({ _tag: "Right" });
+  expect(asked).toEqual(["login"]);
+  expect(posted).toEqual(["/session"]);
+});
+
+test("a date of birth the site refused is asked for again and retyped alone, never the login", async ({ page }) => {
+  const posted: string[] = [];
+  const shown = { refused: false };
+  await serveSite(
+    page,
+    {
+      "/login": loginPage,
+      "/birth": () =>
+        `${shown.refused ? '<p id="birth-error">That date of birth does not match</p>' : ""}<form method="post" action="/birth"><label>Date of birth<input id="birth" name="birth" autocomplete="bday" placeholder="YYYY-MM-DD"></label><button id="confirm">Confirm</button></form>`,
+      "/home": () => '<p id="account">Your account</p>',
+    },
+    (path, form) => {
+      posted.push(path === "/birth" ? (form.get("birth") ?? "") : path);
+      if (path === "/session") return "/birth";
+      shown.refused = form.get("birth") !== "1980-04-09";
+      return shown.refused ? "/birth" : "/home";
+    },
+  );
+  const library = libraryOf([
+    { fingerprint: await scanAt(page, "/login"), step: loginStep },
+    {
+      fingerprint: await scanAt(page, "/birth"),
+      step: {
+        page: `${site}/birth`,
+        fields: [{ selector: "#birth", slot: "date_of_birth", format: "YYYY-MM-DD" }],
+        submit: "#confirm",
+        rejectedMarkers: [{ slot: "date_of_birth", selector: "#birth-error" }],
+      },
+    },
+  ]);
+  const { result, asked } = await runSignIn(page, library, { date_of_birth: ["1980-01-01", "1980-04-09"] });
+  expect(result).toMatchObject({ _tag: "Right" });
+  expect(asked).toEqual(["login", "date_of_birth", "date_of_birth"]);
+  expect(posted).toEqual(["/session", "1980-01-01", "1980-04-09"]);
+});
+
+test("a choice of account the page draws late is waited for and made, a login it never shows goes on at the step wait, and one whose route never held it at once", async ({ page }) => {
+  const posted: string[] = [];
+  const shown = { chosen: false, late: false };
+  const choice = `<button id="choose" type="button" onclick="fetch('/choose', { method: 'POST' }).then(() => this.remove())">Use the team account</button>`;
+  await serveSite(
+    page,
+    {
+      "/login": () =>
+        `<main><p>Sign in to your workspace</p>${shown.chosen || shown.late ? "" : choice}<a id="continue" href="/login/identifier">Continue</a></main>${
+          shown.late ? `<script>setTimeout(() => document.getElementById("continue").insertAdjacentHTML("beforebegin", ${JSON.stringify(choice)}), 1_500)</script>` : ""
+        }`,
+      "/login/identifier":
+        () => '<form method="post" action="/login/identifier"><label>Username<input id="username" name="username"></label><button id="next">Next</button></form>',
+      "/login/password":
+        () => '<form method="post" action="/login/password"><label>Password<input id="password" name="password" type="password"></label><button id="sign-in">Sign in</button></form>',
+      "/home": () => '<p id="account">Your account</p>',
+    },
+    (path) => {
+      posted.push(path);
+      return path === "/choose" ? undefined : path === "/login/identifier" ? "/login/password" : "/home";
+    },
+  );
+  const choose = await scanAt(page, "/login");
+  shown.chosen = true;
+  const library = libraryOf([
+    { fingerprint: choose, step: { page: `${site}/login`, fields: [], submit: "#choose" } },
+    { fingerprint: await scanAt(page, "/login"), step: { page: `${site}/login`, fields: [], submit: "#continue" } },
+    {
+      fingerprint: await scanAt(page, "/login/identifier"),
+      step: { page: `${site}/login/identifier`, fields: [{ selector: "#username", accepts: ["username"] }], submit: "#next" },
+    },
+    {
+      fingerprint: await scanAt(page, "/login/password"),
+      step: { page: `${site}/login/password`, fields: [{ selector: "#password", slot: "password" }], submit: "#sign-in" },
+    },
+  ]);
+  // A new session, where the page draws the choice a moment after the rest.
+  Object.assign(shown, { chosen: false, late: true });
+  const { result } = await runSignIn(page, library);
+  expect(result).toMatchObject({ _tag: "Right" });
+  expect(posted).toEqual(["/choose", "/login/identifier", "/login/password"]);
+  // A login the page never shows the choice to.
+  Object.assign(shown, { chosen: true, late: false });
+  posted.length = 0;
+  expect((await runSignIn(page, library)).result).toMatchObject({ _tag: "Right" });
+  expect(posted).toEqual(["/login/identifier", "/login/password"]);
+  // A login whose own route never held the choice, where the page draws it late again.
+  Object.assign(shown, { chosen: false, late: true });
+  posted.length = 0;
+  const route = library.states.slice(1).map((state) => state.key);
+  expect(await signIn(page, library, { states: route })).toMatchObject({ outcome: "signed_in" });
+  expect(posted).toEqual(["/login/identifier", "/login/password"]);
+});
+
+test("a marker that names an identifier other than the login's ends it as the login's refusal, never retyped", async ({ page }) => {
+  const posted: string[] = [];
+  const shown = { refused: false };
+  await serveSite(
+    page,
+    { "/login": () => `${shown.refused ? '<p id="email-error">No account uses that email</p>' : ""}${loginPage()}` },
+    (path) => {
+      posted.push(path);
+      shown.refused = true;
+      return "/login";
+    },
+  );
+  const step = { ...loginStep, rejectedMarkers: [{ slot: "email" as const, selector: "#email-error" }] };
+  const library = libraryOf([{ fingerprint: await scanAt(page, "/login"), step }]);
+  expect(await signIn(page, library)).toMatchObject({ reason: "username_rejected" });
+  expect(posted).toEqual(["/session"]);
 });
 
 const openerStep: AutofillRecipeStep = { page: `${site}/login`, fields: [], submit: "#open-sign-in" };
