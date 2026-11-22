@@ -227,6 +227,15 @@ export const sameFingerprint = (a: Look, b: Look) => {
   const [left, right] = comparable(lookOf(a).fingerprint, lookOf(b).fingerprint);
   return fingerprintText(left) === fingerprintText(right) && takesAgree(a, b);
 };
+/**
+ * Whether `twin` is `state` with a `dismiss` added and nothing else: one look and one step but for
+ * the covering notice's control `twin` clicks, which a fill clicks only where the page shows it.
+ */
+export const addsDismiss = (twin: StateEntry, state: StateEntry) =>
+  twin.step.dismiss !== undefined &&
+  state.step.dismiss === undefined &&
+  sameFingerprint(twin, state) &&
+  canonical({ ...twin.step, dismiss: undefined }) === canonical(state.step);
 /** Whether a fingerprint shows nothing to tell it by: no box, no message and no button. */
 export const blankFingerprint = (fingerprint: StateFingerprint) =>
   fingerprint.boxes.length === 0 &&
@@ -630,9 +639,8 @@ export const maximumStates = 64;
 /**
  * The library with a recorded sign-in's new entries appended after every existing one, which stay
  * as they are, and those entries (`added`), none when it knew them all. A state is known by its
- * key, its fingerprint and step alike. Refused: a hand-off step, which a library never runs, or a
- * workspace step in a library with no workspace; a state that shows nothing to tell it by; and a
- * library that would pass `maximumStates`.
+ * key, its fingerprint and step alike. Refused: a workspace step in a library with no workspace; a
+ * state that shows nothing to tell it by; and a library that would pass `maximumStates`.
  */
 export const appendSignInStates = (
   library: SignInStates,
@@ -640,12 +648,7 @@ export const appendSignInStates = (
 ):
   | { readonly library: SignInStates; readonly added: readonly SignInStateEntry[] }
   | { readonly refused: "unsupported_step" | "blank_state" | "library_full" } => {
-  if (
-    observed.states.some(
-      ({ step }) =>
-        step.approval === "handoff" || (step.origin === "workspace" && library.workspace === undefined),
-    )
-  )
+  if (observed.states.some(({ step }) => step.origin === "workspace" && library.workspace === undefined))
     return { refused: "unsupported_step" };
   if (observed.states.some(({ fingerprint }) => blankFingerprint(fingerprint)))
     return { refused: "blank_state" };

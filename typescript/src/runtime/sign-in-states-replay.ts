@@ -1,7 +1,7 @@
 import { Clock, Duration, Effect } from "effect";
 import type { YieldableError } from "effect/Cause";
-import type { AutofillRecipeStep } from "../destinations/autofill-recipe.js";
-import type { SignInMethodChoice } from "../destinations/autofill-contracts.js";
+import { type AutofillRecipeStep, handsOffSignIn } from "../destinations/autofill-recipe.js";
+import { handOffPrompt, type SignInMethodChoice } from "../destinations/autofill-contracts.js";
 import { urlOrigin } from "../destinations/autofill-refusal.js";
 import {
   type AutofillInspection,
@@ -10,6 +10,7 @@ import {
   hostSubmits,
 } from "../destinations/autofill-step.js";
 import {
+  addsDismiss,
   blankFingerprint,
   containsFingerprint,
   describeFingerprint,
@@ -243,6 +244,21 @@ const resolved = <E extends YieldableError, V extends string, L extends Autofill
   ...run.replay.resolve({ fields: step.fields, ...screenSubmit(step) }),
   ...(step.rejectedMarkers === undefined ? {} : { rejectedMarkers: step.rejectedMarkers }),
 });
+
+/**
+ * The step a state acts with (`resolved`), with the dismiss of the newest look-alike a sign-in
+ * learned that only adds one to it (`addsDismiss`): a notice that came to cover the state for one
+ * login covers it for every login, and a fill clicks it only where the page shows it. The state
+ * keeps its key, its route and what it leads to.
+ */
+const actedStep = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  state: StateEntry,
+): AutofillStep => {
+  const full = resolved(run, state.step);
+  const dismiss = run.input.library.states.findLast((other) => addsDismiss(other, state))?.step.dismiss;
+  return dismiss === undefined ? full : { ...full, dismiss };
+};
 
 /**
  * Whether each control, and each frame above it, sits on the state's top origin, its recorded
@@ -1417,8 +1433,39 @@ const approve = <E extends YieldableError, V extends string, L extends AutofillL
   });
 
 /**
- * Whether a state's press may have the site send a code or link: a state it led to takes one, or
- * one it led to through states that take nothing, as a "code sent" page before the code's box.
+ * A hand-off state, once it shows, as at the recipe replay's hand-off screen: a replay that may
+ * not hand off (`handOff`) stops there for values (`valuesNeeded`); one that may asks the person
+ * one `browser_handoff` question, with no values, and then only a marker that may sign it in and
+ * verifies (`markersNow`, `verifyMarker`) does so (`handedOff`), never a page that can't tell;
+ * else it ends `handoff_not_signed_in`.
+ */
+const handOff = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  inspection: AutofillInspection,
+) =>
+  Effect.gen(function* () {
+    const { replay, input } = run;
+    if (input.handOff !== true) return stopped(run, valuesNeeded);
+    const done = yield* askOne(input, {
+      id: "signed_in",
+      type: "browser_handoff",
+      prompt: handOffPrompt(input.site),
+      show_inputs: [],
+    });
+    if (done?.type !== "browser_handoff") return stopped(run, "approval_declined");
+    replay.state.steps.push({ page: inspection.page, fields: [], approval: "handoff" });
+    for (const marker of markersNow(run))
+      if (yield* verifyMarker(run, marker))
+        return {
+          ended: { ...signedIn(run, marker).ended, alreadySignedIn: false, loginProved: false, handedOff: true },
+        } as Ended<V>;
+    return stopped(run, "handoff_not_signed_in");
+  });
+
+/**
+ * Whether a state's press may have the site send a code or link: a state it led to takes one or an
+ * approval other than a hand-off, which the site sends nothing for, or one it led to through states
+ * that take nothing, as a "code sent" page before the code's box.
  * With `alone`, never through a state with its look, which is another press on its page, such as
  * one another sign-in learned there.
  */
@@ -1436,7 +1483,7 @@ const sendsOnPress = <E extends YieldableError, V extends string, L extends Auto
       const next = states.find((other) => other.key === to);
       if (next === undefined) continue;
       if (
-        next.step.approval !== undefined ||
+        (next.step.approval !== undefined && next.step.approval !== "handoff") ||
         next.step.fields.some((field) => "slot" in field && field.slot === "code")
       )
         return true;
@@ -1476,6 +1523,8 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
     });
     for (;;) {
       const step = state.step;
+      // Before the value-free stop, as a hand-off takes no value.
+      if (step.approval === "handoff") return yield* handOff(run, inspection);
       if (
         replay.valueFree &&
         (step.fields.length > 0 ||
@@ -1486,9 +1535,8 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
         return stopped(run, valuesNeeded);
       if (step.choice !== undefined && !(input.hosted?.allowedChoices ?? []).includes(step.choice))
         return stopped(run, "sign_in_choice_not_allowed", { choice: step.choice });
-      if (step.approval === "handoff") return stopped(run, "unsupported_state");
       if (step.approval !== undefined) return (yield* approve(run, state, inspection)) ?? acted();
-      const full = resolved(run, step);
+      const full = actedStep(run, state);
       let fuller: { readonly state: StateEntry; readonly observed: ObservedState } | undefined;
       const groups = actions(full.fields.filter((field) => !typed.has(field.slot)));
       for (const [index, fields] of groups.entries()) {
@@ -1674,7 +1722,7 @@ const actAgain = <E extends YieldableError, V extends string, L extends Autofill
   Effect.gen(function* () {
     const { replay, input } = run;
     const state = last.acted;
-    const full = resolved(run, state.step);
+    const full = actedStep(run, state);
     const step: AutofillStep =
       again.again === "repress" && last.press !== undefined
         ? last.press
@@ -1802,9 +1850,13 @@ export const replaySignInStates = <
         visited: [],
         ...(input.from === undefined ? {} : { fromStop: { continued: false, reason: "states_empty" } }),
       } as SignInStatesOutcome<V>;
-    const as: AutofillReplayInput<E, V, L> = { ...input, recipe };
+    // A library that hands off signs in only once a marker shows, never on a page that can't tell,
+    // as a recipe that hands off (`markerOnly`).
+    const { confirmCantTell: _cantTell, ...markerOnly } = input.hooks;
+    const held = handsOffSignIn(recipe) ? { ...input, hooks: markerOnly } : input;
+    const as: AutofillReplayInput<E, V, L> = { ...held, recipe };
     const run: Run<E, V, L> = {
-      input,
+      input: held,
       as,
       replay: makeReplay(as),
       quiet: input.quiet ?? statesQuiet,
