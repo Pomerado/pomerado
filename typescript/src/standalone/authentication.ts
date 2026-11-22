@@ -17,6 +17,7 @@ import {
 import { rememberTyping } from "../destinations/autofill-typed-page.js";
 import type { CredentialKeyboard } from "../destinations/credential-keyboard.js";
 import type { SignInBrowser, SignInLogin } from "../destinations/sign-in-recipe.js";
+import { observeSignInState } from "../destinations/sign-in-state-scan.js";
 import { MintFailure } from "../mint/contracts.js";
 import type { CredentialRejectedField, WebsiteCredentials } from "../runtime/authentication.js";
 import { credentialMessage, credentialPrompt } from "../runtime/credential-prompts.js";
@@ -125,7 +126,10 @@ export const makeSignInBrowser = (options: {
   readonly authenticationOrigins: readonly string[];
   readonly typing: SessionTyping;
 }): SignInBrowser<never> &
-  Pick<SignInReplayBrowser<Error>, "open" | "markerVisible" | "approvalNumber" | "clearSiteData"> => {
+  Pick<
+    SignInReplayBrowser<Error>,
+    "open" | "markerVisible" | "approvalNumber" | "clearSiteData" | "observe"
+  > => {
   const { page, siteOrigin, typing } = options;
   const { authenticationOrigins } = options;
   const calls = rememberTyping({
@@ -195,6 +199,8 @@ export const makeSignInBrowser = (options: {
         siteOrigin,
         authenticationOrigins,
       }),
+    observe: (workspace, identifiers) =>
+      observeSignInState({ page, siteOrigin, authenticationOrigins, workspace, identifiers }),
   };
 };
 

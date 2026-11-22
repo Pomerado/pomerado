@@ -2,6 +2,7 @@ import type { ModelProvider } from "@openai/agents";
 import { type Effect, Schema } from "effect";
 import { ExpectedConfirms } from "../browser/dialogs/expected.js";
 import { SignInRecipe } from "../destinations/sign-in-recipe.js";
+import { SignInStateEntry } from "../destinations/sign-in-states.js";
 import type { MintOutcome } from "../mint/contracts.js";
 import type { MintArtifact } from "../mint/input-feedback.js";
 import type { PlaywrightOptions } from "../execution/playwright-execute.js";
@@ -96,21 +97,38 @@ export const SignInOrigin = Schema.String.pipe(
     return url !== null && url.protocol === "https:" && url.origin === value;
   }),
 );
+const [StateEntry, TransitionEntry, SignedInEntry] = SignInStateEntry.members;
+/** A sign-in's screens as a library (`SignInStates`): its header and its entries of each kind. */
+export const SignInStatesLibrary = Schema.Struct({
+  workspace: Schema.optional(Schema.Struct({ parent: Schema.String })),
+  states: Schema.Array(StateEntry),
+  transitions: Schema.Array(TransitionEntry),
+  signedIn: Schema.Array(SignedInEntry),
+});
 export const Artifact = Schema.Struct({
   files: Schema.Array(Schema.Struct({ path: Schema.String, content: Schema.String })),
   entrypoint: Schema.String,
   inputSchema: Schema.Unknown,
   outputSchema: Schema.Unknown,
   /**
-   * The verified sign-in a build recorded: its value-free recipe, where its runs start and the
-   * build's https sign-in origins, when it has any.
+   * The verified sign-in a build recorded, value-free: its screens (`states`), or the recipe a
+   * build saved before builds recorded screens, or both; where its runs start; and the build's
+   * https sign-in origins, when it has any.
    */
   signIn: Schema.optionalWith(
     Schema.Struct({
-      recipe: SignInRecipe,
+      recipe: Schema.optionalWith(SignInRecipe, { exact: true }),
+      states: Schema.optionalWith(SignInStatesLibrary, { exact: true }),
       entryUrl: PageUrl,
       authenticationOrigins: Schema.optionalWith(Schema.Array(SignInOrigin), { exact: true }),
-    }),
+    }).pipe(
+      Schema.filter(
+        (signIn) =>
+          signIn.recipe !== undefined ||
+          signIn.states !== undefined ||
+          "a sign-in holds its screens or its recipe",
+      ),
+    ),
     { exact: true },
   ),
   /** The questions publication reviewed, the only ones a run asks. */

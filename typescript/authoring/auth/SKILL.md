@@ -192,8 +192,9 @@ attribute.
     number, such as a national identity number or a PIN that is itself the sign-in identifier, is
     `["private_identifier"]` with the site's own label as `label`; prefer it over relabelling the
     field, which Guardian refuses. A step names one such field at most, and a PIN entered in place
-    of a password after another identifier is the `password` slot. Read
-    the label, type and placeholder. The host sends a kind the login holds (username first, then email, phone and
+    of a password after another identifier is the `password` slot. Read the label, type and
+    placeholder: a field whose label names more than one kind lists each, even when its placeholder
+    shows one. The host sends a kind the login holds (username first, then email, phone and
     account number) or asks the caller once for one it accepts. If it refuses the step as
     `identifier_conflict`, the answer was not this login's: send the step again to ask again.
     For a phone box that keeps only the local number and has no country picker, or a picker that
