@@ -724,8 +724,9 @@ const pressesOnly = <E extends YieldableError, V extends string, L extends Autof
  * such as a choice of account, leads to `state` on its own page: `state` is not taken then, as the
  * page may still draw that first state's control and looks like `state` until then, and the recipe
  * replay never passes a screen that types nothing for a later one on its page. A login the page
- * never shows that choice goes on at the step wait; a replay in place, on the login's own session,
- * never waits for it.
+ * never shows that choice goes on at the step wait; one whose own route (`choices.states`) holds
+ * `state` but not that first state, and a replay in place, on the login's own session, never wait
+ * for it.
  */
 const afterChoice = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -735,10 +736,12 @@ const afterChoice = <E extends YieldableError, V extends string, L extends Autof
 ) => {
   const { states, transitions } = run.input.library;
   if (after !== undefined || waited || run.input.inPlace === true) return false;
+  const route = run.input.choices?.states ?? [];
   return transitions.some(({ from, to }) => {
     const first = states.find((known) => known.key === from);
     return (
       to === state.key &&
+      (route.includes(from) || !route.includes(to)) &&
       first?.step.fields.length === 0 &&
       !transitions.some((before) => before.to === from) &&
       sameAddress(first.step.page, state.step.page)
@@ -1263,7 +1266,8 @@ const returnedReason = <E extends YieldableError, V extends string, L extends Au
  * of a state acted in stops the replay as that rejection, whatever else the page shows, unless it
  * names only extras, which are retyped as corrected in the state just acted in (`retypeExtras`);
  * and on a page that shows a password or code box (`asksSecret`), the marker signs in only where
- * no known state shows, as the recipe replay looks for its screens before its marker. A known
+ * no known state shows, nor before the step wait one of its look whose controls may still draw, as
+ * the recipe replay looks for its screens before its marker. A known
  * state is taken once its controls show and pass its origin rule, in the order this login takes
  * them (`ranked`); where the login's own route left another login's out, none of its own showing,
  * nor by the step wait one learned after it for a box it types that is gone (`matchState`), is an
@@ -1332,8 +1336,9 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
       const read = yield* run.input.observe;
       const at = yield* now;
       // Once anything may have gone out, on a page that shows a password or code box the marker
-      // signs in only where no known state shows, as the recipe replay looks for its screens first;
-      // before, it is a session signed in already, as one beside a step-up's form is.
+      // signs in only where no known state shows, nor until the step wait one of the page's look
+      // whose controls may still draw, as the recipe replay looks for its screens first; before,
+      // it is a session signed in already, as one beside a step-up's form is.
       const markerLast = mayHaveSent(run) && asksSecret(read);
       if (!markerLast) {
         const signed = yield* signedInHere(run);
@@ -1411,7 +1416,7 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
             back = shown.returned;
           }
         }
-        if (markerLast) {
+        if (markerLast && (refused === undefined || capped)) {
           const signed = yield* signedInHere(run);
           if (signed !== undefined) return signed;
         }

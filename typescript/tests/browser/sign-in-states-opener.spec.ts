@@ -183,8 +183,9 @@ test("a library that appends an opener leading to a state it knows signs in from
 
 // Runs sign in from a library on the host's own page, as a run does (`signInForRun`): a code page
 // that also shows the account's header is still a code page, a date of birth the site refused is
-// asked for again and retyped alone, and a choice of account the page draws late is waited for,
-// never passed for the page after it before the step wait.
+// asked for again and retyped alone, never an identifier, and a choice of account the page draws
+// late is waited for, never passed for the page after it before the step wait but by a login whose
+// own route never held it.
 
 /** A library of states, each with the look the host's scan read and its step, to `#account`. */
 const libraryOf = (states: readonly { readonly fingerprint: StateFingerprint; readonly step: AutofillRecipeStep }[]) =>
@@ -252,7 +253,7 @@ const runSignIn = async (page: Page, library: SignInStates, answers: Record<stri
   return { result, asked };
 };
 
-test("a code page that also shows the account's header is answered as a code page, and an account page with a password form signs in", async ({ page }) => {
+test("a code page that also shows the account's header is answered as a code page, though its button draws a moment after its box, and an account page with a password form signs in", async ({ page }) => {
   const code = "246810";
   const posted: string[] = [];
   const header = '<header><a id="account" href="/home">Your account</a></header>';
@@ -261,7 +262,7 @@ test("a code page that also shows the account's header is answered as a code pag
     {
       "/login": loginPage,
       "/verify": () =>
-        `${header}<form method="post" action="/verify"><label>Code<input id="code" name="code" autocomplete="one-time-code" inputmode="numeric"></label><button id="verify">Verify</button></form>`,
+        `${header}<form method="post" action="/verify"><label>Code<input id="code" name="code" autocomplete="one-time-code" inputmode="numeric"></label></form><script>setTimeout(() => document.querySelector("form").insertAdjacentHTML("beforeend", '<button id="verify" type="button" onclick="this.form.submit()">Verify</button>'), 1_000)</script>`,
       "/home": () =>
         `${header}<form><label>Current password<input id="current-password" type="password"></label><label>New password<input id="new-password" type="password"></label><button>Change password</button></form>`,
     },
@@ -319,7 +320,7 @@ test("a date of birth the site refused is asked for again and retyped alone, nev
   expect(posted).toEqual(["/session", "1980-01-01", "1980-04-09"]);
 });
 
-test("a choice of account the page draws late is waited for and made, and a login it never shows goes on at the step wait", async ({ page }) => {
+test("a choice of account the page draws late is waited for and made, a login it never shows goes on at the step wait, and one whose route never held it at once", async ({ page }) => {
   const posted: string[] = [];
   const shown = { chosen: false, late: false };
   const choice = `<button id="choose" type="button" onclick="fetch('/choose', { method: 'POST' }).then(() => this.remove())">Use the team account</button>`;
@@ -365,6 +366,30 @@ test("a choice of account the page draws late is waited for and made, and a logi
   posted.length = 0;
   expect((await runSignIn(page, library)).result).toMatchObject({ _tag: "Right" });
   expect(posted).toEqual(["/login/identifier", "/login/password"]);
+  // A login whose own route never held the choice, where the page draws it late again.
+  Object.assign(shown, { chosen: false, late: true });
+  posted.length = 0;
+  const route = library.states.slice(1).map((state) => state.key);
+  expect(await signIn(page, library, { states: route })).toMatchObject({ outcome: "signed_in" });
+  expect(posted).toEqual(["/login/identifier", "/login/password"]);
+});
+
+test("a marker that names an identifier other than the login's ends it as the login's refusal, never retyped", async ({ page }) => {
+  const posted: string[] = [];
+  const shown = { refused: false };
+  await serveSite(
+    page,
+    { "/login": () => `${shown.refused ? '<p id="email-error">No account uses that email</p>' : ""}${loginPage()}` },
+    (path) => {
+      posted.push(path);
+      shown.refused = true;
+      return "/login";
+    },
+  );
+  const step = { ...loginStep, rejectedMarkers: [{ slot: "email" as const, selector: "#email-error" }] };
+  const library = libraryOf([{ fingerprint: await scanAt(page, "/login"), step }]);
+  expect(await signIn(page, library)).toMatchObject({ reason: "username_rejected" });
+  expect(posted).toEqual(["/session"]);
 });
 
 const openerStep: AutofillRecipeStep = { page: `${site}/login`, fields: [], submit: "#open-sign-in" };
