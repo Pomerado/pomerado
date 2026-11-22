@@ -371,6 +371,9 @@ const shownWithin = <E extends YieldableError, V extends string, L extends Autof
     }
   });
 
+/** Whether a look shows a code box. */
+const showsCode = (fingerprint: StateFingerprint) => fingerprint.boxes.some((box) => box.kind === "code");
+
 /** Whether a known state has the whole look `look`, its step telling what its boxes take (`Look`). */
 const looksLike = (look: Look) => (state: StateEntry) => sameFingerprint(state, look);
 
@@ -835,9 +838,9 @@ const byPlace = <E extends YieldableError, V extends string, L extends AutofillL
  * own that types too, presses the same submit and picks no method is taken in its place, the first
  * whose controls show in the order a login with no route there takes them (`newer`). On a page of
  * code boxes the press just made had the site send a code to (`sent`), the code goes in first: a
- * state that types no code is taken only where that press led, and, with `loose`, a state that
- * types a code into the boxes the page shows counts whatever its text, as one recorded for another
- * method does.
+ * state is taken only where that press led, or, with `loose`, once the page held still, as a late
+ * notice that the site couldn't send it shows first, where it types a code into the boxes the page
+ * shows, whatever its text, as one recorded for another method does.
  */
 const matchState = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -858,7 +861,7 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
         : transitions.filter((t) => t.from === after.key).map((t) => t.to),
     );
     const learned = learnedNext(run, after);
-    const codeSent = sent && fingerprint.boxes.some((box) => box.kind === "code");
+    const codeSent = sent && showsCode(fingerprint);
     // In place, a state in a pop-up where the route leads is told by its controls, not the look.
     const told = (state: StateEntry) =>
       ((sameFingerprint(state, fingerprint) && (fingerprint.message === undefined || !untold(state))) ||
@@ -866,7 +869,7 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
         (codeSent && loose && takesCodeIn(run, state) && sameBoxes(state, fingerprint))) &&
       (after !== undefined || run.input.inPlace !== true || leadsToNewMarker(run, state));
     const candidates = states.filter(
-      (state) => state !== skip && told(state) && (!codeSent || next.has(state.key) || takesCodeIn(run, state)),
+      (state) => state !== skip && told(state) && (!codeSent || next.has(state.key) || (loose && takesCodeIn(run, state))),
     );
     const alike = ranked(run, candidates, told, next, fingerprint);
     let refused: string | undefined;
@@ -1384,7 +1387,8 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
           if (capped) {
             if (!again && back !== undefined) return stopped(run, returnedReason(run, back));
             if (!again) break;
-            return acted.press === undefined
+            // A press on a code page is never made again, as it may have the site send once more.
+            return acted.press === undefined || showsCode(state.fingerprint)
               ? stopped(run, returnedReason(run, state))
               : ({ again: "repress" } satisfies Again);
           }
@@ -1655,8 +1659,7 @@ const sendsOnPress = <E extends YieldableError, V extends string, L extends Auto
   alone = false,
 ) => {
   const { states, transitions } = run.input.library;
-  const showsCode = (entry: StateEntry) => entry.fingerprint.boxes.some((box) => box.kind === "code");
-  const onCodePage = showsCode(state);
+  const onCodePage = showsCode(state.fingerprint);
   const seen = new Set([state.key]);
   const queue = [state.key];
   for (const from of queue)
@@ -1667,7 +1670,7 @@ const sendsOnPress = <E extends YieldableError, V extends string, L extends Auto
       if (
         (next.step.approval !== undefined && next.step.approval !== "handoff") ||
         next.step.fields.some((field) => "slot" in field && field.slot === "code") ||
-        (!onCodePage && showsCode(next))
+        (!onCodePage && showsCode(next.fingerprint))
       )
         return true;
       const pressOnly = next.step.fields.length === 0 && !(onCodePage && next.step.methods !== undefined);
