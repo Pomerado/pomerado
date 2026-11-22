@@ -179,7 +179,7 @@ const scriptedSite = (
       : {
           resubmit: ({ step }) =>
             Effect.sync((): AutofillStepReport => {
-              press(step.submit ?? step.submitKey ?? "");
+              press(step.codeKey ?? step.submit ?? step.submitKey ?? "");
               return {
                 outcome: "filled",
                 fields: step.fields.map((field) => ({ slot: field.slot, status: "filled" as const })),
@@ -802,9 +802,10 @@ it("presses Enter once for each code typed, and still ends at the code retry bou
   const events: Readonly<Record<string, unknown>>[] = [];
   const ended = await replay(site, autoCode(), { events });
   expect(ended).toMatchObject({ outcome: "unclear", reason: "code_rejected" });
-  // The state stood through each step wait after its Enter: no second Enter for the same code.
+  // The state stood through each step wait after its Enter and its one Tab: no second Enter for
+  // the same code.
   expect(site.fills).toEqual(["code", "code", "code"]);
-  expect(site.clicks).toEqual(["Enter", "Enter", "Enter"]);
+  expect(site.clicks).toEqual(["Enter", "Tab", "Enter", "Tab", "Enter", "Tab"]);
   expect(entered(events)).toBe(3);
 });
 

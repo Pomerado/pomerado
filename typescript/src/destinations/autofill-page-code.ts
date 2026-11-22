@@ -1245,7 +1245,8 @@ return {
  * key: the field's own place and destinations (its form's action and method, every form action and
  * method its controls could submit with), described for Guardian as that form, by its own name,
  * id and label and its method, never a value; and how many submit controls the form shows. A
- * field in no form submits nothing (`submitMethod` null), which the host refuses.
+ * field in no form submits nothing (`submitMethod` null), which the host refuses but for a
+ * replay's key in a code box (`codeKey`).
  */
 const keySubmitCode = `const keySubmit = async (field) => {
   const form = await field.locator.evaluate((element) => {
@@ -1393,6 +1394,7 @@ export const autofillStepCode = (
     }[];
     readonly submit?: string | undefined;
     readonly submitKey?: string | undefined;
+    readonly codeKey?: string | undefined;
     readonly submitVia?: string | undefined;
     readonly option?: string | undefined;
     readonly popup?: AutofillPopup | undefined;
@@ -1433,7 +1435,7 @@ const codeSlots = ${JSON.stringify(step.fields.map((field) => field.slot === "co
 // letters, such as "mm/yy", counts as a value.
 const emptiedFields = ${JSON.stringify(step.fields.map((field) => (field.slot === "phone" ? null : strictSlots.has(field.slot ?? "") ? "any" : "mask")))};
 const submitSelector = ${JSON.stringify(step.submit ?? null)};
-const submitKey = ${JSON.stringify(step.submitKey ?? null)};
+const submitKey = ${JSON.stringify(step.codeKey ?? step.submitKey ?? null)};
 const submitVia = ${JSON.stringify(step.submitVia ?? null)};
 const submitOption = ${JSON.stringify(step.option ?? null)};
 // Every control is found first, then read in one pass (readControls). A control that is not found

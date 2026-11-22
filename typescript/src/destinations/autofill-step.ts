@@ -162,6 +162,12 @@ export interface AutofillStep<Slot extends FillSlot = AutofillSlot> {
   /** Enter, pressed in the last field to submit its form; never with `submit`. */
   readonly submitKey?: SubmitKey | undefined;
   /**
+   * With `submitKey`, the key a replay presses in place of it in the last box of a code step its
+   * page was to send itself, even a box in no form, whose page's own script may listen for it:
+   * Enter, or Tab, which moves the focus out of the box. Never recorded.
+   */
+  readonly codeKey?: "Enter" | "Tab" | undefined;
+  /**
    * A method choice: every two-factor method or way in offered, and `submit` the one picked. A
    * method chosen from a native select names that select and the value it lists for the method
    * (`option`).
@@ -1121,8 +1127,9 @@ export const inspectAutofillStep = (input: {
         foundEvidence(found.url, foundFor(found.located, untrusted.target), named),
       );
     if (carried !== undefined) authenticationOrigins = [...authenticationOrigins, carried];
-    // A submit key submits its last field's form, so a field in no form has nothing it submits.
-    if (step.submitKey !== undefined && (targets.submit?.submitMethod ?? null) === null)
+    // A submit key submits its last field's form, so a field in no form has nothing it submits,
+    // but for a replay's key in a code box, which only the page's own script may hear (`codeKey`).
+    if (step.submitKey !== undefined && step.codeKey === undefined && (targets.submit?.submitMethod ?? null) === null)
       return withCheck(refused("credential_target_refused", "submit"), "submit_key", {
         part: "no_form",
         ...foundEvidence(found.url, foundFor(found.located, "submit"), named),

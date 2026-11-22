@@ -1779,16 +1779,21 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
 /**
  * After typing a state that names no submit nor submit key, whose page was to send what was typed
  * itself, as a code box that sends on its last digit, while what it typed is still held unsent:
- * once the page held, `enterMs` from the typing, the look it had then (`stateAfter`), with the
- * state's boxes and every box it typed still holding something, and no recorded error marker of a
- * state acted in shows, Enter in the last field, once, by the host's click again, which types
+ * once the page held (`held`), `enterMs` from the typing, the look it had then (`stateAfter`), with
+ * the state's boxes and every box it typed still holding something, and no recorded error marker
+ * of a state acted in shows, Enter in the last field, once, by the host's click again, which types
  * nothing (`resubmit`), as a keyed step's would. A fill that may have sent what it typed, as when
- * the page sent the code itself, gets none, however long the site takes to answer it; nor does a
- * page that moved, or could not be read, at once. Never where the host refuses the key, as for a
- * field in no form, nor where that form shows a submit control, nor on a host with no click again.
- * A press that may have gone out, and only such a press, is heard as `retried`, sends what was
- * typed, and after a code typed again (`retry`) counts as one try of the code retry bound, as a
- * submit would. The replay then waits for the next state as after any typing.
+ * the page sent the code itself (the host's `codeSent`), gets none, however long the site takes to
+ * answer it; nor does a page that moved, or could not be read, at once. Never where the host
+ * refuses the key, nor where the field's form shows a submit control, nor on a host with no click
+ * again. A step whose every field takes a code gets its Enter even in a box in no form, whose
+ * page's own script may listen for it (`codeKey`), and when the page then held once more, Tab in
+ * that box, once, for a page that sends the code as the focus leaves the box: Tab types nothing
+ * and repeats no key a page may already have sent the code on. A press that may have gone out is
+ * heard as `retried`, and one not made for the page's own send, the host's refusal or a submit
+ * control as `key_skipped`. The Enter that may have gone out sends what was typed, and after a
+ * code typed again (`retry`) counts as one try of the code retry bound, as a submit would; the Tab
+ * counts nothing more. The replay then waits for the next state as after any typing.
  */
 const enterAfterTyping = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -1801,29 +1806,39 @@ const enterAfterTyping = <E extends YieldableError, V extends string, L extends 
     const { replay, input } = run;
     const { resubmit } = input.hooks;
     if (resubmit === undefined || hostSubmits(step) || step.fields.length === 0) return;
-    if (!step.fields.some((field) => replay.state.filled.has(field.slot))) return;
-    const since = yield* now;
+    const skipped = (key: "Enter" | "Tab", reason: string) =>
+      input.emit({ stage: "key_skipped", key, reason });
+    if (!step.fields.some((field) => replay.state.filled.has(field.slot)))
+      return yield* skipped("Enter", "page_sent");
     const typed = (read: ObservedState) => read.boxes.filter((box) => !box.empty).length;
     const first = yield* input.observe;
     if (first === undefined) return;
     const look = stateAfter(reached, first);
     if (!sameBoxes(look, reached.fingerprint) || typed(first) === 0) return;
-    for (;;) {
-      const marked = yield* markersShown(run);
-      if (marked === "unavailable" || marked.length > 0) return;
-      if ((yield* now) - since >= (run.quiet.enterMs ?? statesQuiet.enterMs)) break;
-      yield* pause(run);
-      const read = yield* input.observe;
-      if (read === undefined || !sameFingerprint(stateAfter(reached, read), look) || typed(read) < typed(first))
-        return;
-    }
+    const held = Effect.gen(function* () {
+      const since = yield* now;
+      for (;;) {
+        const marked = yield* markersShown(run);
+        if (marked === "unavailable" || marked.length > 0) return false;
+        if ((yield* now) - since >= (run.quiet.enterMs ?? statesQuiet.enterMs)) return true;
+        yield* pause(run);
+        const read = yield* input.observe;
+        if (read === undefined || !sameFingerprint(stateAfter(reached, read), look) || typed(read) < typed(first))
+          return false;
+      }
+    });
+    if (!(yield* held)) return;
+    const codeOnly = step.fields.every((field) => field.slot === "code");
     const keyed: AutofillStep = {
       fields: step.fields,
       ...(step.popup === undefined ? {} : { popup: step.popup }),
       submitKey: "Enter",
+      ...(codeOnly ? { codeKey: "Enter" as const } : {}),
     };
     const here = yield* shownOn(run, state, keyed);
-    if (typeof here === "string" || (here.screen.submitKey?.submitControls ?? 0) > 0) return;
+    if (typeof here === "string") return yield* skipped("Enter", here);
+    if ((here.screen.submitKey?.submitControls ?? 0) > 0)
+      return yield* skipped("Enter", "submit_control");
     const pressed = yield* resubmit({ step: keyed, inspection: here });
     const sent = maySend(pressed);
     if (sent) yield* input.emit({ stage: "retried", reason: "enter_after_typing" });
@@ -1834,6 +1849,13 @@ const enterAfterTyping = <E extends YieldableError, V extends string, L extends 
     input.sent.current = true;
     noteExactSent(replay, state.step, step, here);
     if (retry && step.fields.some((field) => field.slot === "code")) replay.codeAttempts.current += 1;
+    if (!codeOnly || !(yield* held)) return;
+    const tabbed: AutofillStep = { ...keyed, codeKey: "Tab" };
+    const shown = yield* shownOn(run, state, tabbed);
+    if (typeof shown === "string") return yield* skipped("Tab", shown);
+    const nudged = yield* resubmit({ step: tabbed, inspection: shown });
+    if (maySend(nudged)) yield* input.emit({ stage: "retried", reason: "tab_after_enter" });
+    yield* input.emit(stepDiagnostic(tabbed, nudged));
   });
 
 /**
