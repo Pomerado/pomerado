@@ -254,7 +254,7 @@ const unansweredStep = (h: AutofillHost, unanswered: Unanswered) => {
  * screen can send it. A screen counts as sent once the host clicked its submit after the fill, or
  * the minter went on from it. A signed-in check verifies the sign-in only after its identifier and
  * a password or code were sent, or an approval or a code an exploration typed; then the sign-in's
- * value-free recipe is what the build publishes, while no later sign-in reached the site
+ * value-free screens are what the build publishes, while no later sign-in reached the site
  * (`published`). A password or code is filled twice at most in one sign-in, any other secret
  * once. A rejection counts only where its recorded error marker shows, a code's always: a code
  * gets two fresh ones, the login two corrections in place, an identifier, date of birth, ZIP or
