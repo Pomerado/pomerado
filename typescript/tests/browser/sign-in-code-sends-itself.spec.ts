@@ -78,8 +78,8 @@ document.getElementById("verify")?.addEventListener("click", () => {
  * A code screen with one code box in no form and no submit, beside a button that asks for a new
  * code. Its script sends the box's code on each of `sendsOn` in the box until the site answered,
  * never guarding against a second send while the site checks it: the input of its last digit, an
- * Enter, or the focus leaving it. The site's answer puts the account in place of the screen, which
- * takes the focus from the box. The keys pressed in the box are kept.
+ * Enter, or the focus leaving it. The site's answer hides the screen, its box still in the
+ * document, and shows the account below it. The keys pressed in the box are kept.
  */
 const loneBox = (sendsOn: readonly ("input" | "Enter" | "blur")[]) => `<main id="view"><p>Enter the code we sent you</p>
 <input id="code" maxlength="6" inputmode="numeric" autocomplete="one-time-code" aria-label="Verification code">
@@ -95,7 +95,8 @@ const check = () =>
   fetch("/api/code", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code: box.value }) })
     .then((response) => {
       answered = true;
-      document.getElementById("view").innerHTML = response.ok ? '<p id="account">Signed in</p>' : '<p id="signed-out">Your code expired</p>';
+      document.getElementById("view").hidden = true;
+      document.body.insertAdjacentHTML("beforeend", response.ok ? '<p id="account">Signed in</p>' : '<p id="signed-out">Your code expired</p>');
     });
 box.addEventListener("keydown", (event) => {
   window.keys.push(event.key);
