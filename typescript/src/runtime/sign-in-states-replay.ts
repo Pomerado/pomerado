@@ -39,6 +39,7 @@ import { recordedRejections } from "./autofill-rejection.js";
 import { approvalNumber, openPastedLink, withApprovalNumber } from "./autofill-replay-approval.js";
 import { settleCarried } from "./autofill-replay-fill.js";
 import { landingSettleMs } from "./autofill-replay-pages.js";
+import { unrecordedCode } from "./autofill-replay-code-screen.js";
 import { alreadySignedIn, makeReplay, type Replay, workspaceOf } from "./autofill-replay-session.js";
 import {
   askOne,
@@ -2047,7 +2048,10 @@ export const replaySignInStates = <
 /**
  * The replay from the page it is on: each known state it shows in turn, from `first` when given,
  * as the state the page shows now. A value-free replay that stopped for values in a state it
- * reached gives where (`stop`).
+ * reached gives where (`stop`). Once the login went out, a page no state knows with no password box
+ * that shows a code box gets the code there, as a code screen a recipe never recorded does
+ * (`unrecordedCode`), once and only while no code may have gone out, and the replay goes on; a
+ * caller that records such a page itself (`codeRowByPlace: false`) gets the unknown state.
  */
 const walk = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -2057,6 +2061,7 @@ const walk = <E extends YieldableError, V extends string, L extends AutofillLogi
     const { input } = run;
     let last: Acted | undefined;
     let next = first;
+    const probed = { current: false };
     for (;;) {
       const arrived = next ?? (yield* arrive(run, last));
       next = undefined;
@@ -2067,7 +2072,18 @@ const walk = <E extends YieldableError, V extends string, L extends AutofillLogi
         last = again;
         continue;
       }
-      if ("ended" in arrived) return arrived.ended;
+      if ("ended" in arrived) {
+        const unknown = arrived.ended.unknownState?.fingerprint;
+        const code =
+          unknown !== undefined &&
+          run.replay.progress.anythingSent &&
+          input.codeRowByPlace !== false &&
+          !unknown.boxes.some((box) => box.kind === "password")
+            ? yield* unrecordedCode(run.as, run.replay, probed)
+            : "none";
+        if (code === "ran") continue;
+        return code === "none" ? arrived.ended : stopped(run, code).ended;
+      }
       if (run.visited.length >= maximumStateVisits) return stopped(run, "state_limit").ended;
       run.visited.push(arrived.state.key);
       run.missing = undefined;
