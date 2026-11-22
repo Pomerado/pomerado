@@ -1964,7 +1964,8 @@ const noteShownBefore = <E extends YieldableError, V extends string, L extends A
  * screen's origin rule (`admitScreen`), each value through its fill, and a secret goes out at most
  * once in a state. A recipe never runs here; this runs only for a library. Only a replay in place
  * reads a step-up's entries (`stepUp`); any other leaves them out, with every transition to or
- * from them.
+ * from them. One that did not sign in once anything may have gone out lets the host flag a saved
+ * security answer whose question shows again (`hosted.refuseShownAnswer`), as the recipe replay does.
  */
 export const replaySignInStates = <
   E extends YieldableError,
@@ -2034,6 +2035,7 @@ export const replaySignInStates = <
         ? stopped(run, here).ended
         : yield* walk(run, typeof from === "object" ? from : here);
     if ("reason" in ended && ended.reason === "not_found") yield* notFound(run);
+    if (ended.outcome !== "signed_in" && mayHaveSent(run)) yield* run.replay.refuseShownAnswer;
     return from === undefined
       ? ended
       : {
