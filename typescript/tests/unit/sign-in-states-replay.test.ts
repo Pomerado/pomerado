@@ -277,6 +277,8 @@ const replay = (
     readonly prompts?: string[];
     readonly codeRowByPlace?: boolean;
     readonly inPlace?: boolean;
+    /** The replay may hand off: what the person does in the browser before marking it done. */
+    readonly handOff?: () => void;
   } = {},
 ) => {
   const asked: string[] = [];
@@ -292,7 +294,9 @@ const replay = (
               question.id,
               question.id === "sign_in_link"
                 ? link
-                : question.type === "confirm"
+                : question.type === "browser_handoff"
+                  ? (options.handOff?.(), { done: true })
+                  : question.type === "confirm"
                   ? { confirmed: true }
                   : question.id === "code" && options.codes !== undefined
                     ? (options.codes[Math.min(codesGiven++, options.codes.length - 1)] ?? "")
@@ -347,6 +351,7 @@ const replay = (
         ...(options.from === undefined ? {} : { from: options.from }),
         ...(options.codeRowByPlace === undefined ? {} : { codeRowByPlace: options.codeRowByPlace }),
         ...(options.inPlace === undefined ? {} : { inPlace: options.inPlace }),
+        ...(options.handOff === undefined ? {} : { handOff: true }),
       }),
     ),
   ).then((outcome) => {
@@ -1123,6 +1128,19 @@ it("signs in on a page that can't tell once it held still, before the step wait"
   expect(confirmed).toEqual(["confirmed"]);
 });
 
+it("signs in on an account chooser that can't tell in place of a code state, once the step wait ran out", async () => {
+  const library = libraryOf([
+    { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") },
+    { fingerprint: arrival(codeScreen), step: stepAt("/verify", [code], "#verify") },
+  ]);
+  const chooser: Screen = { path: "/choose", boxes: [], texts: ["choose an account"], labels: ["~", "~ ~"] };
+  const site = scriptedSite({ start: passwordScreen, chooser }, () => "chooser");
+  const hooks = { ...site.hooks, confirmCantTell: () => Effect.void };
+  const ended = await replay({ ...site, hooks }, library);
+  expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false, cantTell: true });
+  expect(site.fills).toEqual(["password"]);
+});
+
 it("ends unclear when the press after a typed password lost its call's answer", async () => {
   const library = libraryOf([{ fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") }]);
   const site = scriptedSite({ start: passwordScreen }, () => "home");
@@ -1369,6 +1387,37 @@ it("stops a value-free check before a press that has the site send a link", asyn
     reason: "values_needed",
   });
   expect(site.clicks).toEqual([]);
+});
+
+it("hands the browser to a person at a hand-off state after the presses before it, then checks the marker", async () => {
+  const start: Screen = { path: "/", boxes: [], buttons: ["#sign-in"], texts: ["welcome"] };
+  const provider: Screen = { path: "/sso", boxes: [{ selector: "#user", kind: "identifier" }], buttons: ["#next"] };
+  const library = libraryOf([
+    { fingerprint: arrival(start), step: stepAt("/", [], "#sign-in") },
+    { fingerprint: arrival(provider), step: stepAt("/sso", [], undefined, { approval: "handoff" }) },
+  ]);
+  const site = () => scriptedSite({ start, provider }, (_at, clicked) => (clicked === "#sign-in" ? "provider" : undefined));
+  // A check that may not hand off stops there, unsent.
+  const check = site();
+  expect(await replay(check, library, { valueFree: true })).toMatchObject({ outcome: "unsent", reason: "values_needed" });
+  expect(check.clicks).toEqual(["#sign-in"]);
+  const handed = site();
+  const prompts: string[] = [];
+  const ended = await replay(handed, library, {
+    valueFree: true,
+    prompts,
+    handOff: () => {
+      handed.site.screen = "home";
+    },
+  });
+  expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false, loginProved: false, handedOff: true });
+  expect(prompts).toEqual(["Sign in to example.test in this browser, then mark it done."]);
+  expect(handed.fills).toEqual([]);
+  // A person who did not sign in leaves no marker.
+  expect(await replay(site(), library, { valueFree: true, handOff: () => undefined })).toMatchObject({
+    outcome: "unsent",
+    reason: "handoff_not_signed_in",
+  });
 });
 
 it("appends only what a library did not hold, leaving every stored entry as it was", () => {
@@ -2043,6 +2092,28 @@ it("goes on along the login's own route where known states share a look, never a
   expect(ended).toMatchObject({ outcome: "unclear", reason: "unknown_state" });
   expect(ended.unknownState).toMatchObject({ after: keyOf(emailState) });
   expect(gone.clicks).toEqual(["#continue"]);
+});
+
+it("takes on every login's route a look-alike a repair learned that only adds a dismiss, before the state it adds to", async () => {
+  const plain = { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") };
+  const dismissing = { ...plain, step: stepAt("/password", [password], "#go", { dismiss: "#reject" }) };
+  const library = libraryOf([emailState, plain], [emailState, dismissing]);
+  const own = { states: [keyOf(emailState), keyOf(plain)] };
+  for (const banner of [true, false]) {
+    const site = scriptedSite({ start: emailScreen, password: { ...passwordScreen, buttons: ["#go", "#reject"] } }, (_at, clicked) =>
+      clicked === "#continue" ? "password" : "home",
+    );
+    // A notice over the submit catches its click until its own control dismisses it.
+    let covered = banner;
+    const fill: typeof site.hooks.fill = (call) => {
+      if (call.step.dismiss !== undefined) covered = false;
+      return covered && call.step.submit === "#go"
+        ? Effect.succeed({ outcome: "filled", fields: [], submit: "blocked", url: `${origin}/password` } as AutofillStepReport)
+        : site.hooks.fill(call);
+    };
+    const ended = await replay({ ...site, hooks: { ...site.hooks, fill } }, library, { choices: own });
+    expect(ended).toMatchObject({ outcome: "signed_in", visited: [keyOf(emailState), keyOf(dismissing)] });
+  }
 });
 
 it("takes, for a login with no route there, the state of its own method, else the most recently learned", async () => {
