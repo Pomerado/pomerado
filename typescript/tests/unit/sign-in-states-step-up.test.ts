@@ -190,13 +190,14 @@ it("views a library as the login's recipe in the order its sign-in goes through 
     fingerprint: { top: site, boxes: [], submit: false, buttons: ["here"] },
     step: { page: `${site}/location`, fields: [], submit: "#here" },
   };
+  const base = append(signInStatesOf({}, []), own).library;
+  const submits = (states: SignInStates) => signInStatesRecipe(states)?.steps.map((recipeStep) => recipeStep.submit);
   // A later sign-in found a location page at `at`; the library stores it last, after the pages it leads to.
-  const learned = (at: number) =>
-    signInStatesRecipe(
-      append(append(signInStatesOf({}, []), own).library, { ...own, states: own.states.toSpliced(at, 0, location) }).library,
-    )?.steps.map((recipeStep) => recipeStep.submit);
-  expect(learned(0)).toEqual(["#here", "#continue", "#go"]);
-  expect(learned(1)).toEqual(["#continue", "#here", "#go"]);
+  const learned = (at: number) => append(base, { ...own, states: own.states.toSpliced(at, 0, location) }).library;
+  expect(submits(learned(0))).toEqual(["#here", "#continue", "#go"]);
+  expect(submits(learned(1))).toEqual(["#continue", "#here", "#go"]);
+  // A route a login took, with no link to its last state, keeps that state last.
+  expect(submits({ ...learned(0), transitions: base.transitions })).toEqual(["#continue", "#go", "#here"]);
 });
 
 it("never takes a step-up's state as a sign-in's first screen from the entry URL", async () => {

@@ -630,19 +630,20 @@ const recipeOf = (library: SignInStates, states: readonly StateEntry[], marker: 
 };
 
 /**
- * States in the order a sign-in goes through them, as the transitions between them say: first
- * those no other state leads to, then, turn by turn, each state once every state that leads to it
- * is listed, each turn in library order; then the rest, such as a loop's, in library order.
+ * States in the order a sign-in goes through them, as the transitions between them say, one at a
+ * time: the first in library order that every state leading to it comes before, or, where none
+ * is, as on a loop, the first not yet listed.
  */
 const routeOrder = (states: readonly StateEntry[], transitions: readonly TransitionEntry[]) => {
   const keys = new Set(states.map((state) => state.key));
   const links = transitions.filter(({ from, to }) => from !== to && keys.has(from) && keys.has(to));
   const listed: StateEntry[] = [];
+  const unlisted = (state: StateEntry) => !listed.includes(state);
   const ready = (state: StateEntry) =>
-    !listed.includes(state) &&
-    links.every(({ from, to }) => to !== state.key || listed.some((before) => before.key === from));
-  for (let turn = states.filter(ready); turn.length > 0; turn = states.filter(ready)) listed.push(...turn);
-  return [...listed, ...states.filter((state) => !listed.includes(state))];
+    unlisted(state) && links.every(({ from, to }) => to !== state.key || listed.some((before) => before.key === from));
+  const pick = () => states.find(ready) ?? states.find(unlisted);
+  for (let next = pick(); next !== undefined; next = pick()) listed.push(next);
+  return listed;
 };
 
 /**
