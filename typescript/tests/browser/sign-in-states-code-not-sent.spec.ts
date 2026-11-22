@@ -14,11 +14,12 @@ import { signInForRun } from "../../src/runtime/sign-in-replay.js";
 import { localSignInLogin, makeSignInBrowser } from "../../src/standalone/authentication.js";
 import { expectNotCarried, hostKeyboard, hostPage } from "./autofill-host-page.js";
 
-// A run's sign-in replayed from its screens on local Chromium, on a site that can't send a text:
-// its code page shows a notice with OK over four code boxes. The sign-in that recorded the screens
+// A run's sign-in replayed from its screens on local Chromium. The sign-in that recorded them met a
+// site that couldn't send a text: its code page showed a notice with OK over four code boxes. It
 // pressed OK, then More options, where the owner picked a phone call, and typed that code into the
 // four boxes. A run that meets the same notice goes the same way, the owner picking the method
-// again, and the site gets one call and one code.
+// again. A run whose text the site did send types that code into the same four boxes and presses
+// nothing else.
 
 const site = "https://rides.example.test";
 const code = "4826";
@@ -31,9 +32,10 @@ const boxes = [0, 1, 2, 3]
   .join("");
 
 /**
- * The sign-in at /login: a text-message button; the code page, whose text the site can't send, so
- * a notice with OK covers it; More options, a sheet of other methods; and the same four boxes for
- * a code sent by a phone call, with Verify. Sends post to /api/send, codes to /api/code.
+ * The sign-in at /login: a text-message button; the code page, with a notice with OK over it when
+ * the site couldn't send the text; More options, a sheet of other methods; and the same four boxes
+ * for a code sent by a phone call. Each code page has Verify. Sends post to /api/send, codes to
+ * /api/code.
  */
 const screen = `<main><h1 id="title">Welcome back. Sign in to your account:</h1><div id="boxes" hidden>${boxes}</div><div id="actions"><button id="sms" type="button">Send code via SMS</button></div></main>
 <script>
@@ -43,20 +45,20 @@ const post = (path, body) => fetch(path, { method: "POST", headers: { "content-t
 const show = (heading, buttons) => {
   title.textContent = heading;
   document.getElementById("boxes").hidden = false;
-  actions.innerHTML = buttons;
+  actions.innerHTML = buttons + '<button id="verify" type="button">Verify</button>';
 };
 const sheet = (html) => document.body.insertAdjacentHTML("beforeend", '<div id="sheet" role="dialog">' + html + "</div>");
 document.addEventListener("click", async (event) => {
   const id = event.target.id;
   if (id === "sms") {
-    await post("/api/send", { method: "sms" });
-    show("Enter the 4-digit code sent via SMS", '<button id="more" type="button">More options</button><button id="next" type="button" disabled>Next</button>');
-    sheet("<p>We couldn't send a text message. Try another way.</p><button id=\\"ok\\" type=\\"button\\">OK</button>");
+    const sent = (await post("/api/send", { method: "sms" })).ok;
+    show("Enter the 4-digit code sent via SMS", '<button id="more" type="button">More options</button>');
+    if (!sent) sheet("<p>We couldn't send a text message. Try another way.</p><button id=\\"ok\\" type=\\"button\\">OK</button>");
   } else if (id === "ok" || id === "call") document.getElementById("sheet").remove();
   if (id === "more") sheet('<h2>More options</h2><button id="email" type="button">Email</button><button id="call" type="button">Phone call</button>');
   if (id === "call") {
     await post("/api/send", { method: "call" });
-    show("Enter the 4-digit code sent via phone call", '<button id="verify" type="button">Verify</button>');
+    show("Enter the 4-digit code sent via phone call", "");
   }
   if (id === "verify") {
     const typed = [0, 1, 2, 3].map((box) => document.getElementById("otp-" + box).value).join("");
@@ -66,36 +68,29 @@ document.addEventListener("click", async (event) => {
 </script>`;
 
 /**
- * The site, with each method a send asked for and each code posted, in order, and a reset that
- * clears them and signs the session out.
+ * The site, with each method a send asked for and each code posted, in order. It can't send a text
+ * until `texts` is set.
  */
 const serve = async (page: Page) => {
-  const sends: string[] = [];
-  const codes: string[] = [];
-  let signedIn = false;
-  const reset = () => {
-    sends.length = 0;
-    codes.length = 0;
-    signedIn = false;
-  };
+  const served = { sends: [] as string[], codes: [] as string[], texts: false, signedIn: false };
   await page.route(`${site}/**`, async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
     if (request.method() === "POST") {
       const body = Object(JSON.parse(request.postData() ?? "{}"));
-      if (path === "/api/send") sends.push(String(Reflect.get(body, "method")));
-      if (path === "/api/code") codes.push(String(Reflect.get(body, "code")));
-      signedIn ||= path === "/api/code" && Reflect.get(body, "code") === code;
-      const refused = path === "/api/send" ? Reflect.get(body, "method") === "sms" : !signedIn;
+      if (path === "/api/send") served.sends.push(String(Reflect.get(body, "method")));
+      if (path === "/api/code") served.codes.push(String(Reflect.get(body, "code")));
+      served.signedIn ||= path === "/api/code" && Reflect.get(body, "code") === code;
+      const refused = path === "/api/send" ? Reflect.get(body, "method") === "sms" && !served.texts : !served.signedIn;
       await route.fulfill({ status: refused ? 400 : 200, contentType: "application/json", body: "{}" });
       return;
     }
     await route.fulfill({
       contentType: "text/html",
-      body: path === "/home" && signedIn ? '<p id="account">Your rides</p>' : screen,
+      body: path === "/home" && served.signedIn ? '<p id="account">Your rides</p>' : screen,
     });
   });
-  return { sends, codes, reset };
+  return served;
 };
 
 const press = (name: string) => `role=button[name="${name}" s]`;
@@ -104,23 +99,25 @@ const methods = {
   email: { method: "email", selector: press("Email") },
   call: { method: "call", selector: press("Phone call") },
 } as const;
+const steps: AutofillRecipeStep[] = [
+  { page: `${site}/login`, fields: [], submit: methods.sms.selector, methods: [methods.sms] },
+  { page: `${site}/login`, fields: [], submit: press("OK") },
+  { page: `${site}/login`, fields: [], submit: press("More options") },
+  { page: `${site}/login`, fields: [], submit: methods.call.selector, methods: [methods.email, methods.call] },
+  { page: `${site}/login`, fields: [0, 1, 2, 3].map((box) => ({ selector: `#otp-${box}`, slot: "code" as const })), submit: "#verify" },
+];
 
-test("a code page whose text the site couldn't send goes on as recorded, to the owner's other method and its code", async ({
-  page,
-}) => {
-  const { sends, codes, reset } = await serve(page);
+/**
+ * Records the sign-in on a site that can't send a text, each screen noted as the page showed it
+ * and its step then taken by hand, then replays it from its screens once the site's `texts` are
+ * set as given: the outcome, the questions asked, and the site's sends and codes in the replay.
+ */
+const recordThenSignIn = async (page: Page, texts: boolean) => {
+  const served = await serve(page);
   const host = await hostPage(page);
   const { keyboard } = await hostKeyboard(page);
   const observe = observeSignInState({ page: host, siteOrigin: site, authenticationOrigins: [] });
-  // The recording: each screen noted as the page showed it, then its step taken by hand.
   await page.goto(`${site}/login`);
-  const steps: AutofillRecipeStep[] = [
-    { page: `${site}/login`, fields: [], submit: methods.sms.selector, methods: [methods.sms] },
-    { page: `${site}/login`, fields: [], submit: press("OK") },
-    { page: `${site}/login`, fields: [], submit: press("More options") },
-    { page: `${site}/login`, fields: [], submit: methods.call.selector, methods: [methods.email, methods.call] },
-    { page: `${site}/login`, fields: [0, 1, 2, 3].map((box) => ({ selector: `#otp-${box}`, slot: "code" as const })), submit: "#verify" },
-  ];
   const signIn = { steps: [] as object[] };
   for (const [index, step] of steps.entries()) {
     await expect(page.locator(step.submit ?? "body")).toBeVisible();
@@ -136,7 +133,7 @@ test("a code page whose text the site couldn't send goes on as recorded, to the 
   if ("missingFingerprint" in observed) throw new Error(`No note at step ${observed.missingFingerprint}`);
   const appended = appendSignInStates(signInStatesOf({}, []), observed);
   if ("refused" in appended) throw new Error(appended.refused);
-  reset();
+  Object.assign(served, { sends: [], codes: [], texts, signedIn: false });
   await page.goto("about:blank");
 
   const asked: string[] = [];
@@ -170,10 +167,27 @@ test("a code page whose text the site couldn't send goes on as recorded, to the 
       }),
     ),
   );
-  expect(Either.isRight(ended) ? ended.right : ended.left).toEqual({ alreadySignedIn: false });
   expectNotCarried(host.calls, code);
-  // The text went unsent; the owner picked the call from both methods, and its code went once.
-  expect(asked).toEqual(["method: Text message", "method: Email, Phone call", "secret"]);
-  expect(sends).toEqual(["sms", "call"]);
-  expect(codes).toEqual([code]);
+  return { ended: Either.isRight(ended) ? ended.right : ended.left, asked, sends: served.sends, codes: served.codes };
+};
+
+test("a code page whose text the site couldn't send goes on as recorded, to the owner's other method and its code", async ({
+  page,
+}) => {
+  expect(await recordThenSignIn(page, false)).toEqual({
+    ended: { alreadySignedIn: false },
+    // The owner picked the call from both methods, and its code went once.
+    asked: ["method: Text message", "method: Email, Phone call", "secret"],
+    sends: ["sms", "call"],
+    codes: [code],
+  });
+});
+
+test("a code page whose text the site did send gets that code in its boxes, and nothing else is pressed", async ({ page }) => {
+  expect(await recordThenSignIn(page, true)).toEqual({
+    ended: { alreadySignedIn: false },
+    asked: ["method: Text message", "secret"],
+    sends: ["sms"],
+    codes: [code],
+  });
 });
