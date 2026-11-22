@@ -687,11 +687,16 @@ export const signInStatesStepUps = (library: SignInStates): readonly AutofillRec
 /**
  * A sign-in a build or repair recorded: each state it arrived at, as observed before it acted,
  * with the step it took there, and the marker it signed in by. `from` is the known state a repair
- * went on from, where the library's replay stopped at a state it did not know. `stepUp` says it
- * is a step-up, recorded from a signed-in session's page that asked for the login again.
+ * went on from, where the library's replay stopped at a state it did not know. `to` is the look of
+ * the page its last step led to, for a sign-in that stopped there before it signed in, such as one
+ * whose person left that page's question unanswered: a state the library already knows, of the
+ * same sign-in (a step-up's, or the site's own), which its last step leads to in place of the
+ * marker it never reached, so `signedIn` is not stored then. `stepUp` says it is a step-up,
+ * recorded from a signed-in session's page that asked for the login again.
  */
 export interface ObservedSignIn {
   readonly from?: string | undefined;
+  readonly to?: StateFingerprint | undefined;
   readonly stepUp?: true | undefined;
   readonly states: readonly {
     readonly fingerprint: StateFingerprint;
@@ -706,26 +711,37 @@ export const maximumStates = 64;
 /**
  * The library with a recorded sign-in's new entries appended after every existing one, which stay
  * as they are, and those entries (`added`), none when it knew them all. A state is known by its
- * key, its fingerprint and step alike. Refused: a workspace step in a library with no workspace; a
- * state that shows nothing to tell it by; and a library that would pass `maximumStates`.
+ * key, its fingerprint and step alike. A sign-in that stopped before it signed in (`to`) leads to
+ * the oldest known state of its own sign-in with that look, a step-up's for a step-up, and adds no
+ * marker. Refused: a workspace step in a library with no workspace; a state that shows nothing to
+ * tell it by; a `to` no such state looks like (`unknown_state`); and a library that would pass
+ * `maximumStates`.
  */
 export const appendSignInStates = (
   library: SignInStates,
   observed: ObservedSignIn,
 ):
   | { readonly library: SignInStates; readonly added: readonly SignInStateEntry[] }
-  | { readonly refused: "unsupported_step" | "blank_state" | "library_full" } => {
+  | { readonly refused: "unsupported_step" | "blank_state" | "unknown_state" | "library_full" } => {
   if (observed.states.some(({ step }) => step.origin === "workspace" && library.workspace === undefined))
     return { refused: "unsupported_step" };
   if (observed.states.some(({ fingerprint }) => blankFingerprint(fingerprint)))
     return { refused: "blank_state" };
+  const { to } = observed;
+  const led =
+    to === undefined
+      ? undefined
+      : library.states.find(
+          (state) => (state.stepUp === true) === (observed.stepUp === true) && sameFingerprint(state, to),
+        );
+  if (to !== undefined && led === undefined) return { refused: "unknown_state" };
   const states = observed.states.map(({ fingerprint, step }) => stateEntry(fingerprint, step, "recorded", observed.stepUp));
-  const marker = signedInEntry(observed.signedIn, observed.stepUp);
-  const path = [...(observed.from === undefined ? [] : [observed.from]), ...states.map((s) => s.key), marker.key];
+  const end = led ?? signedInEntry(observed.signedIn, observed.stepUp);
+  const path = [...(observed.from === undefined ? [] : [observed.from]), ...states.map((s) => s.key), end.key];
   const fresh = [
     ...states,
-    marker,
-    ...path.slice(1).map((to, index) => transitionEntry(path[index] ?? "", to)),
+    ...(led === undefined ? [end] : []),
+    ...path.slice(1).map((next, index) => transitionEntry(path[index] ?? "", next)),
   ];
   const known = new Set(
     [...library.states, ...library.transitions, ...library.signedIn].map((entry) => entry.key),
