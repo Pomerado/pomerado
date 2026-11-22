@@ -44,6 +44,7 @@ import {
   valuesNeeded,
 } from "./autofill-replay-steps.js";
 import { admitScreen, noteExactSent } from "./autofill-replay-workspace.js";
+import { codeRowFields, isCodeRowByPlace } from "./autofill-unrecorded-code.js";
 import { isIdentifier, provesLogin, screenSubmit, submittedLoginProof } from "./autofill-state.js";
 import type { AutofillLogin } from "./autofill-values.js";
 import { workspaceHost } from "./workspace-origin.js";
@@ -91,6 +92,13 @@ export interface SignInStatesReplayInput<
    * the replay opens it.
    */
   readonly from?: SignInStatesStop | undefined;
+  /**
+   * Whether a code state whose recorded boxes never show, on a page that shows its look, has the
+   * code typed by place into the row of code boxes the page shows instead (`byPlace`), as by
+   * default; false for a caller that goes on from the page itself, as a build's or repair's minter
+   * does, so the page is left for it to record.
+   */
+  readonly codeRowByPlace?: boolean | undefined;
 }
 
 /**
@@ -151,6 +159,9 @@ interface Run<E extends YieldableError, V extends string, L extends AutofillLogi
   readonly answered: Set<string>;
   /** The page's address as the last marker check read it, for an unknown state's shape. */
   page: string | undefined;
+  /** The page's look as last read, and the known state of that look whose controls did not show. */
+  seen: StateFingerprint | undefined;
+  missing: string | undefined;
   /**
    * Whether the method picked last is the host's hint (`rankMethod`) as a lone method beside a way
    * in, for a login that names no method of its own, in a state the hint may have ranked first: it
@@ -159,11 +170,14 @@ interface Run<E extends YieldableError, V extends string, L extends AutofillLogi
   hinted: boolean;
 }
 
-/** A known state the page shows, told by its control and address alone (`byControl`) or not. */
+/**
+ * A known state the page shows, told by its control and address alone (`byControl`), with its
+ * code typed by place into the row the page shows (`byPlace`), or as recorded.
+ */
 type Shown = {
   readonly state: StateEntry;
   readonly inspection: AutofillInspection;
-  readonly by?: "control";
+  readonly by?: "control" | "row";
 };
 type Ended<V extends string> = { readonly ended: SignInStatesOutcome<V> };
 /**
@@ -246,8 +260,41 @@ const shownOn = <E extends YieldableError, V extends string, L extends AutofillL
     const inspection = yield* run.input.hooks.inspect(step);
     if ("outcome" in inspection) return inspection.reason;
     if (!onStateFrames(run, state, inspection)) return "screen_origin_changed" as const;
+    if (placed.has(state) && step.fields.length > 0 && !(yield* placedRow(run, state, inspection)))
+      return "ambiguous_match" as const;
     const refused = yield* admitScreen(run.as, run.replay, state.step, inspection.page, inspection);
     return refused ?? inspection;
+  });
+
+/** The states whose code is typed by place (`byPlace`). */
+const placed = new WeakSet<StateEntry>();
+
+/**
+ * A code state's row as its look holds it: one code box with a count, a row of one-character
+ * boxes (`row`), else as many code boxes as it shows.
+ */
+const codeRowOf = (state: StateEntry) => {
+  const { boxes } = state.fingerprint;
+  const row = boxes.length === 1 && boxes[0]?.count !== undefined;
+  return { row, count: row ? (boxes[0]?.count ?? 0) : boxes.length };
+};
+
+/**
+ * Whether a state typed by place shows its row as taken: each field the next box of the row, none
+ * labelled for a PIN, a social security number or a date (`isCodeRowByPlace`), and no box at the
+ * place after it, as a box the scan does not count, such as one drawn transparent, would put every
+ * character a box over.
+ */
+const placedRow = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  state: StateEntry,
+  inspection: AutofillInspection,
+) =>
+  Effect.gen(function* () {
+    const { row, count } = codeRowOf(state);
+    if (!isCodeRowByPlace(inspection.screen.fields, count, row)) return false;
+    const after = yield* run.input.hooks.inspect({ fields: codeRowFields(count + 1, row).slice(count) });
+    return "outcome" in after && after.reason === "not_found";
   });
 
 /**
@@ -520,13 +567,46 @@ const byControl = <E extends YieldableError, V extends string, L extends Autofil
   });
 
 /**
+ * A code state of the page's look whose recorded boxes never showed (`missing`, in the order this
+ * login takes them), with its code typed by place into the row of code boxes the page shows
+ * instead: the first whose step types a code alone, one character a box, into as many fields as
+ * its look's one row of code boxes in one frame holds, two or more, as its own step with the row's
+ * fields (`codeRowFields`), once they show on its frames and pass its origin rule as that row, at
+ * this and every later look (`shownOn`, `placedRow`). Its own submit, Enter or the page's own send
+ * then goes as recorded.
+ */
+const byPlace = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  missing: readonly StateEntry[],
+) =>
+  Effect.gen(function* () {
+    for (const state of missing) {
+      const { boxes } = state.fingerprint;
+      const { row, count } = codeRowOf(state);
+      if (
+        count < 2 ||
+        state.step.fields.length !== count ||
+        !state.step.fields.every((field) => "slot" in field && field.slot === "code") ||
+        !boxes.every((box) => box.kind === "code" && box.frame === boxes[0]?.frame)
+      )
+        continue;
+      const typed: StateEntry = { ...state, step: { ...state.step, fields: codeRowFields(count, row) } };
+      placed.add(typed);
+      const shown = yield* shownOn(run, typed, resolved(run, typed.step));
+      if (typeof shown !== "string") return { state: typed, inspection: shown, by: "row" } satisfies Shown;
+    }
+    return undefined;
+  });
+
+/**
  * The known state the page shows: one whose fingerprint it is and whose recorded controls show,
  * one match each, on its recorded origin, in the order this login takes them (`ranked`), never
  * the state just acted in again. A state acted in before something went out that the
  * page shows again, with no other, is `returned`, unless a sign-in learned it after the last one
- * (`learnedNext`). With no state of its whole look, and `loose`, a page with no box may be a
- * state told by its control and address alone (`byControl`); its refusals count for nothing, so a
- * page no state is still ends as an unknown state.
+ * (`learnedNext`). With `loose`, states of its look none of whose recorded controls showed may be a
+ * code state typed by place into the row the page shows (`byPlace`); with no state of its whole
+ * look, a page with no box may be a state told by its control and address alone (`byControl`);
+ * its refusals count for nothing, so a page no state is still ends as an unknown state.
  */
 const matchState = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -550,6 +630,7 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
     const alike = ranked(run, candidates, looksLike(fingerprint), next);
     let refused: string | undefined;
     let returned: StateEntry | undefined;
+    const missing: StateEntry[] = [];
     for (const state of alike) {
       if (!learned.includes(state) && (yield* returnedTo(run, state))) {
         returned ??= state;
@@ -558,8 +639,14 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
       const shown = yield* shownOn(run, state, resolved(run, state.step));
       if (typeof shown !== "string") return { state, inspection: shown } satisfies Shown;
       refused ??= shown;
+      if (shown === "not_found") missing.push(state);
     }
     if (returned !== undefined) return { returned: returned as StateEntry };
+    if (missing[0] !== undefined) run.missing = missing[0].key;
+    if (loose && refused === "not_found" && run.input.codeRowByPlace !== false) {
+      const row = yield* byPlace(run, missing);
+      if (row !== undefined) return row;
+    }
     // Where the login's own route left other logins' states out, none of its own showing by the
     // step wait is a page it does not know, for a repair of its own to go on from.
     if (alike.length < candidates.length && refused === "not_found") return ownStateNotShown;
@@ -646,6 +733,22 @@ const unknownState = <E extends YieldableError, V extends string, L extends Auto
       },
     },
   };
+};
+
+/**
+ * For a log, a replay that ended `not_found`: the known state whose controls did not show, else
+ * the one it acted in last, and the page's look as last read, as an unknown state's is shaped.
+ */
+const notFound = <E extends YieldableError, V extends string, L extends AutofillLogin>(run: Run<E, V, L>) => {
+  const state = run.missing ?? run.visited.at(-1);
+  const { states } = run.input.library;
+  return run.input.emit({
+    stage: "state_not_found",
+    ...(state === undefined ? {} : { state }),
+    ...(run.seen === undefined
+      ? {}
+      : { shape: fingerprintShape(run.seen, run.page, states.map((known) => known.step.page)) }),
+  });
 };
 
 /**
@@ -885,6 +988,8 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
         let back: StateEntry | undefined;
         observed = read;
         shape = acted === undefined ? read.fingerprint : stateAfter(acted.reached, read);
+        run.seen = shape;
+        run.missing = undefined;
         const text = fingerprintText(shape);
         if (held?.text !== text) held = { text, since: at };
         const still = at - held.since >= quiet.quietMs;
@@ -1543,12 +1648,15 @@ export const replaySignInStates = <
       gone: false,
       answered: new Set(),
       page: undefined,
+      seen: undefined,
+      missing: undefined,
       hinted: false,
     };
     const from = input.from === undefined ? undefined : yield* stillShown(run, input.from);
     if (from === undefined || typeof from === "string") yield* input.hooks.open(input.entryUrl);
     else run.visited.push(...(input.from?.visited ?? []).slice(0, -1));
     const ended = yield* walk(run, typeof from === "object" ? from : undefined);
+    if ("reason" in ended && ended.reason === "not_found") yield* notFound(run);
     return from === undefined
       ? ended
       : {
@@ -1583,10 +1691,13 @@ const walk = <E extends YieldableError, V extends string, L extends AutofillLogi
       if ("ended" in arrived) return arrived.ended;
       if (run.visited.length >= maximumStateVisits) return stopped(run, "state_limit").ended;
       run.visited.push(arrived.state.key);
+      run.missing = undefined;
       yield* input.emit({
         stage: "state",
         state: arrived.state.key,
-        ...("by" in arrived ? { reason: "same_control" } : {}),
+        ...("by" in arrived && arrived.by !== undefined
+          ? { reason: arrived.by === "row" ? "code_row" : "same_control" }
+          : {}),
       });
       const done = yield* actIn(run, arrived, arrived.observed);
       if ("ended" in done) return withStop(run, done.ended, arrived.state, last);
