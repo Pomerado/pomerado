@@ -68,8 +68,8 @@ export interface AutofillHooks<E = unknown, V extends string = string> {
   /**
    * Clicks again the submit of the open sign-in's `blocked` screen, typing nothing, after its
    * `dismiss` when the step names one (`resubmitAutofillStep`). A host without it fills that
-   * screen again as any other. A step with a submit key has that key pressed in its last field,
-   * as a replay does once after typing a state whose page was to send itself.
+   * screen again as any other. A step with a submit key has that key, or its `codeKey`, pressed in
+   * its last field, as a replay does once after typing a state whose page was to send itself.
    */
   readonly resubmit?: (input: {
     readonly step: AutofillStep;
@@ -148,6 +148,12 @@ export interface AutofillHooks<E = unknown, V extends string = string> {
    * on such a browser, so its entry page still never ends a check without values.
    */
   readonly signedInBefore?: boolean;
+  /**
+   * Whether this host's `fill` reads the tab's own requests for a code the page sent itself
+   * (`codeSent`). Only then does a replay press its code key in a code box in no form, and Tab
+   * after it (`AutofillStep.codeKey`).
+   */
+  readonly checksCodeSent?: boolean;
   /**
    * The primary tab as it is, read without moving it: whether its document parsed, a shape of
    * its DOM and its navigation's HTTP status, for a check's settling.
