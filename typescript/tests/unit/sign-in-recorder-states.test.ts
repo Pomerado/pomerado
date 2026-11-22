@@ -49,6 +49,31 @@ const blank: ObservedState = {
   texts: [],
 };
 
+/** A control on the site's own login form, as the host's inspection describes it. */
+const target = {
+  ownerUrl: `${origin}/login`,
+  documentOrigin: origin,
+  actions: [`${origin}/login`],
+  methods: ["post"],
+  editable: true,
+  control: "text" as const,
+  empty: true,
+};
+const described = {
+  tag: "input",
+  role: null,
+  formMethod: "post",
+  type: "text",
+  name: null,
+  id: null,
+  autocomplete: null,
+  inputmode: null,
+  label: "Field",
+  placeholder: null,
+  ariaLabel: null,
+  text: null,
+};
+
 /** A build's sign-in on a one-screen site whose page reads as each of `reads` in turn. */
 const record = async (reads: readonly (ObservedState | undefined)[]) => {
   const left = [...reads];
@@ -56,15 +81,6 @@ const record = async (reads: readonly (ObservedState | undefined)[]) => {
   let signedIn = false;
   const secrets = makeRunSecrets();
   const inspection = (step: AutofillStep): AutofillInspection => {
-    const target = {
-      ownerUrl: `${origin}/login`,
-      documentOrigin: origin,
-      actions: [`${origin}/login`],
-      methods: ["post"],
-      editable: true,
-      control: "text" as const,
-      empty: true,
-    };
     return {
       url: `${origin}/login`,
       page: `${origin}/login`,
@@ -77,18 +93,8 @@ const record = async (reads: readonly (ObservedState | undefined)[]) => {
       screen: {
         origin,
         fields: step.fields.map((field) => ({
-          tag: "input",
-          role: null,
-          formMethod: "post",
+          ...described,
           type: field.slot === "password" ? "password" : "text",
-          name: null,
-          id: null,
-          autocomplete: null,
-          inputmode: null,
-          label: "Field",
-          placeholder: null,
-          ariaLabel: null,
-          text: null,
           slot: field.slot,
         })),
         submit: null,
@@ -226,4 +232,100 @@ it("fails a build's sign-in again with an unreadable sign-in where the page read
     failure: { code: "MissingRecipe" },
   });
   expect(calls).toEqual([]);
+});
+
+it("reads a device approval's page as a state before the owner approves, as the site moves on once they do", async () => {
+  const identifierScreen: SignInStep = {
+    fields: [{ selector: "#username", accepts: ["username"] }],
+    submit: "#next",
+  };
+  const pageState = (top: string, boxes: ObservedState["boxes"], message?: string): ObservedState => ({
+    fingerprint: {
+      top,
+      boxes: boxes.map(({ frame, kind }) => ({ frame, kind })),
+      submit: boxes.length > 0,
+      ...(message === undefined ? {} : { message }),
+    },
+    boxes,
+    texts: [],
+  });
+  const identifierPage = pageState(origin, [{ frame: origin, kind: "identifier", empty: true, submit: true }]);
+  const approvalPage = pageState(origin, [], "~ the request on your device");
+  const accountPage = pageState(origin, [], "~ back");
+  /** The page the browser shows: the approval once the identifier went, the account once approved. */
+  let at: "login" | "approval" | "account" = "login";
+  const secrets = makeRunSecrets();
+  const recorder = makeSignInRecorder({
+    browser: {
+      inspect: (step) =>
+        Effect.succeed<AutofillInspection>({
+          url: `${origin}/${at}`,
+          page: `${origin}/${at}`,
+          targets: {
+            fields: step.fields.map(() => target),
+            submit: step.submit === undefined ? null : target,
+          },
+          siteOrigin: origin,
+          authenticationOrigins: [],
+          screen: {
+            origin,
+            fields: step.fields.map((field) => ({ ...described, slot: field.slot })),
+            submit: null,
+            buttons: [],
+          },
+        }),
+      fill: ({ step }) =>
+        Effect.sync((): AutofillStepReport => {
+          at = "approval";
+          return {
+            outcome: "filled",
+            fields: step.fields.map((field) => ({ slot: field.slot, status: "filled" as const })),
+            submit: "clicked",
+            url: `${origin}/approval`,
+          };
+        }),
+      confirm: () =>
+        Effect.succeed<AutofillSignedInCheck>(
+          at === "account"
+            ? { signedIn: true, url: `${origin}/account` }
+            : { signedIn: false, failed: "indicator_not_visible", url: `${origin}/${at}` },
+        ),
+      authenticationOrigins: [],
+      open: () => Effect.void,
+      markerVisible: () => Effect.succeed(false),
+      observe: () =>
+        Effect.succeed(at === "login" ? identifierPage : at === "approval" ? approvalPage : accountPage),
+    },
+    login: {
+      held: () => undefined,
+      values: Effect.sync(() => {
+        secrets.register(login.username);
+        return login;
+      }),
+      correct: () => Effect.die("the login takes no correction"),
+    },
+    // The owner approves on their device, and the site moves on to the account.
+    ask: makeInputAsker(() =>
+      Effect.sync(() => {
+        at = "account";
+        return { approved: { confirmed: true } };
+      }),
+    ),
+    secrets,
+    review: () => Effect.void,
+    site: "example.test",
+    signedOutPages: () => [],
+  });
+  await Effect.runPromise(recorder.step(identifierScreen, `${origin}/login`, Effect.void));
+  const approved = await Effect.runPromise(recorder.step({ approval: "device" }, undefined, Effect.void));
+  expect(approved.approved).toBe(true);
+  const checked = await Effect.runPromise(
+    recorder.step({ signedIn: { selector: "#account" } }, undefined, Effect.void),
+  );
+  expect(checked.verified).toBe(true);
+  const published = recorder.published();
+  expect(published?.states?.states.map((state) => [state.step.approval, state.fingerprint])).toEqual([
+    [undefined, identifierPage.fingerprint],
+    ["device", approvalPage.fingerprint],
+  ]);
 });

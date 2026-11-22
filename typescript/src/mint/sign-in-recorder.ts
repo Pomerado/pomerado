@@ -260,9 +260,9 @@ const unansweredStep = (h: AutofillHost, unanswered: Unanswered) => {
  * gets two fresh ones, the login two corrections in place, an identifier, date of birth, ZIP or
  * recovery code a fresh answer on its next screen. A marker a signed-out page shows
  * (`signedOutPages`), or a sign-in page's path, is refused before the page is read. Each screen
- * and approval is read as a sign-in state just before its fill, read again once when unreadable
- * or blank, so a verified sign-in publishes as screens; one with a screen read as no state
- * publishes as `unreadable`.
+ * and approval is read as a sign-in state just before its fill, or before the owner approves, read
+ * again once when unreadable or blank, so a verified sign-in publishes as screens; one with a
+ * screen read as no state publishes as `unreadable`.
  */
 export const makeSignInRecorder = (input: {
   readonly browser: SignInBrowser<never> &
@@ -738,6 +738,8 @@ export const makeSignInRecorder = (input: {
         ...(step.popup === undefined ? {} : { popup: step.popup }),
       });
       if ("outcome" in screen) return { result: { approved: false, failed: screen.reason } };
+      // The approval's page as a state, read before the owner approves, as the site moves on then.
+      const observed = yield* readState;
       // A device approval may have the owner pick the number its screen shows (`matchSelector`).
       const number =
         step.approval === "device"
@@ -769,7 +771,6 @@ export const makeSignInRecorder = (input: {
         return { result: { approved: false, failed: "approval_declined" } };
       // The screen after a blocked one: sending that one again is a fill of its own.
       open.blocked = undefined;
-      const observed = yield* readState;
       open.steps.push({
         page: screen.page,
         fields: [],
