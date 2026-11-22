@@ -247,6 +247,35 @@ it("asks the security question the screen shows, and types the answer", async ()
   expect(site.typed.at(-1)).toEqual({ slot: "private_answer", value: answers["private_answer"] });
 });
 
+// A library recorded with the page's words, as a host records by default: the second question's
+// page is told by its notice beside the same box. A run answers each question the site asks once.
+it("never answers a security question twice, though the library keeps a page's words", async () => {
+  const [school, teacher] = ["What was the name of your first school?", "What was the name of your first teacher?"];
+  const asks = (text: string, message?: string): Screen => ({
+    path: "/question",
+    boxes: [{ selector: "#answer", kind: "identifier", takes: "other", question: { selector: "#question", text } }],
+    controls: ["#question", "#go"],
+    ...(message === undefined ? {} : { message }),
+  });
+  const answer = stepOn(asks(school), {
+    fields: [{ selector: "#answer", slot: "private_answer", questionSelector: "#question" }],
+    submit: "#go",
+  });
+  const library = storedLibrary([
+    [loginScreen(), login],
+    [asks(school), answer],
+    [asks(teacher, "One more to go"), answer],
+  ]);
+  const questions = (ended: { readonly asked: readonly { readonly prompt: string }[] }) =>
+    ended.asked.map(({ prompt }) => prompt.replace("example.test asks this security question: ", ""));
+  const both = await replay(inTurn(loginScreen(), asks(school), asks(teacher, "One more to go")), library);
+  expect(both).toMatchObject({ outcome: "signed_in" });
+  expect(questions(both)).toEqual([school, teacher]);
+  const again = await replay(inTurn(loginScreen(), asks(school), asks(school, "One more to go")), library);
+  expect(again).toMatchObject({ outcome: "unclear", reason: "unknown_state" });
+  expect(questions(again)).toEqual([school]);
+});
+
 it("types the kind the login holds into a box that takes several", async () => {
   const screen: Screen = {
     path: "/sign-in",

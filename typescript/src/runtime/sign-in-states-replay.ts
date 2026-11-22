@@ -181,8 +181,8 @@ interface Run<E extends YieldableError, V extends string, L extends AutofillLogi
   seen: StateFingerprint | undefined;
   missing: string | undefined;
   /**
-   * For each state noted without its question (`untold`) that this replay acted in, the page's
-   * message and its question (`questionOf`) each time it reached that state, held in memory alone.
+   * For each state taking a private answer that this replay acted in, the page's message and its
+   * question (`questionOf`) each time it reached that state, held in memory alone.
    */
   readonly asked: Map<string, { readonly message?: string | undefined; readonly question?: string | undefined }[]>;
   /**
@@ -371,8 +371,10 @@ const looksLike = (look: Look) => (state: StateEntry) => sameFingerprint(state, 
  * Whether a state's step takes a private answer and its look holds no words of the page's message,
  * which may hold its question (`noteSignInState`): none, or its shape alone.
  */
-const untold = (state: StateEntry) =>
-  !/\p{L}/u.test(state.fingerprint.message ?? "") &&
+const untold = (state: StateEntry) => !/\p{L}/u.test(state.fingerprint.message ?? "") && takesPrivateAnswer(state);
+
+/** Whether a state's step takes a private answer. */
+const takesPrivateAnswer = (state: StateEntry) =>
   state.step.fields.some((field) => "slot" in field && field.slot === "private_answer");
 
 /** Whether a known state has the look `look`, one noted without its question (`untold`) whatever its message. */
@@ -404,6 +406,15 @@ const questionOf = (inspection: AutofillInspection) => {
     .filter((field) => field.slot === "private_answer")
     .map((field) => field.questionText ?? (field.label || undefined));
   return questions.every((question) => question !== undefined) ? JSON.stringify(questions) : undefined;
+};
+
+/** Whether a page asks a question (`questionOf`) this replay answered, as a site asks after a wrong answer. */
+const askedBefore = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  inspection: AutofillInspection,
+) => {
+  const question = questionOf(inspection);
+  return question !== undefined && [...run.asked.values()].flat().some((visit) => visit.question === question);
 };
 
 /**
@@ -809,7 +820,8 @@ const byPlace = <E extends YieldableError, V extends string, L extends AutofillL
  * its refusals count for nothing, so a page no state is still ends as an unknown state. Where none
  * shows and the origin rule refused one whose controls showed (`admission`), that refusal
  * (`refusedOrigin`). A state noted without its question (`untold`) is taken so only on a page with
- * no message, and else, or acted in again, apart, before one that came back (`askedHere`).
+ * no message, and else, or acted in again, apart, before one that came back (`askedHere`). None is
+ * taken where the page asks a question this replay answered (`askedBefore`).
  */
 const matchState = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -844,7 +856,10 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
         continue;
       }
       const shown = yield* shownOn(run, state, resolved(run, state.step));
-      if (typeof shown !== "string") return { state, inspection: shown } satisfies Shown;
+      if (typeof shown !== "string") {
+        if (askedBefore(run, shown)) continue;
+        return { state, inspection: shown } satisfies Shown;
+      }
       refused ??= shown;
       if (shown === "not_found") missing.push(state);
     }
@@ -2054,7 +2069,7 @@ const walk = <E extends YieldableError, V extends string, L extends AutofillLogi
       if (run.visited.length >= maximumStateVisits) return stopped(run, "state_limit").ended;
       run.visited.push(arrived.state.key);
       run.missing = undefined;
-      if (untold(arrived.state))
+      if (takesPrivateAnswer(arrived.state))
         run.asked.set(arrived.state.key, [
           ...(run.asked.get(arrived.state.key) ?? []),
           { message: run.seen?.message, question: questionOf(arrived.inspection) },

@@ -44,7 +44,10 @@ export interface Screen {
   }[];
   /** Its buttons, links and selects. */
   readonly controls: readonly string[];
-  /** What a screen with no empty box is told by: its message and its buttons' labels. */
+  /**
+   * What a screen with no empty box is told by: its message and its buttons' labels. Beside boxes,
+   * a notice that a recorder notes after a screen with the same boxes (`stateAfter`).
+   */
   readonly message?: string;
   readonly labels?: readonly string[];
   /** A notice over the screen, shown on arrival or drawn once every box is typed, and its own control. */
@@ -199,12 +202,16 @@ const lookOf = ({ kind, takes }: Screen["boxes"][number]) => ({
   ...(takes === undefined ? {} : { takes }),
 });
 
-/** The look a screen shows on arrival, every box empty. */
+/** The look a screen shows on arrival, every box empty, as a recorder notes it. */
 const arrival = (screen: Screen): StateFingerprint => ({
   top: origin,
   boxes: screen.boxes.map(lookOf),
   submit: screen.boxes.length > 0,
-  ...(screen.boxes.length > 0 ? {} : { message: screen.message ?? "", buttons: [...(screen.labels ?? [])] }),
+  ...(screen.boxes.length === 0
+    ? { message: screen.message ?? "", buttons: [...(screen.labels ?? [])] }
+    : screen.message === undefined
+      ? {}
+      : { message: screen.message }),
 });
 
 /** A step recorded on `screen`. */
