@@ -129,7 +129,8 @@ if (!rendered || !onSite()) return null;
 const dom = await within(
   5000,
   primary.evaluate(() => {
-    const root = document.documentElement.cloneNode(true);
+    // The copy goes in a document with no window, so its pictures never load again.
+    const root = document.implementation.createHTMLDocument("").importNode(document.documentElement, true);
     for (const element of root.querySelectorAll("script, style")) element.textContent = "";
     return "<!doctype html>" + root.outerHTML;
   }),
