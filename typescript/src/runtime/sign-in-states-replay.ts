@@ -90,13 +90,19 @@ export interface SignInStatesReplayInput<
   readonly rankMethod?: SignInMethodChoice | undefined;
   /**
    * How the login signs in, as its host knows it before its values are read: with a password or a
-   * code alone (`way`), and the kind of identifier it signs in with (`kind`). It orders known states
-   * sharing a look after the login's own route, as a host picks a tool's sign-in path for a login:
-   * first one on its way, then one whose first identifier takes its kind (`ranked`). A code login
-   * never takes a state that types a password. Absent, neither orders anything.
+   * code alone (`way`), the kind of identifier it signs in with (`kind`), and every kind it holds
+   * (`heldKinds`; absent when unknown). It orders known states sharing a look after the login's own
+   * route, as a host picks a tool's sign-in path for a login: one off its way, then one whose first
+   * identifier takes the kind less well, its own before another it holds before none, goes after the
+   * rest where the look offers one that fits better (`ranked`). A code login never takes a state
+   * that types a password. Absent, none of it orders anything.
    */
   readonly loginWay?:
-    | { readonly way: "password" | "code"; readonly kind?: PrimaryIdentifierKind | undefined }
+    | {
+        readonly way: "password" | "code";
+        readonly kind?: PrimaryIdentifierKind | undefined;
+        readonly heldKinds?: readonly PrimaryIdentifierKind[] | undefined;
+      }
     | undefined;
   /** The page as a state, as `observeSignInState` reads it. */
   readonly observe: Effect.Effect<ObservedState | undefined, E>;
@@ -578,9 +584,34 @@ const onFrom = <E extends YieldableError, V extends string, L extends AutofillLo
 };
 
 /**
+ * Whether a state is on the login's way, as a tool's sign-in path is of a password login's way
+ * when any of its screens types a password and of a code login's when none does: for a password
+ * login it types a password or leads to one (`onFrom`); for a code login it leads to a signed-in
+ * marker through states none of which types a password.
+ */
+const onWay = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  state: StateEntry,
+  way: "password" | "code",
+) => {
+  if (way === "password") return onFrom(run, state).some(typesPassword);
+  const { states, transitions, signedIn } = run.input.library;
+  const on = typesPassword(state) ? [] : [state.key];
+  for (const at of on)
+    for (const { from, to } of transitions) {
+      if (from !== at || on.includes(to)) continue;
+      if (signedIn.some((marker) => marker.key === to)) return true;
+      const next = states.find((known) => known.key === to);
+      if (next !== undefined && !typesPassword(next)) on.push(to);
+    }
+  return false;
+};
+
+/**
  * Whether the first identifier field of the sign-in on from a state (`onFrom`) takes the login's
- * kind: there is none, the login's is a username, whose shape no field can tell, or the field
- * accepts that kind, or a username alone, which any login's identifier is.
+ * kind, as a tool's sign-in path's first identifier fits a login: a username's, whose shape no field
+ * can tell, any; else one that accepts that kind, or a username alone, which any login's identifier
+ * is. Undefined where no identifier field comes on from it.
  */
 const takesKind = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -591,9 +622,9 @@ const takesKind = <E extends YieldableError, V extends string, L extends Autofil
     .flatMap((known) => known.step.fields)
     .flatMap((field) => ("accepts" in field ? [field.accepts.filter((taken) => taken !== "private_identifier")] : []))
     .find((taken) => taken.length > 0);
-  return (
-    accepts === undefined || kind === "username" || accepts.includes(kind) || accepts.every((taken) => taken === "username")
-  );
+  return accepts === undefined
+    ? undefined
+    : kind === "username" || accepts.includes(kind) || accepts.every((taken) => taken === "username");
 };
 
 /**
@@ -609,12 +640,15 @@ const takesKind = <E extends YieldableError, V extends string, L extends Autofil
  * its states in the order learned. Given the page's look (`page`), a state whose recorded instruction and ways stand
  * further from the page's than another's do (`toldApart`) goes after the rest, next after the
  * login's own route; one recorded without them is never moved by them. Given how the login signs
- * in (`loginWay`), next comes, among the states `next` holds, where a sign-in branches, one on its
- * way, as a host takes a tool's path of the login's way: for a password login one that types a
- * password or leads to one (`onFrom`), for a code login one that leads to none; then one whose
- * first identifier takes its kind (`takesKind`); and a code login takes no state that types a
- * password (`forLogin`). In place (`inPlace`), the route takes no part, as a step-up is no part of
- * the login's own sign-in.
+ * in (`loginWay`), as a host takes a tool's path of the login's way, next one off its way goes
+ * after the rest where another is on it (`onWay`), until a password login acted in a state that
+ * types the password; then, as a host takes the first path whose identifier takes the login's own
+ * kind, else one it holds, one whose first identifier field takes neither goes after one that takes
+ * a kind it holds, which goes after one that takes its own (`takesKind`). Each only moves a state
+ * back, and only where the look offers a state that fits better, so a look-alike from earlier or
+ * later in a sign-in, or one with no identifier field on from it, keeps its place. A code login
+ * takes no state that types a password (`forLogin`). In place (`inPlace`), the route
+ * takes no part, as a step-up is no part of the login's own sign-in.
  */
 const ranked = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -626,7 +660,6 @@ const ranked = <E extends YieldableError, V extends string, L extends AutofillLo
   const route = run.input.choices?.states ?? [];
   const method = run.input.choices?.method ?? run.input.rankMethod;
   const { loginWay } = run.input;
-  const kind = loginWay?.kind;
   const { states } = run.input.library;
   const taken = candidates.filter((state) => forLogin(run, state));
   // The state last acted in, when it is not looked for again, leaves the route no say: where its
@@ -653,16 +686,30 @@ const ranked = <E extends YieldableError, V extends string, L extends AutofillLo
   };
   const told = (state: StateEntry) => (page === undefined ? undefined : toldApart(state.fingerprint, page));
   const nearest = Math.min(...taken.flatMap((state) => told(state) ?? []));
-  // Only where the sign-in branches: among the states the last one led to, or at the start those
-  // no state leads to (`next`), so a look-alike from earlier or later in a sign-in never goes first.
-  const branch = (state: StateEntry, fits: () => boolean) => Number(!(next.has(state.key) && fits()));
+  // A password login's way is behind it once it acted in a state that types the password.
+  const way =
+    loginWay?.way === "code" ||
+    (loginWay?.way === "password" && !states.some((state) => run.visited.includes(state.key) && typesPassword(state)))
+      ? loginWay.way
+      : undefined;
+  const offWay =
+    way !== undefined && taken.some((state) => onWay(run, state, way))
+      ? (state: StateEntry) => !onWay(run, state, way)
+      : () => false;
+  // How well a state's first identifier takes the login's kinds: its own (0), another it holds (1),
+  // neither (2); undefined with no identifier field on from it, or no kind given.
+  const fit = (state: StateEntry) => {
+    const kind = loginWay?.kind;
+    const primary = kind === undefined ? undefined : takesKind(run, state, kind);
+    if (primary !== false) return primary === undefined ? undefined : 0;
+    return loginWay?.heldKinds?.some((held) => takesKind(run, state, held) === true) === true ? 1 : 2;
+  };
+  const best = Math.min(...taken.flatMap((state) => fit(state) ?? []));
   const order = (state: StateEntry) => [
     own ? along(state) : 0,
     Number((told(state) ?? nearest) > nearest),
-    loginWay === undefined
-      ? 0
-      : branch(state, () => onFrom(run, state).some(typesPassword) === (loginWay.way === "password")),
-    kind === undefined ? 0 : branch(state, () => takesKind(run, state, kind)),
+    Number(offWay(state)),
+    Number.isFinite(best) ? (fit(state) ?? best) - best : 0,
     Number(!picks(state)),
     Number(!next.has(state.key)),
     -states.indexOf(state),
@@ -1593,7 +1640,9 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
         } else if (
           refused === undefined &&
           still &&
-          !run.input.library.states.some((state) => containsFingerprint(shape as StateFingerprint, state))
+          !run.input.library.states.some(
+            (state) => forLogin(run, state) && containsFingerprint(shape as StateFingerprint, state),
+          )
         )
           break;
       }

@@ -2548,6 +2548,15 @@ it("takes the state of one look on the way the host says the login signs in, and
   });
   expect(unknown).toMatchObject({ outcome: "unsent", reason: "unknown_state" });
   expect(combinedOnly.fills).toEqual([]);
+  // Nor is a page only such a state's look holds one that may yet become a state it knows: it ends at once.
+  const partOf = scriptedSite({ start: emailScreen }, () => "home");
+  const began = Date.now();
+  const unshown = await replay(partOf, libraryOf([{ fingerprint: arrival(combined), step: stepAt("/", [email, password], "#continue") }]), {
+    loginWay: { way: "code" },
+    stepWaitMs: 3_000,
+  });
+  expect(unshown).toMatchObject({ outcome: "unsent", reason: "unknown_state" });
+  expect(Date.now() - began).toBeLessThan(2_000);
 });
 
 it("takes the state of one look whose identifier takes the kind the host says the login signs in with", async () => {
@@ -2563,6 +2572,35 @@ it("takes the state of one look whose identifier takes the kind the host says th
   expect(ended).toMatchObject({ outcome: "signed_in" });
   expect(ended.visited[0]).toBe(keyOf(byEmail));
   expect(site.fills).toEqual(["email", "password"]);
+  // Where none takes the login's own kind, one that takes another kind it holds goes first.
+  const byAccount = { fingerprint: arrival(start), step: stepAt("/sign-in", [{ selector: "#id", accepts: ["account_number" as const] }], "#continue") };
+  const held = scriptedSite({ start, password: passwordScreen }, (_at, clicked) => (clicked === "#continue" ? "password" : "home"));
+  const heldEnded = await replay(held, libraryOf([byEmail, typesPassword], [byAccount, typesPassword]), {
+    loginWay: { way: "password", kind: "phone", heldKinds: ["phone", "email"] },
+  });
+  expect(heldEnded).toMatchObject({ outcome: "signed_in" });
+  expect(heldEnded.visited[0]).toBe(keyOf(byEmail));
+});
+
+it("takes, for a code login, the state of one look on its way over one no state leads to that goes on to a password", async () => {
+  const choose: Screen = { path: "/choose", boxes: [], buttons: ["#use-password", "#email-code"], texts: ["how do you want to sign in"] };
+  const methods = [
+    { method: "password" as const, selector: "#use-password" },
+    { method: "email" as const, selector: "#email-code" },
+  ];
+  const byEmailCode = { fingerprint: arrival(choose), step: stepAt("/choose", [], "#email-code", { methods }) };
+  const byPassword = { fingerprint: arrival(choose), step: stepAt("/choose", [], "#use-password", { methods }) };
+  const codeState = { fingerprint: arrival(codeScreen), step: stepAt("/verify", [code], "#verify") };
+  const typesPassword = { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") };
+  // Only the password way starts at the choice; the code way was learned from an email page before it.
+  const library = libraryOf([byEmailCode, codeState], [byPassword, typesPassword], [emailState, byEmailCode, codeState]);
+  const next: Readonly<Record<string, string>> = { "#use-password": "password", "#email-code": "code", "#go": "home", "#verify": "home" };
+  for (const rankMethod of ["email" as const, undefined]) {
+    const site = scriptedSite({ start: choose, password: passwordScreen, code: codeScreen }, (_at, clicked) => next[clicked]);
+    const ended = await replay(site, library, { loginWay: { way: "code", kind: "email" }, ...(rankMethod === undefined ? {} : { rankMethod }) });
+    expect(ended).toMatchObject({ outcome: "signed_in" });
+    expect(site.clicks).toEqual(["#email-code", "#verify"]);
+  }
 });
 
 it("takes the host's method at a method choice, as a saved authenticator seed's, over the login's remembered pick", async () => {
