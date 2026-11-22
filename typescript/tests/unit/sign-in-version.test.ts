@@ -9,9 +9,17 @@
 // about is refused, for its spent values too; a step page, selector or marker holding the
 // `[private]` mask passes when the caller passes no identity values; a step page whose every
 // segment is written as `*` passes; a URL path marker on a sign-in screen whose page writes a
-// segment as `*` passes.
+// segment as `*` passes. The same checks on a sign-in's screens: a state's step or any marker the
+// library ships that names an account, signs out or leaves the site passes; a workspace step in a
+// library whose relation names another domain passes; screens with no state or no marker pass.
 import { describe, expect, it } from "vitest";
 import {
+  appendSignInStates,
+  signInStatesOf,
+  type SignInStates,
+} from "../../src/destinations/sign-in-states.js";
+import {
+  checkSignInScreens,
   checkSignInVersion,
   type SignInVersion,
   type SignInVersionInput,
@@ -510,5 +518,75 @@ describe("checkSignInVersion", () => {
       refused,
     );
     expect(checkSignInVersion(wildcard("/team/*/password", [1], { urlPath: "/team/b/home" }))).toEqual([]);
+  });
+});
+
+describe("checkSignInScreens", () => {
+  const email = { top: site, boxes: [{ frame: site, kind: "identifier" as const }], submit: true };
+  const password = {
+    top: "https://login.example.com",
+    boxes: [{ frame: "https://login.example.com", kind: "password" as const }],
+    submit: true,
+  };
+  /** A library one sign-in recorded through the version's two screens, then `more` markers. */
+  const library = (
+    steps = version.recipe.steps,
+    header: { readonly workspace?: { readonly parent: string } } = {},
+    more: readonly SignInVersion["recipe"]["signedIn"][] = [],
+  ): SignInStates =>
+    [version.recipe.signedIn, ...more].reduce<SignInStates>(
+      (current, signedIn, index) => {
+        const appended = appendSignInStates(current, {
+          states: index === 0 ? steps.map((step, at) => ({ fingerprint: at === 0 ? email : password, step })) : [],
+          signedIn,
+        });
+        if ("refused" in appended) throw new Error(appended.refused);
+        return appended.library;
+      },
+      signInStatesOf(header, []),
+    );
+  const screens = (states: SignInStates, entryUrl = version.entryUrl) =>
+    checkSignInScreens({ siteOrigin: site, screens: { entryUrl, states }, signedOutSnapshots: [signedOut] });
+
+  it("passes screens every account can replay", () => {
+    expect(screens(library())).toEqual([]);
+  });
+
+  it("refuses a state's step or any marker the screens ship by the rules a recipe's go through", () => {
+    const [first, second] = version.recipe.steps;
+    const states = library(
+      [
+        { ...first!, fields: [{ selector: "input[name=member-84731922]", accepts: ["email"] }] },
+        { ...second!, page: "https://accounts.provider.example/password", submit: "#sign-out" },
+      ],
+      {},
+      [{ urlPath: "/login" }, { selector: "text=j•••@example.com" }],
+    );
+    expect(screens(states)).toEqual([
+      { rule: "selector_names_contact", part: "states.states[0].step.fields[0].selector" },
+      { rule: "sign_out", part: "states.states[1].step.submit" },
+      { rule: "foreign_origin", part: "states.states[1].step.page" },
+      { rule: "marker_is_login_path", part: "states.signedIn[1].urlPath" },
+      { rule: "marker_matches_signed_out_page", part: "states.signedIn[1]" },
+      { rule: "indicator_holds_identity", part: "states.signedIn[2].selector" },
+    ]);
+    expect(screens(library(), "https://www.example.com/login?state=8f3a9c2d7e1b4a60")).toEqual([
+      { rule: "one_time_url", part: "entryUrl" },
+    ]);
+  });
+
+  it("refuses a workspace step whose library relation names another domain", () => {
+    const steps = workspaceVersion.recipe.steps;
+    expect(screens(library(steps, { workspace: { parent: "example.com" } }))).toEqual([]);
+    expect(screens(library(steps, { workspace: { parent: "provider.example" } }))).toEqual([
+      { rule: "workspace_parent", part: "states.workspace" },
+      { rule: "foreign_origin", part: "states.states[1].step.page" },
+    ]);
+  });
+
+  it("refuses screens with no state or no marker", () => {
+    expect(screens(signInStatesOf({}, []))).toEqual([{ rule: "invalid_recipe", part: "states.states" }]);
+    const unmarked = { ...library(), signedIn: [] };
+    expect(screens(unmarked)).toEqual([{ rule: "marker_missing", part: "states.signedIn" }]);
   });
 });

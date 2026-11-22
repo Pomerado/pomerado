@@ -17,6 +17,13 @@ import {
   type SignedOutSnapshot,
 } from "../destinations/signed-in-marker.js";
 import {
+  appendSignInStates,
+  blankFingerprint,
+  noteSignInState,
+  observedSignInOf,
+  type SignInStates,
+} from "../destinations/sign-in-states.js";
+import {
   SignInRecipe,
   signInRecipe,
   type SignInBrowser,
@@ -112,9 +119,15 @@ export interface SignInStepResult {
   readonly approved?: true;
 }
 
-/** A verified sign-in's value-free recipe and the address its runs start from. */
+/**
+ * A verified sign-in's value-free recipe, the address its runs start from, and its screens
+ * (`states`); `unreadable` instead when a screen it took could not be read as a state, even read
+ * again, so it has none, and publication refuses it.
+ */
 export interface PublishedSignIn {
   readonly recipe: SignInRecipe;
+  readonly states?: SignInStates;
+  readonly unreadable?: true;
   readonly entryUrl: string;
 }
 
@@ -183,6 +196,25 @@ const maskedSelector = (step: Extract<SignInStep, { readonly fields: unknown }>)
     ...(step.dismiss === undefined ? [] : [step.dismiss]),
   ].findIndex(holdsMask);
 
+/** A library that holds nothing yet, which a build's verified sign-in is the first to fill. */
+const noStates: SignInStates = { states: [], transitions: [], signedIn: [] };
+
+/**
+ * A verified sign-in's screens: a library of each state it took, read before its step, with the
+ * step taken there, and its marker. None when a step has no state read, or the library refuses
+ * one (`appendSignInStates`).
+ */
+const screensOf = (
+  steps: readonly object[],
+  recipe: SignInRecipe,
+): SignInStates | undefined => {
+  const observed = observedSignInOf(steps, recipe);
+  if ("missingFingerprint" in observed || observed.states.length !== recipe.steps.length)
+    return undefined;
+  const library = appendSignInStates(noStates, observed);
+  return "refused" in library ? undefined : library.library;
+};
+
 /** A host call that failed, as the build's failure. */
 const unavailable = (
   operation: string,
@@ -227,11 +259,14 @@ const unansweredStep = (h: AutofillHost, unanswered: Unanswered) => {
  * once. A rejection counts only where its recorded error marker shows, a code's always: a code
  * gets two fresh ones, the login two corrections in place, an identifier, date of birth, ZIP or
  * recovery code a fresh answer on its next screen. A marker a signed-out page shows
- * (`signedOutPages`), or a sign-in page's path, is refused before the page is read.
+ * (`signedOutPages`), or a sign-in page's path, is refused before the page is read. Each screen
+ * and approval is read as a sign-in state just before its fill, or before the owner approves, read
+ * again once when unreadable or blank, so a verified sign-in publishes as screens; one with a
+ * screen read as no state publishes as `unreadable`.
  */
 export const makeSignInRecorder = (input: {
   readonly browser: SignInBrowser<never> &
-    Pick<SignInReplayBrowser<Error>, "markerVisible" | "approvalNumber" | "open">;
+    Pick<SignInReplayBrowser<Error>, "markerVisible" | "approvalNumber" | "open" | "observe">;
   readonly login: SignInLogin<MintFailure>;
   readonly ask: InputAsker;
   readonly secrets: RunSignInSecrets;
@@ -299,7 +334,12 @@ export const makeSignInRecorder = (input: {
   /** Sign-ins whose screens reached the site; a verified one publishes while it is the latest. */
   let signIns = 0;
   let verified:
-    | { readonly recipe: SignInRecipe; readonly entry: string | undefined; readonly signIn: number }
+    | {
+        readonly recipe: SignInRecipe;
+        readonly states: SignInStates | undefined;
+        readonly entry: string | undefined;
+        readonly signIn: number;
+      }
     | undefined;
   /** The latest login URL the minter gave, which runs open rather than the first screen's address. */
   let loginUrl: string | undefined;
@@ -381,6 +421,28 @@ export const makeSignInRecorder = (input: {
     };
     return { state, refund };
   };
+
+  /**
+   * The page as a sign-in state, before a step that may send what it typed: its own sent
+   * identifiers masked, never the password. A page read as nothing, or as blank, is read again
+   * once; then it is no state.
+   */
+  const readState = Effect.suspend(() => {
+    const observe = browser.observe;
+    if (observe === undefined) return Effect.succeed(undefined);
+    const identifiers = Object.entries(h.autofillSentValues.current).flatMap(([field, value]) =>
+      field === "password" || value === undefined || value === "" ? [] : [value],
+    );
+    const read = observe(undefined, identifiers).pipe(
+      Effect.map((observed) =>
+        observed === undefined || blankFingerprint(observed.fingerprint) ? undefined : observed,
+      ),
+      Effect.orElseSucceed(() => undefined),
+    );
+    return read.pipe(
+      Effect.flatMap((observed) => (observed === undefined ? read : Effect.succeed(observed))),
+    );
+  });
 
   /** The screen as the signed-in check reads it: each field with what named its control. */
   const screenOf = (step: AutofillStep, inspected: AutofillInspection) => ({
@@ -610,7 +672,9 @@ export const makeSignInRecorder = (input: {
           : reasksCode(open, step, refills, inspected.screen.fields)
             ? ("code" as const)
             : undefined;
+      const observed = yield* readState;
       yield* armStep(state, step, inspected, filled, secretIn);
+      if (observed !== undefined) noteSignInState(state, observed);
       if (reasked !== undefined) noteRefill(state, reasked);
       afterSubmit = undefined;
       const report = yield* hooks.fill({ step, values: filled, inspection: inspected });
@@ -674,6 +738,8 @@ export const makeSignInRecorder = (input: {
         ...(step.popup === undefined ? {} : { popup: step.popup }),
       });
       if ("outcome" in screen) return { result: { approved: false, failed: screen.reason } };
+      // The approval's page as a state, read before the owner approves, as the site moves on then.
+      const observed = yield* readState;
       // A device approval may have the owner pick the number its screen shows (`matchSelector`).
       const number =
         step.approval === "device"
@@ -714,6 +780,7 @@ export const makeSignInRecorder = (input: {
           : {}),
         ...(step.popup === undefined ? {} : { popup: step.popup }),
       });
+      if (observed !== undefined) noteSignInState(open, observed);
       return {
         approved: true as const,
         result: {
@@ -888,8 +955,10 @@ export const makeSignInRecorder = (input: {
       );
       if (!checked.signedIn) return { result: checked };
       signInStart = screens.length;
+      const recipe = signInRecipe(open.steps, indicator);
       verified = {
-        recipe: signInRecipe(open.steps, indicator),
+        recipe,
+        states: screensOf(open.steps, recipe),
         entry: loginUrl ?? entry,
         signIn: signIns,
       };
@@ -948,13 +1017,15 @@ export const makeSignInRecorder = (input: {
      * password or code passed the check and no sign-in verified since.
      */
     destinationRefused: () => destinationRefused,
-    /** The latest verified sign-in, while no later sign-in reached the site; else none. */
+    /**
+     * The latest verified sign-in, while no later sign-in reached the site, with its screens, or
+     * `unreadable` when a screen it took was read as no state; else none.
+     */
     published: (): PublishedSignIn | undefined => {
       if (verified === undefined || verified.signIn !== signIns) return undefined;
-      const { recipe, entry: entryUrl } = verified;
-      return entryUrl === undefined || !Schema.is(SignInRecipe)(recipe)
-        ? undefined
-        : { recipe, entryUrl };
+      const { recipe, states, entry: entryUrl } = verified;
+      if (entryUrl === undefined || !Schema.is(SignInRecipe)(recipe)) return undefined;
+      return { recipe, entryUrl, ...(states === undefined ? { unreadable: true } : { states }) };
     },
   };
 };

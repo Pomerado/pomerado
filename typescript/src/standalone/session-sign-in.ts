@@ -1,5 +1,6 @@
 import { Data, Effect, Schema } from "effect";
 import type { SignInLogin, SignInRecipe } from "../destinations/sign-in-recipe.js";
+import type { SignInStates } from "../destinations/sign-in-states.js";
 import { MintFailure } from "../mint/contracts.js";
 import { CredentialRejectedField, type WebsiteCredentials } from "../runtime/authentication.js";
 import { failureDetail } from "../runtime/failure-detail.js";
@@ -21,6 +22,8 @@ import { makeAutofillRetryState } from "../runtime/autofill-correction.js";
 import type { AutofillReplayTiming, AutofillRetryState } from "../runtime/autofill-replay-steps.js";
 import {
   type RunSignInSecrets,
+  type SignInBy,
+  signInChecks,
   signInForRun,
   SignInRunFailed,
   type SignInReplayBrowser,
@@ -176,11 +179,40 @@ type Failed = (
   failure?: unknown,
 ) => SessionSignInFailed;
 
-/** A recorded sign-in to sign in again with: its recipe and its entry page. */
+/**
+ * A recorded sign-in to sign in again with: its screens (`states`), or the recipe an integration
+ * saved before builds recorded screens, and its entry page. A build's sign-in whose screens could
+ * not be read (`unreadable`) replays nothing: a build never replays a recipe.
+ */
 export interface RecordedSignIn {
-  readonly recipe: SignInRecipe;
+  readonly states?: SignInStates | undefined;
+  readonly recipe?: SignInRecipe | undefined;
+  readonly unreadable?: true | undefined;
   readonly entryUrl: string;
 }
+
+/** What a recorded sign-in replays: its screens when it has them, else an older one's recipe. */
+const replayedBy = (sign: RecordedSignIn): SignInBy | undefined =>
+  sign.states !== undefined
+    ? { states: sign.states }
+    : sign.recipe === undefined || sign.unreadable === true
+      ? undefined
+      : { recipe: sign.recipe };
+
+/**
+ * The marker and screens a recorded sign-in's checks read (`signInChecks`): its screens', else its
+ * recipe's, which an `unreadable` sign-in's checks still read though it replays nothing, so a page
+ * it finds signed out fails its sign-in again rather than going on; none for neither.
+ */
+const checksOf = (sign: RecordedSignIn) => {
+  const checks =
+    sign.states !== undefined
+      ? signInChecks({ states: sign.states })
+      : sign.recipe === undefined
+        ? undefined
+        : signInChecks({ recipe: sign.recipe });
+  return typeof checks === "string" ? undefined : checks;
+};
 
 /**
  * The workspace origin a run's sign-in learned for its login, held in memory for that run only:
@@ -245,11 +277,14 @@ export const makeLocalSessionSignIn = (options: {
     sign: RecordedSignIn,
     bound: SessionSignInBound | undefined,
     login: SignInLogin<unknown>,
-  ) =>
-    options.asks.within(
+  ) => {
+    const by = replayedBy(sign);
+    if (by === undefined)
+      return Effect.fail(new SignInRunFailed({ code: "MissingRecipe", reason: "missing" }));
+    return options.asks.within(
       bound,
       signInForRun({
-        recipe: sign.recipe,
+        ...by,
         entryUrl: sign.entryUrl,
         browser: replayBrowser(bound),
         login,
@@ -272,18 +307,20 @@ export const makeLocalSessionSignIn = (options: {
         ),
       ),
     );
+  };
   /** The recorded marker on the current page; no recorded sign-in says nothing. */
   const sessionOn = Effect.suspend(() => {
     const sign = options.recorded();
-    if (sign === undefined) return Effect.succeed("unknown" as const);
-    const { selector, urlPath } = sign.recipe.signedIn;
+    const checks = sign === undefined ? undefined : checksOf(sign);
+    if (checks === undefined) return Effect.succeed("unknown" as const);
+    const { selector, urlPath } = checks.signedIn;
     const here = {
       ...(selector === undefined ? {} : { selector }),
       ...(urlPath === undefined ? {} : { urlPath }),
     };
     return options.browser
-      .confirm(here, sign.recipe.steps, sign.recipe.steps)
-      .pipe(Effect.map((check) => sessionOnPage(check, sign.recipe)));
+      .confirm(here, checks.steps, checks.steps)
+      .pipe(Effect.map((check) => sessionOnPage(check, checks)));
   });
   /**
    * Whether the site is still signed in on a page that reads signed out without the marker: the
@@ -296,8 +333,9 @@ export const makeLocalSessionSignIn = (options: {
     failed: Failed,
   ) =>
     Effect.gen(function* () {
-      const { signedIn, steps } = sign.recipe;
-      if (signedIn.openPath !== undefined) {
+      const checks = checksOf(sign);
+      if (checks?.signedIn.openPath !== undefined) {
+        const { signedIn, steps } = checks;
         const check = yield* options.browser
           .confirm(signedIn, steps, steps, options.workspace?.origin)
           .pipe(Effect.mapError((error) => failed("session_sign_in_failed", "check_failed", error)));
@@ -443,10 +481,10 @@ export const mintSessionSignInFailure = (failed: SessionSignInFailed): MintFailu
 
 /**
  * A run's first sign-in, before its operation runs. On a browser this host already typed a sign-in
- * into (`typed`), as a library scope's run after its build, a recipe whose marker shows on its
+ * into (`typed`), as a library scope's run after its build, a sign-in whose marker shows on its
  * account page checks that page first, as `stillSignedIn` does, waiting for a marker drawn late
  * (`settledMarkerCheck`), and signs nothing in when the marker shows there. Otherwise, and on a
- * new browser, it replays. A recipe with a workspace relation always replays, since only the
+ * new browser, it replays. A sign-in with a workspace relation always replays, since only the
  * replay finds the workspace host the session is on. A browser this host already typed into
  * replays as one signed in before (`signedInBefore`).
  */
@@ -455,15 +493,16 @@ export const runSignInBefore = <E>(
   input: Parameters<typeof signInForRun<E>>[0],
 ): ReturnType<typeof signInForRun<E>> =>
   Effect.gen(function* () {
-    const { signedIn, steps } = input.recipe;
+    const checks = signInChecks(input);
     const reused = typed();
     if (
       reused &&
-      signedIn.openPath !== undefined &&
-      workspaceRelation(input.recipe, input.siteOrigin) === undefined &&
+      typeof checks !== "string" &&
+      checks.signedIn.openPath !== undefined &&
+      workspaceRelation(checks, input.siteOrigin) === undefined &&
       (yield* settledMarkerCheck(
-        (shown) => input.browser.confirm(shown, steps, steps),
-        signedIn,
+        (shown) => input.browser.confirm(shown, checks.steps, checks.steps),
+        checks.signedIn,
         input.markerSettle,
       )).signedIn
     )
@@ -472,7 +511,8 @@ export const runSignInBefore = <E>(
   });
 
 /**
- * A run's sign-in with its artifact's recorded sign-in: `before` signs in before the operation
+ * A run's sign-in with its artifact's recorded sign-in, its screens or an older integration's
+ * recipe: `before` signs in before the operation
  * runs, as every signed-in run does, and `hook` signs in again on the same browser whenever the
  * script's `ensureSignedIn` finds the page signed out, with the login `before` read. A run never
  * restores a saved session, so it saves none. Only a read's sign-in may end on a page that can't
@@ -502,18 +542,23 @@ export const makeRunSignIn = (
   const login = { login: localSignInLogin({ ask: asks.ask, register: secrets.register, siteOrigin }) };
   // One run's sign-ins share what the site rejected, as one attempt's do in every host.
   const retryState = makeAutofillRetryState();
-  const before = runSignInBefore(() => session.signInTyping.typed, {
-    recipe: signIn.recipe,
-    entryUrl: signIn.entryUrl,
-    browser: signInBrowser,
-    login: login.login,
-    ask: asks.ask,
-    secrets,
-    site,
-    siteOrigin,
-    retryState,
-    allowCantTell,
-  }).pipe(
+  const by = replayedBy(signIn);
+  const before = (
+    by === undefined
+      ? Effect.fail(new SignInRunFailed({ code: "MissingRecipe", reason: "missing" }))
+      : runSignInBefore(() => session.signInTyping.typed, {
+          ...by,
+          entryUrl: signIn.entryUrl,
+          browser: signInBrowser,
+          login: login.login,
+          ask: asks.ask,
+          secrets,
+          site,
+          siteOrigin,
+          retryState,
+          allowCantTell,
+        })
+  ).pipe(
     Effect.tap((signedIn) =>
       Effect.sync(() => {
         workspace.origin = signedIn.workspaceOrigin;

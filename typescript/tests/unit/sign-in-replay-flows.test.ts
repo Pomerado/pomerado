@@ -6,6 +6,7 @@ import type {
   AutofillStepReport,
 } from "../../src/destinations/autofill-step.js";
 import type { SignInRecipe } from "../../src/destinations/sign-in-recipe.js";
+import { appendSignInStates } from "../../src/destinations/sign-in-states.js";
 import { makeInputAsker } from "../../src/inputs/callback.js";
 import { makeRunSecrets } from "../../src/inputs/secrets.js";
 import { replayAutofillRecipe } from "../../src/runtime/autofill-replay.js";
@@ -1381,4 +1382,107 @@ it("ends a replay whose submit a notice still caught as blocked, having sent not
   const { result } = await signIn(coveredRecipe, fake);
   expect(result).toMatchObject(Either.left({ reason: "submit_blocked" }));
   expect(steps(fake)).toEqual(["ask:missing_credentials", "fill:login"]);
+});
+
+// A run of an integration whose build recorded screens signs in through them, on core's replay of
+// states: the page read as a state (`observe`) picks the known one, and the step taken there.
+
+/** Each scripted page as a sign-in state: its controls as empty boxes on the site's origin. */
+const observeOn = (fake: ScriptedSite): NonNullable<SignInReplayBrowser<never>["observe"]> => () =>
+  Effect.sync(() => {
+    const boxes = (fake.state.page === "login" ? (["identifier", "password"] as const) : []).map(
+      (kind) => ({ frame: origin, kind, empty: true, submit: true }),
+    );
+    return {
+      fingerprint: {
+        top: origin,
+        boxes: boxes.map(({ frame, kind }) => ({ frame, kind })),
+        submit: boxes.length > 0,
+        ...(boxes.length === 0 ? { message: `~ ${fake.state.page}` } : {}),
+      },
+      boxes,
+      texts: [],
+    };
+  });
+const loginScreens = () => {
+  const added = appendSignInStates(
+    { states: [], transitions: [], signedIn: [] },
+    {
+      states: [
+        {
+          fingerprint: {
+            top: origin,
+            boxes: [
+              { frame: origin, kind: "identifier" },
+              { frame: origin, kind: "password" },
+            ],
+            submit: true,
+          },
+          step: loginStep,
+        },
+      ],
+      signedIn: { selector: "#account" },
+    },
+  );
+  if ("refused" in added) throw new Error(added.refused);
+  return added.library;
+};
+const screensSignIn = (fake: ScriptedSite) => {
+  const secrets = makeRunSecrets();
+  const { ask } = owner(fake);
+  return Effect.runPromise(
+    Effect.either(
+      signInForRun({
+        states: loginScreens(),
+        entryUrl: `${origin}/login`,
+        browser: { ...fake.browser, observe: observeOn(fake) },
+        login: localSignInLogin({ ask, register: secrets.register, siteOrigin: origin }),
+        ask,
+        secrets,
+        markerSettle: { within: Duration.millis(20), interval: Duration.millis(5) },
+        site,
+        siteOrigin: origin,
+        timing: fastTiming,
+      }),
+    ),
+  );
+};
+
+it("signs a run in through its screens, going on with the login from the screen the check without it stopped on", async () => {
+  // A replay of screens types each box alone, then presses the submit.
+  const typed: string[] = [];
+  const fake = scriptedSite({
+    entry: "login",
+    screens: { login: loginScreen, account: [] },
+    fill: (_page, values) => {
+      typed.push(...values);
+      return values.length === 0 && signedLogin(typed) ? { next: "account", signIn: true } : {};
+    },
+  });
+  const result = await screensSignIn(fake);
+  expect(result).toEqual(Either.right({ alreadySignedIn: false }));
+  // The check that types nothing opened the entry and stopped on the login screen; the replay with
+  // the login went on from there without opening it again.
+  expect(fake.trace).toEqual([
+    "open:/login",
+    "ask:missing_credentials",
+    "fill:login",
+    "fill:login",
+    "fill:login",
+  ]);
+  expect(fake.filled("login")).toEqual([[login.username], [login.password], []]);
+});
+
+it("fails a run whose site shows a screen its screens don't know, before typing anything", async () => {
+  const fake = scriptedSite({
+    entry: "landing",
+    screens: { landing: ["#start"], login: loginScreen, account: [] },
+    fill: () => ({}),
+  });
+  const result = await screensSignIn(fake);
+  expect(Either.isLeft(result) && result.left).toMatchObject({
+    code: "RecipeFailed",
+    reason: "unknown_state",
+  });
+  expect(fake.fills).toEqual([]);
 });

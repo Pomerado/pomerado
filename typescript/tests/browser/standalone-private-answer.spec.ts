@@ -418,7 +418,10 @@ test("records a sign-in through a security question as a version 1 recipe withou
   await page.waitForURL(`${site}/answer`);
   expect(await Effect.runPromise(auth.fill({ signedIn: { selector: "#identity" } }))).toMatchObject({ verified: true });
   const published = auth.recorder.published();
-  expect(published).toEqual({
+  // Its screens hold the same steps. Nothing published holds the answer, the login or the question
+  // as the page shows it, though the screens keep the question's lowercase words.
+  expect(published?.states?.states.map((state) => state.step)).toEqual(published?.recipe.steps);
+  expect(published).toMatchObject({
     recipe: {
       version: 1,
       steps: [
