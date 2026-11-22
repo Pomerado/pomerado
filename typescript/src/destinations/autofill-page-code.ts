@@ -250,8 +250,10 @@ return {
  *   another element caught a click the host may press past (`pressCovered`) or the step says to
  *   (`submitVia`), waits for the page to
  *   settle and reads its controls (`pageControlsCode`), with how many of their alerts did not show
- *   before the click (`newAlerts`) when it read them. A disabled or inert submit it never clicks:
- *   it says so and does nothing, and the host calls again while the page may still enable it.
+ *   before the click (`newAlerts`) when it read them, and, for a submit key, whether a request
+ *   other than a navigation left the page from the press until it settled (`requestSent`). A
+ *   disabled or inert submit it never clicks: it says so and does nothing, and the host calls
+ *   again while the page may still enable it.
  */
 export type AutofillFillCall =
   | {
@@ -1116,13 +1118,24 @@ const noteHop = (request) => {
       hops.push(new URL(request.url()).origin);
   } catch {}
 };
+// Whether a request other than a navigation, a fetch, an XHR or a POST, left the page from the
+// press of a submit key until the page settled, as a page's own script sends a code on a key.
+let requestSent = false;
+const noteSent = (request) => {
+  try {
+    if (!request.isNavigationRequest() && (request.method() === "POST" || ["fetch", "xhr"].includes(request.resourceType())))
+      requestSent = true;
+  } catch {}
+};
 // An answer the call returns before the page settled, once it stopped noting navigations.
 const unwatched = (answer) => {
   primary.off("request", noteHop);
+  primary.off("request", noteSent);
   return answer;
 };
 primary.on("request", noteRequest);
 primary.on("request", noteHop);
+if (submitKey !== null) primary.on("request", noteSent);
 primary.on("framenavigated", noteCommit);
 let late = false;
 // "keyboard" once the host pressed Enter on the submit itself, which activates it as a click does
@@ -1218,6 +1231,7 @@ let submission = await refusedSubmission();
 if (submission === null && ((await navigated) || (await lateCommit)))
   await primary.waitForLoadState("domcontentloaded", { timeout: ${call.settleMs} }).catch(() => undefined);
 primary.off("request", noteHop);
+primary.off("request", noteSent);
 submission ??= await refusedSubmission();
 if (submission !== null) return { submission, url: primary.url() };
 const settled = await documentStart();
@@ -1229,6 +1243,7 @@ const newAlerts =
 return {
   submit: "clicked",
   ...(via === null ? {} : { via }),
+  ...(requestSent ? { requestSent: true } : {}),
   url: primary.url(),
   navigated: {
     clicked: clickedFrom,
@@ -1245,7 +1260,8 @@ return {
  * key: the field's own place and destinations (its form's action and method, every form action and
  * method its controls could submit with), described for Guardian as that form, by its own name,
  * id and label and its method, never a value; and how many submit controls the form shows. A
- * field in no form submits nothing (`submitMethod` null), which the host refuses.
+ * field in no form submits nothing (`submitMethod` null), which the host refuses but for a
+ * replay's key in a code box (`codeKey`).
  */
 const keySubmitCode = `const keySubmit = async (field) => {
   const form = await field.locator.evaluate((element) => {
@@ -1393,6 +1409,7 @@ export const autofillStepCode = (
     }[];
     readonly submit?: string | undefined;
     readonly submitKey?: string | undefined;
+    readonly codeKey?: string | undefined;
     readonly submitVia?: string | undefined;
     readonly option?: string | undefined;
     readonly popup?: AutofillPopup | undefined;
@@ -1433,7 +1450,7 @@ const codeSlots = ${JSON.stringify(step.fields.map((field) => field.slot === "co
 // letters, such as "mm/yy", counts as a value.
 const emptiedFields = ${JSON.stringify(step.fields.map((field) => (field.slot === "phone" ? null : strictSlots.has(field.slot ?? "") ? "any" : "mask")))};
 const submitSelector = ${JSON.stringify(step.submit ?? null)};
-const submitKey = ${JSON.stringify(step.submitKey ?? null)};
+const submitKey = ${JSON.stringify(step.codeKey ?? step.submitKey ?? null)};
 const submitVia = ${JSON.stringify(step.submitVia ?? null)};
 const submitOption = ${JSON.stringify(step.option ?? null)};
 // Every control is found first, then read in one pass (readControls). A control that is not found

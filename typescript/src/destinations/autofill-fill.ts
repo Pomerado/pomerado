@@ -122,6 +122,8 @@ const FillAnswer = Schema.Union(
      * control laid over it with its name (`click_layer`).
      */
     via: Schema.optional(Schema.Literal("keyboard", "click_layer")),
+    /** A request other than a navigation left the page from a submit key's press on. */
+    requestSent: Schema.optional(Schema.Literal(true)),
     url: Schema.String,
     navigated: Schema.optional(PageNavigation),
     controls: Schema.optional(PageControls),
@@ -1715,6 +1717,7 @@ const submitStep = (
     return {
       ...filledReport(step, progress, answer.submit, answer.url),
       ...(answer.via === undefined ? {} : { via: answer.via }),
+      ...(answer.requestSent === true ? { requestSent: true as const } : {}),
       ...(navigated === undefined ? {} : { navigated }),
       ...(answer.controls === undefined ? {} : { controls: answer.controls }),
     };
