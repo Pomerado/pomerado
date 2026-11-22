@@ -34,7 +34,7 @@ import {
 } from "../destinations/sign-in-states.js";
 import type { AutofillSignInState } from "./autofill-state.js";
 import { maySend } from "../destinations/autofill-refusal.js";
-import { logicalRejectedField, recordedRejections } from "./autofill-rejection.js";
+import { recordedRejections } from "./autofill-rejection.js";
 import { approvalNumber, openPastedLink, withApprovalNumber } from "./autofill-replay-approval.js";
 import { settleCarried } from "./autofill-replay-fill.js";
 import { landingSettleMs } from "./autofill-replay-pages.js";
@@ -49,7 +49,7 @@ import {
 } from "./autofill-replay-steps.js";
 import { admitScreen, noteExactSent } from "./autofill-replay-workspace.js";
 import { codeRowFields, isCodeRowByPlace } from "./autofill-unrecorded-code.js";
-import { isIdentifier, provesLogin, screenSubmit, submittedLoginProof } from "./autofill-state.js";
+import { isExtraSecret, isIdentifier, provesLogin, screenSubmit, submittedLoginProof } from "./autofill-state.js";
 import type { AutofillLogin } from "./autofill-values.js";
 import { workspaceHost } from "./workspace-origin.js";
 
@@ -710,16 +710,21 @@ const pressesOnly = <E extends YieldableError, V extends string, L extends Autof
 };
 
 /**
- * Whether a first state that types nothing, such as a choice of account, leads to `state` on its
- * own page: at the start `state` is never taken, as the page may still draw that first state's
- * control and looks like `state` until then, and the recipe replay never passes a screen that types
- * nothing for a later one on its page.
+ * At the start, before the step wait ran out (`waited`), whether a first state that types nothing,
+ * such as a choice of account, leads to `state` on its own page: `state` is not taken then, as the
+ * page may still draw that first state's control and looks like `state` until then, and the recipe
+ * replay never passes a screen that types nothing for a later one on its page. A login the page
+ * never shows that choice goes on at the step wait; a replay in place, on the login's own session,
+ * never waits for it.
  */
 const afterChoice = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
   state: StateEntry,
+  after: StateEntry | undefined,
+  waited: boolean,
 ) => {
   const { states, transitions } = run.input.library;
+  if (after !== undefined || waited || run.input.inPlace === true) return false;
   return transitions.some(({ from, to }) => {
     const first = states.find((known) => known.key === from);
     return (
@@ -750,7 +755,8 @@ const hashless = (url: string) => URL.parse(url)?.hash === "";
  * the page's top origin and main message, at the host and path the last marker check read
  * (`page`), neither address with a hash, and, on the page of the state just acted in, one that
  * state led to; never the state just acted in nor one acted in that came back (`returnedTo`), nor
- * at the start one a first state that types nothing leads to on its page (`afterChoice`).
+ * at the start, before the step wait ran out, one a first state that types nothing leads to on its
+ * page (`afterChoice`).
  * They are taken in the order this login takes states of one look (`ranked`), so a route that
  * holds one there besides the state last acted in takes only its own: the first whose control
  * shows, one match on its recorded origin, on a page at its recorded host and path whose live
@@ -762,6 +768,7 @@ const byControl = <E extends YieldableError, V extends string, L extends Autofil
   after: StateEntry | undefined,
   skip: StateEntry | undefined,
   next: ReadonlySet<string>,
+  waited: boolean,
 ) =>
   Effect.gen(function* () {
     const { page } = run;
@@ -783,7 +790,7 @@ const byControl = <E extends YieldableError, V extends string, L extends Autofil
       hashless(state.step.page) &&
       sameAddress(page, state.step.page) &&
       (!stayed || next.has(state.key)) &&
-      (after !== undefined || !afterChoice(run, state));
+      !afterChoice(run, state, after, waited);
     const pressing: StateEntry[] = [];
     for (const state of run.input.library.states)
       if (state !== skip && here(state) && !(yield* returnedTo(run, state))) pressing.push(state);
@@ -837,10 +844,10 @@ const byPlace = <E extends YieldableError, V extends string, L extends AutofillL
  * The known state the page shows: one whose fingerprint it is and whose recorded controls show,
  * one match each, on its recorded origin, in the order this login takes them (`ranked`), never
  * the state just acted in again; in place, one in a pop-up (`inPopup`) that no state leads to, or
- * that `after` led to, whatever the look; at the start, never one a first state that types nothing
- * leads to on its page (`afterChoice`). A state acted in before something went out that the
- * page shows again, with no other, is `returned`, unless a sign-in learned it after the last one
- * (`learnedNext`). With `loose`, states of its look none of whose recorded controls showed may be a
+ * that `after` led to, whatever the look; at the start, before the step wait ran out, never one a
+ * first state that types nothing leads to on its page (`afterChoice`). A state acted in before
+ * something went out that the page shows again, with no other, is `returned`, unless a sign-in
+ * learned it after the last one (`learnedNext`). With `loose`, states of its look none of whose recorded controls showed may be a
  * code state typed by place into the row the page shows (`byPlace`); with no state of its whole
  * look, a page with no box may be a state told by its control and address alone (`byControl`);
  * its refusals count for nothing, so a page no state is still ends as an unknown state. Where none
@@ -875,8 +882,8 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
     const told = (state: StateEntry) =>
       ((sameFingerprint(state, fingerprint) && (fingerprint.message === undefined || !untold(state))) ||
         (inPopup(run, state) && next.has(state.key))) &&
-      (after !== undefined ||
-        ((run.input.inPlace !== true || leadsToNewMarker(run, state)) && !afterChoice(run, state)));
+      (after !== undefined || run.input.inPlace !== true || leadsToNewMarker(run, state)) &&
+      !afterChoice(run, state, after, waited);
     const candidates = states.filter((state) => state !== skip && told(state));
     const alike = ranked(run, candidates, told, next, fingerprint);
     let refused: string | undefined;
@@ -930,7 +937,7 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
       }
       return ownStateNotShown;
     }
-    return candidates.length > 0 || !loose ? refused : yield* byControl(run, fingerprint, after, skip, next);
+    return candidates.length > 0 || !loose ? refused : yield* byControl(run, fingerprint, after, skip, next, waited);
   });
 
 const signedIn = <E extends YieldableError, V extends string, L extends AutofillLogin>(
@@ -1121,17 +1128,14 @@ const cantTellEnd = <E extends YieldableError, V extends string, L extends Autof
 
 /**
  * What the recorded error markers that show say, as the recipe replay reads them
- * (`screenRejection`): a password or the primary identifier refused, named by the first; else the
- * extras they name, such as a date of birth, to retype (`retypeExtras`), a code's marker left out.
+ * (`screenRejection`): where they name only extras besides a code, such as a date of birth
+ * (`isExtraSecret`), those extras, to retype (`retypeExtras`); else a password or an identifier
+ * refused, named by the first, so a login never goes through a retype.
  */
-const rejection = <E extends YieldableError, V extends string, L extends AutofillLogin>(
-  run: Run<E, V, L>,
-  marked: readonly RejectedMarker["slot"][],
-) => {
-  const kind = run.input.credentials?.primaryIdentifierKind;
-  if (marked.some((slot) => slot === "password" || logicalRejectedField(slot, kind) === "username"))
-    return marked[0] === "password" ? "password_rejected" : "username_rejected";
-  return marked.filter((slot) => slot !== "code");
+const rejection = (marked: readonly RejectedMarker["slot"][]) => {
+  const named = marked.filter((slot) => slot !== "code");
+  if (named.every(isExtraSecret)) return named;
+  return marked[0] === "password" ? "password_rejected" : "username_rejected";
 };
 
 /**
@@ -1231,11 +1235,12 @@ const returnedReason = <E extends YieldableError, V extends string, L extends Au
 
 /**
  * Waits for the page to show a known state after `last`, or at the start, as the recipe replay
- * waits for a screen. The marker signs in. Once anything may have gone out, it never does while the
- * page shows a password or code box (`asksSecret`), and a recorded error marker of a state acted in
- * stops the replay as that rejection, whatever else the page shows, unless it names only extras,
- * which are retyped as corrected in the state just acted in (`retypeExtras`). A known state is
- * taken once its controls show and pass its origin rule, in the order this login takes
+ * waits for a screen. The marker signs in. Once anything may have gone out, a recorded error marker
+ * of a state acted in stops the replay as that rejection, whatever else the page shows, unless it
+ * names only extras, which are retyped as corrected in the state just acted in (`retypeExtras`);
+ * and on a page that shows a password or code box (`asksSecret`), the marker signs in only where
+ * no known state shows, as the recipe replay looks for its screens before its marker. A known
+ * state is taken once its controls show and pass its origin rule, in the order this login takes
  * them (`ranked`); where the login's own route left another login's out, none of its own showing,
  * nor by the step wait one learned after it for a box it types that is gone (`matchState`), is an
  * unknown state; a known state whose controls show on a host the origin rule refuses for this
@@ -1302,10 +1307,11 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
     for (;;) {
       const read = yield* run.input.observe;
       const at = yield* now;
-      // Once anything may have gone out, a page that shows a password or code box is no signed-in
-      // page, as at the last check; before, its marker is a session signed in already, as one
-      // beside a step-up's form is.
-      if (!mayHaveSent(run) || !asksSecret(read)) {
+      // Once anything may have gone out, on a page that shows a password or code box the marker
+      // signs in only where no known state shows, as the recipe replay looks for its screens first;
+      // before, it is a session signed in already, as one beside a step-up's form is.
+      const markerLast = mayHaveSent(run) && asksSecret(read);
+      if (!markerLast) {
         const signed = yield* signedInHere(run);
         if (signed !== undefined) return signed;
       }
@@ -1316,13 +1322,15 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
         if (marked === "unavailable") return stopped(run, "ambiguous_combined_rejection");
         const first = marked[0];
         if (first !== undefined && first !== "code") {
-          const said = rejection(run, marked);
+          const said = rejection(marked);
           if (typeof said === "string") return stopped(run, said);
           const retyped = yield* retypeExtras(run, acted, said);
           if (retyped !== undefined) return retyped;
-          // The page gets the whole step wait again after the press, as after a cleared challenge.
+          // The page gets the whole step wait again after the press, as after a cleared challenge,
+          // and a moment first, so a marker it drew before that press has a moment to go.
           start = yield* now;
           held = undefined;
+          yield* pause(run);
           continue;
         }
         codeMarked = first === "code";
@@ -1378,6 +1386,10 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
             if (!stood) return stopped(run, returnedReason(run, shown.returned));
             back = shown.returned;
           }
+        }
+        if (markerLast) {
+          const signed = yield* signedInHere(run);
+          if (signed !== undefined) return signed;
         }
         if (acted !== undefined && stood) {
           const state = acted.acted;

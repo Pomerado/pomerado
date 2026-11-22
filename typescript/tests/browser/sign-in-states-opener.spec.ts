@@ -184,7 +184,7 @@ test("a library that appends an opener leading to a state it knows signs in from
 // Runs sign in from a library on the host's own page, as a run does (`signInForRun`): a code page
 // that also shows the account's header is still a code page, a date of birth the site refused is
 // asked for again and retyped alone, and a choice of account the page draws late is waited for,
-// never passed for the page after it.
+// never passed for the page after it before the step wait.
 
 /** A library of states, each with the look the host's scan read and its step, to `#account`. */
 const libraryOf = (states: readonly { readonly fingerprint: StateFingerprint; readonly step: AutofillRecipeStep }[]) =>
@@ -252,7 +252,7 @@ const runSignIn = async (page: Page, library: SignInStates, answers: Record<stri
   return { result, asked };
 };
 
-test("a code page that also shows the account's header is answered as a code page, signing in only after the code", async ({ page }) => {
+test("a code page that also shows the account's header is answered as a code page, and an account page with a password form signs in", async ({ page }) => {
   const code = "246810";
   const posted: string[] = [];
   const header = '<header><a id="account" href="/home">Your account</a></header>';
@@ -262,7 +262,8 @@ test("a code page that also shows the account's header is answered as a code pag
       "/login": loginPage,
       "/verify": () =>
         `${header}<form method="post" action="/verify"><label>Code<input id="code" name="code" autocomplete="one-time-code" inputmode="numeric"></label><button id="verify">Verify</button></form>`,
-      "/home": () => `${header}<p>Welcome back</p>`,
+      "/home": () =>
+        `${header}<form><label>Current password<input id="current-password" type="password"></label><label>New password<input id="new-password" type="password"></label><button>Change password</button></form>`,
     },
     (path, form) => {
       posted.push(path === "/verify" ? (form.get("code") ?? "") : path);
@@ -318,7 +319,7 @@ test("a date of birth the site refused is asked for again and retyped alone, nev
   expect(posted).toEqual(["/session", "1980-01-01", "1980-04-09"]);
 });
 
-test("a choice of account the page draws late is waited for and made, never passed for the page after it", async ({ page }) => {
+test("a choice of account the page draws late is waited for and made, and a login it never shows goes on at the step wait", async ({ page }) => {
   const posted: string[] = [];
   const shown = { chosen: false, late: false };
   const choice = `<button id="choose" type="button" onclick="fetch('/choose', { method: 'POST' }).then(() => this.remove())">Use the team account</button>`;
@@ -359,6 +360,11 @@ test("a choice of account the page draws late is waited for and made, never pass
   const { result } = await runSignIn(page, library);
   expect(result).toMatchObject({ _tag: "Right" });
   expect(posted).toEqual(["/choose", "/login/identifier", "/login/password"]);
+  // A login the page never shows the choice to.
+  Object.assign(shown, { chosen: true, late: false });
+  posted.length = 0;
+  expect((await runSignIn(page, library)).result).toMatchObject({ _tag: "Right" });
+  expect(posted).toEqual(["/login/identifier", "/login/password"]);
 });
 
 const openerStep: AutofillRecipeStep = { page: `${site}/login`, fields: [], submit: "#open-sign-in" };
