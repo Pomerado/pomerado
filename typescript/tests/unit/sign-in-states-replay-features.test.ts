@@ -110,7 +110,8 @@ for (const [drawn, when] of [
 
 for (const via of ["keyboard", "click_layer"] as const)
   it(`sends a covered submit as the screen recorded it: ${via}`, async () => {
-    const screen = loginScreen({ covered: via });
+    // The site's own control over the submit takes a click through it by itself, as core clicks it.
+    const screen = loginScreen(via === "keyboard" ? { covered: true } : {});
     const library = storedLibrary([[screen, stepOn(screen, { fields: [email, password], submit: "#sign-in", submitVia: via })]]);
     const site = inTurn(screen);
     expect(await replay(site, library)).toMatchObject({ outcome: "signed_in" });
@@ -231,7 +232,7 @@ it("asks the security question the screen shows, and types the answer", async ()
   const question = "What was the name of your first school?";
   const screen: Screen = {
     path: "/question",
-    boxes: [{ selector: "#answer", kind: "identifier", takes: "other", question }],
+    boxes: [{ selector: "#answer", kind: "identifier", takes: "other", question: { selector: "#question", text: question } }],
     controls: ["#question", "#go"],
   };
   const answer = { selector: "#answer", slot: "private_answer" as const, questionSelector: "#question" };

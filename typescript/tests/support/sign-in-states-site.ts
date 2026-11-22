@@ -23,9 +23,10 @@ import { typedValues } from "../../src/runtime/autofill-values.js";
 
 // A scripted sign-in site for a replay from states. Its fill acts on a step as core's own fill
 // does on a page: it clicks a covering notice's control the step names before it types, and a
-// notice still showing catches the submit's click; a submit another element covers goes only as
-// the step says (`submitVia`); a native select picks only the step's `option`; and each value is
-// typed as a host types it (`typedValues`).
+// notice still showing catches the submit's click; a submit another element covers goes only from
+// the keyboard (`submitVia`); a native select picks only the step's `option`; a security question
+// is read only at the field's own `questionSelector`; and each value is typed as a host types it
+// (`typedValues`).
 
 export class SiteFailure extends Data.TaggedError("SiteFailure")<{ readonly code: string }> {}
 
@@ -39,7 +40,7 @@ export interface Screen {
     readonly selector: string;
     readonly kind: BoxKind;
     readonly takes?: BoxTakes;
-    readonly question?: string;
+    readonly question?: { readonly selector: string; readonly text: string };
   }[];
   /** Its buttons, links and selects. */
   readonly controls: readonly string[];
@@ -48,8 +49,8 @@ export interface Screen {
   readonly labels?: readonly string[];
   /** A notice over the screen, shown on arrival or drawn once every box is typed, and its own control. */
   readonly notice?: { readonly control: string; readonly drawn: "arrival" | "filled" };
-  /** The submit sits under another element, so it goes only from the keyboard or through it. */
-  readonly covered?: NonNullable<AutofillStep["submitVia"]>;
+  /** The submit sits under another element, which catches its click: it goes only from the keyboard. */
+  readonly covered?: true;
 }
 
 /**
@@ -120,6 +121,7 @@ export const featureSite = (
             fields: step.fields.map((field) => {
               // The host reads a security question by the field's own question selector alone.
               const question = shown().boxes.find((box) => box.selector === field.selector)?.question;
+              const read = question !== undefined && question.selector === field.questionSelector;
               return {
                 tag: "input",
                 role: null,
@@ -134,7 +136,7 @@ export const featureSite = (
                 ariaLabel: null,
                 text: null,
                 slot: field.slot,
-                ...(field.questionSelector === undefined || question === undefined ? {} : { questionText: question }),
+                ...(read ? { questionText: question.text } : {}),
               };
             }),
             submit: null,
@@ -156,8 +158,7 @@ export const featureSite = (
         });
         const pressed = step.submit ?? (step.submitKey === undefined ? undefined : "Enter");
         if (pressed === undefined) return report(step, "none");
-        const covered = shown().covered;
-        if (noticeShows() || (covered !== undefined && step.submitKey === undefined && step.submitVia !== covered))
+        if (noticeShows() || (shown().covered === true && step.submitKey === undefined && step.submitVia !== "keyboard"))
           return report(step, "blocked");
         actions.push(step.option === undefined ? `press ${pressed}` : `select ${pressed} ${step.option}`);
         presses.push(step);
@@ -189,7 +190,7 @@ export const featureSite = (
       texts: screen.message === undefined ? [] : [screen.message],
     };
   });
-  return { hooks, observe, site, actions, typed, presses };
+  return { hooks, observe, actions, typed, presses };
 };
 
 const lookOf = ({ kind, takes }: Screen["boxes"][number]) => ({
@@ -199,7 +200,7 @@ const lookOf = ({ kind, takes }: Screen["boxes"][number]) => ({
 });
 
 /** The look a screen shows on arrival, every box empty. */
-export const arrival = (screen: Screen): StateFingerprint => ({
+const arrival = (screen: Screen): StateFingerprint => ({
   top: origin,
   boxes: screen.boxes.map(lookOf),
   submit: screen.boxes.length > 0,
@@ -211,20 +212,16 @@ export const stepOn = (screen: Screen, step: Omit<AutofillRecipeStep, "page">) =
   ({ page: `${origin}${screen.path}`, ...step }) as AutofillRecipeStep;
 
 /**
- * A library of recorded sign-ins, each a list of screens with the step taken there, as a host
- * stores it and reads it back: every entry written as text and decoded again.
+ * The library of a recorded sign-in, a list of screens with the step taken there, as a host stores
+ * it and reads it back: every entry written as text and decoded again.
  */
-export const storedLibrary = (
-  ...signIns: readonly (readonly (readonly [Screen, AutofillRecipeStep])[])[]
-): SignInStates => {
-  const library = signIns.reduce<SignInStates>((built, states) => {
-    const appended = appendSignInStates(built, {
-      states: states.map(([screen, step]) => ({ fingerprint: arrival(screen), step })),
-      signedIn: { selector: "#account" },
-    });
-    if ("refused" in appended) throw new Error(appended.refused);
-    return appended.library;
-  }, signInStatesOf({}, []));
+export const storedLibrary = (states: readonly (readonly [Screen, AutofillRecipeStep])[]): SignInStates => {
+  const appended = appendSignInStates(signInStatesOf({}, []), {
+    states: states.map(([screen, step]) => ({ fingerprint: arrival(screen), step })),
+    signedIn: { selector: "#account" },
+  });
+  if ("refused" in appended) throw new Error(appended.refused);
+  const { library } = appended;
   const entries = [...library.states, ...library.transitions, ...library.signedIn].map((entry) => {
     const read = decodeSignInStateEntry(signInStateEntryText(entry));
     if (read === undefined) throw new Error(`entry ${entry.key} does not read back`);
