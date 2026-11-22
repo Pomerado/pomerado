@@ -899,7 +899,9 @@ const byPlace = <E extends YieldableError, V extends string, L extends AutofillL
  * that `after` led to, whatever the look. A state acted in before something went out that the
  * page shows again, with no other, is `returned`, unless a sign-in learned it after the last one
  * (`learnedNext`), and before the step wait (`waited`) not while a look-alike so learned has yet to
- * show, as a known next screen that looks the same as an earlier one may still be drawing. With
+ * show, as a known next screen that looks the same as an earlier one may still be drawing; such a
+ * look-alike is looked for there even where the login's own route, kept before it was learned,
+ * leaves it out. With
  * `loose`, states of its look none of whose recorded controls showed may be a code state typed by
  * place into the row the page shows (`byPlace`); with no state of its whole look, a page with no
  * box may be a state told by its control and address alone (`byControl`), else, once anything may
@@ -966,6 +968,19 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
       refused ??= shown;
       pending ||= learned.includes(state);
       if (shown === "not_found") missing.push(state);
+    }
+    // Where a state of the login's own route came back, a look-alike learned after the last one
+    // that the route left out, as one learned after the route was kept, is looked for as well.
+    const left =
+      returned === undefined ? [] : learned.filter((state) => candidates.includes(state) && !alike.includes(state));
+    for (const state of ranked(run, left, (other) => left.includes(other), next, fingerprint)) {
+      const shown = yield* shownOn(run, state, resolved(run, state.step));
+      if (typeof shown !== "string") {
+        if (askedBefore(run, shown)) continue;
+        return { state, inspection: shown } satisfies Shown;
+      }
+      refused ??= shown;
+      pending = true;
     }
     const asked = yield* askedHere(run, fingerprint, after, next);
     if (asked !== undefined) return asked;
