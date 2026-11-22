@@ -6,7 +6,11 @@ import type {
   AutofillStep,
   AutofillStepReport,
 } from "../../src/destinations/autofill-step.js";
-import type { ObservedState } from "../../src/destinations/sign-in-states.js";
+import {
+  noteSignInState,
+  type ObservedState,
+  observedSignInOf,
+} from "../../src/destinations/sign-in-states.js";
 import { makeInputAsker } from "../../src/inputs/callback.js";
 import { makeRunSecrets } from "../../src/inputs/secrets.js";
 import type { SignInStep } from "../../src/mint/contracts.js";
@@ -328,4 +332,43 @@ it("reads a device approval's page as a state before the owner approves, as the 
     [undefined, identifierPage.fingerprint],
     ["device", approvalPage.fingerprint],
   ]);
+});
+
+it("notes a private answer's screen by its look alone, with none of its question's words or ways", () => {
+  const question = "what was the name of your first pet?";
+  const answerScreen: SignInStep = {
+    fields: [{ selector: "#answer", slot: "private_answer", questionSelector: "#question" }],
+    submit: "#continue",
+  };
+  const told = (state: ObservedState, instruction: string, ways: readonly string[]): ObservedState => ({
+    ...state,
+    fingerprint: { ...state.fingerprint, instruction, ways },
+    texts: [instruction, ...ways],
+  });
+  const answerBox = { frame: origin, kind: "identifier" as const, takes: "other" as const };
+  const answerState: ObservedState = {
+    fingerprint: { top: origin, boxes: [answerBox], submit: true },
+    boxes: [{ ...answerBox, empty: true, submit: true }],
+    texts: [],
+  };
+  const signIn: { steps: object[] } = { steps: [] };
+  const steps = [
+    { page: `${origin}/login`, ...loginScreen },
+    { page: `${origin}/answer`, ...answerScreen },
+  ];
+  for (const [step, read] of [
+    [steps[0], told(loginState, "sign in to your account", ["forgot password?"])],
+    [steps[1], told(answerState, question, ["continue", "forgot your answer?"])],
+  ] as const) {
+    signIn.steps.push({ ...step });
+    noteSignInState(signIn, read);
+  }
+  const observed = observedSignInOf(signIn.steps, { steps, signedIn: { selector: "#account" } });
+  if (!("states" in observed)) throw new Error("the sign-in noted no state");
+  // The login's screen keeps its words, which only tell looks apart; the answer's keeps its look.
+  expect(observed.states.map((state) => state.fingerprint)).toEqual([
+    { ...loginState.fingerprint, instruction: "sign in to your account", ways: ["forgot password?"] },
+    answerState.fingerprint,
+  ]);
+  expect(JSON.stringify(observed)).not.toContain("pet");
 });

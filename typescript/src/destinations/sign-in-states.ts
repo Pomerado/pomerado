@@ -476,7 +476,9 @@ const readingField = "stateReading";
 /**
  * Notes the state a build's or repair's sign-in step was taken in, read just before that step's
  * fill or approval: on the step the sign-in recorded last, as the state the page showed after the
- * one noted before (`stateAfter`). A recipe never holds it: its steps are written field by field.
+ * one noted before (`stateAfter`). A step that takes a private answer is noted by its look alone,
+ * with no instruction or ways, which may hold its question. A recipe never holds it: its steps are
+ * written field by field.
  */
 export const noteSignInState = (
   signIn: { readonly steps: readonly object[] },
@@ -485,9 +487,13 @@ export const noteSignInState = (
   const step = signIn.steps.at(-1);
   if (step === undefined) return;
   const before: unknown = Reflect.get(signIn, readingField);
-  Object.assign(step, {
-    [fingerprintField]: stateAfter(Schema.is(ObservedShape)(before) ? before : undefined, observed),
-  });
+  const after = stateAfter(Schema.is(ObservedShape)(before) ? before : undefined, observed);
+  const fields: unknown = Reflect.get(step, "fields");
+  const privateAnswer =
+    Array.isArray(fields) &&
+    fields.some((field: unknown) => typeof field === "object" && field !== null && Reflect.get(field, "slot") === "private_answer");
+  const { instruction: _instruction, ways: _ways, ...look } = after;
+  Object.assign(step, { [fingerprintField]: privateAnswer ? look : after });
   Object.assign(signIn, { [readingField]: observed });
 };
 const ObservedShape = Schema.Struct({
