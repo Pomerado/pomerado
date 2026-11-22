@@ -28,6 +28,9 @@ const login: AutofillRecipeStep = {
 const loginPage =
   '<form method="post" action="/login"><label>Username<input id="username" name="username"></label><label>Password<input id="password" name="password" type="password"></label><button id="sign-in">Sign in</button></form>';
 
+const verify =
+  '<form method="post" action="/verify"><label>Verification code<input id="code" name="code" autocomplete="one-time-code" inputmode="numeric"></label><button id="verify">Verify</button></form>';
+
 test.describe.configure({ timeout: 120_000 });
 
 /** The site: each path's page, and where each form's post goes on to. Each post, in order. */
@@ -116,6 +119,19 @@ const replay = async (
   return { ended: ended.right, asked };
 };
 
+/** The login's saved answer, and the host's own flag of it where its question shows again. */
+const savedAnswer =
+  (flagged: string[]) =>
+  (hooks: AutofillHooks<TestFailure>): HostedSignIn<TestFailure> => ({
+    privateAnswer: () => Effect.succeed({ slot: "private_answer", value: "synthetic-saved-answer" }),
+    refuseShownAnswer: (ran) => {
+      const step = ran.findLast((taken) => taken.fields.some((field) => field.slot === "private_answer"));
+      return step === undefined
+        ? Effect.void
+        : hooks.inspect(step).pipe(Effect.map((shown) => void flagged.push("outcome" in shown ? "gone" : "shown")));
+    },
+  });
+
 test("a saved security answer the site asks for again is flagged through the host's hook", async ({ page }) => {
   const question =
     '<form method="post" action="/question"><p id="question">What was the name of your first pet?</p><label>Answer<input id="answer" name="answer"></label><button id="next">Continue</button></form>';
@@ -128,16 +144,7 @@ test("a saved security answer the site asks for again is flagged through the hos
   await page.goto("about:blank");
   posts.length = 0;
   const flagged: string[] = [];
-  const { ended } = await replay(page, library, {}, (hooks) => ({
-    // The login's saved answer, and the host's own check that its question shows again.
-    privateAnswer: () => Effect.succeed({ slot: "private_answer", value: "synthetic-saved-answer" }),
-    refuseShownAnswer: (ran) => {
-      const step = ran.findLast((taken) => taken.fields.some((field) => field.slot === "private_answer"));
-      return step === undefined
-        ? Effect.void
-        : hooks.inspect(step).pipe(Effect.map((shown) => void flagged.push("outcome" in shown ? "gone" : "shown")));
-    },
-  }));
+  const { ended } = await replay(page, library, {}, savedAnswer(flagged));
   expect(ended.outcome).not.toBe("signed_in");
   expect(posts.filter((post) => post.startsWith("/question"))).toEqual(["/question answer=synthetic-saved-answer"]);
   expect(flagged).toEqual(["shown"]);
@@ -145,8 +152,6 @@ test("a saved security answer the site asks for again is flagged through the hos
 
 test("a code page the library never recorded, after the password, is answered once and signs in", async ({ page }) => {
   const code = "246810";
-  const verify =
-    '<form method="post" action="/verify"><label>Verification code<input id="code" name="code" autocomplete="one-time-code" inputmode="numeric"></label><button id="verify">Verify</button></form>';
   const posts = await serve(
     page,
     { "/login": loginPage, "/verify": verify, "/home": '<p id="account">Your account</p>' },
@@ -164,4 +169,48 @@ test("a code page the library never recorded, after the password, is answered on
     fingerprint: expect.objectContaining({ boxes: [expect.objectContaining({ kind: "code" })] }),
     after: library.states[0]?.key,
   });
+});
+
+test("a refused password beside a security question flags no saved answer", async ({ page }) => {
+  const both = loginPage.replace(
+    "<button",
+    '<p id="question">What was the name of your first pet?</p><label>Answer<input id="answer" name="answer"></label><button',
+  );
+  await serve(page, { "/login": both }, { "/login": "/login" });
+  const library = await recorded(page, [
+    { ...login, fields: [...login.fields, { selector: "#answer", slot: "private_answer", questionSelector: "#question" }] },
+  ]);
+  await page.goto("about:blank");
+  const flagged: string[] = [];
+  const { ended } = await replay(page, library, {}, savedAnswer(flagged));
+  expect(ended.outcome).not.toBe("signed_in");
+  expect(flagged).toEqual([]);
+});
+
+test("a login page that comes back typed beside a new code box gets no code, and the password goes once", async ({ page }) => {
+  const returned = loginPage
+    .replace('name="username"', `name="username" value="${username}"`)
+    .replace('type="password"', `type="password" value="${password}"`)
+    .replace("<button", '<label>Code<input id="otp" name="otp" autocomplete="one-time-code"></label><button');
+  const posts = await serve(page, { "/login": loginPage, "/login/again": returned }, { "/login": "/login/again" });
+  const library = await recorded(page, [login]);
+  await page.goto("about:blank");
+  posts.length = 0;
+  const { ended, asked } = await replay(page, library, { code: "246810" });
+  expect(ended).toMatchObject({ outcome: "unclear", reason: "unknown_state" });
+  expect(asked).toEqual([]);
+  expect(posts).toHaveLength(1);
+});
+
+test("a code page right after the username, before any password, gets no code", async ({ page }) => {
+  const identifier =
+    '<form method="post" action="/login"><label>Username<input id="username" name="username"></label><button id="next">Next</button></form>';
+  const posts = await serve(page, { "/login": identifier, "/verify": verify }, { "/login": "/verify" });
+  const library = await recorded(page, [{ page: `${site}/login`, fields: [{ selector: "#username", accepts: ["username"] }], submit: "#next" }]);
+  await page.goto("about:blank");
+  posts.length = 0;
+  const { ended, asked } = await replay(page, library, { code: "246810" });
+  expect(ended).toMatchObject({ outcome: "unclear", reason: "unknown_state" });
+  expect(asked).toEqual([]);
+  expect(posts.filter((post) => post.startsWith("/verify"))).toEqual([]);
 });

@@ -17,7 +17,7 @@ const codeLookMs = 1_000;
  * field the page no longer has (`not_found`) is gone; a page that could not be read, or a match
  * that was not one, may still be showing it.
  */
-const stillShows = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+export const stillShows = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   input: AutofillReplayInput<E, V, L>,
   step: AutofillStep,
 ) =>

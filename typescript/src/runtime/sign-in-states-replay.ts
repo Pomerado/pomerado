@@ -38,7 +38,7 @@ import { recordedRejections } from "./autofill-rejection.js";
 import { approvalNumber, openPastedLink, withApprovalNumber } from "./autofill-replay-approval.js";
 import { settleCarried } from "./autofill-replay-fill.js";
 import { landingSettleMs } from "./autofill-replay-pages.js";
-import { unrecordedCode } from "./autofill-replay-code-screen.js";
+import { stillShows, unrecordedCode } from "./autofill-replay-code-screen.js";
 import { alreadySignedIn, makeReplay, type Replay, workspaceOf } from "./autofill-replay-session.js";
 import {
   askOne,
@@ -1970,8 +1970,9 @@ const noteShownBefore = <E extends YieldableError, V extends string, L extends A
  * screen's origin rule (`admitScreen`), each value through its fill, and a secret goes out at most
  * once in a state. A recipe never runs here; this runs only for a library. Only a replay in place
  * reads a step-up's entries (`stepUp`); any other leaves them out, with every transition to or
- * from them. One that did not sign in once anything may have gone out lets the host flag a saved
- * security answer whose question shows again (`hosted.refuseShownAnswer`), as the recipe replay does.
+ * from them. One that did not sign in after it acted in a state taking a private answer, with no
+ * password box it typed showing again, lets the host flag a saved security answer whose question
+ * shows again (`hosted.refuseShownAnswer`), as the recipe replay does.
  */
 export const replaySignInStates = <
   E extends YieldableError,
@@ -2042,7 +2043,14 @@ export const replaySignInStates = <
         ? stopped(run, here).ended
         : yield* walk(run, typeof from === "object" ? from : here);
     if ("reason" in ended && ended.reason === "not_found") yield* notFound(run);
-    if (ended.outcome !== "signed_in" && mayHaveSent(run)) yield* run.replay.refuseShownAnswer;
+    // As the recipe replay's last check: a password box that shows again is the site's answer.
+    const password = run.replay.progress.ran.findLast((step) => step.fields.some((field) => field.slot === "password"));
+    if (
+      ended.outcome !== "signed_in" &&
+      run.asked.size > 0 &&
+      (password === undefined || !(yield* stillShows(run.as, password)))
+    )
+      yield* run.replay.refuseShownAnswer;
     return from === undefined
       ? ended
       : {
@@ -2054,11 +2062,11 @@ export const replaySignInStates = <
 /**
  * The replay from the page it is on: each known state it shows in turn, from `first` when given,
  * as the state the page shows now. A value-free replay that stopped for values in a state it
- * reached gives where (`stop`). Once the login went out, a page no state knows with no password box
- * that shows a code box gets the code there, as a code screen a recipe never recorded does
- * (`unrecordedCode`), once and only while no code may have gone out, and the replay goes on; a
- * caller that records such a page itself (`codeRowByPlace: false`) gets the unknown state. One that
- * then signs in names the page (`unrecordedCode`).
+ * reached gives where (`stop`). Once the password went out, a page no state knows that shows a code
+ * box, where the box typed last shows no more, gets the code there, as a code screen a recipe never
+ * recorded does (`unrecordedCode`), once and only while no code may have gone out, and the replay
+ * goes on; a caller that records such a page itself (`codeRowByPlace: false`) gets the unknown
+ * state. One that then signs in names the page (`unrecordedCode`).
  */
 const walk = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -2070,6 +2078,8 @@ const walk = <E extends YieldableError, V extends string, L extends AutofillLogi
     let next = first;
     const probed = { current: false };
     let answered: SignInStatesOutcome<V>["unrecordedCode"];
+    const named = (ended: SignInStatesOutcome<V>) =>
+      answered !== undefined && ended.outcome === "signed_in" ? { ...ended, unrecordedCode: answered } : ended;
     for (;;) {
       const arrived = next ?? (yield* arrive(run, last));
       next = undefined;
@@ -2082,11 +2092,14 @@ const walk = <E extends YieldableError, V extends string, L extends AutofillLogi
       }
       if ("ended" in arrived) {
         const unknown = arrived.ended.unknownState?.fingerprint;
+        // The last box typed still showing is the site's answer to it, as a login page come back.
+        const typed = run.replay.progress.ran.findLast((step) => step.fields.length > 0);
         const code =
           unknown !== undefined &&
-          run.replay.progress.anythingSent &&
+          run.replay.sent.seenSent("password") &&
           input.codeRowByPlace !== false &&
-          !unknown.boxes.some((box) => box.kind === "password")
+          typed !== undefined &&
+          !(yield* stillShows(run.as, typed))
             ? yield* unrecordedCode(run.as, run.replay, probed)
             : "none";
         if (code === "ran" && unknown !== undefined) {
@@ -2095,9 +2108,7 @@ const walk = <E extends YieldableError, V extends string, L extends AutofillLogi
           continue;
         }
         if (code !== "none") return stopped(run, code).ended;
-        return answered !== undefined && arrived.ended.outcome === "signed_in"
-          ? { ...arrived.ended, unrecordedCode: answered }
-          : arrived.ended;
+        return named(arrived.ended);
       }
       if (run.visited.length >= maximumStateVisits) return stopped(run, "state_limit").ended;
       run.visited.push(arrived.state.key);
@@ -2115,7 +2126,7 @@ const walk = <E extends YieldableError, V extends string, L extends AutofillLogi
           : {}),
       });
       const done = yield* actIn(run, arrived, arrived.observed);
-      if ("ended" in done) return withStop(run, done.ended, arrived.state, last);
+      if ("ended" in done) return named(withStop(run, done.ended, arrived.state, last));
       last = done;
     }
   });
