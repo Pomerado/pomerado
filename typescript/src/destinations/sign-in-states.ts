@@ -255,15 +255,6 @@ export const sameFingerprint = (a: Look, b: Look) => {
   return fingerprintText(left) === fingerprintText(right) && takesAgree(a, b);
 };
 /**
- * Whether two known states are one screen: of one look, or one's own look, as a page, reads on the
- * other's top origin and then has the other's look (`readsOn`), as a screen recorded on a sign-in
- * host's page and again on the site's page that frames it does.
- */
-export const sameScreen = (a: StateEntry, b: StateEntry) =>
-  sameFingerprint(a, b) ||
-  sameFingerprint(a, { ...b, fingerprint: readOn(b.fingerprint, a) }) ||
-  sameFingerprint({ ...a, fingerprint: readOn(a.fingerprint, b) }, b);
-/**
  * Whether `twin` is `state` with a `dismiss` added and nothing else: one look and one step but for
  * the covering notice's control `twin` clicks, which a fill clicks only where the page shows it.
  */

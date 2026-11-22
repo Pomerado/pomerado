@@ -22,7 +22,6 @@ import {
   readsOn,
   sameBoxes,
   sameFingerprint,
-  sameScreen,
   type SignedInEntry,
   type SignInStates,
   type SignInStatesChoices,
@@ -386,6 +385,27 @@ const showsCode = (fingerprint: StateFingerprint) => fingerprint.boxes.some((box
 /** Whether a known state has the whole look `look`, its step telling what its boxes take (`Look`). */
 const looksLike = (look: Look) => (state: StateEntry) => sameFingerprint(state, look);
 
+/** Whether a known state has the page's look as the page reads, not only on its top (`readsOn`). */
+const plainly = (state: StateEntry, page: StateFingerprint) => sameFingerprint(state, page) && !readsOn(page, state);
+
+/**
+ * Whether a page that has a state's look only as read on its top origin (`readsOn`) is not that
+ * state: another state has the page's look plainly (`plainly`), or the state's controls don't show
+ * there or the origin rule refuses them (`shownOn`), which leaves no refusal of its own.
+ */
+const apartFrom = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  state: StateEntry,
+  page: StateFingerprint,
+) =>
+  Effect.gen(function* () {
+    if (run.input.library.states.some((other) => other !== state && plainly(other, page))) return true;
+    const admission = run.admission;
+    const shown = yield* shownOn(run, state, resolved(run, state.step));
+    run.admission = admission;
+    return typeof shown === "string";
+  });
+
 /**
  * Whether a state's step takes a private answer and its look holds no words of the page's message,
  * which may hold its question (`noteSignInState`): none, or its shape alone.
@@ -615,7 +635,7 @@ const returnedTo = <E extends YieldableError, V extends string, L extends Autofi
   Effect.gen(function* () {
     if (!run.replay.progress.anythingSent && run.replay.sent.maySent.size === 0) return false;
     for (const other of run.input.library.states) {
-      if (!run.visited.includes(other.key) || !sameScreen(other, state)) continue;
+      if (!run.visited.includes(other.key) || !sameFingerprint(other, state)) continue;
       if (other === state) return true;
       if (typeof (yield* shownOn(run, other, resolved(run, other.step))) !== "string") return true;
     }
@@ -691,8 +711,7 @@ const learnedAlike = <E extends YieldableError, V extends string, L extends Auto
   allowed: { readonly typing: boolean; readonly pressing: boolean; readonly sent: boolean },
 ) =>
   Effect.gen(function* () {
-    const plain = (state: StateEntry) =>
-      (sameFingerprint(fingerprint, state) && !readsOn(fingerprint, state)) || inPopup(run, state);
+    const plain = (state: StateEntry) => plainly(state, fingerprint) || inPopup(run, state);
     // One the page has the look of only as read on its top origin (`readsOn`) only where none other is.
     const told = learnedNext(run, after).some(plain)
       ? plain
@@ -1021,12 +1040,10 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
       const reading = states.filter((state) => framed(state) && shows(state) && taken(state));
       let back: StateEntry | undefined;
       for (const state of ranked(run, reading, (other) => reading.includes(other), next, fingerprint)) {
-        if (yield* returnedTo(run, state)) {
-          back ??= state;
-          continue;
-        }
         const shown = yield* shownOn(run, state, resolved(run, state.step));
-        if (typeof shown !== "string" && !askedBefore(run, shown)) return { state, inspection: shown } satisfies Shown;
+        if (typeof shown === "string") continue;
+        if (yield* returnedTo(run, state)) back ??= state;
+        else if (!askedBefore(run, shown)) return { state, inspection: shown } satisfies Shown;
       }
       run.admission = undefined;
       if (back !== undefined) return { returned: back };
@@ -1434,7 +1451,7 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
         const moved = acted !== undefined && takesLost(acted.reached, read);
         // A page with no box that still looks as it did when its state was taken is that state,
         // as one told by its control alone (`byControl`) is.
-        const again =
+        const looksAgain =
           acted !== undefined &&
           look !== undefined &&
           !moved &&
@@ -1444,11 +1461,22 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
               look.fingerprint.boxes.length > 0 &&
               sameBoxes(shape, look) &&
               read.texts.includes(look.fingerprint.message)));
-        stood =
+        const stands =
           acted !== undefined &&
           fingerprint !== undefined &&
           !moved &&
-          (again || (fingerprint.boxes.length > 0 && sameBoxes(shape, acted.acted)));
+          (looksAgain || (fingerprint.boxes.length > 0 && sameBoxes(shape, acted.acted)));
+        // A page with the state's boxes that has its look only as read on its top origin is that
+        // state only where nothing sets them apart (`apartFrom`); else it is matched as any page is.
+        const apart =
+          stands &&
+          acted !== undefined &&
+          fingerprint !== undefined &&
+          fingerprint.boxes.length > 0 &&
+          readsOn(shape, acted.acted) &&
+          (yield* apartFrom(run, acted.acted, shape));
+        const again = looksAgain && !apart;
+        stood = stands && !apart;
         if (!again && !blankFingerprint(shape)) {
           // A state by its control alone, once for each look that settled as for an early look,
           // and at the step wait, as a whole look may still draw.
@@ -1622,10 +1650,14 @@ const lookAgain = <E extends YieldableError, V extends string, L extends Autofil
     // still looks as the state does.
     const toldByText =
       state.fingerprint.boxes.length === 0 && sameFingerprint(observed.fingerprint, seenLook(run, state));
-    if (sameFingerprint(shape, state) || (notice && sameBoxes(shape, state)) || toldByText)
-      return { kind: "same" as const, text };
+    const kept = sameFingerprint(shape, state) || (notice && sameBoxes(shape, state));
+    const grows = containsFingerprint(state, shape);
+    // Where the page has the state's look only as read on its top origin, it is that state only
+    // where nothing sets them apart (`apartFrom`).
+    const apart = (kept || grows) && readsOn(shape, state) && (yield* apartFrom(run, state, shape));
+    if ((kept && !apart) || toldByText) return { kind: "same" as const, text };
     // One the page has the look of only as read on its top origin (`readsOn`) only where none other has it.
-    const plain = (known: StateEntry) => sameFingerprint(known, shape) && !readsOn(shape, known);
+    const plain = (known: StateEntry) => plainly(known, shape);
     const alike = run.input.library.states.some((known) => known !== state && plain(known)) ? plain : looksLike(shape);
     for (const other of ranked(
       run,
@@ -1636,7 +1668,7 @@ const lookAgain = <E extends YieldableError, V extends string, L extends Autofil
       const shown = yield* shownOn(run, other, resolved(run, other.step));
       if (typeof shown !== "string") return { kind: "fuller" as const, state: other, observed };
     }
-    return containsFingerprint(state, shape)
+    return grows && !apart
       ? { kind: "same" as const, text }
       : { kind: "moved" as const };
   });
@@ -2217,7 +2249,7 @@ const stillShown = <E extends YieldableError, V extends string, L extends Autofi
     const state = states.find((known) => known.key === from.state);
     if (state === undefined || from.visited.at(-1) !== from.state) return "state_unknown";
     const before = from.visited.slice(0, -1);
-    if (states.some((known) => before.includes(known.key) && sameScreen(known, state))) return "state_alike";
+    if (states.some((known) => before.includes(known.key) && sameFingerprint(known, state))) return "state_alike";
     if (ranked({ ...run, visited: before }, [state], looksLike(state)).length === 0) return "state_not_own";
     const read = yield* run.input.observe;
     if (read === undefined) return "page_unread";

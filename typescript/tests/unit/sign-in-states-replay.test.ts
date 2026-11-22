@@ -464,12 +464,29 @@ it("never types into a state whose box sits in a frame off its recorded origin",
   expect(inFrame.fills).toEqual([]);
 });
 
+const www = "https://www.example.test";
 /** A screen in a frame on the sign-in host, and its state recorded with the host's page on top. */
 const inHostFrame = (screen: Screen): Screen => ({ ...screen, frame: auth });
 const onHost = (screen: Screen, fields: AutofillRecipeStep["fields"], submit: string) => ({
   fingerprint: { ...arrival(inHostFrame(screen)), top: auth },
   step: stepAt(screen.path, fields, submit, { page: `${auth}${screen.path}` }),
 });
+/** A scripted site whose screens named in `pages` show on that origin's page, not the site's. */
+const onPages = (site: ReturnType<typeof scriptedSite>, pages: Readonly<Record<string, string>>) => {
+  const at = (address: string) => {
+    const top = pages[site.site.screen];
+    return top === undefined ? address : `${top}${new URL(address).pathname}`;
+  };
+  const observe = Effect.map(site.observe, (read) => ({
+    ...read,
+    fingerprint: { ...read.fingerprint, top: pages[site.site.screen] ?? read.fingerprint.top },
+  }));
+  const inspect: typeof site.hooks.inspect = (step) =>
+    Effect.map(site.hooks.inspect(step), (shown) =>
+      "outcome" in shown ? shown : { ...shown, page: at(shown.page), url: at(shown.url ?? shown.page) },
+    );
+  return { ...site, observe, hooks: { ...site.hooks, inspect } };
+};
 
 it("takes a state recorded on its sign-in host where the site's own page shows its form in a frame on that host", async () => {
   const library = libraryOf([onHost(combined, [email, password], "#continue")]);
@@ -478,14 +495,22 @@ it("takes a state recorded on its sign-in host where the site's own page shows i
   expect(await replay(site, library, { stepWaitMs: 2_000 })).toMatchObject({ outcome: "signed_in" });
   expect(site.fills).toEqual(["email", "password"]);
   // On another page of the site, where the origin rule refuses the state, the page is still unknown.
-  const www = "https://www.example.test";
-  const other = scriptedSite({ start: inHostFrame(combined) }, () => "home");
-  const observe = Effect.map(other.observe, (read) => ({ ...read, fingerprint: { ...read.fingerprint, top: www } }));
-  const inspect: typeof other.hooks.inspect = (step) =>
-    Effect.map(other.hooks.inspect(step), (shown) => ("outcome" in shown ? shown : { ...shown, page: `${www}/sign-in` }));
-  const hooks = { ...other.hooks, inspect };
-  expect(await replay({ ...other, observe, hooks }, library)).toMatchObject({ reason: "unknown_state" });
+  const other = onPages(scriptedSite({ start: inHostFrame(combined) }, () => "home"), { start: www });
+  expect(await replay(other, library)).toMatchObject({ reason: "unknown_state" });
   expect(other.fills).toEqual([]);
+});
+
+it("takes the framed form a sign-in learned after its host's own, and never the host's form again where the origin rule refuses it", async () => {
+  const framed = { fingerprint: arrival(inHostFrame(emailScreen)), step: stepAt("/sign-in", [email], "#continue") };
+  const library = libraryOf([onHost(emailScreen, [email], "#continue"), framed]);
+  const screens = { start: inHostFrame(emailScreen), framed: inHostFrame(emailScreen) };
+  const learned = onPages(scriptedSite(screens, (at) => (at === "start" ? "framed" : "home")), { start: auth });
+  expect(await replay(learned, library)).toMatchObject({ outcome: "signed_in" });
+  expect(learned.fills).toEqual(["email", "email"]);
+  // The same form framed on another host of the site after the host's own is a page no state knows.
+  const refused = onPages(scriptedSite(screens, () => "framed"), { start: auth, framed: www });
+  expect(await replay(refused, libraryOf([onHost(emailScreen, [email], "#continue")]))).toMatchObject({ reason: "unknown_state" });
+  expect(refused.fills).toEqual(["email"]);
 });
 
 it("never acts again in a screen recorded both on its sign-in host and framed on the site's page when that page comes back", async () => {
