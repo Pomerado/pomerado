@@ -510,6 +510,23 @@ it("takes a page with no box whose label gained a word for the state whose contr
   expect(events).toContainEqual({ stage: "state", state: viaStorefront.states[0]?.key, reason: "same_control" });
 });
 
+it("takes a page with no box by its control where its path is the recorded one but a per-account segment or a trailing slash", async () => {
+  for (const [recorded, live, more] of [
+    ["/shop/", "/shop", {}],
+    ["/u/*/shop", "/u/7/shop", { anySegments: [1] }],
+  ] as const) {
+    const library = libraryOf([
+      { fingerprint: arrival({ ...storefront, path: recorded }), step: stepAt(recorded, [], "#log-in", more) },
+      typedEmail,
+      typedPassword,
+    ]);
+    const relabeled = { ...storefront, path: live, labels: ["~ in", "~ ~", "~ up", "~"] };
+    const site = scriptedSite({ start: relabeled, ...toSignIn }, (_at, clicked) => storefrontNext[clicked]);
+    expect(await replay(site, library)).toMatchObject({ outcome: "signed_in" });
+    expect(site.clicks).toEqual(["#log-in", "#continue", "#go"]);
+  }
+});
+
 it("presses once more a state told by its control when the page kept its look", async () => {
   const relabeled = { ...storefront, labels: ["~ in", "~ ~", "~ up", "~"] };
   let presses = 0;

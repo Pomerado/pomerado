@@ -697,9 +697,9 @@ const learnedAlike = <E extends YieldableError, V extends string, L extends Auto
 
 /**
  * Whether a state may be told by its control and address alone (`byControl`): it shows no box and
- * presses one recorded control on an absolute page, typing nothing, with no method, choice,
- * approval or pop-up, and its press has the site send nothing the library knows of
- * (`sendsOnPress`), so taking it never has anything sent twice.
+ * presses one recorded control, typing nothing, with no method, choice, approval or pop-up, and its
+ * press has the site send nothing the library knows of (`sendsOnPress`), so taking it never has
+ * anything sent twice.
  */
 const pressesOnly = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -708,7 +708,6 @@ const pressesOnly = <E extends YieldableError, V extends string, L extends Autof
   const { fingerprint, step } = state;
   return (
     fingerprint.boxes.length === 0 &&
-    step.origin !== "workspace" &&
     step.submit !== undefined &&
     step.fields.length === 0 &&
     step.methods === undefined &&
@@ -725,6 +724,18 @@ const sameAddress = (a: string, b: string) => {
   const right = URL.parse(b);
   return left !== null && right !== null && left.host === right.host && left.pathname === right.pathname;
 };
+/** Whether a page is at a recorded step's page, as a state told by its control is (`addresses`). */
+type At = (page: string, step: AutofillRecipeStep) => boolean;
+/**
+ * The ways a page is at a state's recorded page, in the order a state told by its control is
+ * looked for: the same host and path, as first; then as the recipe replay tells a recorded
+ * screen's page (`matchesRecorded`), a segment recorded `*` (`anySegments`) taking any, a trailing
+ * slash but the root's dropped from both, and a workspace step's path on the workspace origin this
+ * replay knows, or while it knows none one that passes its gates.
+ */
+const addresses = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+): readonly At[] => [(page, step) => sameAddress(page, step.page), run.replay.matchesRecorded];
 /**
  * Whether an absolute URL has no hash: a control's inspection reads its page's origin and path
  * alone, so it can never confirm a hash route.
@@ -735,12 +746,12 @@ const hashless = (url: string) => URL.parse(url)?.hash === "";
  * Where no known state has the page's whole look, the known state a page with no box is by the
  * control it presses, as one page shows other labels in another browser or place, while nothing
  * this sign-in typed may have reached the site: a state that presses only (`pressesOnly`), with
- * the page's top origin and main message, at the host and path the last marker check read
- * (`page`), neither address with a hash, and, on the page of the state just acted in, one that
- * state led to; never the state just acted in nor one acted in that came back (`returnedTo`).
- * They are taken in the order this login takes states of one look (`ranked`), so a route that
- * holds one there besides the state last acted in takes only its own: the first whose control
- * shows, one match on its recorded origin, on a page at its recorded host and path whose live
+ * the page's top origin and main message, at its recorded page (`at`) as the last marker check
+ * read the address (`page`), neither address with a hash, and, on the page of the state just acted
+ * in, one that state led to; never the state just acted in nor one acted in that came back
+ * (`returnedTo`). They are taken in the order this login takes states of one look (`ranked`), so a
+ * route that holds one there besides the state last acted in takes only its own: the first whose
+ * control shows, one match on its recorded origin, on a page at its recorded page whose live
  * address, as the inspection read it, has no hash either. With no address read, none.
  */
 const byControl = <E extends YieldableError, V extends string, L extends AutofillLogin>(
@@ -749,6 +760,7 @@ const byControl = <E extends YieldableError, V extends string, L extends Autofil
   after: StateEntry | undefined,
   skip: StateEntry | undefined,
   next: ReadonlySet<string>,
+  at: At,
 ) =>
   Effect.gen(function* () {
     const { page } = run;
@@ -760,15 +772,15 @@ const byControl = <E extends YieldableError, V extends string, L extends Autofil
       run.replay.sent.maySent.size > 0
     )
       return undefined;
-    const stayed = after !== undefined && sameAddress(page, after.step.page);
+    const stayed = after !== undefined && at(page, after.step);
     // Each state here counts for the login's own route, one that came back too, as `ranked` reads
     // it, which leaves out the state last acted in as it does for a look.
     const here = (state: StateEntry) =>
       state.fingerprint.top === fingerprint.top &&
       state.fingerprint.message === fingerprint.message &&
       pressesOnly(run, state) &&
-      hashless(state.step.page) &&
-      sameAddress(page, state.step.page) &&
+      hashless(URL.parse(state.step.page, page)?.href ?? "") &&
+      at(page, state.step) &&
       (!stayed || next.has(state.key));
     const pressing: StateEntry[] = [];
     for (const state of run.input.library.states)
@@ -780,7 +792,7 @@ const byControl = <E extends YieldableError, V extends string, L extends Autofil
         typeof inspection !== "string" &&
         inspection.url !== undefined &&
         hashless(inspection.url) &&
-        sameAddress(inspection.page, state.step.page)
+        at(inspection.page, state.step)
       )
         return { state, inspection, by: "control" } satisfies Shown;
     }
@@ -793,8 +805,8 @@ const byControl = <E extends YieldableError, V extends string, L extends Autofil
  * login whose words the site changed, such as one asking to remember the browser: only one the
  * state just acted in led to (`learnedNext`) that presses only (`pressesOnly`), whose control is
  * neither that state's submit nor one of its methods, so nothing that state sent goes out again;
- * with the page's top origin, whatever its message and buttons, at the host and path the last
- * marker check read, neither address with a hash, and never one acted in that came back
+ * with the page's top origin, whatever its message and buttons, at its recorded page (`at`) as the
+ * last marker check read the address, neither with a hash, and never one acted in that came back
  * (`returnedTo`). They are taken in the order this login takes states of one look (`ranked`), the
  * first whose control shows as `byControl` takes one.
  */
@@ -803,6 +815,7 @@ const ledToByControl = <E extends YieldableError, V extends string, L extends Au
   fingerprint: StateFingerprint,
   after: StateEntry | undefined,
   next: ReadonlySet<string>,
+  at: At,
 ) =>
   Effect.gen(function* () {
     const { page } = run;
@@ -819,8 +832,8 @@ const ledToByControl = <E extends YieldableError, V extends string, L extends Au
       state.fingerprint.top === fingerprint.top &&
       pressesOnly(run, state) &&
       !pressed.includes(state.step.submit) &&
-      hashless(state.step.page) &&
-      sameAddress(page, state.step.page);
+      hashless(URL.parse(state.step.page, page)?.href ?? "") &&
+      at(page, state.step);
     const pressing: StateEntry[] = [];
     for (const state of learnedNext(run, after))
       if (here(state) && !(yield* returnedTo(run, state))) pressing.push(state);
@@ -830,7 +843,7 @@ const ledToByControl = <E extends YieldableError, V extends string, L extends Au
         typeof inspection !== "string" &&
         inspection.url !== undefined &&
         hashless(inspection.url) &&
-        sameAddress(inspection.page, state.step.page)
+        at(inspection.page, state.step)
       )
         return { state, inspection, by: "control" } satisfies Shown;
     }
@@ -980,10 +993,17 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
       return ownStateNotShown;
     }
     if (candidates.length > 0 || !loose) return refused;
-    // A state the one just acted in led to is looked for only where `byControl` finds none, as it
-    // finds none once anything may have gone out, so every page it takes is taken as before.
-    const known = yield* byControl(run, fingerprint, after, skip, next);
-    return known ?? (yield* ledToByControl(run, fingerprint, after, next));
+    // Each match by control looks only where the ones before it found none, the first as it was:
+    // by host and path, then as the recipe replay tells a recorded page (`addresses`). A state the
+    // one just acted in led to is looked for only where `byControl` finds none, as it finds none
+    // once anything may have gone out. So every page a state was taken on before is taken as before.
+    for (const at of addresses(run)) {
+      const known =
+        (yield* byControl(run, fingerprint, after, skip, next, at)) ??
+        (yield* ledToByControl(run, fingerprint, after, next, at));
+      if (known !== undefined) return known;
+    }
+    return undefined;
   });
 
 const signedIn = <E extends YieldableError, V extends string, L extends AutofillLogin>(
