@@ -253,19 +253,19 @@ const runSignIn = async (page: Page, library: SignInStates, answers: Record<stri
   return { result, asked };
 };
 
-test("a code page that also shows the account's header is answered as a code page, though its button draws a moment after its box, and an account page with a password form signs in", async ({ page }) => {
+test("a code page that also shows the account's header is answered as a code page, though its button draws a moment or a few seconds after its box, and an account page with a password form signs in", async ({ page }) => {
   const code = "246810";
   const posted: string[] = [];
   const header = '<header><a id="account" href="/home">Your account</a></header>';
   const button = '<button id="verify">Verify</button>';
-  const late = { button: false };
+  const late = { ms: 0 };
   await serveSite(
     page,
     {
       "/login": loginPage,
       "/verify": () =>
-        `${header}<form method="post" action="/verify"><label>Code<input id="code" name="code" autocomplete="one-time-code" inputmode="numeric"></label>${late.button ? "" : button}</form>${
-          late.button ? `<script>setTimeout(() => document.querySelector("form").insertAdjacentHTML("beforeend", ${JSON.stringify(button)}), 1_000)</script>` : ""
+        `${header}<form method="post" action="/verify"><label>Code<input id="code" name="code" autocomplete="one-time-code" inputmode="numeric"></label>${late.ms > 0 ? "" : button}</form>${
+          late.ms > 0 ? `<script>setTimeout(() => document.querySelector("form").insertAdjacentHTML("beforeend", ${JSON.stringify(button)}), ${late.ms})</script>` : ""
         }`,
       "/home": () =>
         `${header}<form><label>Current password<input id="current-password" type="password"></label><label>New password<input id="new-password" type="password"></label><button>Change password</button></form>`,
@@ -282,11 +282,46 @@ test("a code page that also shows the account's header is answered as a code pag
       step: { page: `${site}/verify`, fields: [{ selector: "#code", slot: "code" }], submit: "#verify" },
     },
   ]);
-  late.button = true;
-  const { result, asked } = await runSignIn(page, library, { code: [code] });
+  // A button drawn within the page's quiet second, then one drawn well after it.
+  for (const ms of [1_000, 2_500]) {
+    late.ms = ms;
+    posted.length = 0;
+    const { result, asked } = await runSignIn(page, library, { code: [code] });
+    expect(result).toMatchObject({ _tag: "Right" });
+    expect(asked).toEqual(["login", "code"]);
+    expect(posted).toEqual(["/session", code]);
+  }
+});
+
+test("an account page with a password form signs in at the step wait where a known state not reached yet has its boxes", async ({ page }) => {
+  const posted: string[] = [];
+  // Two password boxes each, the learned page's with no button, as a form sent with Enter.
+  const boxes = (first: string, second: string) =>
+    `<label>Current password<input id="${first}" type="password"></label><label>New password<input id="${second}" type="password"></label>`;
+  await serveSite(
+    page,
+    {
+      "/login": loginPage,
+      "/expired": () => `<form method="post" action="/expired">${boxes("old-password", "fresh-password")}</form>`,
+      "/home": () =>
+        `<header><a id="account" href="/home">Your account</a></header><form>${boxes("current-password", "new-password")}<button>Change password</button></form>`,
+    },
+    (path) => {
+      posted.push(path);
+      return "/home";
+    },
+  );
+  const library = libraryOf([
+    { fingerprint: await scanAt(page, "/login"), step: loginStep },
+    {
+      fingerprint: await scanAt(page, "/expired"),
+      step: { page: `${site}/expired`, fields: [{ selector: "#old-password", slot: "password" }] },
+    },
+  ]);
+  const { result, asked } = await runSignIn(page, library);
   expect(result).toMatchObject({ _tag: "Right" });
-  expect(asked).toEqual(["login", "code"]);
-  expect(posted).toEqual(["/session", code]);
+  expect(asked).toEqual(["login"]);
+  expect(posted).toEqual(["/session"]);
 });
 
 test("a date of birth the site refused is asked for again and retyped alone, never the login", async ({ page }) => {

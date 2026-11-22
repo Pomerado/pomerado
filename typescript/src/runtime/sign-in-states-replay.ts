@@ -1615,6 +1615,7 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
           }
         } else if (
           refused === undefined &&
+          !(markerLast && drawing) &&
           still &&
           !run.input.library.states.some((state) => containsFingerprint(shape as StateFingerprint, state))
         )
