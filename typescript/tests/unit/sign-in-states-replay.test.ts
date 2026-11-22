@@ -2086,28 +2086,22 @@ const byEmail = { fingerprint: arrival(pick), step: stepAt("/pick", [], "#email"
 const picked = () =>
   scriptedSite({ start: emailScreen, pick }, (_at, clicked) => (clicked === "#continue" ? "pick" : "home"));
 
-it("goes on along the login's own route where known states share a look, past it only to one learned after", async () => {
+it("goes on along the login's own route where known states share a look, never another login's", async () => {
   // Another login's route was learned last and its press shows too.
   const library = libraryOf([emailState, byEmail], [emailState, byText]);
   const own = { states: [keyOf(emailState), keyOf(byEmail)] };
   const site = picked();
   expect(await replay(site, library, { choices: own })).toMatchObject({ outcome: "signed_in" });
   expect(site.clicks).toEqual(["#continue", "#email"]);
-  // Its own state no longer shows: by the step wait it takes the look-alike learned after it.
-  const gone = () =>
-    scriptedSite({ start: emailScreen, pick: { ...pick, buttons: ["#text"] } }, (_at, clicked) =>
-      clicked === "#continue" ? "pick" : "home",
-    );
-  const newer = gone();
-  expect(await replay(newer, library, { choices: own })).toMatchObject({ outcome: "signed_in" });
-  expect(newer.clicks).toEqual(["#continue", "#text"]);
-  // With only one learned before it, it stops there as on a page it does not know, for a repair
-  // of its own to go on from, pressing no other login's.
-  const older = gone();
-  const ended = await replay(older, libraryOf([emailState, byText], [emailState, byEmail]), { choices: own });
+  // Its own state no longer shows: it stops there as on a page it does not know, for a repair of
+  // its own to go on from, pressing no other login's.
+  const gone = scriptedSite({ start: emailScreen, pick: { ...pick, buttons: ["#text"] } }, (_at, clicked) =>
+    clicked === "#continue" ? "pick" : "home",
+  );
+  const ended = await replay(gone, library, { choices: own });
   expect(ended).toMatchObject({ outcome: "unclear", reason: "unknown_state" });
   expect(ended.unknownState).toMatchObject({ after: keyOf(emailState) });
-  expect(older.clicks).toEqual(["#continue"]);
+  expect(gone.clicks).toEqual(["#continue"]);
 });
 
 it("acts in a login's own state with the dismiss of a look-alike that only adds one, along its own route", async () => {
