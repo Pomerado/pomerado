@@ -97,11 +97,8 @@ export type AutofillReplayOutcome<V extends string = string> =
       readonly choice?: SignInChoice;
     };
 
-/**
- * Why a code screen takes another code: the site showed it refused the last one (`rejected`), or
- * its screen stayed with no refusal shown (`returned`). Both share the code retry bounds.
- */
-export type CodeRetry = "rejected" | "returned";
+/** Why a code screen takes another code: the site refused the last one, or its screen came back. */
+export type CodeRetry = "rejected";
 
 /** Private existing-attempt state survives browser and credential replay rebuilds. */
 export interface AutofillRetryState {
