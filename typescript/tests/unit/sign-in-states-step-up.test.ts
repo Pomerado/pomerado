@@ -202,6 +202,28 @@ it("signs in again in place at the step-up the page shows, by the step-up's own 
   expect(fake.fills).toEqual(["#step-password"]);
 });
 
+it("leads a sign-in that stopped before it signed in to the known state of its own sign-in, a step-up's for a step-up", () => {
+  const opener = (path: string, message: string) => ({
+    fingerprint: { top: site, boxes: [], submit: false, message },
+    step: { page: `${site}${path}`, fields: [], submit: "#open" },
+  });
+  const ownPassword = library.states.find((state) => state.stepUp !== true && state.step.page === `${site}/password`);
+  const stepUpPassword = library.states.find((state) => state.stepUp === true);
+  // Both share the password look; a marker neither reached is never stored.
+  const added = (observed: ObservedSignIn) => append(library, observed).added;
+  const ownAdded = added({ states: [opener("/", "Welcome")], to: look("password"), signedIn: { selector: "#elsewhere" } });
+  const stepUpAdded = added({
+    stepUp: true,
+    states: [opener("/records", "Records")],
+    to: look("password"),
+    signedIn: { selector: "#elsewhere" },
+  });
+  expect(ownAdded.map((entry) => entry.kind)).toEqual(["state", "transition"]);
+  expect(ownAdded[1]).toMatchObject({ to: ownPassword?.key });
+  expect(stepUpAdded.map((entry) => entry.kind)).toEqual(["state", "transition"]);
+  expect(stepUpAdded[1]).toMatchObject({ to: stepUpPassword?.key });
+});
+
 it("keys a step-up's entries apart from the same sign-in's, and stores every other entry as before", () => {
   const tagged = append(signInStatesOf({}, []), { ...own, stepUp: true }).added;
   const untagged = append(signInStatesOf({}, []), own).added;
