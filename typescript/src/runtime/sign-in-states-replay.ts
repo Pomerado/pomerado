@@ -2491,11 +2491,14 @@ const walk = <E extends YieldableError, V extends string, L extends AutofillLogi
           input.codeRowByPlace !== false &&
           typed !== undefined &&
           !(yield* stillShows(run.as, typed))
-            ? yield* unrecordedCode(run.as, run.replay, probed)
+            ? yield* unrecordedCode(run.as, run.replay, probed, true)
             : "none";
         if (code === "ran" && unknown !== undefined) {
           const after = arrived.ended.unknownState?.after;
-          const step = run.replay.progress.unrecordedCodeStep;
+          // The look was read before the step, so the step is kept only on that look's top page.
+          const read = run.replay.progress.unrecordedCodeStep;
+          const step =
+            unknown.popup !== true && URL.parse(read?.page ?? "")?.origin === unknown.top ? read : undefined;
           answered = {
             fingerprint: unknown,
             ...(after === undefined ? {} : { after }),

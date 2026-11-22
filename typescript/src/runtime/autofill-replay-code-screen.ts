@@ -147,19 +147,26 @@ export const codeShownAgain = <E extends YieldableError, V extends string, L ext
  * On a recorded emailed link's screen (`onLinkScreen`), the recording says the site emails, so the
  * code never comes from the host's generator, and a code nobody gave leaves the link's question to
  * ask (`none`), as nothing was typed.
+ * With `record`, a screen whose code went out is kept as a recorded screen too
+ * (`unrecordedCodeStep`, `recordedCodeScreen`), read before the code is typed.
  * `ran` when the code went out, `none` when none shows, or why it stopped.
  */
 export const runFoundCodeScreen = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   input: AutofillReplayInput<E, V, L>,
   replay: Replay<E, V, L>,
   onLinkScreen = false,
+  record = false,
 ) =>
   Effect.gen(function* () {
     const field = yield* findCodeScreen(input.hooks);
     const found = "outcome" in field ? field : yield* codeBoxRow(input.hooks, field);
-    if ("outcome" in found || !onSignInOrigin(replay.signInOrigins(), found.inspection))
+    if ("outcome" in found || "outcome" in field || !onSignInOrigin(replay.signInOrigins(), found.inspection))
       return "none" as const;
     if (!(yield* lastScreenGone(input, replay))) return "none" as const;
+    // The page as a recorded screen, read before the code goes in: a failed read only names none.
+    const kept = record
+      ? yield* Effect.orElseSucceed(recordedCodeScreen(input.hooks, field.inspection, found), () => undefined)
+      : undefined;
     const screen = codeScreenOf(found.inspection);
     const earlier = replay.progress.unrecordedCodeScreen;
     replay.progress.unrecordedCodeScreen = screen;
@@ -172,7 +179,7 @@ export const runFoundCodeScreen = <E extends YieldableError, V extends string, L
       return "none" as const;
     }
     if (failed === undefined && replay.sent.maySent.has("code")) {
-      replay.progress.unrecordedCodeStep = "outcome" in field ? undefined : recordedCodeScreen(field);
+      replay.progress.unrecordedCodeStep = kept;
       return "ran" as const;
     }
     if (replay.sent.maySent.has("code") || replay.state.filled.has("code"))
@@ -183,16 +190,17 @@ export const runFoundCodeScreen = <E extends YieldableError, V extends string, L
 
 /**
  * A code screen the recipe never recorded, after the screens: looked for once and only while no
- * code may have gone out, so the look never sends a second one (`runFoundCodeScreen`). A fill that
- * typed no code leaves the full check to decide.
+ * code may have gone out, so the look never sends a second one (`runFoundCodeScreen`, `record` as
+ * there). A fill that typed no code leaves the full check to decide.
  */
 export const unrecordedCode = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   input: AutofillReplayInput<E, V, L>,
   replay: Replay<E, V, L>,
   probed: { current: boolean },
+  record = false,
 ) =>
   Effect.gen(function* () {
     if (probed.current || replay.sent.maySent.has("code")) return "none" as const;
     probed.current = true;
-    return yield* runFoundCodeScreen(input, replay);
+    return yield* runFoundCodeScreen(input, replay, false, record);
   });

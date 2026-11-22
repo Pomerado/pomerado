@@ -464,8 +464,8 @@ const Located = Schema.Union(
     popupTargetId: Schema.optional(Schema.String),
     /** The other boxes of the row the step's one code field begins (`codeBoxRow`). */
     codeBoxRow: Schema.optional(Schema.Array(Schema.String)),
-    /** The step's one code field, by a selector that matches it alone (`codeFieldName`). */
-    codeFieldName: Schema.optional(Schema.String),
+    /** The code field and its row's other boxes, as a library keeps them (`keptCodeBoxes`). */
+    keptCodeBoxes: Schema.optional(Schema.Array(Schema.String)),
     /** With `hostCardFill`: the first field whose selector the host's card fill can't take. */
     hostFillUnsupported: Schema.optional(Schema.Number),
     url: Schema.String,
@@ -557,10 +557,13 @@ export interface AutofillInspection {
    */
   readonly codeBoxRow?: readonly string[] | undefined;
   /**
-   * Host-only: when the step names one code field, a selector that matches that field alone, read
-   * from its id, name or `aria-label` as `codeBoxRow`'s are; absent when none does.
+   * Host-only: when the step names one code field, a selector for a library to keep for that field
+   * and then, when it begins a row (`codeBoxRow`), for each other box of the row, in order, that
+   * matches it alone in its document or shadow root: its name, else its `aria-label`, else an id
+   * with no digit in it, as a page that makes up an id on each load gives it one; absent when a box
+   * has none. Read at run time, never a recipe value.
    */
-  readonly codeFieldName?: string | undefined;
+  readonly keptCodeBoxes?: readonly string[] | undefined;
   readonly screen: {
     /**
      * The origin of the frame the host found the step's controls in, its submit's or, when it
@@ -1174,7 +1177,7 @@ export const inspectAutofillStep = (input: {
       ...(trustedByHost.size === 0 ? {} : { trustedSignInOrigins: [...trustedByHost].sort() }),
       ...(carried === undefined ? {} : { carriedSignInOrigin: carried }),
       ...(found.codeBoxRow === undefined ? {} : { codeBoxRow: found.codeBoxRow }),
-      ...(found.codeFieldName === undefined ? {} : { codeFieldName: found.codeFieldName }),
+      ...(found.keptCodeBoxes === undefined ? {} : { keptCodeBoxes: found.keptCodeBoxes }),
       ...(input.paymentFrameOrigins === undefined
         ? {}
         : { paymentFrameOrigins: input.paymentFrameOrigins }),

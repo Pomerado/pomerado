@@ -7,7 +7,7 @@ import { makeInputAsker } from "../../src/inputs/callback.js";
 import type { AutofillHooks } from "../../src/runtime/autofill-state.js";
 import type { HostedSignIn } from "../../src/runtime/autofill-replay-steps.js";
 import type { InputAnswers } from "../../src/runtime/input-request.js";
-import { replaySignInStates } from "../../src/runtime/sign-in-states-replay.js";
+import { replaySignInStates, type SignInStatesOutcome } from "../../src/runtime/sign-in-states-replay.js";
 import { makeSignInBrowser } from "../../src/standalone/authentication.js";
 import { hostKeyboard, hostPage } from "./autofill-host-page.js";
 
@@ -171,21 +171,78 @@ test("a code page the library never recorded, after the password, is answered on
     after: library.states[0]?.key,
     step: {
       page: `${site}/verify`,
-      fields: [{ selector: 'input[id="code"]', slot: "code" }],
-      submit: 'form:has(input[id="code"]) :is(button[type="submit" i], input[type="submit" i], button:not([type]))',
+      fields: [{ selector: 'input[name="code"]', slot: "code" }],
+      submit: 'form:has(input[name="code"]) :is(button[type="submit" i], input[type="submit" i], button:not([type]))',
     },
   });
   // A library that keeps the page signs in through it as a known state the next time.
-  const { fingerprint, after, step } = ended.unrecordedCode ?? {};
-  if (fingerprint === undefined || step === undefined) throw new Error("No recorded code screen");
-  const kept = appendSignInStates(library, { from: after, states: [{ fingerprint, step }], signedIn: { selector: "#account" } });
-  if ("refused" in kept) throw new Error(kept.refused);
   await page.goto("about:blank");
   posts.length = 0;
-  const again = await replay(page, kept.library, { code });
+  const again = await replay(page, kept(library, ended.unrecordedCode), { code });
   expect(again.ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
   expect(again.ended.unrecordedCode).toBeUndefined();
   expect(posts.filter((post) => post.startsWith("/verify"))).toEqual([`/verify code=${code}`]);
+});
+
+/** `library` with the code page a replay named, after the state before it, as a host keeps it. */
+const kept = (library: SignInStates, named: SignInStatesOutcome["unrecordedCode"]) => {
+  if (named?.step === undefined) throw new Error("No recorded code screen");
+  const appended = appendSignInStates(library, {
+    from: named.after,
+    states: [{ fingerprint: named.fingerprint, step: named.step }],
+    signedIn: { selector: "#account" },
+  });
+  if ("refused" in appended) throw new Error(appended.refused);
+  return appended.library;
+};
+
+/**
+ * A replay, from a library of the login alone, of a site whose page after the password is a code
+ * page, as `verifyPage` gives it on each load, that leads to the account: it signs in. The library,
+ * the outcome and each post.
+ */
+const codePageReplay = async (page: Page, verifyPage: () => string) => {
+  const pages = {
+    "/login": loginPage,
+    get "/verify"() {
+      return verifyPage();
+    },
+    "/home": '<p id="account">Your account</p>',
+  };
+  const posts = await serve(page, pages, { "/login": "/verify", "/verify": "/home" });
+  const library = await recorded(page, [login]);
+  await page.goto("about:blank");
+  posts.length = 0;
+  const { ended } = await replay(page, library, { code: "246810" });
+  expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  return { library, ended, posts };
+};
+
+test("a code page whose box gets a new id on each load is kept by its name, and the next replay signs in through it", async ({ page }) => {
+  let loads = 0;
+  const { library, ended, posts } = await codePageReplay(page, () => {
+    loads += 1;
+    return verify.replace('id="code" name="code"', `id="otp-${loads}a${loads}" name="otp"`);
+  });
+  await page.goto("about:blank");
+  posts.length = 0;
+  const again = await replay(page, kept(library, ended.unrecordedCode), { code: "246810" });
+  expect(again.ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(again.ended.unrecordedCode).toBeUndefined();
+  expect(posts.filter((post) => post.startsWith("/verify"))).toEqual(["/verify otp=246810"]);
+  expect(ended.unrecordedCode?.step?.fields).toEqual([{ selector: 'input[name="otp"]', slot: "code" }]);
+});
+
+test("a code page whose box has only an id with a digit in it, as a generated id has, is named by its look alone", async ({ page }) => {
+  const { library, ended } = await codePageReplay(page, () => verify.replace('id="code" name="code"', 'id="otp-1a1"'));
+  expect(ended.unrecordedCode).toEqual({ fingerprint: expect.anything(), after: library.states[0]?.key });
+});
+
+test("a code page whose box's name also names a box in a shadow root is named by its look alone", async ({ page }) => {
+  const promo =
+    '<p id="promo"></p><script>document.getElementById("promo").attachShadow({ mode: "open" }).innerHTML = \'<label>Promo<input name="code"></label>\';</script>';
+  const { library, ended } = await codePageReplay(page, () => verify + promo);
+  expect(ended.unrecordedCode).toEqual({ fingerprint: expect.anything(), after: library.states[0]?.key });
 });
 
 test("a refused password beside a security question flags no saved answer", async ({ page }) => {
