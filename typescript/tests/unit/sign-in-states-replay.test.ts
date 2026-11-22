@@ -2596,6 +2596,7 @@ it("never takes an old state whose step types an email alone on a page whose box
     ["other", ["email"]],
     ["email_or_phone", ["email"]],
     ["phone", ["username"]],
+    ["phone", ["username", "email"]],
     ["phone", ["email", "phone"]],
   ] as const) {
     const site = signsIn(at(takes));
@@ -2659,4 +2660,63 @@ it("still stops when a fuller state whose password box drew late shows again aft
   const site = scriptedSite({ start: (looks) => (looks < 4 ? late : full), again: full }, () => "again");
   expect(await replay(site, library)).toMatchObject({ outcome: "unclear", reason: "credential_screen_returned" });
   expect(site.fills).toEqual(["email", "password"]);
+});
+
+it("still takes an old notice state recorded where a box that said nothing turned into an email box", async () => {
+  const at = (takes: BoxTakes, texts: readonly string[] = []): Screen => ({
+    path: "/sign-in",
+    boxes: [{ selector: "#identifier", kind: "identifier", takes }],
+    buttons: ["#continue"],
+    texts,
+  });
+  const confirm = at("email", ["confirm the email on your account"]);
+  // An older core recorded the second page as the first page's boxes and its new text.
+  const library = libraryOf([
+    { fingerprint: unkinded(arrival(at("other"))), step: stepAt("/sign-in", [{ selector: "#identifier", accepts: ["username"] }], "#continue") },
+    {
+      fingerprint: unkinded(arrival(at("other"), "confirm the email on your account")),
+      step: stepAt("/sign-in", [{ selector: "#identifier", accepts: ["email"] }], "#continue"),
+    },
+    { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") },
+  ]);
+  const site = scriptedSite({ start: at("other"), confirm, password: passwordScreen }, (screen) =>
+    screen === "start" ? "confirm" : screen === "confirm" ? "password" : "home",
+  );
+  expect(await replay(site, library)).toMatchObject({ outcome: "signed_in" });
+  expect(site.fills).toEqual(["username", "email", "password"]);
+});
+
+it("still stops as its credential came back where a refused email box's label gained words for a phone", async () => {
+  const library = libraryOf([{ fingerprint: arrival(emailBox), step: stepAt("/sign-in", [email], "#continue") }]);
+  const refused: Screen = { ...emailBox, boxes: [{ selector: "#email", kind: "identifier", takes: "email_or_phone" }] };
+  const site = scriptedSite({ start: emailBox, refused }, () => "refused");
+  expect(await replay(site, library)).toMatchObject({ outcome: "unclear", reason: "credential_screen_returned" });
+  expect(site.fills).toEqual(["email"]);
+});
+
+it("keeps a match where a box's label the site reworded says nothing, and never puts an old state before a newer one for its ways", async () => {
+  const unsaid: Screen = { ...emailBox, boxes: [{ selector: "#email", kind: "identifier", takes: "other" }] };
+  const kinded = libraryOf([{ fingerprint: arrival(emailBox), step: stepAt("/sign-in", [email], "#continue") }]);
+  expect(await replay(scriptedSite({ start: unsaid }, () => "home"), kinded)).toMatchObject({ outcome: "signed_in" });
+  // An old state, recorded before pages kept their ways, and a newer one recorded beside a banner's.
+  const page: Screen = { ...passwordScreen, instruction: "~ your password", ways: ["~"], buttons: ["#go", "#go-old"] };
+  const mixed = libraryOf(
+    [{ fingerprint: unkinded(arrival(page)), step: stepAt("/password", [password], "#go-old") }],
+    [{ fingerprint: arrival({ ...page, ways: ["~", "~ all cookies"] }), step: stepAt("/password", [password], "#go") }],
+  );
+  const site = scriptedSite({ start: page }, () => "home");
+  expect(await replay(site, mixed)).toMatchObject({ outcome: "signed_in" });
+  expect(site.clicks).toEqual(["#go"]);
+});
+
+it("keeps one state where a sign-in records it again beside other ways", () => {
+  const page: Screen = { ...passwordScreen, instruction: "~ your password", ways: ["~"] };
+  const once = libraryOf([{ fingerprint: arrival(page), step: stepAt("/password", [password], "#go") }]);
+  const again = appendSignInStates(once, {
+    states: [{ fingerprint: arrival({ ...page, ways: ["~", "~ all cookies"] }), step: stepAt("/password", [password], "#go") }],
+    signedIn: { selector: "#account" },
+  });
+  if ("refused" in again) throw new Error(again.refused);
+  expect(again.added).toEqual([]);
+  expect(again.library.states).toEqual(once.states);
 });

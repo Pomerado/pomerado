@@ -28,7 +28,7 @@ import {
   stateAfter,
   type StateEntry,
   type StateFingerprint,
-  takesChanged,
+  takesLost,
   toldApart,
 } from "../destinations/sign-in-states.js";
 import type { AutofillSignInState } from "./autofill-state.js";
@@ -333,8 +333,9 @@ const ownStateNotShown = "own_state_not_shown";
  * there, for a repair of its own. Otherwise first a state whose picked method is the login's
  * (`choices.method`, else `rankMethod`), then one the last state led to, or at the start one no
  * state leads to (`next`), then the most recently learned, as a library holds its states in the
- * order learned. Given the page's look (`page`), the states whose instruction and ways stand
- * nearest the page's go first after the login's own route (`toldApart`).
+ * order learned. Given the page's look (`page`), a state whose recorded instruction and ways stand
+ * further from the page's than another's do (`toldApart`) goes after the rest, next after the
+ * login's own route; one recorded without them is never moved by them.
  */
 const ranked = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -361,9 +362,11 @@ const ranked = <E extends YieldableError, V extends string, L extends AutofillLo
     const index = route.indexOf(state.key);
     return index > at ? index - at : route.length + index;
   };
+  const told = (state: StateEntry) => (page === undefined ? undefined : toldApart(state.fingerprint, page));
+  const nearest = Math.min(...candidates.flatMap((state) => told(state) ?? []));
   const order = (state: StateEntry) => [
     own ? along(state) : 0,
-    ...(page === undefined ? [] : toldApart(state.fingerprint, page)),
+    Number((told(state) ?? nearest) > nearest),
     Number(!picks(state)),
     Number(!next.has(state.key)),
     -states.indexOf(state),
@@ -998,9 +1001,9 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
         const still = at - held.since >= quiet.quietMs;
         const capped = at - start >= replay.timing.stepWaitMs;
         const fingerprint = acted?.acted.fingerprint;
-        // A box that takes another kind than when the state was reached is a new page, whatever the
-        // state's own look says (`takesChanged`).
-        const moved = acted !== undefined && takesChanged(acted.reached, read);
+        // A box that lost a kind it took when the state was reached is a new page, whatever the
+        // state's own look says (`takesLost`).
+        const moved = acted !== undefined && takesLost(acted.reached, read);
         // A page with no box that still looks as it did when its state was taken is that state,
         // as one told by its control alone (`byControl`) is.
         const again =

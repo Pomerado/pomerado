@@ -227,6 +227,7 @@ test("an identifier box says whether it takes an email, a phone or either, and a
         <input autocomplete="username" name="third">
         <input type="tel" name="member" placeholder="Member number">
         <span id="spoken">N&uacute;mero de tel&eacute;fono</span><input aria-labelledby="spoken" name="fourth">
+        <input name="username-mobile" id="username-mobile" placeholder="Username">
         <button>Continue</button>
       </form>
       <a href="/password">Use password instead</a>
@@ -237,15 +238,15 @@ test("an identifier box says whether it takes an email, a phone or either, and a
   expect(state.fingerprint).toEqual(
     fingerprintOf({
       top: site,
-      boxes: (["email", "phone", "email_or_phone", "other", "phone", "phone"] as const).map(identifier),
+      boxes: (["email", "phone", "email_or_phone", "other", "phone", "phone", "other"] as const).map(identifier),
       submit: true,
       instruction: "~ back, ~",
       ways: ["~", "~ password instead", "~ a code to # #"],
     }),
   );
   expect(JSON.stringify(state)).not.toMatch(/sam|555/iu);
-  // A phone box in place of the email box after a press is a new page, and an email box again is
-  // the same state.
+  // A phone box in place of the email box after a press is a new look, with what its box takes now,
+  // and an email box again is the same state.
   await open(page, { [site]: `<form><input type="email" name="login"><button>Continue</button></form>` });
   const host = await hostPage(page);
   const read = () =>
@@ -260,7 +261,7 @@ test("an identifier box says whether it takes an email, a phone or either, and a
     box?.setAttribute("aria-label", "Mobile number");
   });
   const phone = await read();
-  expect(stateAfter(email, phone)).toEqual(phone.fingerprint);
+  expect(stateAfter(email, phone)).toEqual(fingerprintOf({ top: site, boxes: [identifier("phone")], submit: true }));
   expect(sameFingerprint(phone.fingerprint, email.fingerprint)).toBe(false);
   await page.evaluate(() => {
     const box = document.querySelector("input");

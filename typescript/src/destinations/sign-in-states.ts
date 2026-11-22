@@ -150,61 +150,85 @@ const labelled = (fingerprint: StateFingerprint) => fingerprint.boxes.some((box)
 const kinded = (fingerprint: StateFingerprint) => fingerprint.boxes.some((box) => box.takes !== undefined);
 /**
  * A look, or a known state's look with the step recorded there, whose identifier fields say what
- * its boxes take where its look does not (`takesApart`).
+ * its boxes take where its look does not (`takesAgree`).
  */
 export type Look =
   | StateFingerprint
   | { readonly fingerprint: StateFingerprint; readonly step?: AutofillRecipeStep | undefined };
 const lookOf = (look: Look) => ("fingerprint" in look ? look : { fingerprint: look, step: undefined });
 /**
- * Two looks as they compare: their code boxes' role and label where both give them, and what their
- * identifier boxes take where both say it, else neither, so a state recorded before boxes had them
- * matches every page it matched then.
+ * Two looks as they compare by text and place: their code boxes' role and label where both give
+ * them, else neither, so a state recorded before code boxes had them matches every page it matched
+ * then; what identifier boxes take never, as `takesAgree` compares it.
  */
 const comparable = (a: StateFingerprint, b: StateFingerprint): readonly [StateFingerprint, StateFingerprint] => {
   const labels = labelled(a) && labelled(b);
-  const takes = kinded(a) && kinded(b);
   const plain = (fingerprint: StateFingerprint): StateFingerprint => ({
     ...fingerprint,
-    boxes: fingerprint.boxes.map(({ role, label, takes: taken, ...box }) => ({
-      ...box,
-      ...(labels ? { role, label } : {}),
-      ...(takes ? { takes: taken } : {}),
-    })),
+    boxes: fingerprint.boxes.map(({ role, label, takes: _takes, ...box }) => ({ ...box, ...(labels ? { role, label } : {}) })),
   });
   return [plain(a), plain(b)];
 };
-/**
- * What a look's identifier boxes take: as it says where it does (`takes`), else as its step's
- * identifier fields accept, each an email and no phone (`email`), a phone and no email (`phone`), or
- * else `other`; undefined where neither tells.
- */
-const takenBy = ({ fingerprint, step }: { readonly fingerprint: StateFingerprint; readonly step?: AutofillRecipeStep | undefined }) => {
-  if (kinded(fingerprint)) return new Set(fingerprint.boxes.flatMap((box) => (box.takes === undefined ? [] : [box.takes])));
-  const fields = (step?.fields ?? []).flatMap((field) => ("accepts" in field ? [field.accepts] : []));
-  if (fields.length === 0) return undefined;
-  return new Set(
-    fields.map((accepts) =>
-      accepts.includes("email") !== accepts.includes("phone") ? (accepts.includes("email") ? "email" : "phone") : "other",
-    ),
-  );
+/** The kinds a box's `takes` says: none for `other`. */
+const kindsOf = (takes: BoxTakes | undefined): readonly string[] =>
+  takes === "email_or_phone" ? ["email", "phone"] : takes === "email" || takes === "phone" ? [takes] : [];
+/** Each frame's identifier boxes by what they take. */
+const takenOn = (fingerprint: StateFingerprint) => {
+  const frames = new Map<string, BoxTakes[]>();
+  for (const box of fingerprint.boxes)
+    if (box.takes !== undefined) frames.set(box.frame, [...(frames.get(box.frame) ?? []), box.takes]);
+  return frames;
 };
 /**
- * Whether one look's identifier boxes take an email alone and the other's a phone alone, where at
- * least one says it of its boxes (`kinded`): a state recorded before boxes said it is told by its
- * step's identifier fields, so it never matches the page of the other kind, and still matches its
- * own and any box that takes either, says nothing, or takes what its fields accept.
+ * Whether each identifier box of `inner` pairs with one of `outer`'s on its frame: both take the
+ * same, or either says nothing (`other`), as a box whose label a site reworded.
  */
-const takesApart = (a: Look, b: Look) => {
-  const [left, right] = [lookOf(a), lookOf(b)];
-  if (!kinded(left.fingerprint) && !kinded(right.fingerprint)) return false;
-  const [one, other] = [takenBy(left), takenBy(right)];
-  const only = (taken: ReadonlySet<string> | undefined, kind: string) => taken?.size === 1 && taken.has(kind);
-  return (only(one, "email") && only(other, "phone")) || (only(one, "phone") && only(other, "email"));
+const takesFit = (inner: StateFingerprint, outer: StateFingerprint) => {
+  const others = takenOn(outer);
+  for (const [frame, held] of takenOn(inner)) {
+    const left = [...held];
+    const right = [...(others.get(frame) ?? [])];
+    for (let at = left.length - 1; at >= 0; at -= 1) {
+      const match = left[at] === "other" ? -1 : right.indexOf(left[at] as BoxTakes);
+      if (match < 0) continue;
+      right.splice(match, 1);
+      left.splice(at, 1);
+    }
+    const said = left.filter((takes) => takes !== "other").length;
+    if (left.length > right.length || said > right.filter((takes) => takes === "other").length) return false;
+  }
+  return true;
+};
+/** What a recorded step's identifier fields accept: an email alone, a phone alone, else `other`. */
+const fieldTakes = (step: AutofillRecipeStep) =>
+  step.fields.flatMap((field) =>
+    "accepts" in field
+      ? [field.accepts.length === 1 && (field.accepts[0] === "email" || field.accepts[0] === "phone") ? field.accepts[0] : "other"]
+      : [],
+  );
+/**
+ * Whether two looks' identifier boxes may be one, as they take values: where both say it, each box
+ * pairs with one of the other's (`takesFit`), `inner`'s into `outer`'s where one only holds the
+ * other (`within`); where one look says it and the other is a known state's that doesn't, as one
+ * recorded before boxes said it, that state's step stands in, and they part only where every box of
+ * the one takes a phone alone and every identifier field of the step accepts an email alone, or
+ * the reverse.
+ */
+const takesAgree = (inner: Look, outer: Look, within = false) => {
+  const [left, right] = [lookOf(inner), lookOf(outer)];
+  const [leftSays, rightSays] = [kinded(left.fingerprint), kinded(right.fingerprint)];
+  if (leftSays && rightSays)
+    return takesFit(left.fingerprint, right.fingerprint) && (within || takesFit(right.fingerprint, left.fingerprint));
+  const [said, step] = leftSays ? [left.fingerprint, right.step] : rightSays ? [right.fingerprint, left.step] : [];
+  if (said === undefined || step === undefined) return true;
+  const boxes = said.boxes.flatMap((box) => (box.takes === undefined ? [] : [box.takes]));
+  const fields = fieldTakes(step);
+  const all = (kinds: readonly string[], kind: string) => kinds.length > 0 && kinds.every((taken) => taken === kind);
+  return !((all(boxes, "phone") && all(fields, "email")) || (all(boxes, "email") && all(fields, "phone")));
 };
 export const sameFingerprint = (a: Look, b: Look) => {
   const [left, right] = comparable(lookOf(a).fingerprint, lookOf(b).fingerprint);
-  return fingerprintText(left) === fingerprintText(right) && !takesApart(a, b);
+  return fingerprintText(left) === fingerprintText(right) && takesAgree(a, b);
 };
 /** Whether a fingerprint shows nothing to tell it by: no box, no message and no button. */
 export const blankFingerprint = (fingerprint: StateFingerprint) =>
@@ -214,12 +238,12 @@ export const blankFingerprint = (fingerprint: StateFingerprint) =>
 
 /**
  * Whether `outer` holds every box of `inner` and more, on the same top origin, as looks compare
- * (`comparable`, `takesApart`): a page that may still grow from `inner` into `outer`, as a
+ * (`comparable`, `takesAgree`): a page that may still grow from `inner` into `outer`, as a
  * sign-in whose password box draws late.
  */
 export const containsFingerprint = (inner: Look, outer: Look) => {
   const [held, holding] = comparable(lookOf(inner).fingerprint, lookOf(outer).fingerprint);
-  if (held.top !== holding.top || held.boxes.length === 0 || takesApart(inner, outer)) return false;
+  if (held.top !== holding.top || held.boxes.length === 0 || !takesAgree(inner, outer, true)) return false;
   const left = holding.boxes.map((box) => canonical(box));
   for (const box of held.boxes) {
     const at = left.indexOf(canonical(box));
@@ -230,19 +254,20 @@ export const containsFingerprint = (inner: Look, outer: Look) => {
 };
 
 /**
- * How far a known look's instruction and ways stand from a page's: whether its instruction differs,
- * then how many ways only one of them offers; each nothing where either gives none, as a look read
- * before they were kept. They only order states of one look, never part them, so a page the site
- * reworded keeps its match.
+ * How far a known look's instruction and ways stand from a page's: a differing instruction counts
+ * more than any count of ways only one of them offers. Undefined where either gives neither, as a
+ * look read before they were kept. They only order states of one look, never part them, so a page
+ * the site reworded keeps its match.
  */
-export const toldApart = (known: StateFingerprint, page: StateFingerprint): readonly [number, number] => {
-  const [ours, theirs] = [known.ways, page.ways];
-  return [
-    Number(known.instruction !== undefined && page.instruction !== undefined && known.instruction !== page.instruction),
-    ours === undefined || theirs === undefined
-      ? 0
-      : ours.filter((way) => !theirs.includes(way)).length + theirs.filter((way) => !ours.includes(way)).length,
-  ];
+export const toldApart = (known: StateFingerprint, page: StateFingerprint): number | undefined => {
+  const told = (look: StateFingerprint) => look.instruction !== undefined || look.ways !== undefined;
+  if (!told(known) || !told(page)) return undefined;
+  const [ours, theirs] = [known.ways ?? [], page.ways ?? []];
+  return (
+    (known.instruction !== undefined && page.instruction !== undefined && known.instruction !== page.instruction ? 100 : 0) +
+    ours.filter((way) => !theirs.includes(way)).length +
+    theirs.filter((way) => !ours.includes(way)).length
+  );
 };
 
 /** A fingerprint in words, value-free: what a repair is told it found. */
@@ -311,7 +336,10 @@ export const fingerprintShape = (fingerprint: StateFingerprint, page?: string, k
 };
 export type FingerprintShape = ReturnType<typeof fingerprintShape>;
 
-/** The entry for a state, keyed by its fingerprint and step. */
+/**
+ * The entry for a state, keyed by its fingerprint and step, its instruction and ways left out, so
+ * a state recorded again beside other ways is the one it was.
+ */
 export const stateEntry = (
   fingerprint: StateFingerprint,
   step: AutofillRecipeStep,
@@ -321,7 +349,7 @@ export const stateEntry = (
   return {
     format: 1,
     kind: "state",
-    key: keyOf({ fingerprint: written, step }),
+    key: keyOf({ fingerprint: { ...written, instruction: undefined, ways: undefined }, step }),
     source,
     fingerprint: written,
     step,
@@ -364,65 +392,86 @@ export interface ObservedState {
   readonly texts: readonly string[];
 }
 
-/** The page's boxes as they stand since `reached`: the empty ones, and the ones filled since. */
-export const standingFingerprint = (reached: ObservedState, now: ObservedState): StateFingerprint => {
-  const before = reached.boxes.filter((box) => !box.empty).map((box) => placeText(box));
-  const boxes = now.boxes.filter((box) => {
-    const at = box.empty ? -1 : before.indexOf(placeText(box));
+/** The page's boxes as read now, less those it held filled already when read as `reached`. */
+const standingBoxes = (reached: ObservedState, now: ObservedState) => {
+  const before = reached.boxes.filter((box) => !box.empty).map((box) => boxText(box));
+  return now.boxes.filter((box) => {
+    const at = box.empty ? -1 : before.indexOf(boxText(box));
     if (at >= 0) before.splice(at, 1);
     return at < 0;
   });
+};
+/** The page's boxes as they stand since `reached`: the empty ones, and the ones filled since. */
+export const standingFingerprint = (reached: ObservedState, now: ObservedState): StateFingerprint => {
+  const boxes = standingBoxes(reached, now);
   return fingerprintOf({
     top: now.fingerprint.top,
     boxes: boxes.map(({ frame, kind, count }) => ({ frame, kind, ...(count === undefined ? {} : { count }) })),
     submit: boxes.some((box) => box.submit),
   });
 };
-const placeText = ({ frame, kind, count }: StateBox) => canonical({ frame, kind, count });
-const boxText = ({ frame, kind, count, takes }: StateBox) => canonical({ frame, kind, count, takes });
+const boxText = ({ frame, kind, count }: StateBox) => canonical({ frame, kind, count });
 /**
- * Whether two looks show the same boxes on the same top origin, whatever their text, each box with
- * what it takes as looks compare (`comparable`, `takesApart`).
+ * Whether two looks show the same boxes on the same top origin, whatever their text, their
+ * identifier boxes taking values alike (`takesAgree`).
  */
 export const sameBoxes = (a: Look, b: Look) => {
-  const [left, right] = comparable(lookOf(a).fingerprint, lookOf(b).fingerprint);
+  const [left, right] = [lookOf(a).fingerprint, lookOf(b).fingerprint];
   return (
     left.top === right.top &&
     canonical(fingerprintOf(left).boxes.map(boxText)) === canonical(fingerprintOf(right).boxes.map(boxText)) &&
-    !takesApart(a, b)
+    takesAgree(a, b)
   );
 };
 /**
- * Whether an identifier box the page shows empty takes another kind than every identifier box it
- * showed when read as `reached` that is still unmatched, where that reading says what its boxes
- * take: a phone box in place of an email box is a new page, whatever a state recorded before boxes
- * said it holds. Boxes that take no identifier, as a password box drawn late, count for nothing.
+ * Whether an identifier box the page shows empty, taking an email alone or a phone alone, no longer
+ * takes a kind the box on its frame took when read as `reached`, where that reading says it: a phone
+ * box where an email box or one that took either was. A box that says nothing, or takes more than
+ * before, as one whose label gained an error's words, loses nothing.
  */
-export const takesChanged = (reached: ObservedState, now: ObservedState) => {
-  const before = reached.boxes.filter((box) => box.takes !== undefined).map(boxText);
-  if (before.length === 0) return false;
-  return now.boxes.some((box) => {
-    if (!box.empty || box.takes === undefined) return false;
-    const at = before.indexOf(boxText(box));
+export const takesLost = (reached: ObservedState, now: ObservedState) => {
+  const before = reached.boxes.filter((box) => box.takes !== undefined && box.takes !== "other");
+  const shown = now.boxes.filter((box) => box.empty && (box.takes === "email" || box.takes === "phone"));
+  for (const box of shown) {
+    const at = before.findIndex((other) => other.frame === box.frame && other.takes === box.takes);
     if (at >= 0) before.splice(at, 1);
-    return at < 0;
+  }
+  return shown.some((box) => {
+    const at = before.findIndex((other) => other.frame === box.frame);
+    if (at < 0) return false;
+    const lost = !kindsOf(before[at]?.takes).every((kind) => kindsOf(box.takes).includes(kind));
+    before.splice(at, 1);
+    return lost;
   });
 };
 
 /**
  * The state the page shows after an action in the state it showed when read as `reached`: the
- * same boxes, typed or not, each taking what it took then (`takesChanged`), with a text that was
- * not there then, as a notice under a sign-in form after its submit, is that state's boxes and the
- * first such text; the same boxes alone are that state again; anything else is the page's own
- * fingerprint. Text counts beside boxes nowhere else.
+ * same boxes, typed or not, with a text that was not there then, as a notice under a sign-in form
+ * after its submit, is that state's boxes and the first such text; the same boxes alone are that
+ * state again; anything else is the page's own fingerprint. Where an identifier box lost a kind it
+ * took (`takesLost`), the boxes are as they stand now, each with what it takes now. Text counts
+ * beside boxes nowhere else.
  */
 export const stateAfter = (reached: ObservedState | undefined, now: ObservedState): StateFingerprint => {
   if (reached === undefined || reached.fingerprint.boxes.length === 0) return now.fingerprint;
   const { top, boxes, submit } = reached.fingerprint;
   const plain = fingerprintOf({ top, boxes, submit });
-  if (!sameBoxes(standingFingerprint(reached, now), plain) || takesChanged(reached, now)) return now.fingerprint;
+  if (!sameBoxes(standingFingerprint(reached, now), plain)) return now.fingerprint;
+  const shown = takesLost(reached, now)
+    ? fingerprintOf({
+        top,
+        boxes: standingBoxes(reached, now).map(({ frame, kind, count, takes }) => ({
+          frame,
+          kind,
+          ...(count === undefined ? {} : { count }),
+          ...(takes === undefined ? {} : { takes }),
+        })),
+        submit,
+      })
+    : plain;
   const fresh = now.texts.find((text) => !reached.texts.includes(text));
-  return fresh === undefined ? plain : fingerprintOf({ ...plain, message: fresh });
+  return fresh === undefined ? shown : fingerprintOf({ ...shown, message: fresh });
 };
 
 /** The plain fields a recorded step and its sign-in carry for states, which survive a copy. */

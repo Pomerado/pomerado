@@ -60,12 +60,13 @@ const normalized = (text: string, limit: number, logins: readonly string[]) =>
  * box with its count. A code box also gives its role, its own or else its type's, and the labels
  * of its boxes (`labels`): each one's `aria-label`, else its label elements' text, else its
  * placeholder. An identifier box gives what it takes (`takes`): an email, a phone, either, or
- * neither said, by its type, input mode and autocomplete and the words of its labels, placeholder,
- * name and id. A box with no hint of its kind counts as an identifier only when required or
- * in a form that has a submit or another counted box; a search box never counts. With no empty
- * box, the first visible h1, else h2, heading, h3 or paragraph, and up to eight buttons; with one,
- * that same text as its instruction and up to twelve buttons and links as its ways; these and
- * every visible text outside a control (`texts`) as they stand, which the host normalizes.
+ * neither said, by its type, input mode and autocomplete and the words of its labels and
+ * placeholder, never its name or id, which a page may give for its layout. A box with no hint of
+ * its kind counts as an identifier only when required or in a form that has a submit or another
+ * counted box; a search box never counts. With no empty box, the first visible h1, else h2,
+ * heading, h3 or paragraph, and up to eight buttons; with one, that same text as its instruction
+ * and up to twelve buttons and links as its ways; these and every visible text outside a control
+ * (`texts`) as they stand, which the host normalizes.
  */
 const scanFrame = `() => {
   const shows = (element) => {
@@ -113,7 +114,7 @@ const scanFrame = `() => {
     const labelledBy = (element.getAttribute("aria-labelledby") ?? "").split(/\\s+/)
       .map((id) => (id === "" ? "" : document.getElementById(id)?.innerText ?? ""));
     const words = [element.getAttribute("aria-label") ?? "", ...labelledBy, ...[...(element.labels ?? [])].map((label) => label.innerText),
-      element.getAttribute("placeholder") ?? "", attribute(element, "name"), attribute(element, "id")].join(" ").toLowerCase().slice(0, 1000);
+      element.getAttribute("placeholder") ?? ""].join(" ").toLowerCase().slice(0, 1000);
     const email = type === "email" || mode === "email" || auto.includes("email") || /e-?mail|correo|courriel/.test(words);
     const phone = type === "tel" || mode === "tel" || auto.some((token) => token.startsWith("tel")) ||
       /phone|mobil|(^|[^a-z])cell|t[e\\u00e9]l[e\\u00e9]f|m[o\\u00f3]vil|celular/.test(words);
