@@ -555,8 +555,9 @@ for (const layout of ["after an identifier-only screen", "with a box the scan do
     expect(prompts).toEqual(["bank.example.test asks this security question: what was the name of your first school?"]);
   });
 
-// Two questions on one page in a row, or with a page between them, are one screen, and a run in a
-// new session answers each question the site asks there.
+// Two questions on one page in a row, or with a page between them, and a run in a new session
+// answers each question the site asks there, and only once: a question the site asks again after
+// its answer, whatever else the page says, ends the run.
 for (const between of [false, true])
   test(`replays a sign-in through two security questions on one page${between ? " with a page between them" : " in a row"}`, async ({ page }) => {
     test.slow();
@@ -567,10 +568,10 @@ for (const between of [false, true])
     const pages: Record<string, () => string> = {
       login: () => '<form method="post" action="/question"><label>Email<input id="email" name="email"></label><label>Password<input id="password" name="password" type="password"></label><button id="sign-in">Sign in</button></form>',
       question: () => {
+        const [intro, action] = shown.at % 2 === 0 ? ["answer to go on", between ? "/between" : "/question"] : ["one more to go", "/account"];
         const question = shown.questions[shown.at % 2];
         shown.at += 1;
-        const action = shown.at % 2 === 0 ? "/account" : between ? "/between" : "/question";
-        return `<form method="post" action="${action}"><p id="question">${question}</p><label>Security answer<input id="answer" name="answer"></label><button id="next">Continue</button></form>`;
+        return `<form method="post" action="${action}"><p>${intro}</p><p id="question">${question}</p><label>Security answer<input id="answer" name="answer"></label><button id="next">Continue</button></form>`;
       },
       between: () => '<form method="post" action="/question"><p>one more question</p><button id="more">Continue</button></form>',
       account: () => '<p id="identity">Signed in</p>',
@@ -600,32 +601,38 @@ for (const between of [false, true])
     if (states === undefined) throw new Error(`no screens: ${JSON.stringify(published)}`);
     const text = JSON.stringify(published).toLowerCase();
     for (const held of ["pet", "street", "synthetic"]) expect(text).not.toContain(held);
-    // A run in a new session, where the site asks two other questions.
-    shown.questions = ["what was the name of your first school?", "what was the name of your first teacher?"];
-    shown.at = 0;
-    await page.goto("about:blank");
-    const prompts: string[] = [];
-    const secrets = makeRunSecrets();
-    const ask = makeInputAsker((request) =>
-      Effect.sync(() => {
-        const question = request.questions[0];
-        if (question?.type === "credential") return { login: { ...login, saveLogin: false } };
-        prompts.push(question?.prompt ?? "");
-        return { private_answer: "synthetic-answer" };
-      }),
-    );
-    const { keyboard } = await hostKeyboard(page);
-    expect(await Effect.runPromise(signInForRun({
-      states,
-      entryUrl: `${site}/login`,
-      browser: makeSignInBrowser({ page: await hostPage(page), keyboard, siteOrigin: site, authenticationOrigins: [], typing: { typed: false } }),
-      login: localSignInLogin({ ask, register: secrets.register, siteOrigin: site }),
-      ask,
-      secrets,
-      site: "bank.example.test",
-      siteOrigin: site,
-    }))).toEqual({ alreadySignedIn: false });
-    expect(prompts).toEqual(shown.questions.map((question) => `bank.example.test asks this security question: ${question}`));
+    // Runs in a new session: the site asks two other questions, then asks one again after its answer.
+    const replay = async (questions: string[]) => {
+      shown.questions = questions;
+      shown.at = 0;
+      await page.goto("about:blank");
+      const prompts: string[] = [];
+      const secrets = makeRunSecrets();
+      const ask = makeInputAsker((request) =>
+        Effect.sync(() => {
+          const question = request.questions[0];
+          if (question?.type === "credential") return { login: { ...login, saveLogin: false } };
+          prompts.push(question?.prompt ?? "");
+          return { private_answer: "synthetic-answer" };
+        }),
+      );
+      const { keyboard } = await hostKeyboard(page);
+      const signedIn = await Effect.runPromise(Effect.either(signInForRun({
+        states,
+        entryUrl: `${site}/login`,
+        browser: makeSignInBrowser({ page: await hostPage(page), keyboard, siteOrigin: site, authenticationOrigins: [], typing: { typed: false } }),
+        login: localSignInLogin({ ask, register: secrets.register, siteOrigin: site }),
+        ask,
+        secrets,
+        site: "bank.example.test",
+        siteOrigin: site,
+        timing: { stepWaitMs: 8_000, pollMs: 250 },
+      })));
+      return { signedIn: signedIn._tag === "Right", prompts: prompts.map((prompt) => prompt.replace("bank.example.test asks this security question: ", "")) };
+    };
+    const [school, teacher] = ["what was the name of your first school?", "what was the name of your first teacher?"];
+    expect(await replay([school, teacher])).toEqual({ signedIn: true, prompts: [school, teacher] });
+    expect(await replay([school, school])).toEqual({ signedIn: false, prompts: [school] });
   });
 
 // A run replays such a recipe, here the version 3 an earlier build wrote: it asks for the login and

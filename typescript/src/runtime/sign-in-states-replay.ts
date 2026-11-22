@@ -181,10 +181,10 @@ interface Run<E extends YieldableError, V extends string, L extends AutofillLogi
   seen: StateFingerprint | undefined;
   missing: string | undefined;
   /**
-   * For each state noted without its question (`untold`) that this replay acted in, the page's look
-   * each time it reached that state, held in memory alone.
+   * For each state noted without its question (`untold`) that this replay acted in, the page's
+   * message and its question (`questionOf`) each time it reached that state, held in memory alone.
    */
-  readonly asked: Map<string, StateFingerprint[]>;
+  readonly asked: Map<string, { readonly message?: string | undefined; readonly question?: string | undefined }[]>;
   /**
    * Whether the method picked last is the host's hint (`rankMethod`) as a lone method beside a way
    * in, for a login that names no method of its own, in a state the hint may have ranked first: it
@@ -368,16 +368,18 @@ const shownWithin = <E extends YieldableError, V extends string, L extends Autof
 const looksLike = (look: Look) => (state: StateEntry) => sameFingerprint(state, look);
 
 /**
- * Whether a state's step takes a private answer and its look was noted with no message, which may
- * hold its question (`noteSignInState`); a look noted before then keeps its message.
+ * Whether a state's step takes a private answer and its look holds no words of the page's message,
+ * which may hold its question (`noteSignInState`): none, or its shape alone.
  */
 const untold = (state: StateEntry) =>
-  state.fingerprint.message === undefined &&
+  !/\p{L}/u.test(state.fingerprint.message ?? "") &&
   state.step.fields.some((field) => "slot" in field && field.slot === "private_answer");
 
 /** Whether a known state has the look `look`, one noted without its question (`untold`) whatever its message. */
 const lookedFor = (state: StateEntry, look: StateFingerprint) =>
-  sameFingerprint(state, untold(state) ? { ...look, message: undefined } : look);
+  untold(state)
+    ? sameFingerprint({ ...state, fingerprint: { ...state.fingerprint, message: undefined } }, { ...look, message: undefined })
+    : sameFingerprint(state, look);
 
 /**
  * A state's look, one noted without its question (`untold`) with the message the page showed when
@@ -387,28 +389,53 @@ const seenLook = <E extends YieldableError, V extends string, L extends Autofill
   run: Run<E, V, L>,
   state: StateEntry,
 ): { readonly fingerprint: StateFingerprint; readonly step: AutofillRecipeStep } => {
-  const message = untold(state) ? run.asked.get(state.key)?.at(-1)?.message : undefined;
-  return message === undefined ? state : { fingerprint: { ...state.fingerprint, message }, step: state.step };
+  if (!untold(state)) return state;
+  const { message: _shape, ...look } = state.fingerprint;
+  const message = run.asked.get(state.key)?.at(-1)?.message;
+  return { fingerprint: message === undefined ? look : { ...look, message }, step: state.step };
 };
 
 /**
- * Whether the page (`page`) asks another question in a state noted without its question (`untold`)
- * that this replay acted in: each time it reached that state the page showed a question, its
- * message or else its instruction, and it shows none of them now.
+ * The questions a step's private-answer fields show, as its inspection read them by their recorded
+ * selectors, else their labels; undefined where one shows neither.
  */
-const askedAnew = <E extends YieldableError, V extends string, L extends AutofillLogin>(
-  run: Run<E, V, L>,
-  state: StateEntry,
-  page: ObservedState | undefined,
-) => {
-  const looks = run.asked.get(state.key);
-  if (looks === undefined || page === undefined) return false;
-  const shown = [...page.texts, page.fingerprint.message, page.fingerprint.instruction];
-  return looks.every((look) => {
-    const question = look.message ?? look.instruction;
-    return question !== undefined && !shown.includes(question);
-  });
+const questionOf = (inspection: AutofillInspection) => {
+  const questions = inspection.screen.fields
+    .filter((field) => field.slot === "private_answer")
+    .map((field) => field.questionText ?? (field.label || undefined));
+  return questions.every((question) => question !== undefined) ? JSON.stringify(questions) : undefined;
 };
+
+/**
+ * A state noted without its question (`untold`) that the page shows, of its look whatever the
+ * page's message (`lookedFor`), in the order this login takes them (`ranked`), one this replay has
+ * not acted in or that the sign-in learned to come after the state acted in last (`next`), whose
+ * controls show on its recorded origin and whose question (`questionOf`) is none this replay
+ * answered; one whose question can't be read only while it answered none. Its refusals count for
+ * nothing, so a page no state is still ends as an unknown state.
+ */
+const askedHere = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  fingerprint: StateFingerprint,
+  after: StateEntry | undefined,
+  next: ReadonlySet<string>,
+) =>
+  Effect.gen(function* () {
+    const told = (state: StateEntry) =>
+      untold(state) &&
+      lookedFor(state, fingerprint) &&
+      (!run.visited.includes(state.key) || next.has(state.key)) &&
+      (after !== undefined || run.input.inPlace !== true || leadsToNewMarker(run, state));
+    const answered = [...run.asked.values()].flat().map((visit) => visit.question);
+    for (const state of ranked(run, run.input.library.states.filter(told), told, next, fingerprint)) {
+      const shown = yield* shownOn(run, state, resolved(run, state.step));
+      if (typeof shown === "string") continue;
+      const question = questionOf(shown);
+      if (question === undefined ? answered.length === 0 : !answered.includes(question))
+        return { state, inspection: shown } satisfies Shown;
+    }
+    return undefined;
+  });
 
 /**
  * In place (`inPlace`), whether a state sits in a pop-up, where it is told by its controls there:
@@ -781,10 +808,8 @@ const byPlace = <E extends YieldableError, V extends string, L extends AutofillL
  * look, a page with no box may be a state told by its control and address alone (`byControl`);
  * its refusals count for nothing, so a page no state is still ends as an unknown state. Where none
  * shows and the origin rule refused one whose controls showed (`admission`), that refusal
- * (`refusedOrigin`). A state noted without its question (`untold`) is told by its look whatever
- * the page's message (`lookedFor`) until this replay acted in it; then, and taken again, the state
- * just acted in or one that came back, only where the page as read (`page`) asks another question
- * (`askedAnew`).
+ * (`refusedOrigin`). A state noted without its question (`untold`) is taken so only on a page with
+ * no message, and else, or acted in again, apart, before one that came back (`askedHere`).
  */
 const matchState = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -792,7 +817,6 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
   after: StateEntry | undefined,
   skip: StateEntry | undefined,
   loose: boolean,
-  page?: ObservedState,
 ) =>
   Effect.gen(function* () {
     const { states, transitions } = run.input.library;
@@ -804,20 +828,18 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
         : transitions.filter((t) => t.from === after.key).map((t) => t.to),
     );
     const learned = learnedNext(run, after);
-    const anew = new Set(states.filter((state) => askedAnew(run, state, page)));
     // In place, a state in a pop-up where the route leads is told by its controls, not the look.
     const told = (state: StateEntry) =>
-      (sameFingerprint(state, fingerprint) ||
-        (lookedFor(state, fingerprint) && (!run.asked.has(state.key) || anew.has(state))) ||
+      ((sameFingerprint(state, fingerprint) && (fingerprint.message === undefined || !untold(state))) ||
         (inPopup(run, state) && next.has(state.key))) &&
       (after !== undefined || run.input.inPlace !== true || leadsToNewMarker(run, state));
-    const candidates = states.filter((state) => (state !== skip || anew.has(state)) && told(state));
+    const candidates = states.filter((state) => state !== skip && told(state));
     const alike = ranked(run, candidates, told, next, fingerprint);
     let refused: string | undefined;
     let returned: StateEntry | undefined;
     const missing: StateEntry[] = [];
     for (const state of alike) {
-      if (!learned.includes(state) && !anew.has(state) && (yield* returnedTo(run, state))) {
+      if (!learned.includes(state) && (yield* returnedTo(run, state))) {
         returned ??= state;
         continue;
       }
@@ -826,6 +848,8 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
       refused ??= shown;
       if (shown === "not_found") missing.push(state);
     }
+    const asked = yield* askedHere(run, fingerprint, after, next);
+    if (asked !== undefined) return asked;
     if (returned !== undefined) return { returned: returned as StateEntry };
     if (run.admission !== undefined) return { refusedOrigin: run.admission };
     if (missing[0] !== undefined) run.missing = missing[0].key;
@@ -1217,7 +1241,7 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
           const loose =
             capped || (at - held.since >= Math.max(quiet.quietMs, landingSettleMs) && byControlRead !== text);
           if (loose) byControlRead = text;
-          const shown = yield* matchState(run, shape, after, acted?.acted, loose, read);
+          const shown = yield* matchState(run, shape, after, acted?.acted, loose);
           refused = typeof shown === "object" ? undefined : shown;
           if (typeof shown === "object") {
             // A known state on a host this login may not type on ends it at once, as at a recipe
@@ -2030,8 +2054,11 @@ const walk = <E extends YieldableError, V extends string, L extends AutofillLogi
       if (run.visited.length >= maximumStateVisits) return stopped(run, "state_limit").ended;
       run.visited.push(arrived.state.key);
       run.missing = undefined;
-      if (untold(arrived.state) && run.seen !== undefined)
-        run.asked.set(arrived.state.key, [...(run.asked.get(arrived.state.key) ?? []), run.seen]);
+      if (untold(arrived.state))
+        run.asked.set(arrived.state.key, [
+          ...(run.asked.get(arrived.state.key) ?? []),
+          { message: run.seen?.message, question: questionOf(arrived.inspection) },
+        ]);
       yield* input.emit({
         stage: "state",
         state: arrived.state.key,
