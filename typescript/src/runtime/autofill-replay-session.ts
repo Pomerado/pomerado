@@ -39,7 +39,13 @@ import {
   shownAgain,
   type SignInMethodOption,
 } from "./autofill-replay-steps.js";
-import { runReplayStep, correctReplayExtras, settleCarried } from "./autofill-replay-fill.js";
+import {
+  runReplayStep,
+  correctReplayExtras,
+  replayValues,
+  settleCarried,
+  type StepValues,
+} from "./autofill-replay-fill.js";
 
 /** The refusals a screen wait ends with when the screen never showed. */
 const missingScreen: ReadonlySet<string> = new Set(["not_found", "not_editable", "popup_missing"]);
@@ -465,6 +471,7 @@ export const makeReplay = <E extends YieldableError, V extends string, L extends
     corrected: ReadonlySet<AutofillSlot> = new Set(),
     planned: readonly AutofillSecret[] = [],
     next?: AutofillRecipeStep,
+    given?: Effect.Effect<StepValues>,
   ) =>
     runReplayStep(
       session,
@@ -475,6 +482,7 @@ export const makeReplay = <E extends YieldableError, V extends string, L extends
       corrected,
       planned,
       next,
+      given,
     );
   const extras = (observed: readonly RejectedMarker["slot"][]) =>
     correctReplayExtras(session, run, observed);
@@ -514,6 +522,9 @@ export const makeReplay = <E extends YieldableError, V extends string, L extends
       },
     ),
     runStep: run,
+    /** A screen's values, resolved before anything is typed (`replayValues`). */
+    values: (asked: AutofillStep, inspection: AutofillInspection) =>
+      replayValues(session, asked, inspection),
     /** The sign-in's tries of a code the site refused or that didn't sign in, each sent once. */
     codeAttempts: session.retryState.codeAttempts,
     verify: verifySignIn(session),
