@@ -2,6 +2,7 @@ import { inspect } from "node:util";
 import { Clock, Data, Duration, Effect, Either, Fiber, Option, TestClock, TestContext } from "effect";
 import { expect, it } from "vitest";
 import type { AutofillRecipeStep } from "../../src/destinations/autofill-recipe.js";
+import { withCheck } from "../../src/destinations/autofill-refusal.js";
 import type {
   AutofillInspection,
   AutofillRefusal,
@@ -13,6 +14,7 @@ import {
   appendSignInStates,
   type BoxKind,
   type BoxTakes,
+  decodeSignInStateEntries,
   decodeSignInStateEntry,
   noteSignInState,
   type ObservedState,
@@ -1196,6 +1198,92 @@ it("acts in a text-only state that reads like one acted in before but presses an
   expect(site.clicks).toEqual(["#continue", "#next", "#go", "#yes"]);
 });
 
+it("runs the last check at the step wait before it ends where an earlier state shows again after the code", async () => {
+  // After the code an offer shows over the home page, with its Log in behind it as the first state
+  // showed it. The account shows only on its own page, which the full check opens.
+  const home: Screen = { path: "/", boxes: [], buttons: ["#log-in"], texts: ["home"], labels: ["log in"] };
+  const emailHere: Screen = { path: "/", boxes: [{ selector: "#email", kind: "identifier" }], buttons: ["#continue"] };
+  const codeHere: Screen = { path: "/", boxes: [{ selector: "#code", kind: "code" }], buttons: ["#verify"] };
+  const library = libraryOf([
+    { fingerprint: arrival(home), step: stepAt("/", [], "#log-in") },
+    { fingerprint: arrival(emailHere), step: stepAt("/", [email], "#continue") },
+    { fingerprint: arrival(codeHere), step: stepAt("/", [code], "#verify") },
+  ]);
+  const next: Readonly<Record<string, string>> = { "#log-in": "email", "#continue": "code", "#verify": "offer" };
+  const site = scriptedSite({ start: home, email: emailHere, code: codeHere, offer: home }, (_at, clicked) => next[clicked]);
+  const confirm: typeof site.hooks.confirm = (...call) =>
+    site.site.screen === "offer" ? Effect.succeed({ signedIn: true, url: `${origin}/account` }) : site.hooks.confirm(...call);
+  const ended = await replay({ ...site, hooks: { ...site.hooks, confirm } }, library);
+  expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(site.clicks).toEqual(["#log-in", "#continue", "#verify"]);
+});
+
+it("signs in on a page that can't tell where a sign-in on one address settles in place", { timeout: 8_000 }, async () => {
+  // A dialog that never leaves its page: after the code it closes without the remember screen a
+  // sign-in met once, and no marker shows there.
+  const emailHere: Screen = { path: "/sign-in", boxes: [{ selector: "#email", kind: "identifier" }], buttons: ["#continue"] };
+  const codeHere: Screen = { path: "/sign-in", boxes: [{ selector: "#code", kind: "code" }], buttons: ["#verify"] };
+  const remember: Screen = { path: "/sign-in", boxes: [], buttons: ["#remember"], texts: ["remember this device?"] };
+  const closed: Screen = { path: "/sign-in", boxes: [], texts: ["welcome back"] };
+  const library = libraryOf([
+    { fingerprint: arrival(emailHere), step: stepAt("/sign-in", [email], "#continue") },
+    { fingerprint: arrival(codeHere), step: stepAt("/sign-in", [code], "#verify") },
+    { fingerprint: arrival(remember), step: stepAt("/sign-in", [], "#remember") },
+  ]);
+  const next: Readonly<Record<string, string>> = { "#continue": "code", "#verify": "closed" };
+  const site = scriptedSite({ start: emailHere, code: codeHere, closed }, (_at, clicked) => next[clicked]);
+  const confirmed: string[] = [];
+  const hooks = { ...site.hooks, confirmCantTell: () => Effect.sync(() => void confirmed.push("confirmed")) };
+  const ended = await replay({ ...site, hooks }, library, { stepWaitMs: 5_000 });
+  expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false, cantTell: true });
+  expect(confirmed).toEqual(["confirmed"]);
+});
+
+it("never lands in place on a sign-in on one address whose dialog closes back to its launcher", { timeout: 8_000 }, async () => {
+  // A wrong password closes the dialog back to the page's Log in, with no error marker.
+  const launcher: Screen = { path: "/sign-in", boxes: [], buttons: ["#log-in"], texts: ["home"], labels: ["log in"] };
+  const emailHere: Screen = { path: "/sign-in", boxes: [{ selector: "#email", kind: "identifier" }], buttons: ["#continue"] };
+  const passwordHere: Screen = { path: "/sign-in", boxes: [{ selector: "#password", kind: "password" }], buttons: ["#go"] };
+  const remember: Screen = { path: "/sign-in", boxes: [], buttons: ["#remember"], texts: ["remember this device?"] };
+  const library = libraryOf([
+    { fingerprint: arrival(launcher), step: stepAt("/sign-in", [], "#log-in") },
+    { fingerprint: arrival(emailHere), step: stepAt("/sign-in", [email], "#continue") },
+    { fingerprint: arrival(passwordHere), step: stepAt("/sign-in", [password], "#go") },
+    { fingerprint: arrival(remember), step: stepAt("/sign-in", [], "#remember") },
+  ]);
+  const next: Readonly<Record<string, string>> = { "#log-in": "email", "#continue": "password", "#go": "closed" };
+  const site = scriptedSite(
+    { start: launcher, email: emailHere, password: passwordHere, closed: launcher },
+    (_at, clicked) => next[clicked],
+  );
+  const confirmed: string[] = [];
+  const hooks = { ...site.hooks, confirmCantTell: () => Effect.sync(() => void confirmed.push("confirmed")) };
+  const ended = await replay({ ...site, hooks }, library, { stepWaitMs: 3_000 });
+  expect(ended).toMatchObject({ outcome: "unclear", reason: "state_repeated" });
+  expect(confirmed).toEqual([]);
+});
+
+it("keeps the evidence of the host's refusal of a state's controls in a step event when the replay ends on it", async () => {
+  const library = libraryOf([{ fingerprint: arrival(emailScreen), step: stepAt("/sign-in", [email], "#continue") }]);
+  const site = scriptedSite({ start: emailScreen }, () => undefined);
+  // The page shows two Continue buttons.
+  const evidence = { framesSearched: 1, matches: `${origin} 2/2` };
+  const refused = withCheck({ outcome: "refused", reason: "ambiguous_match", target: "submit" }, "ambiguous_match", evidence);
+  const inspect: typeof site.hooks.inspect = (step) =>
+    step.submit === "#continue" ? Effect.succeed(refused) : site.hooks.inspect(step);
+  const events: Readonly<Record<string, unknown>>[] = [];
+  const ended = await replay({ ...site, hooks: { ...site.hooks, inspect } }, library, { events });
+  expect(ended).toMatchObject({ outcome: "unsent", reason: "ambiguous_match" });
+  expect(events).toContainEqual({
+    stage: "step",
+    outcome: "refused",
+    state: library.states[0]?.key,
+    reason: "ambiguous_match",
+    check: "ambiguous_match",
+    ...evidence,
+  });
+});
+
 it("signs in on a page that can't tell once it held still, before the step wait", { timeout: 4_000 }, async () => {
   const landing: Screen = { path: "/landing", boxes: [], texts: ["welcome back"] };
   const library = libraryOf([{ fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") }]);
@@ -1615,6 +1703,25 @@ it("appends only what a library did not hold, leaving every stored entry as it w
   );
   // A stored entry whose key is not its content's reads as none.
   expect(decodeSignInStateEntry(stored[0]?.replace("#continue", "#other"))).toBeUndefined();
+});
+
+it("refuses to append a state whose step its readers can't read back, and counts what a reader leaves out", () => {
+  // A step with a field no reader knows, as a newer writer's step reads to an older reader.
+  const unknown = stepAt("/sign-in", [email], "#continue", { sendsLater: true });
+  const signedIn = { selector: "#account" };
+  expect(
+    appendSignInStates(signInStatesOf({}, []), { states: [{ fingerprint: arrival(emailScreen), step: unknown }], signedIn }),
+  ).toEqual({ refused: "unsupported_step" });
+  const known = appendSignInStates(signInStatesOf({}, []), {
+    states: [{ fingerprint: arrival(emailScreen), step: stepAt("/sign-in", [email], "#continue") }],
+    signedIn,
+  });
+  if ("refused" in known) throw new Error(known.refused);
+  const unread = signInStateEntryText(stateEntry(arrival(passwordScreen), { ...unknown, page: `${origin}/password` }));
+  expect(decodeSignInStateEntries([...known.added.map(signInStateEntryText), unread])).toEqual({
+    entries: known.added,
+    dropped: 1,
+  });
 });
 
 it("fails loudly when a recorded step carries no state", () => {
