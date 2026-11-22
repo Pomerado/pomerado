@@ -495,9 +495,9 @@ const readingField = "stateReading";
 /**
  * Notes the state a build's or repair's sign-in step was taken in, read just before that step's
  * fill or approval: on the step the sign-in recorded last, as the state the page showed after the
- * one noted before (`stateAfter`). A step that takes a private answer is noted with no
- * instruction or ways, which may hold its question. A recipe never holds it: its steps are written
- * field by field.
+ * one noted before (`stateAfter`). A step that takes a private answer is noted with no message,
+ * instruction or ways, any of which may hold its question. A recipe never holds it: its steps are
+ * written field by field.
  */
 export const noteSignInState = (
   signIn: { readonly steps: readonly object[] },
@@ -511,7 +511,7 @@ export const noteSignInState = (
   const privateAnswer =
     Array.isArray(fields) &&
     fields.some((field: unknown) => typeof field === "object" && field !== null && Reflect.get(field, "slot") === "private_answer");
-  const { instruction: _instruction, ways: _ways, ...look } = after;
+  const { message: _message, instruction: _instruction, ways: _ways, ...look } = after;
   Object.assign(step, { [fingerprintField]: privateAnswer ? look : after });
   Object.assign(signIn, { [readingField]: observed });
 };

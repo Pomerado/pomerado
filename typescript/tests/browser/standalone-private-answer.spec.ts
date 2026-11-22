@@ -478,6 +478,156 @@ test("records a sign-in through a device approval with the approval's own page a
   ]);
 });
 
+// Where the question reads as a notice beside a box like the screen before it's, or the answer box
+// is one the scan doesn't count, the question is the page's message: the screens keep none of it,
+// and a run in a new session signs in through them when the site asks another question.
+for (const layout of ["after an identifier-only screen", "with a box the scan doesn't count"] as const)
+  test(`records a sign-in through a security question ${layout} without its question, and replays it when another is asked`, async ({ page }) => {
+    test.slow();
+    const site = "https://bank.example.test";
+    const shown = { question: "what was the name of your first pet?" };
+    const identifierFirst = layout === "after an identifier-only screen";
+    const screens: readonly SignInStep[] = identifierFirst
+      ? [
+          { fields: [{ selector: "#email", accepts: ["email"] }], submit: "#continue" },
+          { fields: [{ selector: "#answer", slot: "private_answer", questionSelector: "#question" }], submit: "#next" },
+          { fields: [{ selector: "#password", slot: "password" }], submit: "#sign-in" },
+        ]
+      : [
+          { fields: [{ selector: "#email", accepts: ["email"] }, { selector: "#password", slot: "password" }], submit: "#sign-in" },
+          { fields: [{ selector: "#answer", slot: "private_answer", questionSelector: "#question" }], submit: "#next" },
+        ];
+    const pages: Record<string, () => string> = identifierFirst
+      ? {
+          login: () => '<form method="post" action="/question"><label>Email<input id="email" name="email" type="email"></label><button id="continue">Continue</button></form>',
+          question: () => `<form method="post" action="/password"><p id="question">${shown.question}</p><label>Security answer<input id="answer" name="answer"></label><button id="next">Continue</button></form>`,
+          password: () => '<form method="post" action="/account"><label>Password<input id="password" name="password" type="password"></label><button id="sign-in">Sign in</button></form>',
+          account: () => '<p id="identity">Signed in</p>',
+        }
+      : {
+          login: () => '<form method="post" action="/question"><label>Email<input id="email" name="email"></label><label>Password<input id="password" name="password" type="password"></label><button id="sign-in">Sign in</button></form>',
+          question: () => `<div><h2 id="question">${shown.question}</h2><input id="answer" aria-label="Answer"><div role="button" id="next" onclick="location.href='/account'">Continue</div></div>`,
+          account: () => '<p id="identity">Signed in</p>',
+        };
+    for (const [path, body] of Object.entries(pages))
+      await page.route(`${site}/${path}`, (route) => route.fulfill({ contentType: "text/html", body: body() }));
+    await page.goto(`${site}/login`);
+    const auth = await localSignIn(page, site, makeInputAsker(() => Effect.succeed({ private_answer: "synthetic-first-pet" })));
+    const [first, ...rest] = screens;
+    if (first === undefined) throw new Error("no screen");
+    await Effect.runPromise(auth.recorder.step(first, `${site}/login`, Effect.void));
+    for (const screen of rest) {
+      await page.waitForURL((url) => url.pathname !== "/login");
+      const from = page.url();
+      expect(await Effect.runPromise(auth.fill(screen))).toMatchObject({ report: { outcome: "filled" } });
+      await page.waitForURL((url) => url.href !== from);
+    }
+    expect(await Effect.runPromise(auth.fill({ signedIn: { selector: "#identity" } }))).toMatchObject({ verified: true });
+    const published = auth.recorder.published();
+    const states = published?.states;
+    if (states === undefined) throw new Error(`no screens: ${JSON.stringify(published)}`);
+    const text = JSON.stringify(published).toLowerCase();
+    for (const held of ["pet", "synthetic", login.username, login.password]) expect(text).not.toContain(held.toLowerCase());
+    // A run in a new session, where the site asks another question.
+    shown.question = "what was the name of your first school?";
+    await page.goto("about:blank");
+    const prompts: string[] = [];
+    const secrets = makeRunSecrets();
+    const ask = makeInputAsker((request) =>
+      Effect.sync(() => {
+        const question = request.questions[0];
+        if (question?.type === "credential") return { login: { ...login, saveLogin: false } };
+        prompts.push(question?.prompt ?? "");
+        return { private_answer: "synthetic-first-school" };
+      }),
+    );
+    const { keyboard } = await hostKeyboard(page);
+    expect(await Effect.runPromise(signInForRun({
+      states,
+      entryUrl: `${site}/login`,
+      browser: makeSignInBrowser({ page: await hostPage(page), keyboard, siteOrigin: site, authenticationOrigins: [], typing: { typed: false } }),
+      login: localSignInLogin({ ask, register: secrets.register, siteOrigin: site }),
+      ask,
+      secrets,
+      site: "bank.example.test",
+      siteOrigin: site,
+    }))).toEqual({ alreadySignedIn: false });
+    expect(prompts).toEqual(["bank.example.test asks this security question: what was the name of your first school?"]);
+  });
+
+// Two questions on one page in a row, or with a page between them, are one screen, and a run in a
+// new session answers each question the site asks there.
+for (const between of [false, true])
+  test(`replays a sign-in through two security questions on one page${between ? " with a page between them" : " in a row"}`, async ({ page }) => {
+    test.slow();
+    const site = "https://bank.example.test";
+    const [pet, street] = ["what was the name of your first pet?", "what was the name of your first street?"];
+    const shown = { questions: [pet, street], at: 0 };
+    const answer: SignInStep = { fields: [{ selector: "#answer", slot: "private_answer", questionSelector: "#question" }], submit: "#next" };
+    const pages: Record<string, () => string> = {
+      login: () => '<form method="post" action="/question"><label>Email<input id="email" name="email"></label><label>Password<input id="password" name="password" type="password"></label><button id="sign-in">Sign in</button></form>',
+      question: () => {
+        const question = shown.questions[shown.at % 2];
+        shown.at += 1;
+        const action = shown.at % 2 === 0 ? "/account" : between ? "/between" : "/question";
+        return `<form method="post" action="${action}"><p id="question">${question}</p><label>Security answer<input id="answer" name="answer"></label><button id="next">Continue</button></form>`;
+      },
+      between: () => '<form method="post" action="/question"><p>one more question</p><button id="more">Continue</button></form>',
+      account: () => '<p id="identity">Signed in</p>',
+    };
+    for (const [path, body] of Object.entries(pages))
+      await page.route(`${site}/${path}`, (route) => route.fulfill({ contentType: "text/html", body: body() }));
+    await page.goto(`${site}/login`);
+    const auth = await localSignIn(page, site, makeInputAsker(() => Effect.succeed({ private_answer: "synthetic-answer" })));
+    await Effect.runPromise(auth.recorder.step(
+      { fields: [{ selector: "#email", accepts: ["email"] }, { selector: "#password", slot: "password" }], submit: "#sign-in" },
+      `${site}/login`,
+      Effect.void,
+    ));
+    const more: SignInStep = { fields: [], submit: "#more" };
+    await page.getByText(pet).waitFor();
+    for (const [screen, shows] of [
+      [answer, between ? "one more question" : street],
+      ...(between ? [[more, street]] : []),
+      [answer, "Signed in"],
+    ] as [SignInStep, string][]) {
+      expect(await Effect.runPromise(auth.fill(screen))).toMatchObject({ report: { outcome: "filled" } });
+      await page.getByText(shows).waitFor();
+    }
+    expect(await Effect.runPromise(auth.fill({ signedIn: { selector: "#identity" } }))).toMatchObject({ verified: true });
+    const published = auth.recorder.published();
+    const states = published?.states;
+    if (states === undefined) throw new Error(`no screens: ${JSON.stringify(published)}`);
+    const text = JSON.stringify(published).toLowerCase();
+    for (const held of ["pet", "street", "synthetic"]) expect(text).not.toContain(held);
+    // A run in a new session, where the site asks two other questions.
+    shown.questions = ["what was the name of your first school?", "what was the name of your first teacher?"];
+    shown.at = 0;
+    await page.goto("about:blank");
+    const prompts: string[] = [];
+    const secrets = makeRunSecrets();
+    const ask = makeInputAsker((request) =>
+      Effect.sync(() => {
+        const question = request.questions[0];
+        if (question?.type === "credential") return { login: { ...login, saveLogin: false } };
+        prompts.push(question?.prompt ?? "");
+        return { private_answer: "synthetic-answer" };
+      }),
+    );
+    const { keyboard } = await hostKeyboard(page);
+    expect(await Effect.runPromise(signInForRun({
+      states,
+      entryUrl: `${site}/login`,
+      browser: makeSignInBrowser({ page: await hostPage(page), keyboard, siteOrigin: site, authenticationOrigins: [], typing: { typed: false } }),
+      login: localSignInLogin({ ask, register: secrets.register, siteOrigin: site }),
+      ask,
+      secrets,
+      site: "bank.example.test",
+      siteOrigin: site,
+    }))).toEqual({ alreadySignedIn: false });
+    expect(prompts).toEqual(shown.questions.map((question) => `bank.example.test asks this security question: ${question}`));
+  });
+
 // A run replays such a recipe, here the version 3 an earlier build wrote: it asks for the login and
 // the private answer on each run, from the question the screen shows then, and keeps neither once
 // the run's sign-in is done.
