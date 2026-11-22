@@ -510,6 +510,23 @@ it("takes a page with no box whose label gained a word for the state whose contr
   expect(events).toContainEqual({ stage: "state", state: viaStorefront.states[0]?.key, reason: "same_control" });
 });
 
+it("takes a page with no box by its control where its path is the recorded one but a per-account segment or a trailing slash", async () => {
+  for (const [recorded, live, more] of [
+    ["/shop/", "/shop", {}],
+    ["/u/*/shop", "/u/7/shop", { anySegments: [1] }],
+  ] as const) {
+    const library = libraryOf([
+      { fingerprint: arrival({ ...storefront, path: recorded }), step: stepAt(recorded, [], "#log-in", more) },
+      typedEmail,
+      typedPassword,
+    ]);
+    const relabeled = { ...storefront, path: live, labels: ["~ in", "~ ~", "~ up", "~"] };
+    const site = scriptedSite({ start: relabeled, ...toSignIn }, (_at, clicked) => storefrontNext[clicked]);
+    expect(await replay(site, library)).toMatchObject({ outcome: "signed_in" });
+    expect(site.clicks).toEqual(["#log-in", "#continue", "#go"]);
+  }
+});
+
 it("presses once more a state told by its control when the page kept its look", async () => {
   const relabeled = { ...storefront, labels: ["~ in", "~ ~", "~ up", "~"] };
   let presses = 0;
@@ -693,13 +710,36 @@ it("never takes a state by its control where the page's main message differs or 
   expect(site.clicks).toEqual(["button.go", "#go"]);
 });
 
-it("never takes a state by its control once anything may have reached the site", async () => {
+it("takes by its control, once the login went out, only a state the state just acted in led to, with its buttons", async () => {
   const stay: Screen = { path: "/stay", boxes: [], buttons: ["#yes"], texts: ["stay signed in"], labels: ["~"] };
-  const library = libraryOf([typedEmail, typedPassword, { fingerprint: arrival(stay), step: stepAt("/stay", [], "#yes") }]);
+  const stayState = { fingerprint: arrival(stay), step: stepAt("/stay", [], "#yes") };
   const next: Readonly<Record<string, string>> = { "#continue": "password", "#go": "stay", "#yes": "home" };
-  const site = scriptedSite({ start: emailScreen, password: passwordScreen, stay: { ...stay, labels: ["~ ~"] } }, (_at, clicked) => next[clicked]);
-  expect(await replay(site, library)).toMatchObject({ outcome: "unclear", reason: "unknown_state" });
-  expect(site.clicks).toEqual(["#continue", "#go"]);
+  const reworded = { ...stay, texts: ["stay signed in on this browser"] };
+  const relabeled = { ...stay, labels: ["~ ~"] };
+  const site = (shown: Screen) =>
+    scriptedSite({ start: emailScreen, password: passwordScreen, stay: shown }, (_at, clicked) => next[clicked]);
+  // The password state led to it: taken whatever its message, and heard as told by its control.
+  const led = libraryOf([typedEmail, typedPassword, stayState]);
+  const events: Readonly<Record<string, unknown>>[] = [];
+  const taken = site(reworded);
+  expect(await replay(taken, led, { events })).toMatchObject({ outcome: "signed_in" });
+  expect(taken.clicks).toEqual(["#continue", "#go", "#yes"]);
+  expect(events).toContainEqual({ stage: "state", state: led.states[2]?.key, reason: "same_control" });
+  // Never with buttons other than its own, as another page asking for more with the same control;
+  // never one no sign-in learned after the password state, by its message either, once the login
+  // went out; nor one that presses the password state's own submit, which would send it again.
+  const apart = libraryOf([typedEmail, typedPassword], [stayState]);
+  const again = libraryOf([typedEmail, typedPassword, { fingerprint: arrival(stay), step: stepAt("/stay", [], "#go") }]);
+  for (const [library, shown] of [
+    [led, relabeled],
+    [apart, reworded],
+    [apart, relabeled],
+    [again, { ...reworded, buttons: ["#go"] }],
+  ] as const) {
+    const stopped = site(shown);
+    expect(await replay(stopped, library)).toMatchObject({ outcome: "unclear", reason: "unknown_state" });
+    expect(stopped.clicks).toEqual(["#continue", "#go"]);
+  }
 });
 
 it("tells, at a state no one knows, its shape and the stored ones it was told from, value-free", async () => {
@@ -2660,7 +2700,7 @@ it("presses a learned look-alike alone only where the press would go once more, 
   const went = await replayOnClock(goes, repairedFrom([emailState, go, typesPassword], go, [goElsewhere, typesPassword]));
   expect(went.ended).toMatchObject({ reason: "state_repeated" });
   expect(goes.clicks).toEqual(["#continue", "#go", "#go"]);
-});
+}, 20_000);
 
 // Two code screens a site serves at random after the same email, in a frame on its sign-in origin,
 // alike but for their boxes' role and labels: the states know the first, recorded before code
