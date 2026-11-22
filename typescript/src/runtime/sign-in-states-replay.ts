@@ -807,16 +807,27 @@ const byControl = <E extends YieldableError, V extends string, L extends Autofil
   });
 
 /**
+ * Whether a state's recorded buttons tell its page from another at its address that shows its
+ * control: two or more, not each a lone word the scan masks alike (`~`), as "Continue", "Next" and
+ * "OK" read.
+ */
+const toldByButtons = (state: StateEntry) => {
+  const buttons = state.fingerprint.buttons ?? [];
+  return buttons.length >= 2 && buttons.some((label) => label !== "~");
+};
+
+/**
  * Once anything this sign-in typed may have reached the site, where no known state has the page's
  * whole look, the known state a page with no box is by the control it presses, as a page after the
  * login whose words the site changed, such as one asking to remember the browser: only one the
- * state just acted in led to (`learnedNext`) that presses only (`pressesOnly`), whose control is
- * neither that state's submit nor one of its methods, so nothing that state sent goes out again;
- * with the page's whole look but its message, its buttons as recorded, so another page at that
- * address with the same control, such as one asking for more, is none of it; at its recorded page
- * (`at`) as the last marker check read the address, neither with a hash, and never one acted in
- * that came back (`returnedTo`). They are taken in the order this login takes states of one look
- * (`ranked`), the first whose control shows as `byControl` takes one.
+ * state just acted in led to (`learnedNext`) that presses only (`pressesOnly`), and none while a
+ * control that state pressed, its submit or a method, still shows, as another state's selector may
+ * name that same control, so nothing that state sent goes out again; with the page's whole look
+ * but its message, its buttons as recorded (`toldByButtons`), so another page at that address with
+ * the same control, such as one asking for more, is none of it; at its recorded page (`at`) as the
+ * last marker check read the address, neither with a hash, and never one acted in that came back
+ * (`returnedTo`). They are taken in the order this login takes states of one look (`ranked`), the
+ * first whose control shows as `byControl` takes one.
  */
 const ledToByControl = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -835,18 +846,21 @@ const ledToByControl = <E extends YieldableError, V extends string, L extends Au
       (!mayHaveSent(run) && run.replay.sent.maySent.size === 0)
     )
       return undefined;
-    const pressed = [after.step.submit, ...(after.step.methods ?? []).map((option) => option.selector)];
     // The page's look but its message, which is where a site rewords such a page.
     const unworded = { ...fingerprint, message: undefined };
     const here = (state: StateEntry) =>
       sameFingerprint({ ...state.fingerprint, message: undefined }, unworded) &&
+      toldByButtons(state) &&
       pressesOnly(run, state) &&
-      !pressed.includes(state.step.submit) &&
       hashless(URL.parse(state.step.page, page)?.href ?? "") &&
       at(page, state.step);
     const pressing: StateEntry[] = [];
     for (const state of learnedNext(run, after))
       if (here(state) && !(yield* returnedTo(run, state))) pressing.push(state);
+    if (pressing.length === 0) return undefined;
+    for (const pressed of [after.step.submit, ...(after.step.methods ?? []).map((option) => option.selector)])
+      if (pressed !== undefined && !("outcome" in (yield* run.input.hooks.inspect({ fields: [], submit: pressed }))))
+        return undefined;
     for (const state of ranked(run, pressing, here, next)) {
       const inspection = yield* shownOn(run, state, resolved(run, state.step));
       if (
