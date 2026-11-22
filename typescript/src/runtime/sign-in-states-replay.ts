@@ -15,12 +15,14 @@ import {
   containsFingerprint,
   describeFingerprint,
   type FingerprintShape,
+  fingerprintOf,
   fingerprintShape,
   fingerprintText,
   type Look,
   type ObservedState,
   sameBoxes,
   sameFingerprint,
+  sameMessage,
   type SignedInEntry,
   type SignInStates,
   type SignInStatesChoices,
@@ -217,7 +219,7 @@ interface Run<E extends YieldableError, V extends string, L extends AutofillLogi
 type Shown = {
   readonly state: StateEntry;
   readonly inspection: AutofillInspection;
-  readonly by?: "control" | "row" | "newer";
+  readonly by?: "control" | "row" | "newer" | "filled";
 };
 type Ended<V extends string> = { readonly ended: SignInStatesOutcome<V> };
 /**
@@ -762,7 +764,7 @@ const byControl = <E extends YieldableError, V extends string, L extends Autofil
     // it, which leaves out the state last acted in as it does for a look.
     const here = (state: StateEntry) =>
       state.fingerprint.top === fingerprint.top &&
-      state.fingerprint.message === fingerprint.message &&
+      sameMessage(state.fingerprint, fingerprint) &&
       pressesOnly(run, state) &&
       hashless(state.step.page) &&
       sameAddress(page, state.step.page) &&
@@ -812,6 +814,49 @@ const byPlace = <E extends YieldableError, V extends string, L extends AutofillL
       placed.add(typed);
       const shown = yield* shownOn(run, typed, resolved(run, typed.step));
       if (typeof shown !== "string") return { state: typed, inspection: shown, by: "row" } satisfies Shown;
+    }
+    return undefined;
+  });
+
+/**
+ * Where no known state has the page's look and nothing typed may have gone out, a state whose look
+ * is the page's with each box it shows filled already counted empty, as a site that kept a login's
+ * email shows it filled on a page that asks for the password again: one whose step types each such
+ * box by its kind, never the state just acted in, in the order this login takes them (`ranked`),
+ * the first whose controls show (`shownOn`). It comes with the page as read with those boxes empty
+ * (`observed`), so what its step types there stands as typed (`standingFingerprint`), as on the page
+ * it was recorded on.
+ */
+const byFilled = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  read: ObservedState,
+  skip: StateEntry | undefined,
+) =>
+  Effect.gen(function* () {
+    const filled = read.boxes.filter((box) => !box.empty);
+    if (filled.length === 0 || mayHaveSent(run)) return undefined;
+    const boxes = [...read.fingerprint.boxes, ...filled.map(({ empty: _empty, submit: _submit, ...box }) => box)];
+    const submit = read.fingerprint.submit || filled.some((box) => box.submit);
+    const { top } = read.fingerprint;
+    const look = fingerprintOf(
+      read.fingerprint.boxes.length > 0 ? { ...read.fingerprint, boxes: boxes.slice(0, 24), submit } : { top, boxes: boxes.slice(0, 24), submit },
+    );
+    const types = (state: StateEntry) => {
+      const fields = resolved(run, state.step).fields;
+      return filled.every((box) =>
+        fields.some((field) => (box.kind === "identifier" ? isIdentifier(field.slot) : field.slot === box.kind)),
+      );
+    };
+    const here = (state: StateEntry) => state !== skip && types(state) && sameFingerprint(state, look);
+    for (const state of ranked(run, run.input.library.states.filter(here), here, undefined, look)) {
+      const shown = yield* shownOn(run, state, resolved(run, state.step));
+      if (typeof shown !== "string" && !askedBefore(run, shown))
+        return {
+          state,
+          inspection: shown,
+          by: "filled",
+          observed: { ...read, fingerprint: look, boxes: read.boxes.map((box) => (box.empty ? box : { ...box, empty: true })) },
+        } satisfies Shown & { readonly observed: ObservedState };
     }
     return undefined;
   });
@@ -1294,6 +1339,10 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
             capped || (at - held.since >= Math.max(quiet.quietMs, landingSettleMs) && byControlRead !== text);
           if (loose) byControlRead = text;
           const shown = yield* matchState(run, shape, after, acted?.acted, loose, capped);
+          // Only where no known state has the page's look, once it held still: one whose step types
+          // the boxes it shows filled (`byFilled`).
+          const filled = shown === undefined && (still || loose) && !stood ? yield* byFilled(run, read, acted?.acted) : undefined;
+          if (filled !== undefined) return filled;
           refused = typeof shown === "object" ? undefined : shown;
           if (typeof shown === "object") {
             // A known state on a host this login may not type on ends it at once, as at a recipe
@@ -2167,7 +2216,16 @@ const walk = <E extends YieldableError, V extends string, L extends AutofillLogi
         stage: "state",
         state: arrived.state.key,
         ...("by" in arrived && arrived.by !== undefined
-          ? { reason: arrived.by === "row" ? "code_row" : arrived.by === "newer" ? "newer_look_alike" : "same_control" }
+          ? {
+              reason:
+                arrived.by === "row"
+                  ? "code_row"
+                  : arrived.by === "newer"
+                    ? "newer_look_alike"
+                    : arrived.by === "filled"
+                      ? "filled_boxes"
+                      : "same_control",
+            }
           : {}),
       });
       const done = yield* actIn(run, arrived, arrived.observed);

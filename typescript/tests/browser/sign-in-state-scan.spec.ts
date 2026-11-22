@@ -11,6 +11,8 @@ import {
   noteSignInState,
   observedSignInOf,
   sameFingerprint,
+  type StateBox,
+  toldApart,
 } from "../../src/destinations/sign-in-states.js";
 import { codeRowFields, isCodeRowByPlace } from "../../src/runtime/autofill-unrecorded-code.js";
 import { hostKeyboard, hostPage } from "./autofill-host-page.js";
@@ -363,4 +365,105 @@ test("two code rows alike but for their boxes' role and labels read as two looks
   expect(observedSignInOf(signIn.steps, { steps: [recorded], signedIn: { selector: "#account" } })).toMatchObject({
     states: [{ fingerprint: look("spinbutton", 0), step: recorded }],
   });
+});
+
+test("code boxes told by the rule a fill reads a row by, or by a name, read as code boxes, and still match a look that read them one by one", async ({
+  page,
+}) => {
+  const verify = (boxes: string) =>
+    `<h1>Enter the code</h1><form action="/verify" method="post">${boxes}<button>Verify</button></form>`;
+  const six = (box: (at: number) => string) => Array.from({ length: 6 }, (_, at) => box(at)).join("");
+  const digit = '<input inputmode="numeric" maxlength="1">';
+  const pages = {
+    // Each box in a wrapper beside a caret, three and three, and boxes the page's script holds to one digit.
+    separated: six(() => `<span>${digit}<span class="caret"></span></span>`),
+    split: `<div>${digit.repeat(3)}</div><span>-</span><div>${digit.repeat(3)}</div>`,
+    script: `<div>${six(() => '<input inputmode="numeric" style="width:2em">')}</div>`,
+    marked: six(() => '<span><input autocomplete="one-time-code" maxlength="1"><span class="caret"></span></span>'),
+    named: '<input type="text" name="code">',
+  };
+  const read: Record<string, readonly StateBox[]> = {};
+  for (const [name, boxes] of Object.entries(pages))
+    read[name] = (await (await open(page, { [site]: verify(boxes) }))()).fingerprint.boxes;
+  const row = { frame: site, kind: "code" as const, count: 6, role: "textbox" };
+  expect(read).toEqual({
+    separated: [{ ...row, takes: "other" }],
+    split: [{ ...row, takes: "other" }],
+    script: [{ ...row, takes: "other" }],
+    marked: [row],
+    named: [{ frame: site, kind: "code", role: "textbox", takes: "other" }],
+  });
+  // A look read before, with each box one by one or a box named for a code as an identifier box,
+  // matches each page's look now; a page with one box that takes a name never matches a row.
+  const before = (boxes: readonly StateBox[]) => fingerprintOf({ top: site, boxes, submit: true });
+  const identifiers = (count: number) => Array.from({ length: count }, () => ({ frame: site, kind: "identifier" as const, takes: "other" as const }));
+  const now = (name: string) => before(read[name] ?? []);
+  for (const name of ["separated", "split", "script"]) {
+    expect(sameFingerprint(before(identifiers(6)), now(name))).toBe(true);
+    expect(sameFingerprint(before(identifiers(1)), now(name))).toBe(false);
+  }
+  expect(sameFingerprint(before(Array.from({ length: 6 }, () => ({ frame: site, kind: "code" as const }))), now("marked"))).toBe(true);
+  expect(sameFingerprint(before(identifiers(1)), now("named"))).toBe(true);
+  expect(sameFingerprint(before([{ frame: site, kind: "code", role: "textbox" }]), now("separated"))).toBe(false);
+});
+
+test("a page with no box that shows a modal dialog reads as the dialog, keeping the page as read before beside it", async ({
+  page,
+}) => {
+  const scan = await open(page, {
+    [site]: `<h1>Groceries near you</h1><button>Log in</button><button>Sign up</button>
+      <div role="dialog" aria-modal="true"><h2>Try membership free</h2><button>Start trial</button><button>No thanks</button></div>`,
+  });
+  const shown = await scan();
+  const before = fingerprintOf({
+    top: site,
+    boxes: [],
+    submit: false,
+    message: "~ near you",
+    buttons: ["~ in", "~ up", "~ trial", "~ thanks"],
+  });
+  expect(shown.fingerprint).toEqual(
+    fingerprintOf({
+      top: site,
+      boxes: [],
+      submit: false,
+      message: "~ membership free",
+      buttons: ["~ trial", "~ thanks"],
+      instruction: before.message,
+      ways: before.buttons,
+    }),
+  );
+  // A look read before dialogs were read still matches, after a look read as the dialog.
+  expect(sameFingerprint(before, shown.fingerprint)).toBe(true);
+  expect(toldApart(shown.fingerprint, shown.fingerprint)).toBeLessThan(toldApart(before, shown.fingerprint) ?? 0);
+  // The page with the dialog gone is another look.
+  await page.evaluate(() => document.querySelector('[role="dialog"]')?.remove());
+  const behind = await scan();
+  expect(behind.fingerprint).toEqual(fingerprintOf({ top: site, boxes: [], submit: false, message: "~ near you", buttons: ["~ in", "~ up"] }));
+  expect(sameFingerprint(behind.fingerprint, shown.fingerprint)).toBe(false);
+});
+
+test("a page that shows nothing outside its open shadow roots reads through them; one that shows text of its own reads as before", async ({
+  page,
+}) => {
+  const form = '<h1>Sign in</h1><form><input type="email" name="email"><input type="password" name="password"><button>Continue</button></form>';
+  const component = (own: string) =>
+    `${own}<sign-in-form></sign-in-form><script>customElements.define("sign-in-form", class extends HTMLElement {
+      constructor() { super(); this.attachShadow({ mode: "open" }).innerHTML = ${JSON.stringify(form)}; }
+    });</script>`;
+  const deep = await (await open(page, { [site]: component("") }))();
+  expect(deep.fingerprint).toEqual(
+    fingerprintOf({
+      top: site,
+      boxes: [
+        { frame: site, kind: "identifier", takes: "email" },
+        { frame: site, kind: "password" },
+      ],
+      submit: true,
+      instruction: "~ in",
+      ways: ["~"],
+    }),
+  );
+  const light = await (await open(page, { [site]: component("<p>Welcome back</p>") }))();
+  expect(light.fingerprint).toEqual(fingerprintOf({ top: site, boxes: [], submit: false, message: "~ back", buttons: [] }));
 });

@@ -83,6 +83,8 @@ const notOtherKind = `:not(${anyOf([
  * voucher form's box, an image check's or a card's security code at a checkout, so this matches
  * narrowly.
  */
+/** The inputs a code field may be: a text, number or phone-digits box. */
+const codeInput = `input:is(${anyOf([":not([type])", '[type="text" i]', '[type="number" i]', '[type="tel" i]'])})`;
 const codeFieldStep = (): AutofillStep => {
   const marked = 'input[autocomplete="one-time-code" i]';
   const shortNumeric = [
@@ -90,7 +92,7 @@ const codeFieldStep = (): AutofillStep => {
     `:is(${anyOf(codeLengths.map((length) => `[maxlength="${length}"]`))})`,
   ].join("");
   const codeLike = [
-    `input:is(${anyOf([":not([type])", '[type="text" i]', '[type="number" i]', '[type="tel" i]'])})`,
+    codeInput,
     `:is(${namedBy(oneTimeCodeWords)}, :is(${namedBy(codeWords)})${shortNumeric})`,
     notOtherKind,
   ].join("");
@@ -125,8 +127,23 @@ export const codeScreenOf = (inspection: AutofillInspection) => {
  * `pinCode`, `card_pin` and `PIN`, never `otpInput` or `spinner`.
  */
 const wholeOtherWords = ["pin"];
-const wordsOf = (value: string) =>
-  value.split(/[^A-Za-z]+|(?<=[a-z])(?=[A-Z])/).map((word) => word.toLowerCase());
+const wordBreak = /[^A-Za-z]+|(?<=[a-z])(?=[A-Z])/;
+const wordsOf = (value: string) => value.split(wordBreak).map((word) => word.toLowerCase());
+
+/**
+ * Page code: whether an input is named for a code by the code field's word rule, whatever its
+ * length or input mode: a text, number or phone-digits box whose name or id holds `codeWords`, and
+ * neither its name, id nor autocomplete `otherWords`, nor `wholeOtherWords` as a word of its own
+ * (`namesWholeOtherWord`), nor does its autocomplete start with `tel` or `cc-`. A sign-in state's
+ * look reads such a box as a code box (`sign-in-state-scan.ts`), as a minter judges a box named for
+ * a code one even with no numeric type or length.
+ */
+export const namedForCodeCode = `(element) => {
+  const words = (value) => value.split(${String(wordBreak)}).map((word) => word.toLowerCase());
+  return element.matches(${JSON.stringify(`${codeInput}:is(${namedBy(codeWords)})${notOtherKind}`)}) &&
+    !["name", "id", "autocomplete"].some((attribute) =>
+      words(element.getAttribute(attribute) ?? "").some((word) => ${JSON.stringify(wholeOtherWords)}.includes(word)));
+}`;
 
 /**
  * Whether a field not marked as a one-time code has `wholeOtherWords` in its name, id or

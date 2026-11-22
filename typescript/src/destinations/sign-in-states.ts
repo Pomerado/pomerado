@@ -35,7 +35,9 @@ const Label = Schema.String.pipe(Schema.maxLength(200));
  * its role (`role`, as `textbox` or `spinbutton`) and its label's shape (`label`), so two code
  * screens whose boxes differ in either are two looks; an identifier box also what it takes
  * (`takes`), so an email box and a phone box are two looks. A look read before boxes had them has
- * none of them.
+ * none of them. A code box that says what it takes is one a look read before code rows and boxes
+ * named for a code were read so held as identifier boxes taking that, one for each of its boxes
+ * (`paired`).
  */
 export const StateBox = Schema.Struct({
   frame: Origin,
@@ -53,7 +55,9 @@ export type StateBox = typeof StateBox.Type;
  * its main message and its buttons, normalized so a name, an address or a number never shows. A
  * state with boxes keeps its main instruction (`instruction`) and the ways in it offers, its
  * buttons and links (`ways`), normalized alike, which only order states of one look
- * (`toldApart`); a look read before it kept them has neither.
+ * (`toldApart`); a look read before it kept them has neither. A state with no box read in a dialog
+ * is told by the dialog's message and buttons, and keeps the page behind it as its instruction and
+ * ways (`inDialog`), which no other look with no box has.
  */
 export const StateFingerprint = Schema.Struct({
   top: Origin,
@@ -166,21 +170,68 @@ const lookOf = (look: Look) => ("fingerprint" in look ? look : { fingerprint: lo
 /**
  * Two looks as they compare by text and place: their code boxes' role and label where both give
  * them, else neither, so a state recorded before code boxes had them matches every page it matched
- * then; what identifier boxes take never, as `takesAgree` compares it.
+ * then; what boxes take is kept for `paired` alone, never compared, as `takesAgree` compares it.
  */
 const comparable = (a: StateFingerprint, b: StateFingerprint): readonly [StateFingerprint, StateFingerprint] => {
   const labels = labelled(a) && labelled(b);
   const plain = (fingerprint: StateFingerprint): StateFingerprint => ({
     ...fingerprint,
-    boxes: fingerprint.boxes.map(({ role, label, takes: _takes, ...box }) => ({ ...box, ...(labels ? { role, label } : {}) })),
+    boxes: fingerprint.boxes.map(({ role, label, ...box }) => ({ ...box, ...(labels ? { role, label } : {}) })),
   });
   return [plain(a), plain(b)];
 };
-/** Each frame's identifier boxes by what they take. */
+/** A box as boxes pair (`paired`): all it holds but what it takes. */
+const boxKey = ({ takes: _takes, ...box }: StateBox) => canonical(box);
+/**
+ * `held`'s boxes paired with `holding`'s, and those of each left: each with one alike by `key`;
+ * else, as a look read before code rows and boxes named for a code were read so held it, a code box
+ * of either with as many boxes of the other's frame, each with no count: a row of `count` with
+ * that many code boxes, as one-character boxes read one by one, or identifier boxes where it says
+ * what they took (`takes`); a lone code box that says what it took with one identifier box. A row
+ * pairs only with boxes read one by one, never with another row, whose role and label tell it.
+ */
+const paired = (held: readonly StateBox[], holding: readonly StateBox[], key: (box: StateBox) => string) => {
+  const left = [...held];
+  const right = [...holding];
+  for (let at = left.length - 1; at >= 0; at -= 1) {
+    const match = right.findIndex((box) => key(box) === key(left[at] as StateBox));
+    if (match < 0) continue;
+    right.splice(match, 1);
+    left.splice(at, 1);
+  }
+  const fold = (rows: StateBox[], alone: StateBox[]) => {
+    for (let at = rows.length - 1; at >= 0; at -= 1) {
+      const row = rows[at] as StateBox;
+      if (row.kind !== "code" || (row.count === undefined && row.takes === undefined)) continue;
+      const kind = row.takes === undefined ? "code" : "identifier";
+      const boxes = alone.filter(
+        (box) => box.frame === row.frame && box.kind === kind && box.count === undefined && (kind === "identifier" || box.takes === undefined),
+      );
+      if (boxes.length < (row.count ?? 1)) continue;
+      for (const box of boxes.slice(0, row.count ?? 1)) alone.splice(alone.indexOf(box), 1);
+      rows.splice(at, 1);
+    }
+  };
+  fold(left, right);
+  fold(right, left);
+  return { held: left, holding: right };
+};
+/** A look's text but its boxes, as looks compare. */
+const textBesideBoxes = (fingerprint: StateFingerprint) =>
+  canonical({ ...fingerprintOf(fingerprint), boxes: undefined, instruction: undefined, ways: undefined });
+/** Whether two looks read alike by text and their boxes pair (`comparable`, `paired`). */
+const readAlike = (a: StateFingerprint, b: StateFingerprint) => {
+  const [left, right] = comparable(a, b);
+  if (textBesideBoxes(left) !== textBesideBoxes(right)) return false;
+  const rest = paired(left.boxes, right.boxes, boxKey);
+  return rest.held.length === 0 && rest.holding.length === 0;
+};
+/** Each frame's identifier boxes by what they take, a row that says it once for each of its boxes. */
 const takenOn = (fingerprint: StateFingerprint) => {
   const frames = new Map<string, BoxTakes[]>();
-  for (const box of fingerprint.boxes)
-    if (box.takes !== undefined) frames.set(box.frame, [...(frames.get(box.frame) ?? []), box.takes]);
+  for (const { frame, takes, count } of fingerprint.boxes)
+    if (takes !== undefined)
+      frames.set(frame, [...(frames.get(frame) ?? []), ...Array.from({ length: count ?? 1 }, () => takes)]);
   return frames;
 };
 /**
@@ -230,10 +281,42 @@ const takesAgree = (inner: Look, outer: Look, within = false) => {
   const all = (kinds: readonly string[], kind: string) => kinds.length > 0 && kinds.every((taken) => taken === kind);
   return !((all(boxes, "phone") && all(fields, "email")) || (all(boxes, "email") && all(fields, "phone")));
 };
-export const sameFingerprint = (a: Look, b: Look) => {
-  const [left, right] = comparable(lookOf(a).fingerprint, lookOf(b).fingerprint);
-  return fingerprintText(left) === fingerprintText(right) && takesAgree(a, b);
+/**
+ * Whether a look with no box was read in a dialog: it keeps the page behind it as its instruction
+ * and ways (`observeSignInState`).
+ */
+const inDialog = (fingerprint: StateFingerprint) =>
+  fingerprint.boxes.length === 0 && (fingerprint.instruction !== undefined || fingerprint.ways !== undefined);
+/**
+ * A look as it reads: itself, and one read in a dialog as the page behind it too, as a look read
+ * before dialogs were read holds that page.
+ */
+const readings = (look: Look): readonly Look[] => {
+  const { fingerprint, step } = lookOf(look);
+  if (!inDialog(fingerprint)) return [look];
+  const behind: StateFingerprint = {
+    top: fingerprint.top,
+    boxes: [],
+    submit: fingerprint.submit,
+    ...(fingerprint.instruction === undefined ? {} : { message: fingerprint.instruction }),
+    buttons: fingerprint.ways ?? [],
+  };
+  return [look, { fingerprint: behind, step }];
 };
+/**
+ * Whether two looks are one: alike by text and their boxes (`readAlike`), their identifier boxes
+ * taking values alike (`takesAgree`), as either reads (`readings`), so a page read in a dialog is
+ * still the page behind it, as a look read before held it.
+ */
+export const sameFingerprint = (a: Look, b: Look) =>
+  readings(a).some((left) =>
+    readings(b).some(
+      (right) => readAlike(lookOf(left).fingerprint, lookOf(right).fingerprint) && takesAgree(left, right),
+    ),
+  );
+/** Whether two looks with no box show one message, as either reads (`readings`). */
+export const sameMessage = (a: StateFingerprint, b: StateFingerprint) =>
+  readings(a).some((left) => readings(b).some((right) => lookOf(left).fingerprint.message === lookOf(right).fingerprint.message));
 /**
  * Whether `twin` is `state` with a `dismiss` added and nothing else: one look and one step but for
  * the covering notice's control `twin` clicks, which a fill clicks only where the page shows it.
@@ -251,19 +334,14 @@ export const blankFingerprint = (fingerprint: StateFingerprint) =>
 
 /**
  * Whether `outer` holds every box of `inner` and more, on the same top origin, as looks compare
- * (`comparable`, `takesAgree`): a page that may still grow from `inner` into `outer`, as a
- * sign-in whose password box draws late.
+ * (`comparable`, `paired`, `takesAgree`): a page that may still grow from `inner` into `outer`, as
+ * a sign-in whose password box draws late.
  */
 export const containsFingerprint = (inner: Look, outer: Look) => {
   const [held, holding] = comparable(lookOf(inner).fingerprint, lookOf(outer).fingerprint);
   if (held.top !== holding.top || held.boxes.length === 0 || !takesAgree(inner, outer, true)) return false;
-  const left = holding.boxes.map((box) => canonical(box));
-  for (const box of held.boxes) {
-    const at = left.indexOf(canonical(box));
-    if (at < 0) return false;
-    left.splice(at, 1);
-  }
-  return left.length > 0;
+  const rest = paired(held.boxes, holding.boxes, boxKey);
+  return rest.held.length === 0 && rest.holding.length > 0;
 };
 
 /**
@@ -273,6 +351,10 @@ export const containsFingerprint = (inner: Look, outer: Look) => {
  * the site reworded keeps its match.
  */
 export const toldApart = (known: StateFingerprint, page: StateFingerprint): number | undefined => {
+  // Two looks with no box: one read as the page reads stands nearer than one that matched it only
+  // as the page behind a dialog either was read in (`readings`).
+  if (known.boxes.length === 0 && page.boxes.length === 0)
+    return fingerprintText(known) === fingerprintText(page) ? 0 : inDialog(known) || inDialog(page) ? 100 : undefined;
   const told = (look: StateFingerprint) => look.instruction !== undefined || look.ways !== undefined;
   if (!told(known) || !told(page)) return undefined;
   const [ours, theirs] = [known.ways ?? [], page.ways ?? []];
@@ -425,16 +507,13 @@ export const standingFingerprint = (reached: ObservedState, now: ObservedState):
 };
 const boxText = ({ frame, kind, count }: StateBox) => canonical({ frame, kind, count });
 /**
- * Whether two looks show the same boxes on the same top origin, whatever their text, their
- * identifier boxes taking values alike (`takesAgree`).
+ * Whether two looks show the same boxes on the same top origin, whatever their text, as boxes pair
+ * (`paired`), their identifier boxes taking values alike (`takesAgree`).
  */
 export const sameBoxes = (a: Look, b: Look) => {
   const [left, right] = [lookOf(a).fingerprint, lookOf(b).fingerprint];
-  return (
-    left.top === right.top &&
-    canonical(fingerprintOf(left).boxes.map(boxText)) === canonical(fingerprintOf(right).boxes.map(boxText)) &&
-    takesAgree(a, b)
-  );
+  const rest = paired(left.boxes, right.boxes, boxText);
+  return left.top === right.top && rest.held.length === 0 && rest.holding.length === 0 && takesAgree(a, b);
 };
 /**
  * Whether an identifier box the page shows empty takes an email alone where the box on its frame,

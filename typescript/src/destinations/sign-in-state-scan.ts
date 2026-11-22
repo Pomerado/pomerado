@@ -2,8 +2,11 @@ import { Effect, Schema } from "effect";
 import { primaryPageCode } from "../runtime/host-execute.js";
 import { hostOnSiteSource, siteDomain } from "../runtime/same-site.js";
 import { workspaceHost } from "../runtime/workspace-origin.js";
+import { namedForCodeCode } from "../runtime/autofill-unrecorded-code.js";
+import { codeRowCode } from "./autofill-page-code.js";
 import type { AutofillPage } from "./autofill-step.js";
 import {
+  blankFingerprint,
   BoxKind,
   BoxTakes,
   fingerprintOf,
@@ -64,11 +67,24 @@ const normalized = (text: string, limit: number, logins: readonly string[]) =>
  * placeholder, never its name or id, which a page may give for its layout. A box with no hint of
  * its kind counts as an identifier only when required or in a form that has a submit or another
  * counted box; a search box never counts. With no empty box, the first visible h1, else h2,
- * heading, h3 or paragraph, and up to eight buttons; with one, that same text as its instruction
- * and up to twelve buttons and links as its ways; these and every visible text outside a control
- * (`texts`) as they stand, which the host normalizes.
+ * heading, h3 or paragraph, and up to eight buttons, and those of the modal dialog it shows
+ * (`dialog`), as a covering notice's are read (`coveringCode` in autofill-page-code.ts); with one,
+ * that same text as its instruction and up to twelve buttons and links as its ways; these and
+ * every visible text outside a control (`texts`) as they stand, which the host normalizes.
+ *
+ * A code's row is also one by the rule a fill reads a code's boxes by (`codeRowCode`), where the
+ * one-parent rule above finds none: four to twelve one-character boxes of one form, or of the
+ * document or shadow root outside one, as boxes split three and three or set apart by a separator
+ * are; or as many boxes the page's script holds to one character each, side by side on one line.
+ * A box named for a code (`namedForCodeCode`) is a code box too. Either is read so only where the
+ * rule before it read each of its boxes alike, as code boxes, or as identifier boxes taking one
+ * kind, counted as they were; a code box read where the rule before read identifier boxes says
+ * what they took (`takes`), so a look read before compares with it (`sameFingerprint`).
+ *
+ * With `deep`, it reads each open shadow root too, as inspect and fill walk them, page order
+ * first; without, a frame that shows nothing says whether it holds one (`shadowed`).
  */
-const scanFrame = `() => {
+const scanFrame = `(deep) => {
   const shows = (element) => {
     if (!element.checkVisibility({ visibilityProperty: true, opacityProperty: true })) return false;
     const box = element.getBoundingClientRect();
@@ -80,6 +96,11 @@ const scanFrame = `() => {
     return words.some((word) => own.includes(word));
   };
   const formOf = (element) => element.form ?? element.closest("form");
+  const roots = [document];
+  if (deep)
+    for (const root of roots)
+      for (const element of root.querySelectorAll("*")) if (element.shadowRoot !== null) roots.push(element.shadowRoot);
+  const all = (selector) => roots.flatMap((root) => [...root.querySelectorAll(selector)]);
   // A search box: in a search landmark, named for a search or the usual q, or in a form that
   // sends to a search.
   const searching = (element) => {
@@ -88,7 +109,7 @@ const scanFrame = `() => {
       attribute(element, "name") === "q" || (form !== null && /(^|[^a-z])search/.test(attribute(form, "action")));
   };
   const notTyped = ["hidden", "submit", "button", "checkbox", "radio", "file", "image", "reset", "range", "color", "search"];
-  const boxes = [...document.querySelectorAll("input, textarea")].filter((element) =>
+  const boxes = all("input, textarea").filter((element) =>
     !notTyped.includes(attribute(element, "type")) && !element.disabled && !element.readOnly &&
     !searching(element) && shows(element));
   // Every submit of the form, a button with no type and one joined by its form attribute too.
@@ -111,8 +132,9 @@ const scanFrame = `() => {
     const type = attribute(element, "type");
     const mode = attribute(element, "inputmode");
     const auto = attribute(element, "autocomplete").split(/\\s+/);
+    const root = element.getRootNode();
     const labelledBy = (element.getAttribute("aria-labelledby") ?? "").split(/\\s+/)
-      .map((id) => (id === "" ? "" : document.getElementById(id)?.innerText ?? ""));
+      .map((id) => (id === "" ? "" : (root.getElementById?.(id) ?? document.getElementById(id))?.innerText ?? ""));
     const words = [element.getAttribute("aria-label") ?? "", ...labelledBy, ...[...(element.labels ?? [])].map((label) => label.innerText),
       element.getAttribute("placeholder") ?? ""].join(" ").toLowerCase().slice(0, 1000);
     const email = type === "email" || mode === "email" || auto.includes("email") || /e-?mail|correo|courriel/.test(words);
@@ -126,9 +148,10 @@ const scanFrame = `() => {
   };
   const labelOf = (element) => (element.getAttribute("aria-label") ||
     [...(element.labels ?? [])].map((label) => label.innerText).join(" ") || element.getAttribute("placeholder") || "").slice(0, 200);
+  const codeRow = (members) => ({ kind: "code", count: members.length, role: roleOf(members[0]), labels: members.map(labelOf), empty: members.every((box) => box.value === ""), submit: submitIn(formOf(members[0])), form: formOf(members[0]) });
   // One-character boxes in one parent, or each alone in its own wrapper in one parent.
-  const rowOf = (element) => element.parentElement?.childElementCount === 1
-    ? element.parentElement.parentElement : element.parentElement;
+  const rowOf = (element) => element.parentNode?.childElementCount === 1
+    ? element.parentNode.parentNode : element.parentNode;
   const rows = new Map();
   for (const element of boxes.filter((box) => box.maxLength === 1)) {
     const row = rowOf(element);
@@ -137,18 +160,46 @@ const scanFrame = `() => {
   const found = [];
   const unhinted = [];
   for (const [, members] of rows)
-    if (members.length >= 4 && members.length <= 12)
-      found.push({ kind: "code", count: members.length, role: roleOf(members[0]), labels: members.map(labelOf), empty: members.every((box) => box.value === ""), submit: submitIn(formOf(members[0])), form: formOf(members[0]) });
+    if (members.length >= 4 && members.length <= 12) found.push(codeRow(members));
   const inRows = new Set([...rows.values()].filter((members) => members.length >= 4 && members.length <= 12).flat());
-  for (const element of boxes) {
-    if (inRows.has(element)) continue;
-    const kind = kindOf(element);
-    const box = { kind: kind ?? "identifier", ...(kind === "code" ? { role: roleOf(element), labels: [labelOf(element)] } : {}),
-      ...((kind ?? "identifier") === "identifier" ? { takes: takesOf(element) } : {}), empty: element.value === "", submit: submitIn(formOf(element)), form: formOf(element) };
-    if (kind === undefined) unhinted.push({ box, required: element.required });
+  const left = boxes.filter((element) => !inRows.has(element));
+  // A code's row by the rule a fill reads its boxes by, of boxes the rule before read alike.
+  const oneLine = (members) => {
+    const first = members[0].getBoundingClientRect();
+    return members.every((box) => {
+      const { top, height } = box.getBoundingClientRect();
+      return top + height / 2 >= first.top && top + height / 2 <= first.bottom;
+    });
+  };
+  const grouped = new Set();
+  for (const element of left) {
+    if (grouped.has(element)) continue;
+    const row = (${codeRowCode})(element, true, 12);
+    const members = (row?.boxes ?? []).filter((box) => left.includes(box) && !grouped.has(box));
+    if (members.length < 4 || members.length > 12 || (row.limit === "script" && !oneLine(members))) continue;
+    const kinds = new Set(members.map((box) => kindOf(box) ?? "none"));
+    const [kind] = kinds;
+    if (kinds.size !== 1 || !["code", "identifier", "none"].includes(kind) ||
+      (kind !== "code" && new Set(members.map(takesOf)).size !== 1) ||
+      (kind === "none" && new Set(members.map((box) => box.required)).size !== 1))
+      continue;
+    for (const box of members) grouped.add(box);
+    const box = { ...codeRow(members), ...(kind === "code" ? {} : { takes: takesOf(members[0]) }) };
+    if (kind === "none") unhinted.push({ box, required: members[0].required, at: boxes.indexOf(members[0]) });
     else found.push(box);
   }
-  for (const { box, required } of unhinted)
+  for (const element of left) {
+    if (grouped.has(element)) continue;
+    const kind = kindOf(element);
+    // A box named for a code that the rule before read as an identifier, or as none said.
+    const box = (kind === undefined || kind === "identifier") && (${namedForCodeCode})(element)
+      ? { kind: "code", role: roleOf(element), labels: [labelOf(element)], takes: takesOf(element), empty: element.value === "", submit: submitIn(formOf(element)), form: formOf(element) }
+      : { kind: kind ?? "identifier", ...(kind === "code" ? { role: roleOf(element), labels: [labelOf(element)] } : {}),
+        ...((kind ?? "identifier") === "identifier" ? { takes: takesOf(element) } : {}), empty: element.value === "", submit: submitIn(formOf(element)), form: formOf(element) };
+    if (kind === undefined) unhinted.push({ box, required: element.required, at: boxes.indexOf(element) });
+    else found.push(box);
+  }
+  for (const { box, required } of unhinted.sort((a, b) => a.at - b.at))
     if (required || box.submit || found.some((other) => other.form !== null && other.form === box.form)) found.push(box);
   // Every visible text of its own outside a control, which the host normalizes: what is new after
   // a press tells a notice the site showed beside the same boxes. Text is read by the block it sits
@@ -161,30 +212,38 @@ const scanFrame = `() => {
   };
   const own = new Map();
   let last;
-  const walker = document.createTreeWalker(document.body ?? document.documentElement, NodeFilter.SHOW_TEXT);
-  for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
-    const parent = node.parentElement;
-    if (parent === null || parent.closest('script, style, noscript, template, button, a, label, option, select, textarea, [role="button" i]') !== null || !shows(parent)) continue;
-    const block = blockOf(parent);
-    if (!own.has(block)) {
-      if (node.textContent.trim() === "") continue;
-      if (own.size >= 40) break;
-      own.set(block, "");
+  let full = false;
+  for (const root of roots) {
+    if (full) break;
+    const walker = document.createTreeWalker(root === document ? (document.body ?? document.documentElement) : root, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+      const parent = node.parentElement;
+      if (parent === null || parent.closest('script, style, noscript, template, button, a, label, option, select, textarea, [role="button" i]') !== null || !shows(parent)) continue;
+      const block = blockOf(parent);
+      if (!own.has(block)) {
+        if (node.textContent.trim() === "") continue;
+        if (own.size >= 40) {
+          full = true;
+          break;
+        }
+        own.set(block, "");
+      }
+      // A block's text on both sides of a block inside it reads as two words, not one.
+      own.set(block, own.get(block) + (last === block ? "" : " ") + node.textContent);
+      last = block;
     }
-    // A block's text on both sides of a block inside it reads as two words, not one.
-    own.set(block, own.get(block) + (last === block ? "" : " ") + node.textContent);
-    last = block;
   }
   const result = { boxes: found.map(({ form, ...box }) => box), texts: [...own.values()].map((text) => text.slice(0, 2000)) };
-  const message = ["h1", "h2", '[role="heading" i]', "h3", "p"]
-    .map((selector) => [...document.querySelectorAll(selector)].find((element) => shows(element) && element.innerText.trim() !== ""))
-    .find((element) => element !== undefined);
-  const said = message === undefined ? undefined : message.innerText.slice(0, 2000);
+  const headings = ["h1", "h2", '[role="heading" i]', "h3", "p"];
+  const firstSaid = (within) => headings
+    .map((selector) => within(selector).find((element) => shows(element) && element.innerText.trim() !== ""))
+    .find((element) => element !== undefined)?.innerText.slice(0, 2000);
+  const said = firstSaid(all);
   const controlText = (element) => (element.getAttribute("aria-label") || element.innerText || element.value || "").slice(0, 500);
   const pressed = 'button, [role="button" i], input[type="submit" i], input[type="button" i]';
   if (found.some((box) => box.empty)) {
     const ways = [];
-    for (const element of document.querySelectorAll(pressed + ', a[href], [role="link" i]')) {
+    for (const element of all(pressed + ', a[href], [role="link" i]')) {
       if (ways.length >= 12) break;
       if (!shows(element)) continue;
       const label = controlText(element);
@@ -192,16 +251,23 @@ const scanFrame = `() => {
     }
     return { ...result, ...(said === undefined ? {} : { instruction: said }), ways };
   }
-  const buttons = [...document.querySelectorAll(pressed)]
-    .filter(shows)
-    .map(controlText)
-    .filter((label) => label.trim() !== "")
-    .slice(0, 8);
-  return { ...result, ...(said === undefined ? {} : { message: said }), buttons };
+  const buttonsIn = (within) => within(pressed).filter(shows).map(controlText).filter((label) => label.trim() !== "").slice(0, 8);
+  const buttons = buttonsIn(all);
+  // The modal dialog shown, as a covering notice's is found: the last that holds no other shown.
+  const modals = all('dialog[open], [role~="dialog"], [role~="alertdialog"], [aria-modal="true"]').filter(shows);
+  const modal = modals.findLast((element) => !modals.some((other) => other !== element && element.contains(other)));
+  const inModal = (selector) => (modal === undefined ? [] : [...modal.querySelectorAll(selector)]);
+  const dialogSaid = firstSaid(inModal);
+  const dialogButtons = buttonsIn(inModal);
+  const dialog = dialogSaid === undefined && dialogButtons.length === 0
+    ? {} : { dialog: { ...(dialogSaid === undefined ? {} : { message: dialogSaid }), buttons: dialogButtons } };
+  const shadowed = !deep && said === undefined && buttons.length === 0 &&
+    [...document.querySelectorAll("*")].some((element) => element.shadowRoot !== null);
+  return { ...result, ...(said === undefined ? {} : { message: said }), buttons, ...dialog, ...(shadowed ? { shadowed } : {}) };
 }`;
 
 /** One host call over the primary tab's frames on the site or a configured sign-in origin. */
-const scanCode = (targetId: string, siteHost: string, authenticationOrigins: readonly string[]) =>
+const scanCode = (targetId: string, siteHost: string, authenticationOrigins: readonly string[], deep: boolean) =>
   `${primaryPageCode(targetId)}
 const onSiteHost = ${hostOnSiteSource(siteHost)};
 const authenticationOrigins = ${JSON.stringify(authenticationOrigins)};
@@ -232,7 +298,7 @@ for (const frame of primary.frames()) {
   try {
     const origin = signInOrigin(frameAddress(frame));
     if (origin === undefined || !(await frameShows(frame))) continue;
-    frames.push({ ...(await frame.evaluate(${scanFrame})), origin });
+    frames.push({ ...(await frame.evaluate(${scanFrame}, ${deep})), origin });
   } catch {
     // A frame the host cannot read, such as one that detaches during the scan, shows nothing.
     continue;
@@ -260,6 +326,10 @@ const Scan = Schema.Struct({
       buttons: Schema.optional(Schema.Array(Schema.String)),
       instruction: Schema.optional(Schema.String),
       ways: Schema.optional(Schema.Array(Schema.String)),
+      dialog: Schema.optional(
+        Schema.Struct({ message: Schema.optional(Schema.String), buttons: Schema.Array(Schema.String) }),
+      ),
+      shadowed: Schema.optional(Schema.Boolean),
     }),
   ),
 });
@@ -269,6 +339,13 @@ const Scan = Schema.Struct({
  * of the tool's relation, other than the site's own origin, reads as `workspace`. A word of any
  * text that is one of the sign-in's own `identifiers`, or an address's part before "@", is masked
  * as a name is. Undefined when the page could not be read, or its top page is no web page.
+ *
+ * A page with no empty box that shows a modal dialog reads as that dialog, its heading as the
+ * message and its buttons, and keeps the page behind it as its instruction and ways, where a look
+ * with no box keeps neither otherwise, so a look read before dialogs were read compares with it
+ * (`sameFingerprint`). A page that reads as nothing at all, no box, message or button, is read
+ * again through its open shadow roots (`deep`), as a page whose sign-in form sits in web components
+ * shows nothing to a read of its document alone: no look ever read so is stored or matched.
  */
 export const observeSignInState = (input: {
   readonly page: AutofillPage;
@@ -276,83 +353,121 @@ export const observeSignInState = (input: {
   readonly authenticationOrigins: readonly string[];
   readonly workspace?: { readonly parent: string } | undefined;
   readonly identifiers?: readonly string[] | undefined;
-}): Effect.Effect<ObservedState | undefined> =>
-  input.page
-    .execute(
-      scanCode(
-        input.page.targetId,
-        siteDomain(input.siteOrigin) ?? URL.parse(input.siteOrigin)?.hostname ?? "",
-        input.authenticationOrigins,
-      ),
-      15,
-    )
+}): Effect.Effect<ObservedState | undefined> => {
+  const scan = (deep: boolean) =>
+    input.page
+      .execute(
+        scanCode(
+          input.page.targetId,
+          siteDomain(input.siteOrigin) ?? URL.parse(input.siteOrigin)?.hostname ?? "",
+          input.authenticationOrigins,
+          deep,
+        ),
+        15,
+      )
+      .pipe(Effect.flatMap(Schema.decodeUnknown(Scan)));
+  return scan(false)
     .pipe(
-      Effect.flatMap(Schema.decodeUnknown(Scan)),
-      Effect.map((scan) => {
-        const top = URL.parse(scan.url)?.origin;
-        if (top === undefined || top === "null") return undefined;
-        const { workspace, siteOrigin } = input;
-        const logins = (input.identifiers ?? [])
-          .flatMap((identifier) => {
-            const login = identifier.normalize("NFKC").replace(/\p{Default_Ignorable_Code_Point}/gu, "").trim().toLowerCase();
-            return [login, login.split("@")[0] ?? login];
-          })
-          .filter((login) => login.length >= 3);
-        const frames = scan.frames.slice(0, 20);
-        const named = (origin: string) =>
-          workspace !== undefined && origin !== siteOrigin && workspaceHost(siteOrigin, workspace.parent, origin)
-            ? "workspace"
-            : origin;
-        const boxes = frames.flatMap((frame) =>
-          frame.boxes.slice(0, 200).map((box) => ({ frame: named(frame.origin), ...box })),
-        );
-        const written = (box: (typeof boxes)[number]): StateBox => {
-          const label = (box.labels ?? [])
-            .slice(0, 12)
-            .map((text) => (/^[0-9]{1,2}$/u.test(text.trim()) ? text.trim() : normalized(text, 200, logins)))
-            .filter((text) => text !== "")
-            .join(" ")
-            .slice(0, 200);
-          return {
-            frame: box.frame,
-            kind: box.kind,
-            ...(box.count === undefined ? {} : { count: box.count }),
-            ...(box.role !== undefined && /^[a-z]{1,20}$/u.test(box.role) ? { role: box.role } : {}),
-            ...(label === "" ? {} : { label }),
-            ...(box.takes === undefined ? {} : { takes: box.takes }),
-          };
-        };
-        // At most the 24 empty boxes a `StateFingerprint` holds, so a long form, such as an account
-        // page's, still reads as a state a library can keep.
-        const empty = boxes.filter((box) => box.empty).slice(0, 24);
-        const told = empty.length > 0 ? undefined : frames.find((frame) => frame.message !== undefined || (frame.buttons ?? []).length > 0);
-        const buttons = (told?.buttons ?? []).slice(0, 8).map((label) => normalized(label, 120, logins));
-        // A page with boxes is told beside them by the frame its first empty box sits in.
-        const shown = empty.length > 0 ? frames.find((frame) => frame.boxes.slice(0, 200).some((box) => box.empty)) : undefined;
-        const instruction = shown?.instruction === undefined ? "" : normalized(shown.instruction, 200, logins);
-        const ways = [...new Set((shown?.ways ?? []).slice(0, 12).map((label) => normalized(label, 120, logins)))];
-        return {
-          fingerprint: fingerprintOf({
-            top: named(top),
-            boxes: empty.map(written),
-            submit: empty.some((box) => box.submit),
-            ...(told?.message === undefined ? {} : { message: normalized(told.message, 200, logins) }),
-            ...(told === undefined ? {} : { buttons: buttons.filter((label) => label !== "") }),
-            ...(instruction === "" ? {} : { instruction }),
-            ...(shown === undefined ? {} : { ways: ways.filter((label) => label !== "") }),
-          }),
-          boxes: boxes.map((box) => ({ ...written(box), empty: box.empty, submit: box.submit })),
-          texts: [
-            ...new Set(
-              frames
-                .flatMap((frame) => frame.texts)
-                .slice(0, 40)
-                .map((text) => normalized(text, 200, logins)),
-            ),
-          ]
-            .filter((text) => text.length >= 2)
-            .slice(0, 40),
-        };
+      Effect.flatMap((light) => {
+        const read = readingOf(input, light);
+        return read !== undefined && blankFingerprint(read.fingerprint) && light.frames.some((frame) => frame.shadowed === true)
+          ? Effect.map(scan(true), (deep) => readingOf(input, deep))
+          : Effect.succeed(read);
       }),
       Effect.orElseSucceed(() => undefined),
     );
+};
+
+/** The page as `scanFrame` read it in each frame, as a state (`observeSignInState`). */
+const readingOf = (
+  input: {
+    readonly siteOrigin: string;
+    readonly workspace?: { readonly parent: string } | undefined;
+    readonly identifiers?: readonly string[] | undefined;
+  },
+  scan: typeof Scan.Type,
+): ObservedState | undefined => {
+  const top = URL.parse(scan.url)?.origin;
+  if (top === undefined || top === "null") return undefined;
+  const { workspace, siteOrigin } = input;
+  const logins = (input.identifiers ?? [])
+    .flatMap((identifier) => {
+      const login = identifier.normalize("NFKC").replace(/\p{Default_Ignorable_Code_Point}/gu, "").trim().toLowerCase();
+      return [login, login.split("@")[0] ?? login];
+    })
+    .filter((login) => login.length >= 3);
+  const frames = scan.frames.slice(0, 20);
+  const named = (origin: string) =>
+    workspace !== undefined && origin !== siteOrigin && workspaceHost(siteOrigin, workspace.parent, origin)
+      ? "workspace"
+      : origin;
+  const boxes = frames.flatMap((frame) =>
+    frame.boxes.slice(0, 200).map((box) => ({ frame: named(frame.origin), ...box })),
+  );
+  const written = (box: (typeof boxes)[number]): StateBox => {
+    const label = (box.labels ?? [])
+      .slice(0, 12)
+      .map((text) => (/^[0-9]{1,2}$/u.test(text.trim()) ? text.trim() : normalized(text, 200, logins)))
+      .filter((text) => text !== "")
+      .join(" ")
+      .slice(0, 200);
+    return {
+      frame: box.frame,
+      kind: box.kind,
+      ...(box.count === undefined ? {} : { count: box.count }),
+      ...(box.role !== undefined && /^[a-z]{1,20}$/u.test(box.role) ? { role: box.role } : {}),
+      ...(label === "" ? {} : { label }),
+      ...(box.takes === undefined ? {} : { takes: box.takes }),
+    };
+  };
+  // At most the 24 empty boxes a `StateFingerprint` holds, so a long form, such as an account
+  // page's, still reads as a state a library can keep.
+  const empty = boxes.filter((box) => box.empty).slice(0, 24);
+  const told = empty.length > 0 ? undefined : frames.find((frame) => frame.message !== undefined || (frame.buttons ?? []).length > 0);
+  const pressed = (labels: readonly string[]) =>
+    labels
+      .slice(0, 8)
+      .map((label) => normalized(label, 120, logins))
+      .filter((label) => label !== "");
+  const buttons = pressed(told?.buttons ?? []);
+  const message = told?.message === undefined ? undefined : normalized(told.message, 200, logins);
+  // A dialog shown over a page with no box is the look, the page behind it its instruction and ways.
+  const dialogMessage = told?.dialog?.message === undefined ? undefined : normalized(told.dialog.message, 200, logins);
+  const dialogButtons = pressed(told?.dialog?.buttons ?? []);
+  const dialog = told !== undefined && (dialogMessage !== undefined || dialogButtons.length > 0);
+  // A page with boxes is told beside them by the frame its first empty box sits in.
+  const shown = empty.length > 0 ? frames.find((frame) => frame.boxes.slice(0, 200).some((box) => box.empty)) : undefined;
+  const instruction = shown?.instruction === undefined ? "" : normalized(shown.instruction, 200, logins);
+  const ways = [...new Set((shown?.ways ?? []).slice(0, 12).map((label) => normalized(label, 120, logins)))];
+  return {
+    fingerprint: fingerprintOf({
+      top: named(top),
+      boxes: empty.map(written),
+      submit: empty.some((box) => box.submit),
+      ...(dialog
+        ? {
+            ...(dialogMessage === undefined ? {} : { message: dialogMessage }),
+            buttons: dialogButtons,
+            ...(message === undefined ? {} : { instruction: message }),
+            ways: buttons,
+          }
+        : {
+            ...(message === undefined ? {} : { message }),
+            ...(told === undefined ? {} : { buttons }),
+            ...(instruction === "" ? {} : { instruction }),
+            ...(shown === undefined ? {} : { ways: ways.filter((label) => label !== "") }),
+          }),
+    }),
+    boxes: boxes.map((box) => ({ ...written(box), empty: box.empty, submit: box.submit })),
+    texts: [
+      ...new Set(
+        frames
+          .flatMap((frame) => frame.texts)
+          .slice(0, 40)
+          .map((text) => normalized(text, 200, logins)),
+      ),
+    ]
+      .filter((text) => text.length >= 2)
+      .slice(0, 40),
+  };
+};

@@ -43,6 +43,47 @@ import { pageControlsCode } from "./page-controls.js";
  */
 const strictSlots: ReadonlySet<string> = new Set(["password", "private_answer"]);
 
+/**
+ * Page code: the row of one-character boxes a box sits in, by the rule `codeBoxesCode` gives, else
+ * null: its boxes in page order and how they take one character (`limit`), by their `maxlength` of 1
+ * (`maxlength`), or by the page's own script (`script`) only where `script` says to look for one,
+ * among at most `mostBoxes`. A row by its `maxlength` may hold fewer than two boxes, or more than
+ * `mostBoxes`.
+ */
+export const codeRowCode = `(element, script, mostBoxes) => {
+  const textTypes = ["", "text", "tel", "number", "password", "search"];
+  const shown = (node) => {
+    const rect = node.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0 && node.checkVisibility({ visibilityProperty: true });
+  };
+  const shownChildren = (node) => Array.from(node.children).filter(shown);
+  const editable = (control) => {
+    if (control.tagName !== "INPUT") return false;
+    if (!textTypes.includes((control.getAttribute("type") ?? "").toLowerCase())) return false;
+    if (control.disabled || control.readOnly) return false;
+    return shown(control);
+  };
+  if (!editable(element)) return null;
+  if (element.maxLength === 1) {
+    const screen = element.form ?? element.getRootNode();
+    const boxes = Array.from(screen.querySelectorAll("input")).filter((control) => editable(control) && control.maxLength === 1);
+    return { boxes, limit: "maxlength" };
+  }
+  if (element.maxLength >= 0 || !script || element.parentNode === null) return null;
+  let boxes = Array.from(element.parentNode.children).filter(editable);
+  const wrapper = element.parentElement;
+  if (boxes.length === 1 && wrapper?.parentNode) {
+    boxes = shownChildren(wrapper.parentNode).map((child) => {
+      const held = shownChildren(child);
+      return held.length === 1 ? held[0] : null;
+    });
+    if (!boxes.every((control) => control !== null && editable(control))) return null;
+  }
+  if (boxes.length > mostBoxes || boxes.some((control) => control.maxLength >= 0 || control.type !== element.type))
+    return null;
+  return { boxes, limit: "script" };
+}`;
+
 const codeBoxesCode = `const codeBoxes = [];
 const codeFields = codeSlots.filter(Boolean).length;
 for (const [index, field] of fields.entries()) {
@@ -51,22 +92,6 @@ for (const [index, field] of fields.entries()) {
     continue;
   }
   const codeBox = await field.locator.evaluate((element, [codeFields, mostBoxes]) => {
-    const textTypes = ["", "text", "tel", "number", "password", "search"];
-    const shown = (node) => {
-      const rect = node.getBoundingClientRect();
-      return rect.width > 0 && rect.height > 0 && node.checkVisibility({ visibilityProperty: true });
-    };
-    const shownChildren = (node) => Array.from(node.children).filter(shown);
-    const editable = (control) => {
-      if (control.tagName !== "INPUT") return false;
-      if (!textTypes.includes((control.getAttribute("type") ?? "").toLowerCase())) return false;
-      if (control.disabled || control.readOnly) return false;
-      return shown(control);
-    };
-    const place = (boxes, limit) => {
-      const at = boxes.indexOf(element);
-      return boxes.length < 2 || at < 0 ? null : { box: at + 1, of: boxes.length, limit };
-    };
     const nameOf = (control) => {
       const root = control.getRootNode();
       for (const attribute of ["id", "name", "aria-label"]) {
@@ -78,27 +103,12 @@ for (const [index, field] of fields.entries()) {
       }
       return null;
     };
-    if (!editable(element)) return null;
-    if (element.maxLength === 1) {
-      const screen = element.form ?? element.getRootNode();
-      const boxes = Array.from(screen.querySelectorAll("input")).filter((control) => editable(control) && control.maxLength === 1);
-      const found = place(boxes, "maxlength");
-      if (found === null || codeFields !== 1 || found.box !== 1 || boxes.length > mostBoxes) return found;
-      return { ...found, rest: boxes.slice(1).map(nameOf) };
-    }
-    if (element.maxLength >= 0 || codeFields < 2 || element.parentNode === null) return null;
-    let boxes = Array.from(element.parentNode.children).filter(editable);
-    const wrapper = element.parentElement;
-    if (boxes.length === 1 && wrapper?.parentNode) {
-      boxes = shownChildren(wrapper.parentNode).map((child) => {
-        const held = shownChildren(child);
-        return held.length === 1 ? held[0] : null;
-      });
-      if (!boxes.every((control) => control !== null && editable(control))) return null;
-    }
-    if (boxes.length > mostBoxes || boxes.some((control) => control.maxLength >= 0 || control.type !== element.type))
-      return null;
-    return place(boxes, "script");
+    const row = (${codeRowCode})(element, codeFields >= 2, mostBoxes);
+    const at = row === null ? -1 : row.boxes.indexOf(element);
+    if (row === null || row.boxes.length < 2 || at < 0) return null;
+    const found = { box: at + 1, of: row.boxes.length, limit: row.limit };
+    if (row.limit === "script" || codeFields !== 1 || found.box !== 1 || row.boxes.length > mostBoxes) return found;
+    return { ...found, rest: row.boxes.slice(1).map(nameOf) };
   }, [codeFields, ${maximumCodeBoxes}], { timeout: ${elementReadMs} }).catch(() => null);
   codeBoxes.push(codeBox);
 }

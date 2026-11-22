@@ -66,6 +66,8 @@ interface Screen {
   readonly labels?: readonly string[];
   /** Boxes the inspection finds that the look never counts, as boxes drawn transparent. */
   readonly unseen?: readonly string[];
+  /** Boxes the site shows filled already, as an email it kept. */
+  readonly filled?: readonly string[];
 }
 
 /**
@@ -194,7 +196,7 @@ const scriptedSite = (
     const screen = shown();
     const boxes = screen.boxes.map((box) => ({
       ...lookOf(screen, box),
-      empty: !site.typed.has(box.selector),
+      empty: !site.typed.has(box.selector) && !(screen.filled ?? []).includes(box.selector),
       submit: true,
     }));
     const empty = boxes.filter((box) => box.empty);
@@ -400,6 +402,21 @@ const combined: Screen = {
   buttons: ["#continue"],
 };
 const emailOnly: Screen = { path: "/", boxes: [{ selector: "#email", kind: "identifier" }], buttons: ["#continue"] };
+
+it("takes a state whose step types a box the site shows filled already, as an email it kept, only where no state has the page's look", async () => {
+  const both = { fingerprint: arrival(combined), step: stepAt("/", [email, password], "#continue") };
+  const events: Readonly<Record<string, unknown>>[] = [];
+  const kept = scriptedSite({ start: { ...combined, filled: ["#email"] } }, () => "home");
+  const library = libraryOf([both]);
+  expect(await replay(kept, library, { events })).toMatchObject({ outcome: "signed_in", visited: [library.states[0]?.key] });
+  expect(kept.fills).toEqual(["email", "password"]);
+  expect(events).toContainEqual({ stage: "state", state: library.states[0]?.key, reason: "filled_boxes" });
+  // A known state with the page's own look is taken as before.
+  const passwordHere: Screen = { path: "/", boxes: [{ selector: "#password", kind: "password" }], buttons: ["#continue"] };
+  const again = scriptedSite({ start: { ...combined, filled: ["#email"] } }, () => "home");
+  await replay(again, libraryOf([both], [{ fingerprint: arrival(passwordHere), step: stepAt("/", [password], "#continue") }]));
+  expect(again.fills).toEqual(["password"]);
+});
 
 it("waits before pressing in a state another known state holds, and takes the fuller one it draws", async () => {
   const library = libraryOf(
