@@ -1420,6 +1420,31 @@ it("stops a value-free check before a press that has the site send a link", asyn
   expect(site.clicks).toEqual([]);
 });
 
+it("counts a press that leads to a code page as sending, though the sign-in left that page by other ways", async () => {
+  const start: Screen = { path: "/", boxes: [], buttons: ["#continue"], texts: ["welcome back"] };
+  const texted: Screen = { path: "/code", boxes: [{ selector: "#code", kind: "code" }], buttons: ["#other-ways"] };
+  const ways: Screen = { path: "/ways", boxes: [], buttons: ["#email", "#call"], texts: ["other ways"] };
+  const called: Screen = { path: "/call", boxes: [{ selector: "#code", kind: "code" }], buttons: ["#verify"] };
+  const methods = [
+    { method: "email" as const, selector: "#email" },
+    { method: "call" as const, selector: "#call" },
+  ];
+  const library = libraryOf([
+    { fingerprint: arrival(start), step: stepAt("/", [], "#continue") },
+    { fingerprint: arrival(texted), step: stepAt("/code", [], "#other-ways") },
+    { fingerprint: arrival(ways), step: stepAt("/ways", [], "#call", { methods }) },
+    { fingerprint: arrival(called, "we called you"), step: stepAt("/call", [code], "#verify") },
+  ]);
+  // A value-free check stops before the press that has the site text a code.
+  const check = scriptedSite({ start, texted }, (_at, clicked) => (clicked === "#continue" ? "texted" : undefined));
+  expect(await replay(check, library, { valueFree: true })).toMatchObject({ outcome: "unsent", reason: "values_needed" });
+  expect(check.clicks).toEqual([]);
+  // A page slow to leave it never gets that press again.
+  const slow = scriptedSite({ start }, () => undefined);
+  expect(await replay(slow, library)).toMatchObject({ reason: "state_repeated" });
+  expect(slow.clicks).toEqual(["#continue"]);
+});
+
 it("hands the browser to a person at a hand-off state after the presses before it, then checks the marker", async () => {
   const start: Screen = { path: "/", boxes: [], buttons: ["#sign-in"], texts: ["welcome"] };
   const provider: Screen = { path: "/sso", boxes: [{ selector: "#user", kind: "identifier" }], buttons: ["#next"] };
