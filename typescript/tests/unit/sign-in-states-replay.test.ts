@@ -277,6 +277,8 @@ const replay = (
     readonly codes?: readonly string[];
     /** Each question's prompt, in order. */
     readonly prompts?: string[];
+    /** The host gives every code itself, a new one each time, as from an authenticator app. */
+    readonly hostCodes?: boolean;
     readonly codeRowByPlace?: boolean;
     readonly inPlace?: boolean;
     /** The replay may hand off: what the person does in the browser before marking it done. */
@@ -285,6 +287,7 @@ const replay = (
 ) => {
   const asked: string[] = [];
   let codesGiven = 0;
+  let hostGiven = 0;
   const ask = makeInputAsker((request) =>
     Effect.sync(
       () =>
@@ -327,10 +330,13 @@ const replay = (
           unanswered: (cause) => new TestFailure({ code: `unanswered:${String(cause)}` }),
           unavailable: () => new TestFailure({ code: "unavailable" }),
         },
-        ...(options.siteAnswer === undefined && options.hostMethod === undefined
+        ...(options.siteAnswer === undefined && options.hostMethod === undefined && options.hostCodes !== true
           ? {}
           : {
               hosted: {
+                ...(options.hostCodes === true
+                  ? { code: () => Effect.sync(() => ({ slot: "code" as const, value: String(100000 + ++hostGiven) })) }
+                  : {}),
                 ...(options.siteAnswer === undefined
                   ? {}
                   : {
@@ -808,6 +814,22 @@ it("presses Enter once for each code typed, and still ends at the code retry bou
   expect(entered(events)).toBe(3);
 });
 
+it("ends at the code retry bound when the host gives each code and the page empties its box with no refusal", async () => {
+  // A box that sends its code itself, on a site that empties it after a wrong code, with no error,
+  // and that signs in only on a sixth code.
+  const site = scriptedSite({ start: codeScreen }, () => undefined);
+  const fill: typeof site.hooks.fill = (call) =>
+    Effect.map(site.hooks.fill(call), (report) => {
+      site.site.typed.clear();
+      if (site.fills.length >= 6) site.site.screen = "home";
+      return report;
+    });
+  const ended = await replay({ ...site, hooks: { ...site.hooks, fill } }, autoCode(), { hostCodes: true });
+  expect(ended).toMatchObject({ outcome: "unclear", reason: "code_rejected" });
+  expect(site.fills).toEqual(["code", "code", "code"]);
+  expect(ended.asked).toEqual([]);
+});
+
 it("never takes the same code again when the code page stays with no refusal", async () => {
   // The site keeps its code page after the first press, with no error, and signs in on the second.
   // The owner gives the same code again first, which is asked again and never typed.
@@ -827,7 +849,7 @@ it("never takes the same code again when the code page stays with no refusal", a
   expect(prompts[1]).toMatch(/^The site refused the last code\. /u);
 });
 
-it("never types again a code the site refused, after a later code that only didn't sign in", async () => {
+it("never types again a code the site refused, after a later code whose page stayed with no refusal", async () => {
   // The site refuses the first code at its marker, which goes once a code is typed again; the
   // second code then stays with no marker.
   const site = scriptedSite(
