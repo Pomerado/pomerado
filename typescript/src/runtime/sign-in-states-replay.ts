@@ -826,7 +826,11 @@ const byPlace = <E extends YieldableError, V extends string, L extends AutofillL
  * route left other logins' states out and none of its own shows by the step wait (`waited`), for a
  * box its own state types that is gone, as one the site renamed, a look-alike learned after its
  * own that types too, presses the same submit and picks no method is taken in its place, the first
- * whose controls show in the order a login with no route there takes them (`newer`).
+ * whose controls show in the order a login with no route there takes them (`newer`). On a page of
+ * code boxes the press just made had the site send a code to (`sent`), the code goes in first: a
+ * state that types no code is taken only where that press led, and, with `loose`, a state that
+ * types a code into the boxes the page shows counts whatever its text, as one recorded for another
+ * method does.
  */
 const matchState = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -835,6 +839,7 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
   skip: StateEntry | undefined,
   loose: boolean,
   waited = false,
+  sent = false,
 ) =>
   Effect.gen(function* () {
     const { states, transitions } = run.input.library;
@@ -846,12 +851,16 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
         : transitions.filter((t) => t.from === after.key).map((t) => t.to),
     );
     const learned = learnedNext(run, after);
+    const codeSent = sent && fingerprint.boxes.some((box) => box.kind === "code");
     // In place, a state in a pop-up where the route leads is told by its controls, not the look.
     const told = (state: StateEntry) =>
       ((sameFingerprint(state, fingerprint) && (fingerprint.message === undefined || !untold(state))) ||
-        (inPopup(run, state) && next.has(state.key))) &&
+        (inPopup(run, state) && next.has(state.key)) ||
+        (codeSent && loose && takesCodeIn(run, state) && sameBoxes(state, fingerprint))) &&
       (after !== undefined || run.input.inPlace !== true || leadsToNewMarker(run, state));
-    const candidates = states.filter((state) => state !== skip && told(state));
+    const candidates = states.filter(
+      (state) => state !== skip && told(state) && (!codeSent || next.has(state.key) || takesCodeIn(run, state)),
+    );
     const alike = ranked(run, candidates, told, next, fingerprint);
     let refused: string | undefined;
     let returned: StateEntry | undefined;
@@ -1286,7 +1295,7 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
           const loose =
             capped || (at - held.since >= Math.max(quiet.quietMs, landingSettleMs) && byControlRead !== text);
           if (loose) byControlRead = text;
-          const shown = yield* matchState(run, shape, after, acted?.acted, loose, capped);
+          const shown = yield* matchState(run, shape, after, acted?.acted, loose, capped, acted?.sends === true);
           refused = typeof shown === "object" ? undefined : shown;
           if (typeof shown === "object") {
             // A known state on a host this login may not type on ends it at once, as at a recipe
