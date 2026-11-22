@@ -140,7 +140,7 @@ export const codeShownAgain = <E extends YieldableError, V extends string, L ext
  * count as sent there.
  * On a recorded emailed link's screen (`onLinkScreen`), the recording says the site emails, so the
  * code never comes from the host's generator, and a code nobody gave leaves the link's question to
- * ask (`none`), as nothing was typed.
+ * ask (`link_code_unanswered`), as nothing was typed.
  * `ran` when the code went out, `none` when none shows, or why it stopped.
  */
 export const runFoundCodeScreen = <E extends YieldableError, V extends string, L extends AutofillLogin>(
@@ -163,7 +163,7 @@ export const runFoundCodeScreen = <E extends YieldableError, V extends string, L
     if (failed === "link_code_unanswered") {
       replay.progress.unrecordedCodeScreen = earlier;
       replay.progress.linkCodeScreen = undefined;
-      return "none" as const;
+      return failed;
     }
     if (failed === undefined && replay.sent.maySent.has("code")) return "ran" as const;
     if (replay.sent.maySent.has("code") || replay.state.filled.has("code"))
@@ -174,16 +174,18 @@ export const runFoundCodeScreen = <E extends YieldableError, V extends string, L
 
 /**
  * A code screen the recipe never recorded, after the screens: looked for once and only while no
- * code may have gone out, so the look never sends a second one (`runFoundCodeScreen`). A fill that
- * typed no code leaves the full check to decide.
+ * code may have gone out, so the look never sends a second one (`runFoundCodeScreen`), on a
+ * recorded emailed link's screen with its rules (`onLinkScreen`). A fill that typed no code leaves
+ * the full check to decide.
  */
 export const unrecordedCode = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   input: AutofillReplayInput<E, V, L>,
   replay: Replay<E, V, L>,
   probed: { current: boolean },
+  onLinkScreen = false,
 ) =>
   Effect.gen(function* () {
     if (probed.current || replay.sent.maySent.has("code")) return "none" as const;
     probed.current = true;
-    return yield* runFoundCodeScreen(input, replay);
+    return yield* runFoundCodeScreen(input, replay, onLinkScreen);
   });

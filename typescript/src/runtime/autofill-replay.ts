@@ -468,7 +468,7 @@ const runScreen = <E extends YieldableError, V extends string, L extends Autofil
       if (recorded.approval === "email_link" && !replay.sent.maySent.has("code")) {
         const code = yield* runFoundCodeScreen(input, replay, true);
         if (code === "ran") return "continue" as const;
-        if (code !== "none") return replay.outcome(code);
+        if (code !== "none" && code !== "link_code_unanswered") return replay.outcome(code);
       }
       yield* heard;
       // A site whose emailed link signs in only the browser that opens it: the owner pastes the

@@ -214,3 +214,43 @@ test("a code page right after the username, before any password, gets no code", 
   expect(asked).toEqual([]);
   expect(posts.filter((post) => post.startsWith("/verify"))).toEqual([]);
 });
+
+// A site that emailed a sign-in link when its states were learned shows a code box this time, where
+// the link's page was. Its code is one the site sent, so a host's own, as from an authenticator
+// seed, never goes in; with no code given, the link's own question is asked.
+const checkEmail = '<h1>Check your email</h1><p>We sent you a link to sign in.</p>';
+const emailedLink: AutofillRecipeStep = { page: `${site}/check-email`, fields: [], approval: "email_link" };
+
+test("a code box where an emailed link's page was takes the site's code, never the host's own", async ({ page }) => {
+  const posts = await serve(
+    page,
+    { "/login": loginPage, "/check-email": checkEmail, "/verify": verify, "/home": '<p id="account">Your account</p>' },
+    { "/login": "/verify", "/verify": "/home" },
+  );
+  const library = await recorded(page, [login, emailedLink]);
+  await page.goto("about:blank");
+  posts.length = 0;
+  const { ended } = await replay(page, library, {}, () => ({
+    login: (base, step) => ({ ...base, seedAllowed: step.seedAllowed }),
+    code: (held) =>
+      Effect.succeed({ slot: "code" as const, value: (held as { seedAllowed?: boolean }).seedAllowed === true ? "111111" : "246810" }),
+  }));
+  expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(posts.filter((post) => post.startsWith("/verify"))).toEqual(["/verify code=246810"]);
+});
+
+test("a code box where an emailed link's page was, with no code given, asks for the link instead", async ({ page }) => {
+  const link = `${site}/magic/AbCdEf0123456789`;
+  const posts = await serve(
+    page,
+    { "/login": loginPage, "/check-email": checkEmail, "/verify": verify, "/magic/AbCdEf0123456789": '<p id="account">Your account</p>' },
+    { "/login": "/verify" },
+  );
+  const library = await recorded(page, [login, { ...emailedLink, delivery: "paste" }]);
+  await page.goto("about:blank");
+  posts.length = 0;
+  const { ended, asked } = await replay(page, library, { sign_in_link: link });
+  expect(ended).toMatchObject({ outcome: "signed_in" });
+  expect(asked).toEqual(["code", "sign_in_link"]);
+  expect(posts.filter((post) => post.startsWith("/verify"))).toEqual([]);
+});

@@ -132,7 +132,7 @@ const scriptedSite = (
           // As a host's inspection reads it: origin and path alone.
           page: page().split("#")[0] ?? "",
           targets: {
-            fields: step.fields.map(() => target),
+            fields: step.fields.map((field) => ({ ...target, empty: !site.typed.has(field.selector) })),
             submit: step.submit === undefined ? null : target,
           },
           siteOrigin: origin,
@@ -754,6 +754,37 @@ it("asks for a new code when the site refuses one, as many times as a recipe's r
   expect(always.fills).toEqual(["code", "code", "code"]);
 });
 
+it("types the password the site emptied beside a refused code again, and ends where either may be the one refused", async () => {
+  const both: Screen = {
+    path: "/verify",
+    boxes: [
+      { selector: "#password", kind: "password" },
+      { selector: "#code", kind: "code" },
+    ],
+    buttons: ["#verify"],
+  };
+  const library = libraryOf([
+    { fingerprint: arrival(emailScreen), step: stepAt("/sign-in", [email], "#continue") },
+    {
+      fingerprint: arrival(both),
+      step: stepAt("/verify", [password, code], "#verify", { rejectedMarkers: [{ selector: "#bad-code", slot: "code" }] }),
+    },
+  ]);
+  // The site refuses the first code and empties both boxes, then takes the password with the next.
+  const site = scriptedSite({ start: emailScreen, both, refused: { ...both, errors: ["#bad-code"] } }, (at) =>
+    at === "start" ? "both" : site.site.typed.has("#password") && site.site.typed.get("#code") === "222222" ? "home" : "refused",
+  );
+  expect(await replay(site, library, { codes: ["111111", "222222"] })).toMatchObject({ outcome: "signed_in" });
+  expect(site.fills).toEqual(["email", "password", "code", "password", "code"]);
+  // With no code marker, an emptied password may be the half refused: no second try.
+  const unmarked = scriptedSite({ start: emailScreen, both, refused: both }, (at) => (at === "start" ? "both" : "refused"));
+  expect(await replay(unmarked, library, { codes: ["111111", "222222"] })).toMatchObject({
+    outcome: "unclear",
+    reason: "ambiguous_combined_rejection",
+  });
+  expect(unmarked.fills).toEqual(["email", "password", "code"]);
+});
+
 it("waits for a slow site to check a code before asking for another", async () => {
   const library = libraryOf([
     {
@@ -1078,6 +1109,35 @@ it("never picks a sign-in method a second time when the page keeps the choice", 
   const site = scriptedSite({ start: choose }, () => undefined);
   expect(await replay(site, library)).toMatchObject({ reason: "state_repeated" });
   expect(site.clicks).toEqual(["#text-me"]);
+});
+
+it("takes a method choice that offers this login fewer methods by its message and its methods' controls", async () => {
+  // Learned where the site offered a text and a call; this login is offered the text alone.
+  const offered: Screen = { path: "/method", boxes: [], buttons: ["#text-me", "#call-me"], texts: ["~ it's you"], labels: ["~ me", "~ me"] };
+  const methods = [
+    { method: "sms" as const, selector: "#text-me" },
+    { method: "call" as const, selector: "#call-me" },
+  ];
+  const chooser = { fingerprint: arrival(offered), step: stepAt("/method", [], "#text-me", { methods }) };
+  const library = libraryOf([
+    { fingerprint: arrival(emailScreen), step: stepAt("/sign-in", [email], "#continue") },
+    chooser,
+    { fingerprint: arrival(codeScreen), step: stepAt("/verify", [code], "#verify") },
+  ]);
+  const fewer: Screen = { ...offered, buttons: ["#text-me"], labels: ["~ me"] };
+  const site = scriptedSite({ start: emailScreen, method: fewer, code: codeScreen }, (at, clicked) =>
+    at === "start" ? "method" : clicked === "#text-me" ? "code" : "home",
+  );
+  const events: Readonly<Record<string, unknown>>[] = [];
+  expect(await replay(site, library, { hostMethod: "sms", events })).toMatchObject({ outcome: "signed_in" });
+  expect(site.clicks).toEqual(["#continue", "#text-me", "#verify"]);
+  expect(events).toContainEqual({ stage: "state", state: keyOf(chooser), reason: "same_methods" });
+  // A page with that message where none of its methods' controls shows is still no state.
+  const other = scriptedSite({ start: emailScreen, method: { ...fewer, buttons: ["#help"] } }, (at) =>
+    at === "start" ? "method" : undefined,
+  );
+  expect(await replay(other, library, { hostMethod: "sms" })).toMatchObject({ outcome: "unclear", reason: "unknown_state" });
+  expect(other.clicks).toEqual(["#continue"]);
 });
 
 it("never signs in on a page that can't tell before the password went in", { timeout: 8_000 }, async () => {
@@ -2653,6 +2713,32 @@ it("types the code by place into the row of a look-alike code screen whose recor
       boxes: numberRow.boxes.map((box) => ({ ...lookOf(numberRow, box), label: "#" })),
     }),
   });
+});
+
+it("names the load that failed after the last press where a state's controls never show, as a recipe screen does", async () => {
+  const library = libraryOf([
+    { fingerprint: arrival(emailScreen), step: stepAt("/sign-in", [email], "#continue") },
+    { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") },
+  ]);
+  // The password page draws its box under another selector once its script failed to load.
+  const broken: Screen = { ...passwordScreen, boxes: [{ selector: "#pw", kind: "password" }] };
+  const site = scriptedSite({ start: emailScreen, broken }, (at) => (at === "start" ? "broken" : undefined));
+  const failure = { kind: "request", origin, method: "GET", cause: "ERR_FAILED" };
+  const listeners = new Set<(failure: unknown) => void>();
+  const hooks: AutofillHooks<TestFailure> = {
+    ...site.hooks,
+    onLoadFailure: (listener) => (listeners.add(listener), () => void listeners.delete(listener)),
+    fill: (request) =>
+      Effect.tap(site.hooks.fill(request), () =>
+        Effect.sync(() => {
+          if (request.step.submit === "#continue") for (const listener of listeners) listener(failure);
+        }),
+      ),
+  };
+  const events: Readonly<Record<string, unknown>>[] = [];
+  expect(await replay({ ...site, hooks }, library, { events })).toMatchObject({ outcome: "unclear", reason: "not_found" });
+  expect(events).toContainEqual(expect.objectContaining({ stage: "state_not_found", firstCause: failure }));
+  expect(listeners.size).toBe(0);
 });
 
 it("learns a look-alike code screen beside the known one, which a new login takes directly, and keeps a login's own route and method", async () => {
