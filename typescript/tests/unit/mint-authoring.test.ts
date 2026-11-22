@@ -468,13 +468,13 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
  */
 const formerSections: readonly (readonly [string, string])[] = [
   ["core", "Unclear means possible. `websiteEffect: may_have_dispatched` makes that execution's effect possible"],
-  ["auth", "The `loginUrl` you pass on `authenticate` is published with the tool, and every run opens it to sign in."],
+  ["auth", "The `loginUrl` you pass on `authenticate` is kept with the sign-in's screens, and every run opens it to sign in."],
   ["auth", "A run can begin partway through that flow because its bound profile or remembered device omitted an earlier stage."],
   ["caller-input", "1. Declare every question the run may ask in the contract, `defineOperation({ name, input, output, questions }, ...)`, by id, with its `type` and a short `prompt`."],
   ["forms", "Filling in or advancing a form that saves data on the site (an application, a profile, a contracting or checkout form) is a write, even when nothing is submitted yet"],
   ["pagination", "The host signs every cursor and checks it before the next run starts"],
   ["writes", "- The first `act` step claims the build's write."],
-  ["publication", "- **Login URL.** A signed-in tool publishes the `loginUrl` you signed in from, and every run opens it."],
+  ["publication", "- **Login URL.** The `loginUrl` you signed in from is kept with the sign-in's screens, and every run opens it."],
   ["workspace/AGENTS.md", "Testing a read signed out is your job, never the caller's (.agents/testing/SKILL.md)."],
   ["workspace/AGENTS.md", "- `src/`: your operation. It exists from the start and is empty until you write to it"],
   ["testing", "Choose cases that catch actual risk: applied filters, IDs, units, authoritative empty"],
@@ -663,7 +663,7 @@ it("gives the local builder the shared publication text and no hosted-only check
   expect(publication).toContain(
     "Never run the write again. After the last round the host publishes privately and flags it |",
   );
-  expect(publication).toContain("- **Login URL.** A signed-in tool publishes the `loginUrl`");
+  expect(publication).toContain("- **Login URL.** The `loginUrl` you signed in from is kept");
   expect(publication).toContain("`confirmation_unrecorded`, `confirm_action_unmatched`,");
   expect(publication).toContain(
     "`finish_build`'s metadata names the tool and describes it in the public definition Guardian reviews (`publication/definition.json`):",
@@ -843,7 +843,7 @@ it("tells the local minter how its sign-in values are asked, what it records and
   expect(instructions).not.toContain("masked terminal");
   // A verified sign-in fixes its login URL, so only a new sign-in from another URL changes it.
   expect(instructions).toContain(
-    "The login URL of the build's verified sign-in publishes with the tool, so it never holds a value of the account, such as its email. If `finish_build` refuses it with `login_url_contains_credential`, sign in again from a login URL without one: send each sign-in screen's `signInStep` with that `loginUrl`, then `signedIn`, and call `finish_build` again with the same `executionId`. A signed-in check alone does not change it.",
+    "The login URL of the build's verified sign-in is kept with the sign-in's screens, so it never holds a value of the account, such as its email. If `finish_build` refuses it with `login_url_contains_credential`, sign in again from a login URL without one: send each sign-in screen's `signInStep` with that `loginUrl`, then `signedIn`, and call `finish_build` again with the same `executionId`. A signed-in check alone does not change it.",
   );
 });
 
@@ -1721,15 +1721,15 @@ it("renders the pinned standalone authoring", async () => {
   ]).toStrictEqual([
     ["263155659f2b7cb5666bb4b421e340c71c398ebab063e370f266c93bcd50f9a2", "core"],
     ["97e3b5ebdbe8d5fca43790729084de4eef4fbcf5fdf71ad645e679fd72f4e804", "search"],
-    ["627cab8459434bd0dccb1206b50d0684b0aee2d580cfd931fa973b1ab9154f61", "auth"],
+    ["91eec03dba2ba4b3d9b63a743cd8146b22fbe24fcb28dd07f1a131a3eadaf469", "auth"],
     ["539abe36b602c8e2eff8745dd0462aea41837a20cc0b90cbef7a01cbad6fb89a", "testing"],
     ["ca80679c4488dec4ee85052fb39f1493b6d5f8ca4a5df9b56d10a2e96078e848", "pagination"],
     ["b0220727e7f21e1c5d10101e74996ddb3d2d4e18061ac85c807203ed4ab0f695", "forms"],
     ["3cd1434cdea838aee3b06589f685812620c48d2aba277f86622d6bb45282cb40", "writes"],
     ["3c704ebf62f31a58bcfc21e23889a794cd0005885afc692b4638c9e182022bc9", "cart"],
     ["a0c9ea62be24b9fcf921daf77c6c9aa93c65c3869ee8cbcad42d8e1698c32f05", "caller-input"],
-    ["d47486fdd08e7a7ff6ab8f38ee03e6a3e8e2287eb67f2412f1fe996543ea1857", "publication"],
-    ["b76c0ac57db6caf1485147513393a4ab31278ed8d74722853377ca82a1c25808", "workspace/AGENTS.md"],
+    ["3573b3f6005645d27cb02a140d3d212ffeb30272c47d05f9851b37824d2beb11", "publication"],
+    ["257b832d4c786c59dc1589b8df7fa8b5836625366511d990445399c8b164e300", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);
 });
@@ -1850,7 +1850,7 @@ it("renders the search URL fast path only when a host turns it on", async () => 
     [sha256(on.agents), "workspace/AGENTS.md"],
   ]).toStrictEqual([
     ["de172ebf03d92a8782f5abbdd8444d90104634da28f4e21ad444dcbde0734e1f", "search"],
-    ["2f4b5fb2475ab4979dc81948316e450d7d57f7fcf690fba5255f32330d7cf73d", "workspace/AGENTS.md"],
+    ["d7361f40aa3b3e5213ef24e273f5318bf97cbfce60a0f0ad1e97128c68377e8d", "workspace/AGENTS.md"],
   ]);
   expect(on.digests.filter(([, name]) => name !== "search")).toStrictEqual(
     off.digests.filter(([, name]) => name !== "search"),
