@@ -214,17 +214,84 @@ export const codeBoxRow = <E>(
     };
     const inspection = yield* hooks.inspect(step);
     if ("outcome" in inspection) return inspection;
-    const fields = inspection.screen.fields;
-    const row =
-      fields.length === first.of &&
-      fields.every(
-        (field, index) =>
-          field.codeBox?.box === index + 1 &&
-          field.codeBox.of === first.of &&
-          !namesWholeOtherWord(field),
-      );
-    return row ? { step, inspection } : ambiguous;
+    return isCodeRow(inspection.screen.fields, first.of, true) ? { step, inspection } : ambiguous;
   });
+
+/**
+ * Whether inspected fields are a row of `count` code boxes in order, none naming a PIN
+ * (`namesWholeOtherWord`): with `row`, each the next box of a row of as many one-character boxes
+ * (`codeBox`).
+ */
+const isCodeRow = (
+  fields: AutofillInspection["screen"]["fields"],
+  count: number,
+  row: boolean,
+) =>
+  fields.length === count &&
+  fields.every(
+    (field, index) =>
+      (!row || (field.codeBox?.box === index + 1 && field.codeBox.of === count)) &&
+      !namesWholeOtherWord(field),
+  );
+
+/**
+ * Words of a box's labels, `aria-label` or placeholder that name a value a code never goes in: a
+ * PIN, a social security number or a date, as of birth, by name or by a date mask's letters.
+ */
+const otherRowWords = ["pin", "ssn", "social", "birth", "birthday", "dob", "date", "month", "day", "year"];
+const dateMaskWord = /^(?:m{1,2}|d{1,2}|y{1,4})$/u;
+
+/**
+ * Whether inspected fields typed by place are a row of `count` code boxes in order (`isCodeRow`),
+ * none of them named, by its labels, `aria-label` or placeholder, with `otherRowWords` or a date
+ * mask's letters as a word of its own (`wordsOf`), such as "PIN-1", "Date of birth 1", "Year" or
+ * "MM".
+ */
+export const isCodeRowByPlace = (
+  fields: AutofillInspection["screen"]["fields"],
+  count: number,
+  row: boolean,
+) =>
+  isCodeRow(fields, count, row) &&
+  fields.every((field) =>
+    [field.label, field.ariaLabel, field.placeholder].every(
+      (value) =>
+        value === null ||
+        !wordsOf(value).some((word) => otherRowWords.includes(word) || dateMaskWord.test(word)),
+    ),
+  );
+
+/**
+ * One-character boxes that are never a code's, beyond the code field's word rule: a password box,
+ * as a PIN's, one for a date of birth, in any autofill section, one named for a social security
+ * number or a birth date, and one whose `aria-label` holds the word PIN or opens with it.
+ */
+const notOtherRowKind = `:not(${anyOf([
+  '[type="password" i]',
+  '[autocomplete*="bday" i]',
+  '[aria-label~="pin" i]',
+  '[aria-label^="pin" i]',
+  ...["ssn", "social", "birth", "dob"].flatMap((word) => [
+    `[name*="${word}" i]`,
+    `[id*="${word}" i]`,
+    `[aria-label*="${word}" i]`,
+  ]),
+])})`;
+
+/**
+ * The code fields of a row of `count` code boxes taken by place, for a code screen whose recorded
+ * boxes never showed though the page shows its look: each box of a row of one-character boxes
+ * (`row`, by `maxlength` 1, the code field's word rule and `notOtherRowKind`), else each code field
+ * `unrecordedCodeStep` matches, the next in its frame's page order (`:nth-match`, as a selector
+ * never chains into another frame). A host's inspection of them passes `isCodeRowByPlace`, and
+ * shows no box at the next place, before anything is typed.
+ */
+export const codeRowFields = (count: number, row: boolean) => {
+  const box = row
+    ? `input[maxlength="1"]${notOtherKind}${notOtherRowKind}`
+    : (unrecordedCodeStep.fields[0]?.selector ?? "");
+  return Array.from({ length: count }, (_, index) => ({ selector: `:nth-match(${box}, ${index + 1})`, slot: "code" as const }));
+};
 
 /**
  * Whether the inspected code screen is on a sign-in origin: a recorded screen's (`recorded`), or

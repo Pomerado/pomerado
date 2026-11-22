@@ -19,12 +19,14 @@ import {
   type SignInStates,
   type SignInStatesChoices,
   signInStatesOf,
+  type StateEntry,
   type StateFingerprint,
   stateEntry,
 } from "../../src/destinations/sign-in-states.js";
 import { makeInputAsker } from "../../src/inputs/callback.js";
 import type { SiteAnswer } from "../../src/runtime/autofill-replay-steps.js";
 import type { AutofillHooks } from "../../src/runtime/autofill-state.js";
+import { codeRowFields } from "../../src/runtime/autofill-unrecorded-code.js";
 import type { InputAnswers } from "../../src/runtime/input-request.js";
 import { replaySignInStates, type SignInStatesStop } from "../../src/runtime/sign-in-states-replay.js";
 
@@ -36,10 +38,18 @@ class TestFailure extends Data.TaggedError("TestFailure")<{ readonly code: strin
 const origin = "https://example.test";
 const link = `${origin}/magic?token=abc`;
 
-/** A screen: its path, its boxes by selector and kind, its buttons, and its visible texts. */
+/**
+ * A screen: its path, its boxes by selector and kind, a code box's role and label as the scan
+ * reads them, its buttons, and its visible texts.
+ */
 interface Screen {
   readonly path: string;
-  readonly boxes: readonly { readonly selector: string; readonly kind: BoxKind }[];
+  readonly boxes: readonly {
+    readonly selector: string;
+    readonly kind: BoxKind;
+    readonly role?: string;
+    readonly label?: string;
+  }[];
   readonly buttons?: readonly string[];
   readonly texts?: readonly string[];
   /** The origin of the frame the boxes sit in, when not the page's own. */
@@ -132,7 +142,7 @@ const scriptedSite = (
               inputmode: null,
               label: null,
               placeholder: null,
-              ariaLabel: null,
+              ariaLabel: shown().boxes.find(({ selector }) => selector === field.selector)?.label ?? null,
               text: null,
               slot: field.slot,
             })),
@@ -175,8 +185,7 @@ const scriptedSite = (
     site.looks += 1;
     const screen = shown();
     const boxes = screen.boxes.map((box) => ({
-      frame: screen.frame ?? origin,
-      kind: box.kind,
+      ...lookOf(screen, box),
       empty: !site.typed.has(box.selector),
       submit: true,
     }));
@@ -184,7 +193,7 @@ const scriptedSite = (
     return {
       fingerprint: {
         top: origin,
-        boxes: empty.map(({ frame, kind }) => ({ frame, kind })),
+        boxes: empty.map(({ empty: _empty, submit: _submit, ...box }) => box),
         submit: empty.length > 0,
         ...(empty.length > 0 ? {} : { message: screen.texts?.[0] ?? "", buttons: [...(screen.labels ?? [])] }),
       },
@@ -195,10 +204,18 @@ const scriptedSite = (
   return { hooks, observe, site, clicks, fills };
 };
 
+/** A box as a look holds it. */
+const lookOf = (screen: Screen, { kind, role, label }: Screen["boxes"][number]) => ({
+  frame: screen.frame ?? origin,
+  kind,
+  ...(role === undefined ? {} : { role }),
+  ...(label === undefined ? {} : { label }),
+});
+
 /** The fingerprint a screen shows on arrival, every box empty. */
 const arrival = (screen: Screen, message?: string): StateFingerprint => ({
   top: origin,
-  boxes: screen.boxes.map((box) => ({ frame: screen.frame ?? origin, kind: box.kind })),
+  boxes: screen.boxes.map((box) => lookOf(screen, box)),
   submit: screen.boxes.length > 0,
   ...(message === undefined ? {} : { message }),
   ...(screen.boxes.length === 0
@@ -241,6 +258,7 @@ const replay = (
     readonly codes?: readonly string[];
     /** Each question's prompt, in order. */
     readonly prompts?: string[];
+    readonly codeRowByPlace?: boolean;
   } = {},
 ) => {
   const asked: string[] = [];
@@ -309,6 +327,7 @@ const replay = (
         quiet: { quietMs: 20, capMs: 120, enterMs: 40 },
         sent: { current: false },
         ...(options.from === undefined ? {} : { from: options.from }),
+        ...(options.codeRowByPlace === undefined ? {} : { codeRowByPlace: options.codeRowByPlace }),
       }),
     ),
   ).then((outcome) => {
@@ -2394,4 +2413,111 @@ it("presses a learned look-alike alone only where the press would go once more, 
   const went = await replayOnClock(goes, repairedFrom([emailState, go, typesPassword], go, [goElsewhere, typesPassword]));
   expect(went.ended).toMatchObject({ reason: "state_repeated" });
   expect(goes.clicks).toEqual(["#continue", "#go", "#go"]);
+});
+
+// Two code screens a site serves at random after the same email, in a frame on its sign-in origin,
+// alike but for their boxes' role and labels: the states know the first, recorded before code
+// boxes had either.
+const auth = "https://auth.example.test";
+const codeRow = (role: string, first: number, selector: (at: number) => string): Screen => ({
+  path: "/verify",
+  frame: auth,
+  boxes: Array.from({ length: 6 }, (_, at) => ({
+    selector: selector(at),
+    kind: "code" as const,
+    role,
+    label: String(first + at),
+  })),
+});
+const textRow = codeRow("textbox", 1, (at) => `role=textbox[name="${at + 1}"]`);
+const rowStep = (row: Screen) =>
+  stepAt("/verify", row.boxes.map(({ selector }) => ({ selector, slot: "code" as const })), undefined, {
+    page: `${auth}/verify`,
+  });
+const unlabelledRow: Screen = { ...textRow, boxes: textRow.boxes.map(({ selector, kind }) => ({ selector, kind })) };
+const rowLibrary = libraryOf([
+  { fingerprint: arrival(emailScreen), step: stepAt("/sign-in", [email], "#continue") },
+  { fingerprint: arrival(unlabelledRow), step: rowStep(textRow) },
+]);
+const [rowEmail, textState] = rowLibrary.states as [StateEntry, StateEntry];
+/** The site: the email's Continue shows `row`, whose code goes by Enter, as a page sends it. */
+const rowSite = (row: Screen) =>
+  scriptedSite({ start: emailScreen, code: row }, (at, clicked) =>
+    at === "start" && clicked === "#continue" ? "code" : clicked === "Enter" ? "home" : undefined,
+  { resubmit: true });
+const stateEvents = (events: readonly Readonly<Record<string, unknown>>[]) =>
+  events.filter((event) => event.stage === "state");
+
+it("types the code by place into the row of a look-alike code screen whose recorded boxes never show, asking for it once, and logs a stop there", async () => {
+  // The other screen's spinbuttons, which only the row's own selectors by place find.
+  const numberRow = codeRow("spinbutton", 0, (at) => codeRowFields(6, false)[at]?.selector ?? "");
+  const events: Readonly<Record<string, unknown>>[] = [];
+  const site = rowSite(numberRow);
+  const ended = await replay(site, rowLibrary, { events });
+  expect(ended).toMatchObject({ outcome: "signed_in" });
+  expect(site.fills).toEqual(["email", ...Array<string>(6).fill("code")]);
+  expect(ended.asked.filter((id) => id === "code")).toHaveLength(1);
+  expect(stateEvents(events)).toEqual([
+    { stage: "state", state: rowEmail.key },
+    { stage: "state", state: textState.key, reason: "code_row" },
+  ]);
+  // A box past the row that the page's look leaves out, as one drawn transparent, types nothing.
+  const past = rowSite({ ...numberRow, buttons: codeRowFields(7, false).slice(6).map(({ selector }) => selector) });
+  expect(await replay(past, rowLibrary)).toMatchObject({ outcome: "unclear", reason: "not_found" });
+  expect(past.fills).toEqual(["email"]);
+  // A row of the look whose boxes are labelled for a PIN, as a PIN screen alike, types nothing.
+  const pin = rowSite({ ...numberRow, boxes: numberRow.boxes.map((box, at) => ({ ...box, label: `PIN ${at + 1}` })) });
+  expect(await replay(pin, rowLibrary)).toMatchObject({ outcome: "unclear", reason: "not_found" });
+  expect(pin.fills).toEqual(["email"]);
+  // A caller that goes on from the page itself gets it as it stopped, with its look and the state.
+  const logged: Readonly<Record<string, unknown>>[] = [];
+  const left = rowSite(numberRow);
+  expect(await replay(left, rowLibrary, { events: logged, codeRowByPlace: false })).toMatchObject({
+    outcome: "unclear",
+    reason: "not_found",
+  });
+  expect(left.fills).toEqual(["email"]);
+  expect(logged).toContainEqual({
+    stage: "state_not_found",
+    state: textState.key,
+    shape: expect.objectContaining({
+      boxes: numberRow.boxes.map((box) => ({ ...lookOf(numberRow, box), label: "#" })),
+    }),
+  });
+});
+
+it("learns a look-alike code screen beside the known one, which a new login takes directly, and keeps a login's own route and method", async () => {
+  // A repair that met the spinbutton screen went on from the email state and recorded it, and
+  // another login's repair recorded a look-alike of the first screen pressing another control.
+  const numberRow = codeRow("spinbutton", 0, (at) => `role=spinbutton[name="${at}"]`);
+  const learned = [
+    { fingerprint: arrival(numberRow), step: rowStep(numberRow) },
+    { fingerprint: arrival(textRow), step: { ...rowStep(textRow), submit: "#other" } },
+  ].reduce((library, state) => {
+    const appended = appendSignInStates(library, { from: rowEmail.key, states: [state], signedIn: { selector: "#account" } });
+    if ("refused" in appended) throw new Error(appended.refused);
+    return appended.library;
+  }, rowLibrary);
+  const [, , numberState] = learned.states as [StateEntry, StateEntry, StateEntry, StateEntry];
+  expect(learned.states.slice(0, 2)).toEqual([rowEmail, textState]);
+  const events: Readonly<Record<string, unknown>>[] = [];
+  expect(await replay(rowSite(numberRow), learned, { events })).toMatchObject({
+    outcome: "signed_in",
+    choices: { states: [rowEmail.key, numberState.key] },
+  });
+  expect(stateEvents(events)).toEqual([
+    { stage: "state", state: rowEmail.key },
+    { stage: "state", state: numberState.key },
+  ]);
+  // A login whose route went through the first screen, recorded before code boxes had a role and
+  // label, keeps to it on that screen, which now has them, and keeps its method.
+  const own = { states: [rowEmail.key, textState.key], method: "sms" as const };
+  const ownEvents: Readonly<Record<string, unknown>>[] = [];
+  const site = rowSite({ ...textRow, buttons: ["#other"] });
+  expect(await replay(site, learned, { choices: own, events: ownEvents })).toMatchObject({ outcome: "signed_in", choices: own });
+  expect(stateEvents(ownEvents)).toEqual([
+    { stage: "state", state: rowEmail.key },
+    { stage: "state", state: textState.key },
+  ]);
+  expect(site.clicks).not.toContain("#other");
 });
