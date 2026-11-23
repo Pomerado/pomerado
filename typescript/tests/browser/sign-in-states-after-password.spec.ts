@@ -239,6 +239,26 @@ test("a ZIP code page that signs in on its last digit, taking its button away, s
   expect(posts).toEqual([`/login username=${username}&password=${password}`]);
 });
 
+test("a sign-in whose button switches its form to GET as it fires is refused once, with no second press and no credential in an address", async ({ page }) => {
+  // The button counts its clicks and switches its form to GET, which would put the password in
+  // the address, so the fill's guard refuses the submission as the click fires.
+  const switching = loginPage.replace(
+    '<button id="sign-in">',
+    `<button id="sign-in" onclick="window.clicks = (window.clicks || 0) + 1; this.form.method = 'get'">`,
+  );
+  const posts = await serve(page, { "/login": switching }, { "/login": "/login" });
+  const library = await recorded(page, [login]);
+  await page.goto("about:blank");
+  posts.length = 0;
+  const addresses: string[] = [];
+  page.on("request", (request) => addresses.push(request.url()));
+  const { ended } = await replay(page, library, {});
+  expect(ended).toMatchObject({ reason: "submit_refused" });
+  expect(await page.evaluate(() => Reflect.get(window, "clicks"))).toBe(1);
+  expect(posts).toEqual([]);
+  expect(addresses.filter((address) => address.includes(password) || address.includes(username))).toEqual([]);
+});
+
 test("a code page right after the username, before any password, gets no code", async ({ page }) => {
   const identifier =
     '<form method="post" action="/login"><label>Username<input id="username" name="username"></label><button id="next">Next</button></form>';

@@ -2103,8 +2103,9 @@ const sendsOnPress = <E extends YieldableError, V extends string, L extends Auto
  * The last box goes in with the state's own submit, in one fill, as a recipe screen's do, so the
  * fill's guards around its click hold for what it typed, such as closing a list the box opened over
  * the submit; never in a state another known state holds, nor one with methods or whose page sends
- * itself, nor where the page doesn't show that submit with the box at once. A press so refused with the box still unsent, as
- * one the page took away once the box was typed, goes as after the box alone.
+ * itself, nor where the page doesn't show that submit with the box at once. A press so refused
+ * before its click ran, as one the page took away once the box was typed, goes as after the box
+ * alone.
  */
 const actIn = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -2204,9 +2205,10 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
           next,
           heldFor(run, fields, asked),
         );
-        // A submit refused once every box was typed (`fillFailure`) goes as after the boxes alone;
-        // any other submit the fill failed ends the state, as a press alone would.
-        const unpressed = asked !== typing && failed === "submit_refused";
+        // A submit refused before its click ran, once every box was typed (`fillFailure`), goes as
+        // after the boxes alone; any other submit the fill failed, as a click the guard refused as
+        // it fired, ends the state, as a press alone would.
+        const unpressed = asked !== typing && failed === "submit_refused" && !replay.progress.ranMaySend;
         if (failed !== undefined && !unpressed) {
           if (
             run.gone ||

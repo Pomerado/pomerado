@@ -174,6 +174,11 @@ const makeReplaySession = <E extends YieldableError, V extends string, L extends
     chosen: undefined as SignInMethodChoice | undefined,
     ran: [] as AutofillStep[],
     /**
+     * Whether the step the replay ran last may have sent what it filled (`maySend`), which its
+     * failure alone doesn't tell of a click the guard refused as it fired.
+     */
+    ranMaySend: false,
+    /**
      * The password or code a retry, or a recorded screen's planned refill, filled a second time,
      * which is never filled again.
      */
