@@ -1487,7 +1487,7 @@ it("reads a run's screens apart from each notice its screens' steps dismiss", as
       return signedLogin(typed) ? { next: "account", signIn: true } : {};
     },
   });
-  const dismissed:(readonly string[] | undefined)[] = [];
+  const dismissed: (readonly string[] | undefined)[] = [];
   const observe: NonNullable<SignInReplayBrowser<never>["observe"]> = (workspace, identifiers, popup, dismiss) => {
     dismissed.push(dismiss);
     return observeOn(fake)(workspace, identifiers, popup, dismiss);

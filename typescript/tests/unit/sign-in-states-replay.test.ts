@@ -478,12 +478,20 @@ it("never holds a code picked from checkboxes as still showing on a page with no
   expect(site.clicks).toEqual(["#continue", "#verify"]);
 });
 
-it("never matches a code picked from checkboxes with a code box a look read before boxes had a role holds", () => {
+it("never matches a code picked from checkboxes with a typed code box, one a look read before boxes had a role holds or a code row", () => {
   const plain: StateFingerprint = { top: origin, boxes: [{ frame: origin, kind: "code" }], submit: true };
   const picked: StateFingerprint = { ...plain, boxes: [{ frame: origin, kind: "code", role: "checkbox" }] };
+  const password = { frame: origin, kind: "password" } as const;
   expect(sameFingerprint(picked, plain)).toBe(false);
   expect(sameBoxes(picked, plain, true)).toBe(false);
-  expect(containsFingerprint(picked, { ...plain, boxes: [...plain.boxes, { frame: origin, kind: "password" }] })).toBe(false);
+  expect(containsFingerprint(picked, { ...plain, boxes: [...plain.boxes, password] })).toBe(false);
+  // A row of six typed boxes, beside a state whose step types its one code.
+  const row: StateFingerprint = { ...plain, boxes: [{ frame: origin, kind: "code", role: "textbox", count: 6 }] };
+  const state = { fingerprint: picked, step: stepAt("/verify", [{ selector: "#grid", slot: "code" }], "#verify") };
+  expect(sameFingerprint(row, state)).toBe(false);
+  expect(sameBoxes(row, state)).toBe(false);
+  expect(sameBoxes(row, state, true)).toBe(false);
+  expect(containsFingerprint(state, { ...row, boxes: [...row.boxes, password] })).toBe(false);
 });
 
 it("acts in a state recorded under a notice with the dismiss of one recorded with it, where the page read apart from the notice is both", async () => {

@@ -533,6 +533,11 @@ test("a code picked from four or more named checkboxes, on a page with no text b
     }),
   );
   expect(sameFingerprint(before.fingerprint, shown.fingerprint)).toBe(true);
+  // With a choice ticked, the page after it is still the code state it was.
+  const read = await open(page, { [site]: body(pictures(6)) });
+  const reached = await read();
+  await page.getByRole("checkbox", { name: "apple" }).check();
+  expect(stateAfter(reached, await read()).boxes).toEqual(reached.fingerprint.boxes);
   // Three checkboxes, or a page with a box that takes typing, read as before.
   const three = await (await open(page, { [site]: body(pictures(3)) }))();
   expect(three.fingerprint.boxes).toEqual([]);

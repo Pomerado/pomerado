@@ -242,7 +242,8 @@ const facing = (a: Look, b: Look): readonly [Look, Look] => {
  * box where the other look's step types as many codes as the row has boxes, or one code the fill
  * spreads across the row from its first box (`codes`), as a look read before a page switched each
  * box on in turn held its first box alone. A row pairs only with boxes read one by one, never with
- * another row, whose role and label tell it.
+ * another row, whose role and label tell it, nor with a picture code box or a code picked from
+ * checkboxes.
  * A picture code box left pairs with a box of its kind and frame the other look holds, else with
  * none, as a site may show it only at times. `folded` holds every box paired so, whose takes are
  * never compared (`takesAgree`).
@@ -273,6 +274,7 @@ const paired = (
           box.kind === kind &&
           box.count === undefined &&
           box.role !== "captcha" &&
+          box.role !== "checkbox" &&
           (kind === "identifier" ? takesFits(box.takes, row.takes) : box.takes === undefined),
       );
       const taken =
@@ -315,8 +317,8 @@ const paired = (
 const pairedLooks = (a: Look, b: Look, place = false) => {
   const [left, right] = [lookOf(a), lookOf(b)];
   const labels = labelled(left.fingerprint) && labelled(right.fingerprint);
-  // A picture code box, or a code picked from checkboxes, pairs by its role always, so it never
-  // stands in for another box (`paired`), as a typed code box a look read before roles held.
+  // A picture code box, or a code picked from checkboxes, pairs by its role always and never with a
+  // code row (`paired`), so it never stands in for a typed code box, as a look read before roles held.
   const marked = (role: string | undefined) => (role === "captcha" || role === "checkbox" ? { role } : {});
   const key = place
     ? ({ frame, kind, count, role }: StateBox) => canonical({ frame, kind, count, ...marked(role) })
