@@ -63,6 +63,7 @@ const signInOn = async (
     readonly path?: string;
     readonly look?: string;
     readonly fields: AutofillRecipeStep["fields"];
+    readonly rejectedMarkers?: AutofillRecipeStep["rejectedMarkers"];
   }[],
 ) => {
   const host = await hostPage(page);
@@ -81,12 +82,12 @@ const signInOn = async (
   };
   const observe = observeSignInState({ page: host, siteOrigin: site, authenticationOrigins: [] });
   const states = [];
-  for (const { path = "/verify", look, fields } of screens) {
+  for (const { path = "/verify", look, fields, rejectedMarkers } of screens) {
     await page.goto(`${site}${path}`);
     if (look !== undefined) await page.evaluate(look);
     const shown = await Effect.runPromise(observe);
     if (shown === undefined) throw new Error("The scan read nothing");
-    states.push({ fingerprint: shown.fingerprint, step: { page: `${site}${path}`, fields, submit: "#verify" } });
+    states.push({ fingerprint: shown.fingerprint, step: { page: `${site}${path}`, fields, submit: "#verify", ...(rejectedMarkers && { rejectedMarkers }) } });
   }
   const appended = appendSignInStates(signInStatesOf({}, []), { states, signedIn: { selector: "#account" } });
   if ("refused" in appended) throw new Error(appended.refused);
@@ -180,6 +181,36 @@ test("a recovery code goes back untyped when the ZIP code on its screen goes una
   expect(Either.isRight(signedIn) && signedIn.right.outcome).toBe("signed_in");
   expect(posted).toEqual([{ recovery_code: codes[0], zip }]);
   expect(settled).toEqual([{ codes: [codes[0]], reached: true }]);
+});
+
+test("a ZIP code refused beside a recovery code is retyped with a fresh code from the ledger, as the site spent the one it took", async ({ page }) => {
+  // The site spends each recovery code posted to it, whatever else it refuses.
+  const spent = new Set<string>();
+  const posted = await serve(
+    page,
+    recoveryForm(),
+    (sent) => {
+      const code = sent["recovery_code"] ?? "";
+      const fresh = codes.includes(code) && !spent.has(code);
+      spent.add(code);
+      return sent["zip"] !== zip ? "/refused" : fresh ? "/home" : "/verify";
+    },
+    { "/refused": `<p id="zip-error">The ZIP code does not match</p>${recoveryForm()}` },
+  );
+  const { signIn, settled, asked } = await signInOn(page, [
+    { fields: [...recoveryFields], rejectedMarkers: [{ slot: "zip", selector: "#zip-error" }] },
+  ]);
+  const signedIn = await signIn({ username: "owner", password, zip: "00000" }, { zip });
+  expect(Either.isRight(signedIn) && signedIn.right.outcome).toBe("signed_in");
+  expect(asked).toEqual(["zip"]);
+  expect(posted).toEqual([
+    { recovery_code: codes[0], zip: "00000" },
+    { recovery_code: codes[1], zip },
+  ]);
+  expect(settled).toEqual([
+    { codes: [codes[0]], reached: true },
+    { codes: [codes[1]], reached: true },
+  ]);
 });
 
 // Main takes no recovery code before its box, so it has none to give back here: this case covers
