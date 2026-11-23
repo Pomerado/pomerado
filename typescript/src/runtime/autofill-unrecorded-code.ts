@@ -1,4 +1,5 @@
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
+import { type AutofillRecipeStep, HandOffRecipeStep } from "../destinations/autofill-recipe.js";
 import type {
   AutofillInspection,
   AutofillRefusal,
@@ -71,6 +72,9 @@ const notOtherKind = `:not(${anyOf([
   '[autocomplete^="cc-" i]',
 ])})`;
 
+/** A form's submit control, as a code field's form shows one. */
+const submitControl = `:is(${anyOf(['button[type="submit" i]', 'input[type="submit" i]', "button:not([type])"])})`;
+
 /**
  * The code field and its form's submit, matched case-insensitively on attributes alone, never on
  * page text. A field marked
@@ -97,10 +101,9 @@ const codeFieldStep = (): AutofillStep => {
   // A page with a marked field matches only that, so a row of boxes whose first is marked and
   // whose ids name a code still matches that one box, as before.
   const unmarkedPage = `:root:not(:has(${marked}))`;
-  const submit = `:is(${anyOf(['button[type="submit" i]', 'input[type="submit" i]', "button:not([type])"])})`;
   return {
     fields: [{ selector: `${marked}, ${unmarkedPage} ${codeLike}`, slot: "code" }],
-    submit: `form:has(${marked}) ${submit}, ${unmarkedPage} form:has(${codeLike}) ${submit}`,
+    submit: `form:has(${marked}) ${submitControl}, ${unmarkedPage} form:has(${codeLike}) ${submitControl}`,
   };
 };
 export const unrecordedCodeStep = codeFieldStep();
@@ -312,3 +315,33 @@ export const onSignInOrigin = (
       !sameSite(inspection.siteOrigin, page))
   );
 };
+
+/**
+ * A code screen found by attributes alone (`findCodeScreen`, `codeBoxRow`) as a recorded screen a
+ * library of sign-in states can keep, so a host can have the page recorded, read before the code
+ * is typed: each box by the selector its first box's inspection (`named`) keeps for it
+ * (`keptCodeBoxes`), and, where the found step has a submit, that submit within the first box's
+ * form, on the page they showed on. None where a box has no such selector, the screen passes a
+ * recipe's bounds, such as a selector over its length, or the host's inspection of the step finds
+ * other controls than the found step's, or more than one, as a name that a box in another frame or
+ * shadow root has too.
+ */
+export const recordedCodeScreen = <E>(
+  hooks: Pick<AutofillHooks<E>, "inspect">,
+  named: AutofillInspection,
+  found: { readonly step: AutofillStep; readonly inspection: AutofillInspection },
+) =>
+  Effect.gen(function* () {
+    const names = named.keptCodeBoxes ?? [];
+    const first = names[0];
+    const boxes = named.screen.fields[0]?.codeBox?.of ?? 1;
+    if (first === undefined || names.length !== boxes) return undefined;
+    const fields = names.map((selector) => ({ selector, slot: "code" as const }));
+    const submit = found.step.submit === undefined ? undefined : `form:has(${first}) ${submitControl}`;
+    const step: AutofillRecipeStep = { page: named.page, fields, ...(submit === undefined ? {} : { submit }) };
+    if (!Schema.is(HandOffRecipeStep)(step)) return undefined;
+    const inspected = yield* hooks.inspect({ fields, ...(submit === undefined ? {} : { submit }) });
+    const controls = ({ page, targets, screen }: AutofillInspection) =>
+      JSON.stringify([page, targets, screen.origin, screen.fields, screen.submit]);
+    return "outcome" in inspected || controls(inspected) !== controls(found.inspection) ? undefined : step;
+  });
