@@ -999,8 +999,8 @@ const carriedRedirect = (
  * such a script by where it sits and its other destinations. A sign-in step that types nothing,
  * before anything was typed on the browser, judges any script address of its submit that way,
  * whatever the script runs. A form that
- * submits by GET is allowed when it is clearly the login form, which Guardian judges; its values
- * land in a URL that stays byte-exact. Once the host typed into the page
+ * submits by GET is judged like any other; its values land in a URL that stays byte-exact. Once the
+ * host typed into the page
  * (`judgedBeforeTyping` given), a refusal names only the origins `namedAfterTyping` allows.
  * A step with a part of a payment card (a card-fill step) is refused unless the primary tab's top
  * document is on the site or exactly on one of `checkoutOrigins`, and its card fields may sit in a
