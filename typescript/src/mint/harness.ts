@@ -1687,9 +1687,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        * A host check refused a step the build needs in this attempt: a publication its checks
        * refused, a sign-in the host refused, a task update the host refused, a step a host source
        * rule refused before it ran, a step its preflight refused and marked `hostRefusal`, or a
-       * download over its file caps, until a later example or act step settles without one. A `host_refused` block stands on it. A later finish_build
-       * that gets past the host's checks to Guardian's review clears it, setting
-       * `hostRefusalPassed`.
+       * download over its file caps, until a later example or act step settles without one. A
+       * `host_refused` block stands on it. A later finish_build that gets past the host's checks
+       * to Guardian's review clears it, setting `hostRefusalPassed`.
        */
       let hostRefused = recovered?.hostRefused === true;
       /**
