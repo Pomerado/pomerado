@@ -660,7 +660,8 @@ const pickerPageCode = String.raw`(element, args) => {
  * `{ picked: false, reason, wanted, available, matches }`, where `reason` is `option_missing`,
  * `option_ambiguous` (`matches` lists the options that tie), `option_disabled` or
  * `option_unclear` (in a write, `matches` lists the options that match only loosely), and
- * `available` every enabled option it listed, up to 100, for `option_missing` and
+ * `available` every enabled option it listed, up to 100, options with one label told apart as
+ * `matches` tells them and an option listed twice once, for `option_missing` and
  * `option_unclear` those closest to the value first (`rankByWords`), and for `option_unclear`
  * each option by its whole text, its lines joined with commas, as `matches` lists them. A
  * typeahead value with no clean match whose text before its first comma is shorter, as such a text
@@ -1007,11 +1008,16 @@ const pickerCollect = async (s, scan, wanted, cap = Infinity, searched = false) 
   const ranking = wanted ? pickerRank(s, pickerChoices(list), wanted, undefined, searched) : { status: "missing" };
   return { list, ranking, scan: latest, complete };
 };
-// The enabled options as shown, never a native select's empty-valued prompt such as "Choose...".
-// For a value it lacks (wanted given), those closest to it first, so they survive the cap.
+// The enabled options as shown, never a native select's empty-valued prompt such as "Choose...",
+// copies (one label, names and value) once and options that share a name told apart as
+// pickerMatches tells them. For a value it lacks (wanted given), those closest to it first, so
+// they survive the cap.
 const pickerClosest = (labels, wanted) => pickerClosestFirst([...new Set(labels)], wanted?.[0] ?? "", pickerRankByWords).slice(0, 100);
-const pickerAvailable = (list, wanted, name = (option) => option.label) =>
-  pickerClosest(list.filter((option) => !option.disabled && !(option.native && option.value === "")).map(name).filter(Boolean), wanted);
+const pickerAvailable = (list, wanted, name = (option) => option.label) => {
+  const shown = list.filter((option) => !option.disabled && !(option.native && option.value === "") && name(option));
+  const kept = [...new Map(shown.map((option) => [JSON.stringify([option.label, option.names, option.value]), option])).values()];
+  return pickerClosest(pickerMatches(kept, name), wanted);
+};
 // An option's whole text, every line of it.
 const pickerText = (option) => option.text || option.label;
 // An option as a refusal lists it: its whole text with its lines joined by commas, so a caller who
@@ -1023,10 +1029,10 @@ const pickerClean = ${JSON.stringify(cleanRanks)};
 // Every rank, the closest first.
 const pickerRankOrder = ${JSON.stringify(pickerRanks)};
 const pickerCleanly = (ranking) => ranking.status !== "missing" && pickerClean.includes(ranking.rank);
-// Options that tie, each as the caller can tell it apart: its label, else its whole text (its lines
-// joined with commas) or other name, else that and its value.
-const pickerMatches = (options) => {
-  const labels = options.map((option) => option.label);
+// Options that tie, each as the caller can tell it apart: its label (or name), else its whole text
+// (its lines joined with commas) or other name, else that and its value.
+const pickerMatches = (options, name = (option) => option.label) => {
+  const labels = options.map(name);
   const texts = options.map((option, index) => (labels.indexOf(labels[index]) === labels.lastIndexOf(labels[index]) ? labels[index] : option.lines?.length > 1 ? pickerCandidate(option) : option.names?.[1] ?? labels[index]));
   return texts.map((text, index) => (texts.indexOf(text) === texts.lastIndexOf(text) || !options[index].value ? text : text + " [" + options[index].value + "]"));
 };
