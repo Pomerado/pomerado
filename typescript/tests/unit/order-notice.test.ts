@@ -183,6 +183,20 @@ describe("a script's purchase confirm", () => {
     expect(asksAsDeclared({ ...request, notice: `${earlier} Extra.` }, declared)).toBe(false);
   });
 
+  it("refuses a notice that labels one line's total and leaves another's unlabeled", () => {
+    const { request } = asked({
+      currency: "USD",
+      items: [
+        { name: "Synthetic shake", quantity: 3, lineTotal: "14.97" },
+        { name: "Synthetic cable", quantity: 1, lineTotal: "4.36" },
+      ],
+      total: "19.33",
+    });
+    if (request === undefined) throw new Error("the order was not asked");
+    const mixed = 'Order: 3 × "Synthetic shake" (line total 14.97 USD); 1 × "Synthetic cable" (4.36 USD). Total: 19.33 USD.';
+    expect(asksAsDeclared({ ...request, notice: mixed }, declared)).toBe(false);
+  });
+
   // A host that predates fees refuses the key, so an order with none leaves it out.
   it("leaves out an empty list of fees, so the order keeps the earlier shape", () => {
     const { request } = asked({
