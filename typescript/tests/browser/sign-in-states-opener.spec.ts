@@ -421,6 +421,41 @@ test("a choice of account the page draws late is waited for and made, a login it
   expect(posted).toEqual(["/login/identifier", "/login/password"]);
 });
 
+test("a choice of account the page never shows is passed at the step wait for a state on its page that types the identifier", async ({ page }) => {
+  const posted: string[] = [];
+  const shown = { chosen: false };
+  await serveSite(
+    page,
+    {
+      "/login": () =>
+        `<main><p>Sign in to your workspace</p>${shown.chosen ? "" : '<button id="choose" type="button" onclick="this.remove()">Use the team account</button>'}<form method="post" action="/login/identifier"><label>Username<input id="username" name="username"></label><button id="next">Next</button></form></main>`,
+      "/login/password":
+        () => '<form method="post" action="/login/password"><label>Password<input id="password" name="password" type="password"></label><button id="sign-in">Sign in</button></form>',
+      "/home": () => '<p id="account">Your account</p>',
+    },
+    (path) => {
+      posted.push(path);
+      return path === "/login/identifier" ? "/login/password" : "/home";
+    },
+  );
+  const choose = await scanAt(page, "/login");
+  shown.chosen = true;
+  const library = libraryOf([
+    { fingerprint: choose, step: { page: `${site}/login`, fields: [], submit: "#choose" } },
+    {
+      fingerprint: await scanAt(page, "/login"),
+      step: { page: `${site}/login`, fields: [{ selector: "#username", accepts: ["username"] }], submit: "#next" },
+    },
+    {
+      fingerprint: await scanAt(page, "/login/password"),
+      step: { page: `${site}/login/password`, fields: [{ selector: "#password", slot: "password" }], submit: "#sign-in" },
+    },
+  ]);
+  posted.length = 0;
+  expect(await signIn(page, library)).toMatchObject({ outcome: "signed_in" });
+  expect(posted).toEqual(["/login/identifier", "/login/password"]);
+});
+
 test("a marker that names an identifier other than the login's ends it as the login's refusal, never retyped", async ({ page }) => {
   const posted: string[] = [];
   const shown = { refused: false };
