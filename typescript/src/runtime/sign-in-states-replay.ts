@@ -10,6 +10,7 @@ import {
   type AutofillSlot,
   type AutofillStep,
   hostSubmits,
+  type PrimaryIdentifierKind,
 } from "../destinations/autofill-step.js";
 import {
   addsDismiss,
@@ -96,6 +97,22 @@ export interface SignInStatesReplayInput<
    * itself, though a state it ranks first may press its recorded method there.
    */
   readonly rankMethod?: SignInMethodChoice | undefined;
+  /**
+   * How the login signs in, as its host knows it before its values are read: with a password or a
+   * code alone (`way`), the kind of identifier it signs in with (`kind`), and every kind it holds
+   * (`heldKinds`; absent when unknown). It orders known states sharing a look after the login's own
+   * route, as a host picks a tool's sign-in path for a login: one off its way, then one whose first
+   * identifier takes the kind less well, its own before another it holds before none, goes after the
+   * rest where the look offers one that fits better (`ranked`). A code login never takes a state
+   * that types a password. Absent, none of it orders anything.
+   */
+  readonly loginWay?:
+    | {
+        readonly way: "password" | "code";
+        readonly kind?: PrimaryIdentifierKind | undefined;
+        readonly heldKinds?: readonly PrimaryIdentifierKind[] | undefined;
+      }
+    | undefined;
   /** The page as a state, as `observeSignInState` reads it. */
   readonly observe: Effect.Effect<ObservedState | undefined, E>;
   readonly quiet?: StatesQuiet | undefined;
@@ -159,10 +176,15 @@ export type SignInStatesOutcome<V extends string = string> = AutofillReplayOutco
   readonly fromStop?: { readonly continued: true } | { readonly continued: false; readonly reason: string };
   /**
    * A replay that signed in after it gave the code on a page no state knew (`walk`): that page's
-   * fingerprint, and the key of the state acted in before it (`after`), with no selector or value,
-   * for a host to have the page recorded.
+   * fingerprint, the key of the state acted in before it (`after`), and the page as a recorded
+   * screen a library can keep (`step`, `recordedCodeScreen`), its boxes by the selectors that name
+   * them alone and no value, where each has one, for a host to have the page recorded.
    */
-  readonly unrecordedCode?: { readonly fingerprint: StateFingerprint; readonly after?: string };
+  readonly unrecordedCode?: {
+    readonly fingerprint: StateFingerprint;
+    readonly after?: string;
+    readonly step?: AutofillRecipeStep;
+  };
   readonly unknownState?: {
     readonly fingerprint: StateFingerprint;
     readonly description: string;
@@ -439,8 +461,9 @@ const plainly = (state: StateEntry, page: StateFingerprint) => sameFingerprint(s
 
 /**
  * Whether a page that has a state's look only as read on its top origin (`readsOn`) is not that
- * state: another state has the page's look plainly (`plainly`), or the state's controls don't show
- * there or the origin rule refuses them (`shownOn`), which leaves no refusal of its own.
+ * state: another state the login may take (`forLogin`) has the page's look plainly (`plainly`), or
+ * the state's controls don't show there or the origin rule refuses them (`shownOn`), which leaves
+ * no refusal of its own.
  */
 const apartFrom = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -448,7 +471,8 @@ const apartFrom = <E extends YieldableError, V extends string, L extends Autofil
   page: StateFingerprint,
 ) =>
   Effect.gen(function* () {
-    if (run.input.library.states.some((other) => other !== state && plainly(other, page))) return true;
+    if (run.input.library.states.some((other) => other !== state && forLogin(run, other) && plainly(other, page)))
+      return true;
     const admission = run.admission;
     const shown = yield* shownOn(run, state, resolved(run, state.step));
     run.admission = admission;
@@ -613,6 +637,78 @@ const verifyMarker = <E extends YieldableError, V extends string, L extends Auto
 /** `matchState`'s refusal where none of the login's own states shows, as an unknown state. */
 const ownStateNotShown = "own_state_not_shown";
 
+/** Whether a state's step types a password. */
+const typesPassword = (state: StateEntry) =>
+  state.step.fields.some((field) => "slot" in field && field.slot === "password");
+
+/** Whether the login may take a state: one that types a password never, for a code login (`loginWay`). */
+const forLogin = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  state: StateEntry,
+) => run.input.loginWay?.way !== "code" || !typesPassword(state);
+
+/**
+ * A state and the states it leads to, through the states after them, nearest first: the sign-in
+ * on from it, judged whole as a tool's sign-in path is.
+ */
+const onFrom = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  state: StateEntry,
+) => {
+  const { states, transitions } = run.input.library;
+  const on = [state];
+  for (const at of on)
+    for (const { from, to } of transitions) {
+      const next = from === at.key ? states.find((known) => known.key === to) : undefined;
+      if (next !== undefined && !on.includes(next)) on.push(next);
+    }
+  return on;
+};
+
+/**
+ * Whether a state is on the login's way, as a tool's sign-in path is of a password login's way
+ * when any of its screens types a password and of a code login's when none does: for a password
+ * login it types a password or leads to one (`onFrom`); for a code login it leads to a signed-in
+ * marker through states none of which types a password.
+ */
+const onWay = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  state: StateEntry,
+  way: "password" | "code",
+) => {
+  if (way === "password") return onFrom(run, state).some(typesPassword);
+  const { states, transitions, signedIn } = run.input.library;
+  const on = typesPassword(state) ? [] : [state.key];
+  for (const at of on)
+    for (const { from, to } of transitions) {
+      if (from !== at || on.includes(to)) continue;
+      if (signedIn.some((marker) => marker.key === to)) return true;
+      const next = states.find((known) => known.key === to);
+      if (next !== undefined && !typesPassword(next)) on.push(to);
+    }
+  return false;
+};
+
+/**
+ * Whether the first identifier field of the sign-in on from a state (`onFrom`) takes the login's
+ * kind, as a tool's sign-in path's first identifier fits a login: a username's, whose shape no field
+ * can tell, any; else one that accepts that kind, or a username alone, which any login's identifier
+ * is. Undefined where no identifier field comes on from it.
+ */
+const takesKind = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  state: StateEntry,
+  kind: PrimaryIdentifierKind,
+) => {
+  const accepts = onFrom(run, state)
+    .flatMap((known) => known.step.fields)
+    .flatMap((field) => ("accepts" in field ? [field.accepts.filter((taken) => taken !== "private_identifier")] : []))
+    .find((taken) => taken.length > 0);
+  return accepts === undefined
+    ? undefined
+    : kind === "username" || accepts.includes(kind) || accepts.every((taken) => taken === "username");
+};
+
 /**
  * Known states that share one look (`alike`), in the order this login takes them. Where its
  * own route, the states it last signed in through (`choices.states`), holds a state with that look
@@ -625,8 +721,16 @@ const ownStateNotShown = "own_state_not_shown";
  * at the start one no state leads to (`next`), then the most recently learned, as a library holds
  * its states in the order learned. Given the page's look (`page`), a state whose recorded instruction and ways stand
  * further from the page's than another's do (`toldApart`) goes after the rest, next after the
- * login's own route; one recorded without them is never moved by them. In place (`inPlace`), the
- * route takes no part, as a step-up is no part of the login's own sign-in.
+ * login's own route; one recorded without them is never moved by them. Given how the login signs
+ * in (`loginWay`), as a host takes a tool's path of the login's way, next one off its way goes
+ * after the rest where another is on it (`onWay`), until a password login acted in a state that
+ * types the password; then, as a host takes the first path whose identifier takes the login's own
+ * kind, else one it holds, one whose first identifier field takes neither goes after one that takes
+ * a kind it holds, which goes after one that takes its own (`takesKind`). Each only moves a state
+ * back, and only where the look offers a state that fits better, so a look-alike from earlier or
+ * later in a sign-in, or one with no identifier field on from it, keeps its place. A code login
+ * takes no state that types a password (`forLogin`). In place (`inPlace`), the route
+ * takes no part, as a step-up is no part of the login's own sign-in.
  */
 const ranked = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -637,7 +741,9 @@ const ranked = <E extends YieldableError, V extends string, L extends AutofillLo
 ) => {
   const route = run.input.choices?.states ?? [];
   const method = run.input.choices?.method ?? run.input.rankMethod;
+  const { loginWay } = run.input;
   const { states } = run.input.library;
+  const taken = candidates.filter((state) => forLogin(run, state));
   // The state last acted in, when it is not looked for again, leaves the route no say: where its
   // page stays, the route goes no further there, so a look-alike a repair learned after it may go on.
   const last = run.visited.at(-1);
@@ -645,7 +751,11 @@ const ranked = <E extends YieldableError, V extends string, L extends AutofillLo
   const own =
     run.input.inPlace !== true &&
     states.some(
-      (state) => (state.key !== last || candidates.includes(state)) && route.includes(state.key) && alike(state),
+      (state) =>
+        (state.key !== last || candidates.includes(state)) &&
+        route.includes(state.key) &&
+        alike(state) &&
+        forLogin(run, state),
     );
   const picks = (state: StateEntry) =>
     method !== undefined && state.step.methods?.find((option) => option.selector === state.step.submit)?.method === method;
@@ -657,15 +767,36 @@ const ranked = <E extends YieldableError, V extends string, L extends AutofillLo
     return index > at ? index - at : route.length + index;
   };
   const told = (state: StateEntry) => (page === undefined ? undefined : toldApart(state.fingerprint, page));
-  const nearest = Math.min(...candidates.flatMap((state) => told(state) ?? []));
+  const nearest = Math.min(...taken.flatMap((state) => told(state) ?? []));
+  // A password login's way is behind it once it acted in a state that types the password.
+  const way =
+    loginWay?.way === "code" ||
+    (loginWay?.way === "password" && !states.some((state) => run.visited.includes(state.key) && typesPassword(state)))
+      ? loginWay.way
+      : undefined;
+  const offWay =
+    way !== undefined && taken.some((state) => onWay(run, state, way))
+      ? (state: StateEntry) => !onWay(run, state, way)
+      : () => false;
+  // How well a state's first identifier takes the login's kinds: its own (0), another it holds (1),
+  // neither (2); undefined with no identifier field on from it, or no kind given.
+  const fit = (state: StateEntry) => {
+    const kind = loginWay?.kind;
+    const primary = kind === undefined ? undefined : takesKind(run, state, kind);
+    if (primary !== false) return primary === undefined ? undefined : 0;
+    return loginWay?.heldKinds?.some((held) => takesKind(run, state, held) === true) === true ? 1 : 2;
+  };
+  const best = Math.min(...taken.flatMap((state) => fit(state) ?? []));
   const order = (state: StateEntry) => [
     own ? along(state) : 0,
     Number((told(state) ?? nearest) > nearest),
+    Number(offWay(state)),
+    Number.isFinite(best) ? (fit(state) ?? best) - best : 0,
     Number(!picks(state)),
     Number(!next.has(state.key)),
     -states.indexOf(state),
   ];
-  return candidates
+  return taken
     .filter((state) => !own || route.includes(state.key))
     .map((state) => ({ state, by: order(state) }))
     .sort((a, b) => {
@@ -778,8 +909,9 @@ const learnedAlike = <E extends YieldableError, V extends string, L extends Auto
 ) =>
   Effect.gen(function* () {
     const plain = (state: StateEntry) => plainly(state, fingerprint) || inPopup(run, state);
-    // One the page has the look of only as read on its top origin (`readsOn`) only where none other is.
-    const told = learnedNext(run, after).some(plain)
+    // One the page has the look of only as read on its top origin (`readsOn`) only where none other
+    // the login may take (`forLogin`) is.
+    const told = learnedNext(run, after).some((state) => forLogin(run, state) && plain(state))
       ? plain
       : (state: StateEntry) => sameFingerprint(fingerprint, state) || inPopup(run, state);
     const learned = learnedNext(run, after).filter(told);
@@ -1097,7 +1229,7 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
     const told = (state: StateEntry) => shows(state) && !framed(state);
     const taken = (state: StateEntry) =>
       state !== skip && (!codeSent || next.has(state.key) || (loose && takesCodeIn(run, state)));
-    const candidates = states.filter((state) => told(state) && taken(state));
+    const candidates = states.filter((state) => told(state) && taken(state) && forLogin(run, state));
     const alike = ranked(run, candidates, told, next, fingerprint);
     let refused: string | undefined;
     let returned: StateEntry | undefined;
@@ -1926,7 +2058,9 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
           refused === undefined &&
           !(markerLast && drawing) &&
           still &&
-          !run.input.library.states.some((state) => containsFingerprint(shape as StateFingerprint, state))
+          !run.input.library.states.some(
+            (state) => forLogin(run, state) && containsFingerprint(shape as StateFingerprint, state),
+          )
         ) {
           if (endsEarly(run, shape)) break;
           // The marker's full check once, which may open the account page, then a page that
@@ -2010,9 +2144,12 @@ const lookAgain = <E extends YieldableError, V extends string, L extends Autofil
     // where nothing sets them apart (`apartFrom`).
     const apart = (kept || grows) && readsOn(shape, state) && (yield* apartFrom(run, state, shape));
     if ((kept && !apart) || toldByText) return { kind: "same" as const, text };
-    // One the page has the look of only as read on its top origin (`readsOn`) only where none other has it.
+    // One the page has the look of only as read on its top origin (`readsOn`) only where none other
+    // the login may take (`forLogin`) has it.
     const plain = (known: StateEntry) => plainly(known, shape);
-    const alike = run.input.library.states.some((known) => known !== state && plain(known)) ? plain : looksLike(shape);
+    const alike = run.input.library.states.some((known) => known !== state && forLogin(run, known) && plain(known))
+      ? plain
+      : looksLike(shape);
     for (const other of ranked(
       run,
       run.input.library.states.filter((known) => known !== state && alike(known)),
@@ -2407,7 +2544,7 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
         }
       }
       if (fuller === undefined && hostSubmits(full) && !sendsItself) {
-        if (input.library.states.some((other) => containsFingerprint(state, other))) {
+        if (input.library.states.some((other) => forLogin(run, other) && containsFingerprint(state, other))) {
           const look = yield* holdStill(run, state, reached);
           if (look.kind === "moved") return acted();
           if (look.kind === "fuller") fuller = look;
@@ -2897,11 +3034,19 @@ const walk = <E extends YieldableError, V extends string, L extends AutofillLogi
           input.codeRowByPlace !== false &&
           typed !== undefined &&
           !(yield* stillShows(run.as, typed))
-            ? yield* unrecordedCode(run.as, run.replay, probed)
+            ? yield* unrecordedCode(run.as, run.replay, probed, true)
             : "none";
         if (code === "ran" && unknown !== undefined) {
           const after = arrived.ended.unknownState?.after;
-          answered = { fingerprint: unknown, ...(after === undefined ? {} : { after }) };
+          // The look was read before the step, so the step is kept only on that look's top page.
+          const read = run.replay.progress.unrecordedCodeStep;
+          const step =
+            unknown.popup !== true && URL.parse(read?.page ?? "")?.origin === unknown.top ? read : undefined;
+          answered = {
+            fingerprint: unknown,
+            ...(after === undefined ? {} : { after }),
+            ...(step === undefined ? {} : { step }),
+          };
           continue;
         }
         if (code !== "none") return stopped(run, code).ended;

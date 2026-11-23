@@ -6,8 +6,9 @@ import { appendSignInStates, type SignInStates, signInStatesOf } from "../../src
 import { makeInputAsker } from "../../src/inputs/callback.js";
 import type { AutofillHooks } from "../../src/runtime/autofill-state.js";
 import type { HostedSignIn } from "../../src/runtime/autofill-replay-steps.js";
+import { typedValues } from "../../src/runtime/autofill-values.js";
 import type { InputAnswers } from "../../src/runtime/input-request.js";
-import { replaySignInStates } from "../../src/runtime/sign-in-states-replay.js";
+import { replaySignInStates, type SignInStatesOutcome } from "../../src/runtime/sign-in-states-replay.js";
 import { makeSignInBrowser } from "../../src/standalone/authentication.js";
 import { hostKeyboard, hostPage } from "./autofill-host-page.js";
 
@@ -54,7 +55,8 @@ const hostOn = async (page: Page) => {
   const browser = makeSignInBrowser({ page: host, keyboard, siteOrigin: site, authenticationOrigins: [], typing: { typed: false } });
   const hooks: AutofillHooks<TestFailure> = {
     inspect: (step) => browser.inspect(step),
-    fill: (input) => browser.fill(input),
+    // One-character code boxes take the code one character each, as the local host types it.
+    fill: (input) => browser.fill({ ...input, values: typedValues(input.step, input.values) }),
     ...(browser.resubmit === undefined ? {} : { resubmit: browser.resubmit }),
     check: (indicator, screens, challengeScreens, at) =>
       browser.confirm(indicator, screens, challengeScreens ?? screens, at?.origin),
@@ -165,11 +167,105 @@ test("a code page the library never recorded, after the password, is answered on
   expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
   expect(asked).toEqual(["code"]);
   expect(posts.filter((post) => post.startsWith("/verify"))).toEqual([`/verify code=${code}`]);
-  // The page's look and the state before it, for the host to have the page recorded.
+  // The page's look, the state before it and the page as a recorded screen, for the host to have
+  // the page recorded.
   expect(ended.unrecordedCode).toEqual({
     fingerprint: expect.objectContaining({ boxes: [expect.objectContaining({ kind: "code" })] }),
     after: library.states[0]?.key,
+    step: {
+      page: `${site}/verify`,
+      fields: [{ selector: 'input[name="code"]', slot: "code" }],
+      submit: 'form:has(input[name="code"]) :is(button[type="submit" i], input[type="submit" i], button:not([type]))',
+    },
   });
+  // A library that keeps the page signs in through it as a known state the next time.
+  await page.goto("about:blank");
+  posts.length = 0;
+  const again = await replay(page, kept(library, ended.unrecordedCode), { code });
+  expect(again.ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(again.ended.unrecordedCode).toBeUndefined();
+  expect(posts.filter((post) => post.startsWith("/verify"))).toEqual([`/verify code=${code}`]);
+});
+
+/** `library` with the code page a replay named, after the state before it, as a host keeps it. */
+const kept = (library: SignInStates, named: SignInStatesOutcome["unrecordedCode"]) => {
+  if (named?.step === undefined) throw new Error("No recorded code screen");
+  const appended = appendSignInStates(library, {
+    from: named.after,
+    states: [{ fingerprint: named.fingerprint, step: named.step }],
+    signedIn: { selector: "#account" },
+  });
+  if ("refused" in appended) throw new Error(appended.refused);
+  return appended.library;
+};
+
+/**
+ * A replay, from a library of the login alone, of a site whose page after the password is a code
+ * page, as `verifyPage` gives it on each load, that leads to the account: it signs in. The library,
+ * the outcome and each post.
+ */
+const codePageReplay = async (page: Page, verifyPage: () => string) => {
+  const pages = {
+    "/login": loginPage,
+    get "/verify"() {
+      return verifyPage();
+    },
+    "/home": '<p id="account">Your account</p>',
+  };
+  const posts = await serve(page, pages, { "/login": "/verify", "/verify": "/home" });
+  const library = await recorded(page, [login]);
+  await page.goto("about:blank");
+  posts.length = 0;
+  const { ended } = await replay(page, library, { code: "246810" });
+  expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  return { library, ended, posts };
+};
+
+test("a code page whose box gets a new id on each load is kept by its name, and the next replay signs in through it", async ({ page }) => {
+  let loads = 0;
+  const { library, ended, posts } = await codePageReplay(page, () => {
+    loads += 1;
+    return verify.replace('id="code" name="code"', `id="otp-${loads}a${loads}" name="otp"`);
+  });
+  await page.goto("about:blank");
+  posts.length = 0;
+  const again = await replay(page, kept(library, ended.unrecordedCode), { code: "246810" });
+  expect(again.ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(again.ended.unrecordedCode).toBeUndefined();
+  expect(posts.filter((post) => post.startsWith("/verify"))).toEqual(["/verify otp=246810"]);
+  expect(ended.unrecordedCode?.step?.fields).toEqual([{ selector: 'input[name="otp"]', slot: "code" }]);
+});
+
+test("a code page of a row of boxes is kept box by box, and the next replay signs in through it", async ({ page }) => {
+  const digits = [1, 2, 3, 4, 5, 6];
+  const boxes = digits
+    .map((box) => `<input name="d${box}" maxlength="1" inputmode="numeric"${box === 1 ? ' autocomplete="one-time-code"' : ""}>`)
+    .join("");
+  const { library, ended, posts } = await codePageReplay(
+    page,
+    () => `<form method="post" action="/verify"><p>Enter the code</p>${boxes}<button>Verify</button></form>`,
+  );
+  const sent = "/verify d1=2&d2=4&d3=6&d4=8&d5=1&d6=0";
+  expect(posts.filter((post) => post.startsWith("/verify"))).toEqual([sent]);
+  await page.goto("about:blank");
+  posts.length = 0;
+  const again = await replay(page, kept(library, ended.unrecordedCode), { code: "246810" });
+  expect(again.ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(again.ended.unrecordedCode).toBeUndefined();
+  expect(posts.filter((post) => post.startsWith("/verify"))).toEqual([sent]);
+  expect(ended.unrecordedCode?.step?.fields).toEqual(digits.map((box) => ({ selector: `input[name="d${box}"]`, slot: "code" })));
+});
+
+test("a code page whose box has only an id with a digit in it, as a generated id has, is named by its look alone", async ({ page }) => {
+  const { library, ended } = await codePageReplay(page, () => verify.replace('id="code" name="code"', 'id="otp-1a1"'));
+  expect(ended.unrecordedCode).toEqual({ fingerprint: expect.anything(), after: library.states[0]?.key });
+});
+
+test("a code page whose box's name also names a box in a shadow root is named by its look alone", async ({ page }) => {
+  const promo =
+    '<p id="promo"></p><script>document.getElementById("promo").attachShadow({ mode: "open" }).innerHTML = \'<label>Promo<input name="code"></label>\';</script>';
+  const { library, ended } = await codePageReplay(page, () => verify + promo);
+  expect(ended.unrecordedCode).toEqual({ fingerprint: expect.anything(), after: library.states[0]?.key });
 });
 
 test("a refused password beside a security question flags no saved answer", async ({ page }) => {
