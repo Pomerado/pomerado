@@ -1316,9 +1316,12 @@ test("pickValue takes the first of an option listed twice, and still refuses opt
       matches: ["Springfield [b-40]", "Springfield [b-12]"],
     },
   });
-  // An option listed twice is one option among those available.
+  // An option listed twice is one option among those available, and one passed back as listed is picked.
   expect(await call(page, `return (await pickValue(page.getByLabel("Country"), "Mexico", fast)).available;`)).toEqual({ result: ["United States", "Canada"] });
-  expect(await submitted(page)).toEqual({ country: "US", branch: "" });
+  expect(await call(page, `return await pickValue(page.getByLabel("Branch"), "Springfield [b-12]", fast);`)).toEqual({
+    result: { picked: true, kind: "select", label: "Springfield", value: "b-12", rank: "exact", refills: 0 },
+  });
+  expect(await submitted(page)).toEqual({ country: "US", branch: "b-12" });
 });
 
 test("pickValue takes a city whose name before its comma is the value over one holding it as a word, with or without tie first", async ({ page }) => {
