@@ -2390,6 +2390,50 @@ const sendsOnPress = <E extends YieldableError, V extends string, L extends Auto
 };
 
 /**
+ * How and where a control's form submits, as a reading judged it: the properties the fill's own
+ * recheck compares (`resubmitted`), its methods, a GET its form or the control names, the method
+ * its submission takes and its destinations.
+ */
+const submitsBy = (target: AutofillInspection["targets"]["fields"][number] | undefined) =>
+  JSON.stringify([target?.methods, target?.explicitGet ?? false, target?.submitMethod, target?.actions]);
+
+/**
+ * Whether a reading of the page after typing (`inspection`, of `step`) finds a box the state typed
+ * in a form that submits otherwise than the reading before it was typed found (`readBefore`), as a
+ * page that turns its form to GET once a box was typed: the host judges each reading as it finds
+ * it, so a press on it would send what was typed where no reading judged it.
+ */
+const submitsChanged = (
+  readBefore: ReadonlyMap<string, string>,
+  step: AutofillStep,
+  inspection: AutofillInspection,
+) =>
+  step.fields.some((field, at) => {
+    const before = readBefore.get(field.selector);
+    return before !== undefined && before !== submitsBy(inspection.targets.fields[at]);
+  });
+
+/** Whether the page no longer shows a control of `step`, as the host's inspection finds it. */
+const goneFrom = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  step: AutofillStep,
+) =>
+  Effect.map(run.input.hooks.inspect(step), (found) => "outcome" in found && found.reason === "not_found");
+
+/**
+ * Whether the page no longer shows `step`'s submit, as the recipe replay reads a submit gone once
+ * the identifiers were typed (`submitGoneAfterTyping`).
+ */
+const submitGone = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  step: AutofillStep,
+) =>
+  Effect.map(
+    run.input.hooks.inspect(step),
+    (found) => "outcome" in found && found.reason === "not_found" && found.target === "submit",
+  );
+
+/**
  * Acts in a shown state, one action at a time, and looks at the page after each: each box typed
  * alone (a code's boxes together, with the state's recorded `refills`), then its press. A fuller
  * known state the page shows after a box or while a press waits (`holdStill`) is taken, keeping
@@ -2409,9 +2453,12 @@ const sendsOnPress = <E extends YieldableError, V extends string, L extends Auto
  * fill's guards around its click hold for what it typed, such as closing a list the box opened over
  * the submit; never in a state another known state holds, nor one with methods or whose page sends
  * itself, nor where the page doesn't show that submit with the box at once. A press so refused
- * before its click ran, as one the page took away once the box was typed, goes as after the box
- * alone. A press alone after boxes the state typed goes with them, by the host's click again,
- * which types nothing (`clickAgain`), so its guards on those boxes hold too.
+ * before its click ran, with its controls gone from the page, as one the page took away once the
+ * box was typed, goes as after the box alone. A press alone after boxes the state typed goes with
+ * them, by the host's click again, which types nothing (`clickAgain`), so its guards on those boxes
+ * hold too, and never where the page now finds a box it typed in a form that submits otherwise than
+ * before it was typed (`submitsChanged`), nor does Enter in its place, which follows only a press
+ * that never went and whose submit the page took away (`submitGone`).
  */
 const actIn = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -2424,6 +2471,8 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
     const { inspection } = shown;
     let reached = arrival;
     const typed = new Set<AutofillSlot>();
+    // How and where each box's form submits, as the reading before it was typed found it.
+    const readBefore = new Map<string, string>();
     const acted = (press?: AutofillStep, picked?: NonNullable<AutofillRecipeStep["methods"]>[number]): Acted => ({
       acted: state,
       reached,
@@ -2502,6 +2551,8 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
         const here = typeof ready === "object" ? ready : yield* shownWithin(run, state, typing);
         if (typeof here === "string") return stopped(run, here);
         if ("ended" in here) return here;
+        for (const [at, field] of asked.fields.entries())
+          if (!readBefore.has(field.selector)) readBefore.set(field.selector, submitsBy(here.targets.fields[at]));
         const next = asked === typing ? undefined : learnedNext(run, state)[0]?.step;
         const failed = yield* replay.runStep(
           asked,
@@ -2513,10 +2564,15 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
           next,
           heldFor(run, fields, asked),
         );
-        // A submit refused before its click ran, once every box was typed (`fillFailure`), goes as
-        // after the boxes alone; any other submit the fill failed, as a click the guard refused as
-        // it fired, ends the state, as a press alone would.
-        const unpressed = asked !== typing && failed === "submit_refused" && !replay.progress.ranMaySend;
+        // A submit refused before its click ran, once every box was typed (`fillFailure`), with
+        // the step's controls gone from the page, goes as after the boxes alone; any other submit
+        // the fill failed, as a click the guard refused as it fired or one whose form changed how
+        // it submits, ends the state, as a press alone would.
+        const unpressed =
+          asked !== typing &&
+          failed === "submit_refused" &&
+          !replay.progress.ranMaySend &&
+          (yield* goneFrom(run, asked));
         if (failed !== undefined && !unpressed) {
           if (
             run.gone ||
@@ -2586,6 +2642,8 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
         ? yield* shownOn(run, state, press)
         : yield* shownWithin(run, state, press, until);
       if (typeof here === "object" && "ended" in here) return here;
+      if (typeof here === "object" && submitsChanged(readBefore, press, here))
+        return stopped(run, "credential_target_refused");
       let failed =
         typeof here === "string"
           ? here
@@ -2598,13 +2656,18 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
         if (typeof here === "object" && "ended" in here) return here;
         failed = typeof here === "string" ? here : yield* replay.runStep(press, here);
       }
-      if ((failed === "not_found" || failed === "submit_refused") && enterInstead) {
+      if (
+        enterInstead &&
+        (failed === "not_found" ||
+          (failed === "submit_refused" && !replay.progress.ranMaySend && (yield* submitGone(run, press))))
+      ) {
         run.gone = true;
         yield* input.emit({ stage: "retried", reason: "submit_gone_after_typing" });
         const { submit: _gone, submitVia: _via, ...rest } = full;
         const keyed: AutofillStep = { ...rest, submitKey: "Enter" };
         const shown = yield* shownOn(run, state, keyed);
         if (typeof shown === "string") return stopped(run, shown);
+        if (submitsChanged(readBefore, keyed, shown)) return stopped(run, "credential_target_refused");
         const enter = yield* replay.runStep(keyed, shown);
         if (enter !== undefined) return stopped(run, enter);
         replay.progress.anythingSent = true;
@@ -2638,7 +2701,7 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
  * each box of a split code one character, the submit is found in their form and guarded for them,
  * and a click another element catches goes from the keyboard. What was typed counts as sent once
  * the press may have gone, as after a press alone (`settleCarried`), and the press is the step the
- * replay ran last. It runs none of the fill's own records of a step, as the host's click again
+ * replay ran last, with whether it may have sent (`ranMaySend`). It runs none of the fill's own records of a step, as the host's click again
  * after a typing that names no submit runs none (`enterAfterTyping`). Why it did not go, or
  * undefined.
  */
@@ -2655,6 +2718,7 @@ const clickAgain = <E extends YieldableError, V extends string, L extends Autofi
     if (maySend(report)) settleCarried(replay);
     yield* input.emit(stepDiagnostic(press, report));
     replay.progress.ran.push(press);
+    replay.progress.ranMaySend = maySend(report);
     return fillFailure(report);
   });
 

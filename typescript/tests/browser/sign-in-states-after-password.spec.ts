@@ -361,6 +361,52 @@ test("a sign-in whose button switches its form to GET as it fires is refused onc
   expect(addresses.filter((address) => address.includes(password) || address.includes(username))).toEqual([]);
 });
 
+test("a username state a fuller one holds, whose Continue switches its form to GET as it fires, gets no Enter after the refusal and no username in an address", async ({ page }) => {
+  const identifier = `<form method="post" action="/login"><label>Username<input id="username" name="username"></label><button id="next" onclick="window.clicks = (window.clicks || 0) + 1; this.form.method = 'get'">Continue</button></form>`;
+  const both = identifier.replace("<button", '<label>Password<input id="pw" type="password"></label><button');
+  const posts = await serve(page, { "/login": identifier, "/both": both }, { "/login": "/login" });
+  const usernameStep: AutofillRecipeStep = { page: `${site}/login`, fields: [{ selector: "#username", accepts: ["username"] }], submit: "#next" };
+  const library = await recorded(page, [
+    usernameStep,
+    { ...usernameStep, page: `${site}/both`, fields: [...usernameStep.fields, { selector: "#pw", slot: "password" }] },
+  ]);
+  await page.goto("about:blank");
+  posts.length = 0;
+  const addresses: string[] = [];
+  page.on("request", (request) => addresses.push(request.url()));
+  const { ended } = await replay(page, library, {});
+  expect(ended).toMatchObject({ reason: "submit_refused" });
+  expect(await page.evaluate(() => Reflect.get(window, "clicks"))).toBe(1);
+  expect(posts).toEqual([]);
+  expect(addresses.filter((address) => address.includes(username))).toEqual([]);
+});
+
+test("a password page whose form switches to GET once the password is typed sends nothing, alone or in a state a fuller one holds, and no password in an address", async ({ page }) => {
+  const passwordPage =
+    '<form method="post" action="/password"><label>Password<input id="password" name="password" type="password"></label><button id="sign-in">Sign in</button></form><script>document.getElementById("password").addEventListener("input", (event) => { event.target.form.method = "get"; });</script>';
+  // The same page with a code box drawn beside the password, as a page that asks for both.
+  const both = passwordPage.replace("<button", '<label>Code<input id="otp" autocomplete="one-time-code"></label><button');
+  const identifier =
+    '<form method="post" action="/login"><label>Username<input id="username" name="username"></label><button id="next">Next</button></form>';
+  const posts = await serve(page, { "/login": identifier, "/password": passwordPage, "/both": both }, { "/login": "/password" });
+  const usernameStep: AutofillRecipeStep = { page: `${site}/login`, fields: [{ selector: "#username", accepts: ["username"] }], submit: "#next" };
+  const passwordStep: AutofillRecipeStep = { page: `${site}/password`, fields: [{ selector: "#password", slot: "password" }], submit: "#sign-in" };
+  const fuller: AutofillRecipeStep = { ...passwordStep, page: `${site}/both`, fields: [...passwordStep.fields, { selector: "#otp", slot: "code" }] };
+  for (const steps of [[usernameStep, passwordStep], [usernameStep, passwordStep, fuller]]) {
+    const library = await recorded(page, steps);
+    await page.goto("about:blank");
+    posts.length = 0;
+    const addresses: string[] = [];
+    const heard = (request: { url: () => string }) => void addresses.push(request.url());
+    page.on("request", heard);
+    const { ended } = await replay(page, library, {});
+    page.off("request", heard);
+    expect(ended.outcome).not.toBe("signed_in");
+    expect(posts).toEqual([`/login username=${username}`]);
+    expect(addresses.filter((address) => address.includes(password))).toEqual([]);
+  }
+});
+
 test("a code page right after the username, before any password, gets no code", async ({ page }) => {
   const identifier =
     '<form method="post" action="/login"><label>Username<input id="username" name="username"></label><button id="next">Next</button></form>';
