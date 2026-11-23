@@ -20,10 +20,10 @@ export const normalizeText = (text: string, options: { readonly lines?: boolean 
     .join(options.lines === true ? "\n" : " ");
 
 /**
- * A choice's name folded for matching: case, accents and runs of spaces ignored, apostrophes
- * dropped and the punctuation `.`, `,`, hyphens and dashes read as a space, except next to a
- * digit, so "Joe’s Café" and "joes cafe" name the same option while "-1.5" keeps its sign and
- * point. Text that folds to nothing is kept as written, trimmed.
+ * A choice's name folded for matching: case, accents, the usual Arabic letter forms and runs of
+ * spaces ignored, apostrophes dropped and the punctuation `.`, `,`, hyphens and dashes read as a
+ * space, except next to a digit, so "Joe’s Café" and "joes cafe" name the same option while "-1.5"
+ * keeps its sign and point. Text that folds to nothing is kept as written, trimmed.
  *
  * It is pure and self-contained: the page code of `formControlsCode` and `pickerCode` embeds this
  * same function, so every option match folds names alike.
@@ -31,8 +31,10 @@ export const normalizeText = (text: string, options: { readonly lines?: boolean 
 export const foldChoiceText = (text: unknown): string => {
   const folded = String(text ?? "")
     .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/gu, "")
+    .replace(/[\u0300-\u036f\u0640\u064b-\u0655\u0670]/gu, "")
     .normalize("NFC")
+    .replace(/\u0649/gu, "\u0627")
+    .replace(/\u0629/gu, "\u0647")
     .replace(/(?<!\p{N})['\u2018\u2019\u02bc](?!\p{N})/gu, "")
     .replace(/(?<!\p{N})[.,\-\u2010\u2011\u2012\u2013\u2014](?!\p{N})/gu, " ")
     .replace(/\s+/gu, " ")
@@ -60,7 +62,8 @@ export const foldChoiceText = (text: unknown): string => {
  * 8,20 matches 8.2, while 1,5 never matches 15, 1,25 never matches 1.2 and 10.0 never matches 100.
  * Three digits after a lone mark may be thousands, so 1,250 and 1.250 stay as written and never
  * match 1.25, and a number right after a letter is a code, so v2.10 never matches v2.1. Compare
- * dates and amounts with `readBackMatches`, which reads them as values.
+ * dates and amounts with `readBackMatches`, which reads them as values. The usual Arabic letter
+ * forms of a name read as one name.
  *
  * With `{ rewrite: true }`, `shown` is the site's own version of a value the tool typed, `wanted`,
  * such as an address the site standardized as it was entered, and the answer is whether it kept
@@ -124,8 +127,10 @@ export const sameText = (
     const raw = String(text ?? "").replace(/[\u00AD\u200B\u2060\uFEFF]/gu, "");
     const folded = raw
       .normalize("NFKD")
-      .replace(/[\u0300-\u036f]/gu, "")
+      .replace(/[\u0300-\u036f\u0640\u064b-\u0655\u0670]/gu, "")
       .normalize("NFC")
+      .replace(/\u0649/gu, "\u0627")
+      .replace(/\u0629/gu, "\u0647")
       .toLowerCase()
       .replace(/(?<!\p{N})['\u2018\u2019\u02bc](?!\p{N})/gu, "")
       .replace(/(?<!\p{N})[.,\-\u2010\u2011\u2012\u2013\u2014](?!\p{N})/gu, " ")

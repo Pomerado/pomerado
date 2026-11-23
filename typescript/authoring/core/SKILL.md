@@ -315,7 +315,8 @@ exception: it is optional unless the task can't run without it (below).
   read picks and a write asks about, as above. `sameText` from `pomerado/runtime`
   matches a name that differs only in case, accents, spacing, apostrophes, periods, commas or
   hyphens, or in a word the site writes short, such as St-Jean for Saint-Jean, but not one
-  with a word added or dropped. Prefer it for confirming the pick, so the read-back agrees with
+  with a word added or dropped. It also reads the usual Arabic letter forms of a name as one
+  name. Prefer it for confirming the pick, so the read-back agrees with
   the choice, but not for choosing from a list, where a short label can match a longer name it
   isn't, such as UK for Ukraine.
   When more than one option matches equally, decide per tool, except for an address, pickup or
