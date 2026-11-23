@@ -675,6 +675,29 @@ it("reads the site's answer where a framed form recorded on its sign-in host sta
   expect(site.fills).toEqual(["password"]);
 });
 
+it("never takes another login's framed look-alike of a state that a choice of account the page never shows holds back, recorded on its sign-in host or on the site's page", async () => {
+  const choose: Screen = { path: passwordScreen.path, boxes: [], buttons: ["#choose"], texts: ["choose an account"], labels: ["~ ~"] };
+  const onSite = (screen: Screen, fields: AutofillRecipeStep["fields"], submit: string) => ({
+    fingerprint: arrival(inHostFrame(screen)),
+    step: stepAt(screen.path, fields, submit),
+  });
+  const screens = { start: inHostFrame({ ...passwordScreen, buttons: ["#go", "#go2"] }) };
+  for (const recorded of [onHost, onSite]) {
+    const library = libraryOf(
+      [recorded(choose, [], "#choose"), recorded(passwordScreen, [password], "#go")],
+      [onHost({ ...passwordScreen, buttons: ["#go2"] }, [password], "#go2")],
+    );
+    const route = library.states.filter((state) => state.step.submit !== "#go2").map((state) => state.key);
+    const held = scriptedSite(screens, () => "home");
+    expect(await replay(held, library, { choices: { states: route } })).toMatchObject({ outcome: "unsent", reason: "not_found" });
+    expect(held.fills).toEqual([]);
+    // A login whose own route never held the choice takes its own state.
+    const own = scriptedSite(screens, () => "home");
+    expect(await replay(own, library, { choices: { states: route.slice(1) } })).toMatchObject({ outcome: "signed_in" });
+    expect(own.clicks).toEqual(["#go"]);
+  }
+});
+
 it("presses once more a press that typed no secret when the page kept its state", async () => {
   const start: Screen = { path: "/", boxes: [], buttons: ["#sign-in"], texts: ["welcome"] };
   const library = libraryOf([
@@ -836,6 +859,24 @@ it("never takes another login's state by its control where the login's own state
   const relabeled = scriptedSite({ start: { ...both, labels: ["~"], buttons: ["#sign-in"] }, ...toSignIn }, (_at, clicked) => storefrontNext[clicked]);
   expect(await replay(relabeled, twoStorefronts, { choices: { states: route } })).toMatchObject({ reason: "unknown_state" });
   expect(relabeled.clicks).toEqual([]);
+});
+
+it("never takes another login's state by its control in place of the login's own that a choice of account the page never shows holds back", async () => {
+  const choose: Screen = { ...storefront, buttons: ["#choose", "#log-in"], texts: ["choose an account"] };
+  const library = libraryOf(
+    [{ fingerprint: arrival(choose), step: stepAt("/", [], "#choose") }, storefrontState, typedEmail, typedPassword],
+    [{ fingerprint: arrival({ ...both, labels: ["~ ~", "~"] }), step: stepAt("/", [], "#sign-in") }, typedEmail, typedPassword],
+  );
+  const route = library.states.filter((state) => state.step.submit !== "#sign-in").map((state) => state.key);
+  // No state has the page's whole look, and both logins' controls show.
+  const relabeled = { start: { ...both, labels: ["~"] }, ...toSignIn };
+  const held = scriptedSite(relabeled, (_at, clicked) => storefrontNext[clicked]);
+  expect(await replay(held, library, { choices: { states: route } })).toMatchObject({ outcome: "unsent", reason: "unknown_state" });
+  expect(held.clicks).toEqual([]);
+  // A login whose own route never held the choice takes its own state.
+  const own = scriptedSite(relabeled, (_at, clicked) => storefrontNext[clicked]);
+  expect(await replay(own, library, { choices: { states: route.slice(1) } })).toMatchObject({ outcome: "signed_in" });
+  expect(own.clicks).toEqual(["#log-in", "#continue", "#go"]);
 });
 
 // After a press, a page at the address of the state just pressed that still shows another state's

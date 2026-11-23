@@ -967,7 +967,10 @@ const pressesOnly = <E extends YieldableError, V extends string, L extends Autof
  * itself; else it stops there with the choice's own refusal (`matchState`), never pressing a later
  * state's control, such as a Continue shown beside the choice, or typing a password, for the
  * account the page picked. One whose own route (`choices.states`) holds `state` but not that first
- * state, and a replay in place, on the login's own session, never wait for it.
+ * state, and a replay in place, on the login's own session, never wait for it. A `state` so held
+ * back still counts for the login's own route where states of its look are taken (`ranked`), so a
+ * look-alike that route leaves out, such as another login's method choice no choice leads to, is
+ * never taken in its place.
  */
 const firstChoice = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -1055,11 +1058,16 @@ const byControl = <E extends YieldableError, V extends string, L extends Autofil
       pressesOnly(run, state) &&
       hashless(URL.parse(state.step.page, page)?.href ?? "") &&
       at(page, state.step) &&
-      (!stayed || next.has(state.key)) &&
-      firstChoice(run, state, after, waited) === undefined;
+      (!stayed || next.has(state.key));
     const pressing: StateEntry[] = [];
     for (const state of run.input.library.states)
-      if (state !== skip && here(state) && !(yield* returnedTo(run, state))) pressing.push(state);
+      if (
+        state !== skip &&
+        here(state) &&
+        firstChoice(run, state, after, waited) === undefined &&
+        !(yield* returnedTo(run, state))
+      )
+        pressing.push(state);
     for (const state of ranked(run, pressing, here, next)) {
       const inspection = yield* shownOn(run, state, resolved(run, state.step));
       // The live address as the inspection read it, whose hash a host's marker check may leave out.
@@ -1170,9 +1178,10 @@ const byMethods = <E extends YieldableError, V extends string, L extends Autofil
       state.fingerprint.boxes.length === 0 &&
       state.step.methods !== undefined &&
       state.fingerprint.top === fingerprint.top &&
-      state.fingerprint.message === fingerprint.message &&
-      firstChoice(run, state, after, waited) === undefined;
-    const choices = run.input.library.states.filter((state) => here(state) && !run.visited.includes(state.key));
+      state.fingerprint.message === fingerprint.message;
+    const choices = run.input.library.states.filter(
+      (state) => here(state) && firstChoice(run, state, after, waited) === undefined && !run.visited.includes(state.key),
+    );
     for (const state of ranked(run, choices, here, next, fingerprint))
       for (const { selector } of state.step.methods ?? []) {
         const popup = state.step.popup === undefined ? {} : { popup: state.step.popup };
@@ -1384,14 +1393,14 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
       ((sameFingerprint(state, fingerprint) && (fingerprint.message === undefined || !untold(state))) ||
         (inPopup(run, state) && next.has(state.key)) ||
         (codeSent && loose && takesCodeIn(run, state) && sameBoxes(state, fingerprint, true))) &&
-      (after !== undefined || run.input.inPlace !== true || leadsToNewMarker(run, state)) &&
-      firstChoice(run, state, after, waited) === undefined;
+      (after !== undefined || run.input.inPlace !== true || leadsToNewMarker(run, state));
+    const held = (state: StateEntry) => firstChoice(run, state, after, waited) !== undefined;
     // A state of the page's look only as the page reads on its top origin (`readsOn`).
     const framed = (state: StateEntry) => readsOn(fingerprint, state) && !(inPopup(run, state) && next.has(state.key));
     const told = (state: StateEntry) => shows(state) && !framed(state);
     const taken = (state: StateEntry) =>
       state !== skip && (!codeSent || next.has(state.key) || (loose && takesCodeIn(run, state)));
-    const candidates = states.filter((state) => told(state) && taken(state) && forLogin(run, state));
+    const candidates = states.filter((state) => told(state) && !held(state) && taken(state) && forLogin(run, state));
     const alike = ranked(run, candidates, told, next, fingerprint);
     let refused: string | undefined;
     let returned: StateEntry | undefined;
@@ -1434,9 +1443,10 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
     // admits them, never one acted in that came back. Its refusals count for nothing, so the page
     // ends as it did before it had that look.
     if (candidates.length === 0) {
-      const reading = states.filter((state) => framed(state) && shows(state) && taken(state));
+      const reading = states.filter((state) => framed(state) && shows(state) && !held(state) && taken(state));
       let back: StateEntry | undefined;
-      for (const state of ranked(run, reading, (other) => reading.includes(other), next, fingerprint)) {
+      // A held-back state with the page's look, plainly or as read, still counts for the route.
+      for (const state of ranked(run, reading, (other) => shows(other) && taken(other), next, fingerprint)) {
         const shown = yield* shownOn(run, state, resolved(run, state.step));
         if (typeof shown === "string") continue;
         if (yield* returnedTo(run, state)) back ??= state;

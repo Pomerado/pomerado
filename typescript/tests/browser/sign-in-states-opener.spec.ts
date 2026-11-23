@@ -510,6 +510,73 @@ test("a method choice on the page of a choice of account the page never shows is
   }
 });
 
+test("another login's method choice of the look of a login's own that a choice of account the page never shows holds back is never taken in its place, offered as recorded or with fewer methods, and a login whose route never held the choice takes its own", async ({ page }) => {
+  const posted: string[] = [];
+  const shown = { chosen: false, fewer: false };
+  const way = (id: string, label: string) =>
+    `<button id="${id}" type="button" onclick="location.assign('/login/identifier')">${label}</button>`;
+  await serveSite(
+    page,
+    {
+      "/login": () =>
+        `<main><p>Sign in to your workspace</p>${shown.chosen ? "" : '<button id="choose" type="button" onclick="this.remove()">Use the team account</button>'}${way("use-password", "Use a password")}${way("use-username", "Use a username")}${shown.fewer ? "" : way("use-email", "Use an email")}</main>`,
+      "/login/identifier":
+        () => '<form method="post" action="/login/identifier"><label>Username<input id="username" name="username"></label><button id="next">Next</button></form>',
+      "/login/password":
+        () => '<form method="post" action="/login/password"><label>Password<input id="password" name="password" type="password"></label><button id="sign-in">Sign in</button></form>',
+      "/home": () => '<p id="account">Your account</p>',
+    },
+    (path) => {
+      posted.push(path);
+      return path === "/login/identifier" ? "/login/password" : "/home";
+    },
+  );
+  const choose = await scanAt(page, "/login");
+  shown.chosen = true;
+  const chooser = await scanAt(page, "/login");
+  const identifier = await scanAt(page, "/login/identifier");
+  const methods = [
+    { method: "password", selector: "#use-password" },
+    { method: "identifier_username", selector: "#use-username" },
+    { method: "identifier_email", selector: "#use-email" },
+  ] as const;
+  const own = libraryOf([
+    { fingerprint: choose, step: { page: `${site}/login`, fields: [], submit: "#choose" } },
+    { fingerprint: chooser, step: { page: `${site}/login`, fields: [], submit: "#use-password", methods } },
+    { fingerprint: identifier, step: { page: `${site}/login/identifier`, fields: [{ selector: "#username", accepts: ["username"] }], submit: "#next" } },
+    {
+      fingerprint: await scanAt(page, "/login/password"),
+      step: { page: `${site}/login/password`, fields: [{ selector: "#password", slot: "password" }], submit: "#sign-in" },
+    },
+  ]);
+  // Another login's sign-in, which the page showed no choice of account, picked the username on
+  // that page and went on to the identifier.
+  const library = appended(
+    appendSignInStates(own, {
+      states: [{ fingerprint: chooser, step: { page: `${site}/login`, fields: [], submit: "#use-username", methods } }],
+      to: identifier,
+      signedIn: { selector: "#account" },
+    }),
+  ).library;
+  const route = own.states.map((state) => state.key);
+  for (const [fewer, reason] of [
+    [false, "not_found"],
+    [true, "unknown_state"],
+  ] as const) {
+    Object.assign(shown, { fewer });
+    posted.length = 0;
+    expect(await signIn(page, library, { states: route })).toMatchObject({ outcome: "unsent", reason });
+    expect(posted).toEqual([]);
+    expect(new URL(page.url()).pathname).toBe("/login");
+  }
+  for (const fewer of [false, true]) {
+    Object.assign(shown, { fewer });
+    posted.length = 0;
+    expect(await signIn(page, library, { states: route.slice(1) })).toMatchObject({ outcome: "signed_in", visited: route.slice(1) });
+    expect(posted).toEqual(["/login/identifier", "/login/password"]);
+  }
+});
+
 test("a marker that names an identifier other than the login's ends it as the login's refusal, never retyped", async ({ page }) => {
   const posted: string[] = [];
   const shown = { refused: false };
