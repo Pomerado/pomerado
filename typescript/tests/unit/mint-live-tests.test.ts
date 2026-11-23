@@ -2570,6 +2570,32 @@ it("runs no live tests for a write, signed in or not", async () => {
   expect(batches).toHaveLength(0);
 });
 
+// A host that guides a repair's or a change's tests itself sets `noMaintenanceTestPlan`: their
+// first passing example then carries no build test plan, while a build's still does.
+it("gives maintenance no build test plan on a host that sets noMaintenanceTestPlan", async () => {
+  const receiptIn = async (mode: "mint" | "maintenance") => {
+    const { host } = liveTestHost({});
+    const f = await fixture(
+      (_request, index) =>
+        [call("execute", example, "example"), call("finish_build", finish, "finish")][index] ??
+        prose(),
+      {
+        liveTests: { ...host, noMaintenanceTestPlan: true },
+        deadline: Deadline.after(30 * 60_000),
+        reviewAndExecute: completedExample,
+      },
+      { ...read, mode, observations: { failure: "The results list did not load." } },
+    );
+    await writeWorkspace((f.workspace as unknown as { root: string }).root, {
+      "src/tool.ts": toolSource,
+    });
+    await f.run();
+    return resultOf(f.requests[1], "example");
+  };
+  expect((await receiptIn("maintenance"))["testPlan"]).toBeUndefined();
+  expect((await receiptIn("mint"))["testPlan"]).toMatchObject({ plannedCases: 0 });
+});
+
 // Testing scope follows what the tool is now. A repair of a read that starts signed out runs its
 // cases; once it signs in, it is a signed-in read held to four test inputs, and its publication
 // carries only what ran signed in: here nothing, so the review judges its example.

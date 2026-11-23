@@ -1125,6 +1125,12 @@ export interface LiveTestHost {
    */
   readonly holdReviewOnFailingCases?: true;
   /**
+   * The host guides a maintenance mint's tests itself: a repair's or a change's first passing
+   * example carries no build test plan (`testPlan`). Its live tests still run. Absent,
+   * maintenance gets the test plan as a build does, as before this field existed.
+   */
+  readonly noMaintenanceTestPlan?: true;
+  /**
    * How long one case may run on this host, in milliseconds; `defaultLiveTestCaseMs` when
    * absent. The harness refuses a batch as `no_time`, running nothing, when less than this is
    * left before the batch's deadline, since no case could finish.
