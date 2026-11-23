@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { sameText } from "../../src/runtime/text.js";
+import { foldChoiceText, sameText } from "../../src/runtime/text.js";
 
 type Pairs = readonly (readonly [string, string])[];
 
@@ -31,6 +31,22 @@ it("ignores case, accents, spacing, apostrophes, and periods, commas and hyphens
     ],
     true,
   );
+});
+
+it("reads the usual Arabic letter forms of a name as the same name", () => {
+  expectEach(
+    [
+      ["أحمد", "احمد"],
+      ["إبراهيم", "ابراهيم"],
+      ["آمنة", "امنه"],
+      ["مصطفى", "مصطفا"],
+      ["مُحَمَّد", "محمد"],
+      ["محـــمد", "محمد"],
+    ],
+    true,
+  );
+  expectEach([["سلمى", "سلمان"]], false);
+  expect(foldChoiceText("حديقة الندى")).toBe(foldChoiceText("حديقه الندا"));
 });
 
 it("matches a word the page writes short when the wanted text has the full word", () => {
