@@ -422,7 +422,11 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   evidence for the `http` version; any other write is unintended and must not be in
   the script.
 - Confirm a write from the first proof the site gives that it took it, such as the new record's
-  id. Read other details if they show, and never wait for them.
+  id. After that proof, read each value the request doesn't need best-effort: never wait for one
+  or fail the run on one, and return one the tool couldn't read, or can't tie to the written
+  record, as null, with a short reason where the output declares a field for it. After
+  `verified()`, throw `OperationFailure` naming a value the request needs that the tool couldn't
+  read, or can't tie to the written record (core skill), so the run fails as applied.
 - Prefer confirming the write from its commit request. Keep the click on the final commit
   control, such as Save, Send, Submit, Book or Pay, in its own step, except a pay press after
   the host's card fill, which goes in the fill's step (caller-input skill). In the same call as
@@ -630,18 +634,16 @@ note.
   fails the run: the caller gets an error in place of the output, though the write landed. In
   that read-back, prefer needing only what proves the change, the record's identity and the
   values the input sets, and passing every other field to `waitForRows` or `waitForValues` as
-  `optional`. After `verified()`, return a field the request doesn't need as null when it read
-  nothing, and throw `OperationFailure` naming a value the request needs, or one it can't tie to
-  the written record (core skill), so the run fails as applied.
+  `optional`.
   List each field the input sets that the site saved differently, from the commit response or
   the read-back, in an optional output field `saved_differences`: `{ field, wanted, shown }`,
   as `saveAndReadBack` returns it, with `shown` left out when the site shows none, and
   `saved_differences` left out when every value holds. A tool whose output already holds a
-  fuller per-field list of what the site kept lists them there instead. A read-back that can't
-  find the record, or finds it only as it was before the write, calls no `verified()`, so the
-  run reports a possible change. When the script confirms from the commit response, take the
-  comparison's after read through the before read's query in the same call, before
-  `verified()`, so that `verified()` stays the last call to the site.
+  fuller per-field list of what the site kept lists them there instead. A read-back that is the
+  write's only proof, and can't find the record or finds it only as it was before the write,
+  calls no `verified()`, so the run reports a possible change. When the script confirms from the
+  commit response, take the comparison's after read through the before read's query in the same
+  call, before `verified()`, so that `verified()` stays the last call to the site.
 - A write with branches, such as create when nothing matches and update when one does, runs
   one branch in the session. Each branch may make its own commit call, such as a create call
   and an update call; keep their confirmation and comparison in shared code that reads back
