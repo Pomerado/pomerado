@@ -1818,7 +1818,7 @@ it("refuses to append a state whose step its readers can't read back, and counts
   });
 });
 
-it("retires the oldest states past the cap, never one the recorded sign-in goes through", () => {
+it("retires the oldest states past the cap, never one the recorded sign-in goes through, and one on a saved route last", () => {
   const notice = (n: number) => ({
     fingerprint: { top: origin, boxes: [], submit: false, message: `Notice ${n}`, buttons: ["Ok"] },
     step: stepAt(`/notice/${n}`, [], "#ok"),
@@ -1840,6 +1840,14 @@ it("retires the oldest states past the cap, never one the recorded sign-in goes 
     [oldest, ...rest, repaired.added[0]].map((entry) => entry?.key),
   );
   expect(repaired.library.transitions.slice(0, full.transitions.length)).toEqual(full.transitions);
+  // A state a login's saved route holds goes only after every other one, so here the next oldest
+  // goes; with every state on a route, the oldest goes again.
+  const elsewhere = { states: [notice(100)], signedIn: { selector: "#account" } };
+  const routed = appendSignInStates(full, elsewhere, new Set([oldest?.key ?? ""]));
+  const everyRouted = appendSignInStates(full, elsewhere, new Set(full.states.map((state) => state.key)));
+  if ("refused" in routed || "refused" in everyRouted) throw new Error("refused");
+  expect(routed.retired).toEqual([next?.key]);
+  expect(everyRouted.retired).toEqual([oldest?.key]);
 });
 
 it("fails loudly when a recorded step carries no state", () => {

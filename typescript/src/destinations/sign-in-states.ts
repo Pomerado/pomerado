@@ -858,8 +858,10 @@ export const maximumStates = 64;
  * the oldest known state of its own sign-in with that look and top origin, never one the page only
  * reads on (`readsOn`), a step-up's for a step-up, and adds no marker. A library that would pass
  * `maximumStates` drops its oldest states, as many as it would pass it by, never one the sign-in
- * went through, went on from (`from`) or led to (`to`), and names their keys (`retired`) for a host
- * to drop from what it stores; its transitions and markers stay. Refused: a workspace step in a
+ * went through, went on from (`from`) or led to (`to`), and one whose key `onRoutes` holds, such as
+ * a state on a login's saved route (`SignInStatesChoices.states`), only after every other one; it
+ * names their keys (`retired`) for a host to drop from what it stores, and its transitions and
+ * markers stay. Refused: a workspace step in a
  * library with no workspace, or a new entry this core can't read back from its stored bytes
  * (`decodeSignInStateEntry`), as a step with a field no reader knows, which a reader would leave out
  * (`unsupported_step`); a state that shows nothing to tell it by; and a `to` no such state looks
@@ -868,6 +870,7 @@ export const maximumStates = 64;
 export const appendSignInStates = (
   library: SignInStates,
   observed: ObservedSignIn,
+  onRoutes?: ReadonlySet<string>,
 ):
   | {
       readonly library: SignInStates;
@@ -906,7 +909,10 @@ export const appendSignInStates = (
     return { refused: "unsupported_step" };
   const growth = added.filter((entry) => entry.kind === "state").length;
   const over = library.states.length + growth - maximumStates;
-  const retired = over > 0 ? library.states.filter((state) => !path.includes(state.key)).slice(0, over) : [];
+  const droppable = library.states.filter((state) => !path.includes(state.key));
+  const routed = (state: StateEntry) => onRoutes?.has(state.key) === true;
+  const retired =
+    over > 0 ? [...droppable.filter((state) => !routed(state)), ...droppable.filter(routed)].slice(0, over) : [];
   return {
     library: signInStatesOf(library, [
       ...library.states.filter((state) => !retired.includes(state)),
