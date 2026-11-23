@@ -1215,6 +1215,24 @@ test("pickValue in a write picks a name written short, with a hyphen for a space
   expect(await submitted(page)).toEqual({ place: "jo" });
 });
 
+// A number followed only by the value's own unit, however the site spells, spaces or cases the
+// unit, is the value; a count never takes an option in a unit, a pack or a deal.
+test("pickValue in a write picks the value's number in its own unit however the site writes it, and none for a count", async ({ page }) => {
+  const labels = ["2lb", "2 lbs", "2 pounds", "2 LB"];
+  await serve(page, `<form>${labels.map((label, index) => `<label>Weight ${index} <select name="w${index}">
+<option value="">Choose</option><option value="kg">2 kg</option><option value="lb">${label}</option></select></label>`).join("")}
+<label>Quantity <select name="quantity"><option value="">Choose</option><option value="a">2 lb</option>
+<option value="b">Pack of 2</option><option value="c">2-pack</option><option value="d">2 for $5</option></select></label></form>`);
+  for (const [index, label] of labels.entries())
+    expect(await call(page, `return await pickValue(page.getByLabel("Weight ${index}"), "2 lb", fast);`, 20, "write")).toEqual({
+      result: { picked: true, kind: "select", label, value: "lb", rank: label === "2 LB" ? "normalized" : "alike", refills: 0 },
+    });
+  expect(await call(page, `return await pickValue(page.getByLabel("Quantity"), "2", fast);`, 20, "write")).toMatchObject({
+    result: { picked: false, reason: "option_unclear", matches: ["2 lb", "Pack of 2", "2-pack", "2 for $5"] },
+  });
+  expect(await submitted(page)).toEqual({ w0: "lb", w1: "lb", w2: "lb", w3: "lb", quantity: "" });
+});
+
 // A read takes a name holding the value among other words, and says so; a write, or code the
 // runtime declared nothing for, lists it to ask about.
 test("pickValue in a read takes a product holding the value among other words, and a write lists it", async ({ page }) => {

@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { foldChoiceText } from "../runtime/text.js";
+import { foldChoiceText, unitAmount } from "../runtime/text.js";
 import { typeKeys, typingPauses } from "../runtime/typing-pace.js";
 import { fieldName } from "./field-name.js";
 
@@ -127,8 +127,11 @@ export const formControlMessageWords = /\brequired\b|\b(?:is|are) (?:missing|not
  * - `chooseOption(control, wanted, { timeout }?)`: chooses the one option of a native select or a
  *   custom dropdown whose label or value is one of `wanted` (a string or a list of alternate
  *   spellings, such as `["CA", "California"]`), ignoring case, accents, spacing and punctuation.
- *   A label that equals one wins over a value that does; a label that only holds it among other
- *   words is no match; two different options at the winning rank are ambiguous, while copies with one label and a value, both as read, such as a country
+ *   A label that equals one wins over a value that does, and a value that does over a label that
+ *   states the same number followed only by the same unit written another way, such as 2lb,
+ *   2 lbs or 2 pounds for 2 lb, while 2 alone never takes 2 lb; a label that only
+ *   holds it among other words is no match; two different options at the winning rank are
+ *   ambiguous, while copies with one label and a value, both as read, such as a country
  *   listed twice, are one option, so the first enabled copy is chosen. A custom dropdown is
  *   opened, its own listbox found through `aria-controls` or `aria-owns` (else the one visible
  *   listbox), typed into when it filters as you type, and scrolled when it renders its options as
@@ -203,6 +206,8 @@ const formControlFailure = (reason) => Object.assign(new Error(reason), { name: 
 const formControlMessageWords = ${String(formControlMessageWords)};
 /** Folds case, accents, spacing and punctuation, so "Joe’s Café" and "joes cafe" name the same option. */
 const formControlText = ${String(foldChoiceText)};
+/** A number followed only by its unit, written one way, so "2 pounds" and "2lb" state "2 lb". */
+const formControlAmount = ${String(unitAmount)};
 const formControlFrame = async (control, options) => {
   const handle = await control.elementHandle(options);
   const frame = handle === null ? null : await handle.ownerFrame();
@@ -240,16 +245,18 @@ const formControlDateCandidates = (iso, format, locale) => {
   return [...new Set(candidates)];
 };
 /**
- * The one option a choice names, by rank: label, then value, then, only with words set, as for a
- * date's part, whole words of the label.
+ * The one option a choice names, by rank: label, then value, then a label stating its number and
+ * unit another way, then, only with words set, as for a date's part, whole words of the label.
  */
 const formControlPick = (read, wanted, words = false) => {
-  const options = read.map((option) => ({ ...option, label: formControlText(option.label), value: formControlText(option.value) }));
+  const options = read.map((option) => ({ ...option, label: formControlText(option.label), value: formControlText(option.value), amount: formControlAmount(option.label) }));
   const names = new Set(wanted.map(formControlText).filter((name) => name !== ""));
+  const amounts = new Set(wanted.map(formControlAmount));
   const wordsOf = (label) => label.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
   const ranks = [
     (option) => names.has(option.label),
     (option) => option.value !== "" && names.has(option.value),
+    (option) => option.amount !== undefined && amounts.has(option.amount),
     ...(words ? [(option) => [...names].some((name) => (" " + wordsOf(option.label).join(" ") + " ").includes(" " + name + " "))] : []),
   ];
   for (const rank of ranks) {

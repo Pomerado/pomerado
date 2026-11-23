@@ -59,7 +59,10 @@ export type PickerRanking =
  * with `options.spellings`, a
  * short word that has other written forms there, such as St or a state's code, pairs only with
  * those, so MS never pairs with Missouri nor St with Station, and a state's code is one only where
- * a place ends the value. Then a name holding a spelling as whole words (New
+ * a place ends the value. With `options.units`, such as `unitAmount`, which writes a number
+ * followed only by its unit one way, a name that is a spelling's number followed only by the same
+ * unit, written another way, is `alike` too: 2lb, 2 lbs or 2 pounds for 2 lb, never 2 lb for 2.
+ * Then a name holding a spelling as whole words (New
  * York for York), then a name made of a
  * spelling's words, no more and no fewer,
  * whose parts, as its own or the spelling's commas, semicolons, colons, slashes, bars, brackets or
@@ -127,6 +130,7 @@ export const rankChoices = (
     readonly extraWords?: boolean;
     readonly searched?: boolean;
     readonly listedFirst?: boolean;
+    readonly units?: (text: string) => string | undefined;
     readonly spellings?: (
       text: string,
       options?: { readonly places?: "end" | "after-words" | "never" },
@@ -228,6 +232,7 @@ export const rankChoices = (
     phrase: once(phrase),
     parted: once(parted),
     alike: once((text: string) => alikeWords(text)),
+    amount: once((text: string) => options.units?.(text)),
   };
   // Two words pair when they are equal, or when both are Latin letters only and the shorter, of
   // five or more letters, is the whole start of the longer.
@@ -340,6 +345,7 @@ export const rankChoices = (
   }));
   const wordLists = perList((list) => list.map(words).filter((each) => each.length > 0));
   const alikeLists = perList((list) => list.map(alikeWords).filter((each) => each.length > 0));
+  const amounts = perList((list) => new Set(list.map((spelling) => options.units?.(spelling)).filter((amount) => amount !== undefined)));
   // A name's text up to each comma that is not a thousands separator, as in 1,000.
   const leadingParts = (text: string) =>
     [...text.matchAll(/(?<!\p{N}),|,(?!\p{N})/gu)].flatMap((comma) => ((comma.index ?? 0) > 0 ? [text.slice(0, comma.index)] : []));
@@ -403,7 +409,8 @@ export const rankChoices = (
         return choice.names.some((name) => {
           const text = String(name ?? "");
           const texts = options.leading === true ? [text, ...leadingParts(text)] : [text];
-          return texts.some((each) => wants.some((want) => alikeAll(want, named.alike(each))));
+          const amount = named.amount(text);
+          return (amount !== undefined && amounts(list).has(amount)) || texts.some((each) => wants.some((want) => alikeAll(want, named.alike(each))));
         });
       },
       true,
