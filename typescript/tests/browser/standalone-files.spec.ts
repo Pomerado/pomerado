@@ -319,6 +319,37 @@ async () => ({ statement: { $file: { id: "made-up", name: "other.txt", media_typ
   }
 });
 
+test("a run places a file the page takes from its input on change, then clears the input", async () => {
+  test.info().annotations.push({ type: "slow", description: "One native run through Chromium" });
+  // The site's page embeds `/chip`, which empties its input once it takes the file.
+  const site = await startFileSite({ frame: "/chip" });
+  const directory = await mkdtemp(join(tmpdir(), "pomerado-files-qa-"));
+  const file = join(directory, "receipt.txt");
+  await writeFile(file, receipt);
+  const served = await serve(site.url, join(directory, "downloads"), {
+    source: placeTool(
+      { selector: "iframe >> internal:control=enter-frame >> input[type=file]" },
+      { catches: true },
+    ),
+  });
+  try {
+    const result = await settled(
+      served.client,
+      served.client.callTool({
+        name: "send_receipt",
+        arguments: { input: { receipt: pathToFileURL(file).href } },
+      }),
+    );
+    expect(result.structuredContent, JSON.stringify(result)).toEqual({
+      placed: { name: "receipt.txt", media_type: "text/plain", size: receipt.length },
+    });
+  } finally {
+    await served.close();
+    await site.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("a run cannot steer a placement to another site's input or to a field that takes no file", async () => {
   test.info().annotations.push({
     type: "slow",

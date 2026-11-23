@@ -331,13 +331,12 @@ const serverType = (contentType: string | undefined) => {
     : undefined;
 };
 
+const PlacedFiles = Schema.Array(Schema.Struct({ name: Schema.String, size: Schema.Number }));
 const Placement = Schema.Union(
   Schema.Struct({
     refused: Schema.Literal("field_not_found", "not_file_input", "other_site", "not_accepted"),
   }),
-  Schema.Struct({
-    chosen: Schema.Array(Schema.Struct({ name: Schema.String, size: Schema.Number })),
-  }),
+  Schema.Struct({ chosen: PlacedFiles, seen: PlacedFiles }),
 );
 
 /** The page locator a field names, written by the host from data, never the script's code. */
@@ -382,10 +381,12 @@ const setByBrowserPathCode = (path: string, marker: string) => `
 /**
  * Page code that finds the one element `field` names and, only when it is a file input whose
  * frame is on the site and whose `accept` takes the file, sets that same element to `path`, then
- * reads back the names and sizes it holds. The frame's address comes from Playwright, not from
- * the page. A frame is on the site at the site's own origin, or on an https host of its
- * registrable domain. With `byBrowserPath`, the browser reads `path` on its own machine
- * (`setByBrowserPathCode`); else Playwright's `setInputFiles` reads it where the page code runs.
+ * reads back the names and sizes it holds (`chosen`) and those it held when its `change` event
+ * reached it (`seen`), before a page that takes the file and empties the input could act. The
+ * frame's address comes from Playwright, not from the page. A frame is on the site at the site's
+ * own origin, or on an https host of its registrable domain. With `byBrowserPath`, the browser
+ * reads `path` on its own machine (`setByBrowserPathCode`); else Playwright's `setInputFiles`
+ * reads it where the page code runs.
  */
 const placeCode = (options: {
   readonly field: FileField;
@@ -401,6 +402,7 @@ const field = ${fieldLocator(options.field)};
 try { await field.first().waitFor({ state: "attached", timeout: ${options.timeoutMs} }); } catch { return { refused: "field_not_found" }; }
 if ((await field.count()) !== 1) return { refused: "field_not_found" };
 const element = await field.elementHandle({ timeout: ${options.timeoutMs} });
+let seen;
 try {
   const facts = await element.evaluate((node) => ({ file: node instanceof HTMLInputElement && node.type === "file", accept: node.getAttribute("accept") ?? "" }));
   if (!facts.file) return { refused: "not_file_input" };
@@ -409,14 +411,20 @@ try {
   const onSiteHost = ${options.siteDomain === undefined ? "() => false" : hostOnSiteSource(options.siteDomain)};
   const onSite = address !== null && (address.origin === ${JSON.stringify(options.siteOrigin)} || (address.protocol === "https:" && onSiteHost(address.hostname)));
   if (!onSite) return { refused: "other_site" };
-  if (!accepts(facts.accept, ${JSON.stringify(options.file)})) return { refused: "not_accepted" };${
+  if (!accepts(facts.accept, ${JSON.stringify(options.file)})) return { refused: "not_accepted" };
+  seen = await element.evaluateHandle((node) => {
+    const seen = [];
+    node.addEventListener("change", () => seen.push(...[...node.files].map((file) => ({ name: file.name, size: file.size }))), { capture: true, once: true });
+    return seen;
+  });${
     options.byBrowserPath
       ? setByBrowserPathCode(options.path, randomUUID())
       : `
   await element.setInputFiles(${JSON.stringify(options.path)}, { timeout: ${options.timeoutMs} });`
   }
-  return { chosen: await element.evaluate((node) => [...node.files].map((file) => ({ name: file.name, size: file.size }))) };
+  return { chosen: await element.evaluate((node) => [...node.files].map((file) => ({ name: file.name, size: file.size }))), seen: await seen.jsonValue() };
 } finally {
+  await seen?.dispose();
   await element.dispose();
 }`;
 
@@ -533,8 +541,8 @@ export const makeRunFiles = (options: {
           .writeToBrowser({ name, bytes })
           .pipe(Effect.mapError(() => new FileRefused({ reason: "unavailable" })));
         // From here the page call may set the input, so a failure may have started an upload.
-        const sent = (reason: FileRefusalReason) =>
-          Effect.fail(new FileRefused({ reason, dispatched: true }));
+        const sent = (reason: FileRefusalReason, detail: string) =>
+          Effect.fail(new FileRefused({ reason, dispatched: true, detail }));
         const placement = yield* run(
           placeCode({
             field,
@@ -548,12 +556,20 @@ export const makeRunFiles = (options: {
           timeoutSec * 2 + 5,
         ).pipe(
           Effect.flatMap(Schema.decodeUnknown(Placement)),
-          Effect.catchAll(() => sent("unavailable")),
+          Effect.catchAll(() => sent("unavailable", "The page call that sets the input failed.")),
         );
         // A check that failed in the page refused before the input was set.
         if ("refused" in placement) return yield* refuse(placement.refused);
-        if (!placement.chosen.some((file) => file.name === name && file.size === bytes.byteLength))
-          return yield* sent("unavailable");
+        const lists = (files: typeof PlacedFiles.Type) =>
+          files.some((file) => file.name === name && file.size === bytes.byteLength);
+        // The input's change event saw the file even when the page then took it and emptied it.
+        if (!lists(placement.chosen) && !lists(placement.seen))
+          return yield* sent(
+            "unavailable",
+            placement.chosen.length === 0
+              ? "The input held no file once set."
+              : "The input held other files once set.",
+          );
         yield* count(bytes.byteLength);
         return {
           name,
