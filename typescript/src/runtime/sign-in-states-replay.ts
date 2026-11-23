@@ -47,7 +47,7 @@ import { recordedRejections } from "./autofill-rejection.js";
 import { approvalNumber, approvalScreen, openPastedLink, withApprovalNumber } from "./autofill-replay-approval.js";
 import { settleCarried, type StepValues } from "./autofill-replay-fill.js";
 import { landingSettleMs, type OffScreens } from "./autofill-replay-pages.js";
-import { stillShows, unrecordedCode } from "./autofill-replay-code-screen.js";
+import { codeShownAgain, stillShows, unrecordedCode } from "./autofill-replay-code-screen.js";
 import { entryCantTell, entryShape, holdsShown, inPlaceShape, inspectSettled, notShownYet } from "./autofill-replay-screens.js";
 import { alreadySignedIn, makeReplay, type Replay, workspaceOf } from "./autofill-replay-session.js";
 import {
@@ -3099,11 +3099,16 @@ const linkHere = <E extends YieldableError, V extends string, L extends Autofill
  * box, where the box typed last shows no more, gets the code there, as a code screen a recipe never
  * recorded does (`unrecordedCode`), once and only while no code may have gone out, and the replay
  * goes on; a caller that records such a page itself (`codeRowByPlace: false`) gets the unknown
- * state. One that then signs in names the page (`unrecordedCode`). Where the state acted in last
- * led to an emailed link's approval on a page the recipe replay admits as its screen (`linkHere`),
- * the page takes the code as the recipe replay's link screen does (`onLinkScreen`): never the host
- * generator's, and with no code given, the link's own question is asked as in its state. A
- * recovery code still held once it ends goes back unspent.
+ * state. Such a page that shows again where it was found refused that code, with or without an
+ * error: it gets one more code, never the refused one nor the host's own generator's, as a recipe
+ * replay's code retry there (`codeShownAgain`), and the replay goes on, unless the site's own answer
+ * names a locked account (`hosted.siteAnswer`, read on the texts the page didn't show before the code
+ * went in), which ends it (`account_locked`) with no code asked again, as in a code state; shown once
+ * more, it is the unknown state. One that then signs in names the page (`unrecordedCode`). Where the state acted in
+ * last led to an emailed link's approval on a page the recipe replay admits as its screen
+ * (`linkHere`), the page takes the code as the recipe replay's link screen does (`onLinkScreen`):
+ * never the host generator's, and with no code given, the link's own question is asked as in its
+ * state. A recovery code still held once it ends goes back unspent.
  */
 const walk = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -3115,6 +3120,9 @@ const walk = <E extends YieldableError, V extends string, L extends AutofillLogi
     let next = first;
     const probed = { current: false };
     let answered: SignInStatesOutcome<V>["unrecordedCode"];
+    let retried = false;
+    // The texts that page showed before its code went in, which the site's answer is read against.
+    let codeTexts: readonly string[] | undefined;
     const named = (ended: SignInStatesOutcome<V>) =>
       answered !== undefined && ended.outcome === "signed_in" ? { ...ended, unrecordedCode: answered } : ended;
     for (;;) {
@@ -3129,20 +3137,40 @@ const walk = <E extends YieldableError, V extends string, L extends AutofillLogi
       }
       if ("ended" in arrived) {
         const unknown = arrived.ended.unknownState?.fingerprint;
+        // The code page answered here before, shown again where it was found, refused its code.
+        const shown = unknown !== undefined && answered !== undefined && !retried ? yield* codeShownAgain(run.as, run.replay) : undefined;
+        const here = shown === undefined ? undefined : yield* input.hooks.inspect(shown);
+        if (shown !== undefined && here !== undefined && !("outcome" in here)) {
+          // A locked account the site's own answer names ends it with no code asked again, as in a code state.
+          const answer = input.hosted?.siteAnswer;
+          const now = answer === undefined ? undefined : yield* input.observe;
+          const said =
+            answer === undefined || now === undefined
+              ? undefined
+              : yield* answer(now.texts.filter((text) => !codeTexts?.includes(text)));
+          if (said === "locked") return stopped(run, "account_locked").ended;
+          retried = true;
+          yield* input.emit({ stage: "retried", reason: "unrecorded_code" });
+          run.replay.recordRejected(["code"]);
+          const failed = yield* run.replay.runStep(shown, here, "rejected");
+          if (failed !== undefined) return stopped(run, failed).ended;
+          continue;
+        }
         // The last box typed still showing is the site's answer to it, as a login page come back.
         const typed = run.replay.progress.ran.findLast((step) => step.fields.length > 0);
         const link = last === undefined || unknown === undefined ? undefined : yield* linkHere(run, last.acted, unknown);
-        const code =
+        const probe =
           unknown !== undefined &&
           (run.replay.sent.seenSent("password") ||
             (run.input.credentials?.password === undefined && run.replay.progress.anythingSent) ||
             link !== undefined) &&
           input.codeRowByPlace !== false &&
           typed !== undefined &&
-          !(yield* stillShows(run.as, typed))
-            ? yield* unrecordedCode(run.as, run.replay, probed, link !== undefined, true)
-            : "none";
+          !(yield* stillShows(run.as, typed));
+        const before = probe && input.hosted?.siteAnswer !== undefined ? yield* input.observe : undefined;
+        const code = probe ? yield* unrecordedCode(run.as, run.replay, probed, link !== undefined, true) : "none";
         if (code === "ran" && unknown !== undefined) {
+          codeTexts = before?.texts;
           const after = arrived.ended.unknownState?.after;
           // The look was read before the step, so the step is kept only on that look's top page.
           const read = run.replay.progress.unrecordedCodeStep;
