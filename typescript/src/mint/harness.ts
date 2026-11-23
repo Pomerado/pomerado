@@ -6460,7 +6460,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   ? preflighted
                   : { supported: false as const, reason: overLimit };
               // A refused preflight records no host refusal: it refuses the minter's own request,
-              // such as a wrong target or a missing sign-in step, which the minter can fix.
+              // such as a wrong target or a missing sign-in step, which the minter can fix. One the
+              // host marks `hostRefusal` is a host refusal: no change to the request gets past it.
               if (!availability.supported) {
                 const evidence: ExecutionEvidence = {
                   executionId: randomUUID(),
@@ -6476,6 +6477,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   reason: availability.reason,
                 });
                 record(evidence, submitted.purpose);
+                if (availability.hostRefusal === true) {
+                  refuseByHost({ source: "preflight" });
+                  yield* recordHostRefusal("execute", evidence.status, availability.reason);
+                }
                 return yield* visible(evidence, submitted.purpose);
               }
               if (submitted.purpose === "residual") yield* dependencies.authorizeResidual;
