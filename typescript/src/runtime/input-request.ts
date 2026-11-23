@@ -384,10 +384,16 @@ export type OrderFacts = typeof OrderFacts.Type;
 
 /**
  * An order's facts in the host's own words, as a request's notice shows them. Each item and fee
- * name is quoted, so no name reads as the host's words. An order with none of the later fields
- * (`unit`, `lineTotal`, `discount`, `fees`, `tip`) reads exactly as it did before them.
+ * name is quoted, so no name reads as the host's words. A line's total is labeled, as in
+ * `(line total 14.97 USD)`, so it never reads as a price each. An order with none of the later
+ * fields (`unit`, `lineTotal`, `discount`, `fees`, `tip`) reads exactly as it did before them.
+ * With `unlabeledTotals: true`, a line's total reads as a tool on an earlier core wrote it,
+ * `(14.97 USD)`, which a host still accepts (`asksAsDeclared`).
  */
-export const orderNotice = (order: OrderFacts) => {
+export const orderNotice = (
+  order: OrderFacts,
+  options: { readonly unlabeledTotals?: boolean } = {},
+) => {
   const money = (amount: string) => `${amount} ${order.currency}`;
   const items = order.items.map((item) =>
     [
@@ -395,7 +401,9 @@ export const orderNotice = (order: OrderFacts) => {
       ...(item.price === undefined
         ? []
         : [`at ${money(item.price)} ${item.unit === undefined ? "each" : `per ${item.unit}`}`]),
-      ...(item.lineTotal === undefined ? [] : [`(${money(item.lineTotal)})`]),
+      ...(item.lineTotal === undefined
+        ? []
+        : [`(${options.unlabeledTotals === true ? "" : "line total "}${money(item.lineTotal)})`]),
     ].join(" "),
   );
   const fees = (order.fees ?? []).map((fee) => `${JSON.stringify(fee.name)} ${money(fee.amount)}`);
