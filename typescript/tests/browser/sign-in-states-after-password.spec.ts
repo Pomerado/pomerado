@@ -186,6 +186,48 @@ test("a code page the library never recorded, after the password, is answered on
   expect(posts.filter((post) => post.startsWith("/verify"))).toEqual([`/verify code=${code}`]);
 });
 
+test("a code page the library never recorded that comes back with no error gets one more code, never the host's again", async ({ page }) => {
+  const seedCode = "135791";
+  const code = "246810";
+  // The site takes only the code it sent; any other brings the code page back as it was, with no error.
+  const posts: string[] = await serve(
+    page,
+    { "/login": loginPage, "/verify": verify, "/home": '<p id="account">Your account</p>' },
+    {
+      "/login": "/verify",
+      get "/verify"() {
+        return posts.at(-1) === `/verify code=${code}` ? "/home" : "/verify";
+      },
+    },
+  );
+  const library = await recorded(page, [login]);
+  // The host's own code, as from a saved authenticator seed, wherever the replay lets it give one,
+  // else the owner's: `owner` in turn, each counted.
+  const run = async (owner: readonly string[]) => {
+    await page.goto("about:blank");
+    posts.length = 0;
+    let asked = 0;
+    const { ended } = await replay(page, library, {}, () => ({
+      login: (base, step) => ({ ...base, seedAllowed: step.seedAllowed }),
+      code: (held) =>
+        Effect.sync(() => ({
+          slot: "code" as const,
+          value: (held as { seedAllowed?: boolean }).seedAllowed === true ? seedCode : (owner[asked++] ?? ""),
+        })),
+    }));
+    return { ended, asked, codes: posts.filter((post) => post.startsWith("/verify")) };
+  };
+  const signed = await run([code]);
+  expect(signed.ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(signed.asked).toBe(1);
+  expect(signed.codes).toEqual([`/verify code=${seedCode}`, `/verify code=${code}`]);
+  // An owner's code the site refuses too ends the replay there, with no third code.
+  const refused = await run(["975310", code]);
+  expect(refused.ended).toMatchObject({ outcome: "unclear", reason: "unknown_state" });
+  expect(refused.asked).toBe(1);
+  expect(refused.codes).toEqual([`/verify code=${seedCode}`, "/verify code=975310"]);
+});
+
 /** `library` with the code page a replay named, after the state before it, as a host keeps it. */
 const kept = (library: SignInStates, named: SignInStatesOutcome["unrecordedCode"]) => {
   if (named?.step === undefined) throw new Error("No recorded code screen");
