@@ -155,6 +155,17 @@ export interface AutofillHooks<E = unknown, V extends string = string> {
    */
   readonly checksCodeSent?: boolean;
   /**
+   * Whether the page itself sent `code` from `since` (epoch ms) on, up to now, as the host's own
+   * reading of the tab's requests tells, as its fill's `codeSent` does. A replay of states asks it
+   * right before each press after typing a code its fill did not see the page send, so a page that
+   * sends the code a few seconds after its last digit gets no second send. A host that has it keeps
+   * reading the tab's requests from a fill's start until that press. One that fails says no.
+   */
+  readonly codeSent?: (typed: {
+    readonly since: number;
+    readonly code: string;
+  }) => Effect.Effect<boolean, Error>;
+  /**
    * The primary tab as it is, read without moving it: whether its document parsed, a shape of
    * its DOM and its navigation's HTTP status, for a check's settling.
    */
