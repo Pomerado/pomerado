@@ -321,10 +321,10 @@ export const onSignInOrigin = (
  * library of sign-in states can keep, so a host can have the page recorded, read before the code
  * is typed: each box by the selector its first box's inspection (`named`) keeps for it
  * (`keptCodeBoxes`), and, where the found step has a submit, that submit within the first box's
- * form, on the page they showed on. None where a box has no such selector, the boxes sit in a
- * pop-up, the screen passes a recipe's bounds, such as a selector over its length, or the host's
- * inspection of the step finds other controls than the found step's, or more than one, as a name
- * that a box in another frame or shadow root has too.
+ * form, on the page they showed on. None where a box has no such selector, the screen passes a
+ * recipe's bounds, such as a selector over its length, or the host's inspection of the step finds
+ * other controls than the found step's, or more than one, as a name that a box in another frame or
+ * shadow root has too.
  */
 export const recordedCodeScreen = <E>(
   hooks: Pick<AutofillHooks<E>, "inspect">,
@@ -335,7 +335,7 @@ export const recordedCodeScreen = <E>(
     const names = named.keptCodeBoxes ?? [];
     const first = names[0];
     const boxes = named.screen.fields[0]?.codeBox?.of ?? 1;
-    if (first === undefined || names.length !== boxes || named.popupTargetId !== undefined) return undefined;
+    if (first === undefined || names.length !== boxes) return undefined;
     const fields = names.map((selector) => ({ selector, slot: "code" as const }));
     const submit = found.step.submit === undefined ? undefined : `form:has(${first}) ${submitControl}`;
     const step: AutofillRecipeStep = { page: named.page, fields, ...(submit === undefined ? {} : { submit }) };

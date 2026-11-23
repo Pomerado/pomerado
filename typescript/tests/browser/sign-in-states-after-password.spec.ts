@@ -6,6 +6,7 @@ import { appendSignInStates, type SignInStates, signInStatesOf } from "../../src
 import { makeInputAsker } from "../../src/inputs/callback.js";
 import type { AutofillHooks } from "../../src/runtime/autofill-state.js";
 import type { HostedSignIn } from "../../src/runtime/autofill-replay-steps.js";
+import { typedValues } from "../../src/runtime/autofill-values.js";
 import type { InputAnswers } from "../../src/runtime/input-request.js";
 import { replaySignInStates, type SignInStatesOutcome } from "../../src/runtime/sign-in-states-replay.js";
 import { makeSignInBrowser } from "../../src/standalone/authentication.js";
@@ -54,7 +55,8 @@ const hostOn = async (page: Page) => {
   const browser = makeSignInBrowser({ page: host, keyboard, siteOrigin: site, authenticationOrigins: [], typing: { typed: false } });
   const hooks: AutofillHooks<TestFailure> = {
     inspect: (step) => browser.inspect(step),
-    fill: (input) => browser.fill(input),
+    // One-character code boxes take the code one character each, as the local host types it.
+    fill: (input) => browser.fill({ ...input, values: typedValues(input.step, input.values) }),
     check: (indicator, screens, challengeScreens, at) =>
       browser.confirm(indicator, screens, challengeScreens ?? screens, at?.origin),
     confirm: (indicator, _identifiers, screens, challengeScreens, at) =>
@@ -231,6 +233,26 @@ test("a code page whose box gets a new id on each load is kept by its name, and 
   expect(again.ended.unrecordedCode).toBeUndefined();
   expect(posts.filter((post) => post.startsWith("/verify"))).toEqual(["/verify otp=246810"]);
   expect(ended.unrecordedCode?.step?.fields).toEqual([{ selector: 'input[name="otp"]', slot: "code" }]);
+});
+
+test("a code page of a row of boxes is kept box by box, and the next replay signs in through it", async ({ page }) => {
+  const digits = [1, 2, 3, 4, 5, 6];
+  const boxes = digits
+    .map((box) => `<input name="d${box}" maxlength="1" inputmode="numeric"${box === 1 ? ' autocomplete="one-time-code"' : ""}>`)
+    .join("");
+  const { library, ended, posts } = await codePageReplay(
+    page,
+    () => `<form method="post" action="/verify"><p>Enter the code</p>${boxes}<button>Verify</button></form>`,
+  );
+  const sent = "/verify d1=2&d2=4&d3=6&d4=8&d5=1&d6=0";
+  expect(posts.filter((post) => post.startsWith("/verify"))).toEqual([sent]);
+  await page.goto("about:blank");
+  posts.length = 0;
+  const again = await replay(page, kept(library, ended.unrecordedCode), { code: "246810" });
+  expect(again.ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(again.ended.unrecordedCode).toBeUndefined();
+  expect(posts.filter((post) => post.startsWith("/verify"))).toEqual([sent]);
+  expect(ended.unrecordedCode?.step?.fields).toEqual(digits.map((box) => ({ selector: `input[name="d${box}"]`, slot: "code" })));
 });
 
 test("a code page whose box has only an id with a digit in it, as a generated id has, is named by its look alone", async ({ page }) => {
