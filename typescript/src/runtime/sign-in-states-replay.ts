@@ -1443,10 +1443,10 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
     // admits them, never one acted in that came back. Its refusals count for nothing, so the page
     // ends as it did before it had that look.
     if (candidates.length === 0) {
-      const read = (state: StateEntry) => framed(state) && shows(state) && taken(state);
-      const reading = states.filter((state) => read(state) && !held(state));
+      const reading = states.filter((state) => framed(state) && shows(state) && !held(state) && taken(state));
       let back: StateEntry | undefined;
-      for (const state of ranked(run, reading, read, next, fingerprint)) {
+      // A held-back state with the page's look, plainly or as read, still counts for the route.
+      for (const state of ranked(run, reading, (other) => shows(other) && taken(other), next, fingerprint)) {
         const shown = yield* shownOn(run, state, resolved(run, state.step));
         if (typeof shown === "string") continue;
         if (yield* returnedTo(run, state)) back ??= state;

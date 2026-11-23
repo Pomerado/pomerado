@@ -675,21 +675,27 @@ it("reads the site's answer where a framed form recorded on its sign-in host sta
   expect(site.fills).toEqual(["password"]);
 });
 
-it("never takes another login's framed look-alike of a state recorded on its sign-in host that a choice of account the page never shows holds back", async () => {
+it("never takes another login's framed look-alike of a state that a choice of account the page never shows holds back, recorded on its sign-in host or on the site's page", async () => {
   const choose: Screen = { path: passwordScreen.path, boxes: [], buttons: ["#choose"], texts: ["choose an account"], labels: ["~ ~"] };
-  const library = libraryOf(
-    [onHost(choose, [], "#choose"), onHost(passwordScreen, [password], "#go")],
-    [onHost({ ...passwordScreen, buttons: ["#go2"] }, [password], "#go2")],
-  );
-  const route = library.states.filter((state) => state.step.submit !== "#go2").map((state) => state.key);
+  const onSite = (screen: Screen, fields: AutofillRecipeStep["fields"], submit: string) => ({
+    fingerprint: arrival(inHostFrame(screen)),
+    step: stepAt(screen.path, fields, submit),
+  });
   const screens = { start: inHostFrame({ ...passwordScreen, buttons: ["#go", "#go2"] }) };
-  const held = scriptedSite(screens, () => "home");
-  expect(await replay(held, library, { choices: { states: route } })).toMatchObject({ outcome: "unsent", reason: "not_found" });
-  expect(held.fills).toEqual([]);
-  // A login whose own route never held the choice takes its own state.
-  const own = scriptedSite(screens, () => "home");
-  expect(await replay(own, library, { choices: { states: route.slice(1) } })).toMatchObject({ outcome: "signed_in" });
-  expect(own.clicks).toEqual(["#go"]);
+  for (const recorded of [onHost, onSite]) {
+    const library = libraryOf(
+      [recorded(choose, [], "#choose"), recorded(passwordScreen, [password], "#go")],
+      [onHost({ ...passwordScreen, buttons: ["#go2"] }, [password], "#go2")],
+    );
+    const route = library.states.filter((state) => state.step.submit !== "#go2").map((state) => state.key);
+    const held = scriptedSite(screens, () => "home");
+    expect(await replay(held, library, { choices: { states: route } })).toMatchObject({ outcome: "unsent", reason: "not_found" });
+    expect(held.fills).toEqual([]);
+    // A login whose own route never held the choice takes its own state.
+    const own = scriptedSite(screens, () => "home");
+    expect(await replay(own, library, { choices: { states: route.slice(1) } })).toMatchObject({ outcome: "signed_in" });
+    expect(own.clicks).toEqual(["#go"]);
+  }
 });
 
 it("presses once more a press that typed no secret when the page kept its state", async () => {
