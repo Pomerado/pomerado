@@ -660,11 +660,14 @@ const pickerPageCode = String.raw`(element, args) => {
  * `{ picked: false, reason, wanted, available, matches }`, where `reason` is `option_missing`,
  * `option_ambiguous` (`matches` lists the options that tie), `option_disabled` or
  * `option_unclear` (in a write, `matches` lists the options that match only loosely), and
- * `available` every enabled option it listed, up to 100, for `option_missing` and
- * `option_unclear` those closest to the value first (`rankByWords`), and for `option_unclear`
- * each option by its whole text, its lines joined with commas, as `matches` lists them. A
- * typeahead value with no clean match whose text before its first comma is shorter, as such a text
- * passed back is, is typed once, then as that text alone while more than a third of the budget is
+ * `available` every enabled option it listed, up to 100, options with one label told apart as
+ * `matches` tells them (one listed with its value in brackets, passed back as listed, is the
+ * option its text names that holds that value) and an option listed twice once, for
+ * `option_missing` and `option_unclear` those closest to the value first (`rankByWords`), and for
+ * `option_unclear` each option by its whole text, its lines joined with commas, as `matches` lists
+ * them. A typeahead value with no clean match whose text before its first comma, or its value in
+ * brackets, is shorter, as such a text passed back is, is typed once, then as that text alone
+ * while more than a third of the budget is
  * left, unless `query` is set, and that list ranked against the whole value, so the option is found
  * by its first line, where its text as listed matches as written; that second typing failing
  * leaves the first one's answer. Decode with `PickOutcome` and throw
@@ -693,9 +696,21 @@ const pickerSpellings = ${String(spellingsOf)};
 const pickerRankByWords = ${String(rankByWords)};
 const pickerClosestFirst = ${String(closestFirst)};
 // A typeahead lists its results by how well they match, so a place it lists first is the one it means.
-// searched says the list is the site's answer to typed text.
-const pickerRank = (s, list, wanted, listedFirst = s.kind === "typeahead", searched = false) =>
-  pickerRankChoices(list, wanted, pickerFold, { leading: true, stem: s.options.stem === true, extraWords: s.options.extraWords === true, listedFirst, searched, spellings: pickerSpellings });
+// searched says the list is the site's answer to typed text. A value no option cleanly names that
+// is an option as a refusal lists it, its text and then its value in brackets (pickerMatches),
+// names the options that text cleanly names that hold that value.
+const pickerRank = (s, list, wanted, listedFirst = s.kind === "typeahead", searched = false) => {
+  const rank = (spellings) =>
+    pickerRankChoices(list, spellings, pickerFold, { leading: true, stem: s.options.stem === true, extraWords: s.options.extraWords === true, listedFirst, searched, spellings: pickerSpellings });
+  const ranking = rank(wanted);
+  const [, text, value] = (!pickerCleanly(ranking) && /^(.+) \[(.+)\]$/u.exec(wanted[0])) || [];
+  if (!text) return ranking;
+  const named = rank([text]);
+  const indexes = (pickerCleanly(named) ? (named.indexes ?? [named.index]) : []).filter((index) => list[index].value === value);
+  if (indexes.length === 0) return ranking;
+  if (indexes.length > 1) return { status: "ambiguous", indexes, rank: named.rank };
+  return { status: list[indexes[0]].disabled ? "disabled" : "picked", index: indexes[0], rank: named.rank };
+};
 // The run's effect, which the runtime declares around each call: a read takes its best match at
 // any rank; a write, or code run without the runtime, only a clean one.
 const pickerReads = () => typeof __pomeradoEffect === "string" && __pomeradoEffect === "read";
@@ -1007,11 +1022,16 @@ const pickerCollect = async (s, scan, wanted, cap = Infinity, searched = false) 
   const ranking = wanted ? pickerRank(s, pickerChoices(list), wanted, undefined, searched) : { status: "missing" };
   return { list, ranking, scan: latest, complete };
 };
-// The enabled options as shown, never a native select's empty-valued prompt such as "Choose...".
-// For a value it lacks (wanted given), those closest to it first, so they survive the cap.
+// The enabled options as shown, never a native select's empty-valued prompt such as "Choose...",
+// copies (one label, names and value) once and options that share a name told apart as
+// pickerMatches tells them. For a value it lacks (wanted given), those closest to it first, so
+// they survive the cap.
 const pickerClosest = (labels, wanted) => pickerClosestFirst([...new Set(labels)], wanted?.[0] ?? "", pickerRankByWords).slice(0, 100);
-const pickerAvailable = (list, wanted, name = (option) => option.label) =>
-  pickerClosest(list.filter((option) => !option.disabled && !(option.native && option.value === "")).map(name).filter(Boolean), wanted);
+const pickerAvailable = (list, wanted, name = (option) => option.label) => {
+  const shown = list.filter((option) => !option.disabled && !(option.native && option.value === "") && name(option));
+  const kept = [...new Map(shown.map((option) => [JSON.stringify([option.label, option.names, option.value]), option])).values()];
+  return pickerClosest(pickerMatches(kept, name), wanted);
+};
 // An option's whole text, every line of it.
 const pickerText = (option) => option.text || option.label;
 // An option as a refusal lists it: its whole text with its lines joined by commas, so a caller who
@@ -1023,10 +1043,10 @@ const pickerClean = ${JSON.stringify(cleanRanks)};
 // Every rank, the closest first.
 const pickerRankOrder = ${JSON.stringify(pickerRanks)};
 const pickerCleanly = (ranking) => ranking.status !== "missing" && pickerClean.includes(ranking.rank);
-// Options that tie, each as the caller can tell it apart: its label, else its whole text (its lines
-// joined with commas) or other name, else that and its value.
-const pickerMatches = (options) => {
-  const labels = options.map((option) => option.label);
+// Options that tie, each as the caller can tell it apart: its label (or name), else its whole text
+// (its lines joined with commas) or other name, else that and its value.
+const pickerMatches = (options, name = (option) => option.label) => {
+  const labels = options.map(name);
   const texts = options.map((option, index) => (labels.indexOf(labels[index]) === labels.lastIndexOf(labels[index]) ? labels[index] : option.lines?.length > 1 ? pickerCandidate(option) : option.names?.[1] ?? labels[index]));
   return texts.map((text, index) => (texts.indexOf(text) === texts.lastIndexOf(text) || !options[index].value ? text : text + " [" + options[index].value + "]"));
 };
@@ -1200,7 +1220,8 @@ const pickerMore = async (s, typed, wanted, query) => {
   return { ...typed, found: { list, ranking: pickerRank(s, pickerChoices(list), wanted, undefined, true), scan: further.scan, complete: true } };
 };
 // Types the value, then, with no clean match for it and more than a third of the budget left, its
-// first comma part alone, as an option's first line that a refusal's candidate begins with, ranking
+// first comma part alone, without a value in brackets a refusal listed it with, as an option's
+// first line that a refusal's candidate begins with, ranking
 // that list against the whole value; with no clean match then either, both lists are the
 // candidates. Each is typed once, the second typing standing for typing the value again, and the
 // second never fails the call: when it does, the first typing's answer stands. After the first list
@@ -1209,7 +1230,7 @@ const pickerMore = async (s, typed, wanted, query) => {
 // in another order.
 const pickerTypeahead = async (s, wanted) => {
   const value = String(wanted[0] ?? "").trim();
-  const head = value.split(/(?<!\p{N}),|,(?!\p{N})/u)[0].trim();
+  const head = value.replace(/ \[.+\]$/u, "").split(/(?<!\p{N}),|,(?!\p{N})/u)[0].trim();
   const retry = !s.options.query && head !== "" && head !== value;
   const typed = await pickerMore(s, await pickerQuery(s, s.control, wanted, [], undefined, retry), wanted, String(s.options.query ?? value));
   if (!retry || pickerCleanly(typed.found.ranking) || s.left() <= (s.until - s.started) / 3) return typed;
