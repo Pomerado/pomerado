@@ -1039,18 +1039,50 @@ export interface ObservedSignIn {
 export const maximumStates = 64;
 
 /**
+ * The keys of the library's states to drop so that the states among `incoming`, the entries a host
+ * adds, fit within `maximumStates`: as many as the library would pass it by with those it lacks,
+ * its least recently used first, by `lastUsed`, when each state was last used by its key, such as
+ * in epoch milliseconds, a state `lastUsed` lacks before every one it names, and oldest first where
+ * they tie, so with no `lastUsed` its oldest. It never drops a state `incoming` holds, and drops
+ * one whose key `onRoutes` holds, such as a state on a login's saved route
+ * (`SignInStatesChoices.states`), only after every other one. A recorded sign-in's append drops
+ * them so (`appendSignInStates`), and a host that merges another library's entries, of any number
+ * of sign-ins, drops them by the same order.
+ */
+export const signInStatesToRetire = (
+  library: SignInStates,
+  incoming: readonly SignInStateEntry[],
+  onRoutes?: ReadonlySet<string>,
+  lastUsed?: ReadonlyMap<string, number>,
+): readonly string[] => {
+  const held = new Set(library.states.map((state) => state.key));
+  const kept = new Set(incoming.map((entry) => entry.key));
+  const growth = new Set(
+    incoming.flatMap((entry) => (entry.kind === "state" && !held.has(entry.key) ? [entry.key] : [])),
+  ).size;
+  const over = library.states.length + growth - maximumStates;
+  if (over <= 0) return [];
+  const usedAt = (state: StateEntry) => lastUsed?.get(state.key) ?? Number.NEGATIVE_INFINITY;
+  // A stable sort, so states used at the same time keep the library's order, the oldest first.
+  const droppable = library.states
+    .filter((state) => !kept.has(state.key))
+    .sort((a, b) => (usedAt(a) === usedAt(b) ? 0 : usedAt(a) < usedAt(b) ? -1 : 1));
+  const routed = (state: StateEntry) => onRoutes?.has(state.key) === true;
+  return [...droppable.filter((state) => !routed(state)), ...droppable.filter(routed)]
+    .slice(0, over)
+    .map((state) => state.key);
+};
+
+/**
  * The library with a recorded sign-in's new entries appended after every existing one, which stay
  * as they are, and those entries (`added`), none when it knew them all. A state is known by its
  * key, its fingerprint and step alike. A sign-in that stopped before it signed in (`to`) leads to
  * the oldest known state of its own sign-in with that look and top origin, never one the page only
  * reads on (`readsOn`), a step-up's for a step-up, and adds no marker. A library that would pass
- * `maximumStates` drops its least recently used states, as many as it would pass it by: by
- * `lastUsed`, when each state was last used by its key, such as in epoch milliseconds, a state it
- * lacks before every one it names, and oldest first where they tie, so with no `lastUsed` its
- * oldest. It never drops one the sign-in went through, went on from (`from`) or led to (`to`), and
- * one whose key `onRoutes` holds, such as a state on a login's saved route
- * (`SignInStatesChoices.states`), only after every other one; it names their keys (`retired`) for
- * a host to drop from what it stores, and its transitions and markers stay. Refused: a workspace
+ * `maximumStates` drops its least recently used states, as many as it would pass it by, those
+ * whose key `onRoutes` holds last (`signInStatesToRetire`), never one the sign-in went through,
+ * went on from (`from`) or led to (`to`); it names their keys (`retired`) for a host to drop from
+ * what it stores, and its transitions and markers stay. Refused: a workspace
  * step in a library with no workspace, or a new entry this core can't read back from its stored bytes
  * (`decodeSignInStateEntry`), as a step with a field no reader knows, which a reader would leave out
  * (`unsupported_step`); a state that shows nothing to tell it by; and a `to` no such state looks
@@ -1097,25 +1129,17 @@ export const appendSignInStates = (
   const added = fresh.filter((entry) => !known.has(entry.key) && known.add(entry.key));
   if (added.some((entry) => decodeSignInStateEntry(signInStateEntryText(entry)) === undefined))
     return { refused: "unsupported_step" };
-  const growth = added.filter((entry) => entry.kind === "state").length;
-  const over = library.states.length + growth - maximumStates;
-  const usedAt = (state: StateEntry) => lastUsed?.get(state.key) ?? Number.NEGATIVE_INFINITY;
-  // A stable sort, so states used at the same time keep the library's order, the oldest first.
-  const droppable = library.states
-    .filter((state) => !path.includes(state.key))
-    .sort((a, b) => (usedAt(a) === usedAt(b) ? 0 : usedAt(a) < usedAt(b) ? -1 : 1));
-  const routed = (state: StateEntry) => onRoutes?.has(state.key) === true;
-  const retired =
-    over > 0 ? [...droppable.filter((state) => !routed(state)), ...droppable.filter(routed)].slice(0, over) : [];
+  const onPath = library.states.filter((state) => path.includes(state.key));
+  const retired = signInStatesToRetire(library, [...states, ...onPath], onRoutes, lastUsed);
   return {
     library: signInStatesOf(library, [
-      ...library.states.filter((state) => !retired.includes(state)),
+      ...library.states.filter((state) => !retired.includes(state.key)),
       ...library.transitions,
       ...library.signedIn,
       ...added,
     ]),
     added,
-    retired: retired.map((state) => state.key),
+    retired,
   };
 };
 

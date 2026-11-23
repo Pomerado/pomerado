@@ -27,6 +27,7 @@ import {
   type SignInStates,
   type SignInStatesChoices,
   signInStatesOf,
+  signInStatesToRetire,
   type StateEntry,
   type StateFingerprint,
   stateEntry,
@@ -2158,7 +2159,7 @@ it("refuses to append a state whose step its readers can't read back, and counts
   });
 });
 
-it("retires the oldest states past the cap, or the least recently used where the host says, never one the recorded sign-in goes through, and one on a saved route last", () => {
+it("retires the oldest states past the cap, or the least recently used where the host says, never one the recorded sign-in or a merge brings, and one on a saved route last", () => {
   const notice = (n: number) => ({
     fingerprint: { top: origin, boxes: [], submit: false, message: `Notice ${n}`, buttons: ["Ok"] },
     step: stepAt(`/notice/${n}`, [], "#ok"),
@@ -2198,6 +2199,14 @@ it("retires the oldest states past the cap, or the least recently used where the
   if ("refused" in used || "refused" in usedRouted) throw new Error("refused");
   expect(used.retired).toEqual([next?.key]);
   expect(usedRouted.retired).toEqual([rest[0]?.key]);
+  // A host's merge of another library's entries, of more than one sign-in, retires by the same
+  // order: two new states push out the two least recently used on no saved route, never the state
+  // the merge brings that the library already holds.
+  const other = libraryOf([notice(200)], [notice(201)]);
+  const merged = [...other.states, ...other.transitions, ...other.signedIn, ...rest.slice(0, 1)];
+  expect(signInStatesToRetire(full, merged, new Set([next?.key ?? ""]), lastUsed)).toEqual(
+    rest.slice(1, 3).map((state) => state.key),
+  );
 });
 
 it("fails loudly when a recorded step carries no state", () => {
