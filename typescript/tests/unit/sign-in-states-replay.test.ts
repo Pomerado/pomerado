@@ -16,6 +16,7 @@ import {
   type BoxTakes,
   decodeSignInStateEntries,
   decodeSignInStateEntry,
+  maximumStates,
   noteSignInState,
   type ObservedState,
   observedSignInOf,
@@ -1991,6 +1992,38 @@ it("refuses to append a state whose step its readers can't read back, and counts
     entries: known.added,
     dropped: 1,
   });
+});
+
+it("retires the oldest states past the cap, never one the recorded sign-in goes through, and one on a saved route last", () => {
+  const notice = (n: number) => ({
+    fingerprint: { top: origin, boxes: [], submit: false, message: `Notice ${n}`, buttons: ["Ok"] },
+    step: stepAt(`/notice/${n}`, [], "#ok"),
+  });
+  const full = libraryOf(
+    [
+      { fingerprint: arrival(emailScreen), step: stepAt("/sign-in", [email], "#continue") },
+      { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") },
+    ],
+    ...Array.from({ length: maximumStates - 2 }, (_, n) => [notice(n)]),
+  );
+  expect(full.states).toHaveLength(maximumStates);
+  const [oldest, next, ...rest] = full.states;
+  // A repair that went on from the oldest state learns one more: that state stays, the next goes.
+  const repaired = appendSignInStates(full, { from: oldest?.key, states: [notice(99)], signedIn: { selector: "#account" } });
+  if ("refused" in repaired) throw new Error(repaired.refused);
+  expect(repaired.retired).toEqual([next?.key]);
+  expect(repaired.library.states.map((state) => state.key)).toEqual(
+    [oldest, ...rest, repaired.added[0]].map((entry) => entry?.key),
+  );
+  expect(repaired.library.transitions.slice(0, full.transitions.length)).toEqual(full.transitions);
+  // A state a login's saved route holds goes only after every other one, so here the next oldest
+  // goes; with every state on a route, the oldest goes again.
+  const elsewhere = { states: [notice(100)], signedIn: { selector: "#account" } };
+  const routed = appendSignInStates(full, elsewhere, new Set([oldest?.key ?? ""]));
+  const everyRouted = appendSignInStates(full, elsewhere, new Set(full.states.map((state) => state.key)));
+  if ("refused" in routed || "refused" in everyRouted) throw new Error("refused");
+  expect(routed.retired).toEqual([next?.key]);
+  expect(everyRouted.retired).toEqual([oldest?.key]);
 });
 
 it("fails loudly when a recorded step carries no state", () => {
