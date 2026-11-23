@@ -184,8 +184,8 @@ test("a library that appends an opener leading to a state it knows signs in from
 // Runs sign in from a library on the host's own page, as a run does (`signInForRun`): a code page
 // that also shows the account's header is still a code page, a date of birth the site refused is
 // asked for again and retyped alone, never an identifier, and a choice of account the page draws
-// late is waited for, never passed for the page after it before the step wait but by a login whose
-// own route never held it.
+// late is waited for, never passed for the page after it but by a login whose own route never
+// held it.
 
 /** A library of states, each with the look the host's scan read and its step, to `#account`. */
 const libraryOf = (states: readonly { readonly fingerprint: StateFingerprint; readonly step: AutofillRecipeStep }[]) =>
@@ -360,16 +360,16 @@ test("a date of birth the site refused is asked for again and retyped alone, nev
   expect(posted).toEqual(["/session", "1980-01-01", "1980-04-09"]);
 });
 
-test("a choice of account the page draws late is waited for and made, a login it never shows goes on at the step wait, and one whose route never held it at once", async ({ page }) => {
+test("a choice of account the page draws late is waited for and made, a login it never shows or keeps disabled stops with nothing sent, and one whose route never held it signs in at once", async ({ page }) => {
   const posted: string[] = [];
-  const shown = { chosen: false, late: false };
-  const choice = `<button id="choose" type="button" onclick="fetch('/choose', { method: 'POST' }).then(() => this.remove())">Use the team account</button>`;
+  const shown = { chosen: false, late: false, disabled: false };
+  const choice = () => `<button id="choose" type="button"${shown.disabled ? " disabled" : ""} onclick="fetch('/choose', { method: 'POST' }).then(() => this.remove())">Use the team account</button>`;
   await serveSite(
     page,
     {
       "/login": () =>
-        `<main><p>Sign in to your workspace</p>${shown.chosen || shown.late ? "" : choice}<a id="continue" href="/login/identifier">Continue</a></main>${
-          shown.late ? `<script>setTimeout(() => document.getElementById("continue").insertAdjacentHTML("beforebegin", ${JSON.stringify(choice)}), 1_500)</script>` : ""
+        `<main><p>Sign in to your workspace</p>${shown.chosen || shown.late ? "" : choice()}<a id="continue" href="/login/identifier">Continue</a></main>${
+          shown.late ? `<script>setTimeout(() => document.getElementById("continue").insertAdjacentHTML("beforebegin", ${JSON.stringify(choice())}), 1_500)</script>` : ""
         }`,
       "/login/identifier":
         () => '<form method="post" action="/login/identifier"><label>Username<input id="username" name="username"></label><button id="next">Next</button></form>',
@@ -401,16 +401,58 @@ test("a choice of account the page draws late is waited for and made, a login it
   const { result } = await runSignIn(page, library);
   expect(result).toMatchObject({ _tag: "Right" });
   expect(posted).toEqual(["/choose", "/login/identifier", "/login/password"]);
-  // A login the page never shows the choice to.
-  Object.assign(shown, { chosen: true, late: false });
-  posted.length = 0;
-  expect((await runSignIn(page, library)).result).toMatchObject({ _tag: "Right" });
-  expect(posted).toEqual(["/login/identifier", "/login/password"]);
+  // A login the page never shows the choice to, though its Continue shows, and one it keeps the
+  // choice disabled for: nothing is pressed or sent, as the recipe replay stops at its first screen.
+  for (const [chosen, disabled, reason] of [
+    [true, false, "not_found"],
+    [false, true, "submit_stayed_disabled"],
+  ] as const) {
+    Object.assign(shown, { chosen, late: false, disabled });
+    posted.length = 0;
+    expect(await signIn(page, library)).toMatchObject({ outcome: "unsent", reason });
+    expect(posted).toEqual([]);
+    expect(new URL(page.url()).pathname).toBe("/login");
+  }
   // A login whose own route never held the choice, where the page draws it late again.
-  Object.assign(shown, { chosen: false, late: true });
+  Object.assign(shown, { chosen: false, late: true, disabled: false });
   posted.length = 0;
   const route = library.states.slice(1).map((state) => state.key);
   expect(await signIn(page, library, { states: route })).toMatchObject({ outcome: "signed_in" });
+  expect(posted).toEqual(["/login/identifier", "/login/password"]);
+});
+
+test("a choice of account the page never shows is passed at the step wait for a state on its page that types the identifier", async ({ page }) => {
+  const posted: string[] = [];
+  const shown = { chosen: false };
+  await serveSite(
+    page,
+    {
+      "/login": () =>
+        `<main><p>Sign in to your workspace</p>${shown.chosen ? "" : '<button id="choose" type="button" onclick="this.remove()">Use the team account</button>'}<form method="post" action="/login/identifier"><label>Username<input id="username" name="username"></label><button id="next">Next</button></form></main>`,
+      "/login/password":
+        () => '<form method="post" action="/login/password"><label>Password<input id="password" name="password" type="password"></label><button id="sign-in">Sign in</button></form>',
+      "/home": () => '<p id="account">Your account</p>',
+    },
+    (path) => {
+      posted.push(path);
+      return path === "/login/identifier" ? "/login/password" : "/home";
+    },
+  );
+  const choose = await scanAt(page, "/login");
+  shown.chosen = true;
+  const library = libraryOf([
+    { fingerprint: choose, step: { page: `${site}/login`, fields: [], submit: "#choose" } },
+    {
+      fingerprint: await scanAt(page, "/login"),
+      step: { page: `${site}/login`, fields: [{ selector: "#username", accepts: ["username"] }], submit: "#next" },
+    },
+    {
+      fingerprint: await scanAt(page, "/login/password"),
+      step: { page: `${site}/login/password`, fields: [{ selector: "#password", slot: "password" }], submit: "#sign-in" },
+    },
+  ]);
+  posted.length = 0;
+  expect(await signIn(page, library)).toMatchObject({ outcome: "signed_in" });
   expect(posted).toEqual(["/login/identifier", "/login/password"]);
 });
 
