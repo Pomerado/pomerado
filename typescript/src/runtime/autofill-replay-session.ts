@@ -51,26 +51,26 @@ import {
 const missingScreen: ReadonlySet<string> = new Set(["not_found", "not_editable", "popup_missing"]);
 
 /**
- * A failed load that is a POST of the page's own to the site, which the site answered with an
- * error status (`AutofillHooks.onLoadFailure`).
+ * A failed load the host marks as the site's error answer to the request the replay's latest press
+ * itself made (`answersPress`), with its status and origin (`AutofillHooks.onLoadFailure`).
  */
-const isRefusedPost = Schema.is(
+const isPressAnswer = Schema.is(
   Schema.Struct({
-    kind: Schema.Literal("request"),
-    method: Schema.Literal("POST"),
-    status: Schema.Number.pipe(Schema.greaterThanOrEqualTo(400)),
+    answersPress: Schema.Literal(true),
+    status: Schema.Number,
+    origin: Schema.optional(Schema.String),
   }),
 );
 
 /**
  * The first same-site load that failed after the replay's latest submit: a screen that then never
- * shows is its downstream symptom, so the refusal points at it. `refused` says whether the site
- * answered a POST of the page's own with an error status since then (`isRefusedPost`).
+ * shows is its downstream symptom, so the refusal points at it. `refused` is the site's error answer
+ * to that submit's own request, as the host marks it (`isPressAnswer`): its status and origin only.
  */
 const makeFirstCause = () => {
   let submitted = false;
   let first: unknown;
-  let refused = false;
+  let refused: { readonly status: number; readonly origin?: string } | undefined;
   return {
     /**
      * A step fills and submits: a load that failed before it is not what its next screen waits
@@ -79,11 +79,12 @@ const makeFirstCause = () => {
     submitted: () => {
       submitted = true;
       first = undefined;
-      refused = false;
+      refused = undefined;
     },
     heard: (failure: unknown) => {
       if (submitted && first === undefined) first = failure;
-      if (submitted && isRefusedPost(failure)) refused = true;
+      if (submitted && refused === undefined && isPressAnswer(failure))
+        refused = { status: failure.status, ...(failure.origin === undefined ? {} : { origin: failure.origin }) };
     },
     refused: () => refused,
     /** A refused screen's first cause, for its step event, when the screen never showed. */
