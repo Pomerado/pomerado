@@ -2119,7 +2119,7 @@ it("refuses to append a state whose step its readers can't read back, and counts
   });
 });
 
-it("retires the oldest states past the cap, never one the recorded sign-in goes through, and one on a saved route last", () => {
+it("retires the oldest states past the cap, or the least recently used where the host says, never one the recorded sign-in goes through, and one on a saved route last", () => {
   const notice = (n: number) => ({
     fingerprint: { top: origin, boxes: [], submit: false, message: `Notice ${n}`, buttons: ["Ok"] },
     step: stepAt(`/notice/${n}`, [], "#ok"),
@@ -2149,6 +2149,16 @@ it("retires the oldest states past the cap, never one the recorded sign-in goes 
   if ("refused" in routed || "refused" in everyRouted) throw new Error("refused");
   expect(routed.retired).toEqual([next?.key]);
   expect(everyRouted.retired).toEqual([oldest?.key]);
+  // Where the host says when each state was last used, the least recently used goes, whatever its
+  // age: the oldest, used since every other was added, stays and the next goes; one on a saved
+  // route still goes only after every other one.
+  const lastUsed = new Map(full.states.map((state, n) => [state.key, n]));
+  lastUsed.set(oldest?.key ?? "", maximumStates);
+  const used = appendSignInStates(full, elsewhere, new Set(), lastUsed);
+  const usedRouted = appendSignInStates(full, elsewhere, new Set([next?.key ?? ""]), lastUsed);
+  if ("refused" in used || "refused" in usedRouted) throw new Error("refused");
+  expect(used.retired).toEqual([next?.key]);
+  expect(usedRouted.retired).toEqual([rest[0]?.key]);
 });
 
 it("fails loudly when a recorded step carries no state", () => {
