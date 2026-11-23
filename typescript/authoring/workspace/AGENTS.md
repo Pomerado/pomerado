@@ -112,8 +112,9 @@ then read").
 When the site does not match the request exactly, tell two cases apart:
 
 - Work the request already covers proceeds without asking: finding the right field or route,
-  correcting your own code, matching a proper noun to another usual form of it, or choosing
-  among alternatives the request already allows.
+  correcting your own code, matching a proper noun to another usual form of it or a number to an
+  option that adds only the input's own unit, or choosing among alternatives the request already
+  allows.
 - A supplied value that is incompatible with what the site offers, such as an unavailable
   option, date or quantity, changes the request. Ask the owner with `request_input` whether to
   revise it or stop: name the value and offer what the site actually has. Never substitute
@@ -217,7 +218,7 @@ input, a
 URL the tool built, a URL parameter, a box checked before the site applied it or the option's
 name elsewhere on the page does not show an input applied; read the site's committed state, such
 as the applied chip, the selected control or the results' own state, and compare its text with
-the input, or the option a proper noun matched, normalized for case, accents, whitespace and
+the input, or the option a proper noun or number matched, normalized for case, accents, whitespace and
 punctuation. Every `applied_*` field reports the value the site actually used, read from the
 site's committed state, never copied from the input or from a suggestion the site did not use. A detail
 read also checks the page's stable identity (.agents/core/SKILL.md). Building or repairing a search or listing tool: read

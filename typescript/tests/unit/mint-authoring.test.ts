@@ -1609,7 +1609,7 @@ it("has every unoffered-value rule name the task-asked substitute exception", as
   const instead =
     "A write follows the site's preselected substitute instead when the caller's own task asks for whatever the site ends up with (writes skill).";
   expect(text("core")).toContain(
-    `Never pick a near match, the page's default or the first option; an option that states the value's number and meaning, whatever its unit words, spacing or case, or the same proper noun in another usual form, is the value, not a near match (input schema above). ${instead} A broader choice that covers the value`,
+    `Never pick a near match, the page's default or the first option; the same proper noun in another usual form is not a near match (input schema above). An option that states the value's number followed only by the input's own unit, in any spelling, spacing or case, is the value (input schema above). ${instead} A broader choice that covers the value`,
   );
   expect(text("core")).toContain(
     `A write throws \`InvalidInput\` with \`field\` and \`available\`, the selectable options. Neither picks another value for the caller; ${only} - For an input whose options depend on another`,
@@ -1719,7 +1719,7 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["991d6d3d9b4a1713935af9c2ea67822089337987996c48c76b518577bb5e5d4b", "core"],
+    ["3affa04c314049fd9fe35cda68911a2b9fe4c2e279d66dd37e7122aa88f5ae8c", "core"],
     ["97e3b5ebdbe8d5fca43790729084de4eef4fbcf5fdf71ad645e679fd72f4e804", "search"],
     ["61b480c71ae366c9693906543639fb35f700d3d1c027ec879753ff9738a985c5", "auth"],
     ["539abe36b602c8e2eff8745dd0462aea41837a20cc0b90cbef7a01cbad6fb89a", "testing"],
@@ -1729,7 +1729,7 @@ it("renders the pinned standalone authoring", async () => {
     ["c57264580481b348972d0e8d64e70889d7a759783c6ac36e915724739de3fce5", "cart"],
     ["a0c9ea62be24b9fcf921daf77c6c9aa93c65c3869ee8cbcad42d8e1698c32f05", "caller-input"],
     ["3573b3f6005645d27cb02a140d3d212ffeb30272c47d05f9851b37824d2beb11", "publication"],
-    ["257b832d4c786c59dc1589b8df7fa8b5836625366511d990445399c8b164e300", "workspace/AGENTS.md"],
+    ["7821c05e9063943acce94d6c79f21bc57635e70b0ecebb4ad582d3ad5939ed65", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);
 });
@@ -1850,7 +1850,7 @@ it("renders the search URL fast path only when a host turns it on", async () => 
     [sha256(on.agents), "workspace/AGENTS.md"],
   ]).toStrictEqual([
     ["de172ebf03d92a8782f5abbdd8444d90104634da28f4e21ad444dcbde0734e1f", "search"],
-    ["d7361f40aa3b3e5213ef24e273f5318bf97cbfce60a0f0ad1e97128c68377e8d", "workspace/AGENTS.md"],
+    ["5b9b73b2db5d76cda499e9cffbf94c45c54ade96c70eb0710f10d93e51830308", "workspace/AGENTS.md"],
   ]);
   expect(on.digests.filter(([, name]) => name !== "search")).toStrictEqual(
     off.digests.filter(([, name]) => name !== "search"),

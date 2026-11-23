@@ -259,9 +259,9 @@ exception: it is optional unless the task can't run without it (below).
   reads every suggestion, tries the usual other forms of the value's words, such as 5th
   and Fifth, St and Street or Saint, or a state's code and name, and picks the best match. A
   clean match is a name that is the value as written or differs only in case, spacing, accents,
-  punctuation, a leading "the", a word written short or a singular or plural, an option's name
-  before its comma, or an option's first line followed by parts of its other lines, in their
-  order. With `rankChoices` and `leading: true`, that is a rank in `cleanRanks`, and rank
+  punctuation, a leading "the", a word written short or a singular or plural, the input's own
+  unit after the value's number, an option's name before its comma, or an option's first line
+  followed by parts of its other lines, in their order. With `rankChoices` and `leading: true`, that is a rank in `cleanRanks`, and rank
   `place` needs options read with their `lines`. A match on an option's
   first line alone is a candidate, never a pick, when an option a typeahead lists before it
   holds the value's text before its first comma, as whole words, in its first line, and the
@@ -673,12 +673,12 @@ that depends on them:
    `field` the input's name and `available` every option the page currently offers as
    selectable, exactly as shown. Leave disabled, sold-out and other unselectable options out of
    `available`, and say in the message that they were left out. Never pick a near match, the
-   page's default or the first option; an option that states the value's number and meaning,
-   whatever its unit words, spacing or case, or the same proper noun in another usual form, is
-   the value, not a near match (input schema above). A write follows the site's preselected
-   substitute instead when the caller's own task asks for whatever the site ends up with (writes
-   skill). A broader choice that covers the value, such as "Show all", is allowed on a search
-   (search skill).
+   page's default or the first option; the same proper noun in another usual form is not a near
+   match (input schema above). An option that states the value's number followed only by the
+   input's own unit, in any spelling, spacing or case, is the value (input schema above). A
+   write follows the site's preselected substitute instead when the caller's own task asks for
+   whatever the site ends up with (writes skill). A broader choice that covers the value, such
+   as "Show all", is allowed on a search (search skill).
    - An option the page lists but greys out, disables or marks unavailable, such as a booked
      date, a sold-out size or a full time slot: a read returns it as data, the requested value
      with `available: false`, the page's own reason when it shows one, and the alternatives the
