@@ -422,7 +422,9 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   evidence for the `http` version; any other write is unintended and must not be in
   the script.
 - Confirm a write from the first proof the site gives that it took it, such as the new record's
-  id. Read other details if they show, and never wait for them.
+  id. Every read after that proof is best-effort: never wait for it or fail the run on it, and
+  return a value it couldn't read, or can't tie to the written record, as null, with a short
+  reason where the output allows one.
 - Prefer confirming the write from its commit request. Keep the click on the final commit
   control, such as Save, Send, Submit, Book or Pay, in its own step, except a pay press after
   the host's card fill, which goes in the fill's step (caller-input skill). In the same call as
@@ -630,9 +632,7 @@ note.
   fails the run: the caller gets an error in place of the output, though the write landed. In
   that read-back, prefer needing only what proves the change, the record's identity and the
   values the input sets, and passing every other field to `waitForRows` or `waitForValues` as
-  `optional`. After `verified()`, return a field the request doesn't need as null when it read
-  nothing, and throw `OperationFailure` naming a value the request needs, or one it can't tie to
-  the written record (core skill), so the run fails as applied.
+  `optional`.
   List each field the input sets that the site saved differently, from the commit response or
   the read-back, in an optional output field `saved_differences`: `{ field, wanted, shown }`,
   as `saveAndReadBack` returns it, with `shown` left out when the site shows none, and
