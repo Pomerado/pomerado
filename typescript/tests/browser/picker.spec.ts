@@ -1108,7 +1108,7 @@ test("pickValue reports two options with one label as ambiguous, each by its ful
       picked: false,
       reason: "option_ambiguous",
       wanted: "John Smith",
-      available: ["John Smith", "Jane Smith"],
+      available: ["John Smith, john.s@example.com", "John Smith, jsmith@example.org", "Jane Smith"],
       matches: ["John Smith, john.s@example.com", "John Smith, jsmith@example.org"],
     },
   });
@@ -1312,11 +1312,16 @@ test("pickValue takes the first of an option listed twice, and still refuses opt
       picked: false,
       reason: "option_ambiguous",
       wanted: "Springfield",
-      available: ["Springfield"],
+      available: ["Springfield [b-40]", "Springfield [b-12]"],
       matches: ["Springfield [b-40]", "Springfield [b-12]"],
     },
   });
-  expect(await submitted(page)).toEqual({ country: "US", branch: "" });
+  // An option listed twice is one option among those available, and one passed back as listed is picked.
+  expect(await call(page, `return (await pickValue(page.getByLabel("Country"), "Mexico", fast)).available;`)).toEqual({ result: ["United States", "Canada"] });
+  expect(await call(page, `return await pickValue(page.getByLabel("Branch"), "Springfield [b-12]", fast);`)).toEqual({
+    result: { picked: true, kind: "select", label: "Springfield", value: "b-12", rank: "exact", refills: 0 },
+  });
+  expect(await submitted(page)).toEqual({ country: "US", branch: "b-12" });
 });
 
 test("pickValue takes a city whose name before its comma is the value over one holding it as a word, with or without tie first", async ({ page }) => {

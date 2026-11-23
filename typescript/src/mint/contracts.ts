@@ -208,7 +208,9 @@ const ClosedCode = Schema.String.pipe(
  *   (`DownloadCap`);
  * - `source_rule`: the host refused an execution before it ran, as `unsupported`, because its
  *   source broke a host source rule core states, with the rule: a placed or downloaded file's
- *   bytes stay with the host (`file_readback`), or a typed card does (`card_readback`).
+ *   bytes stay with the host (`file_readback`), or a typed card does (`card_readback`);
+ * - `preflight`: the host's preflight refused an execution before it ran and marked the refusal
+ *   `hostRefusal`, as one no change to the request gets past.
  */
 export const HostRefusalSource = Schema.Union(
   Schema.Struct({
@@ -244,6 +246,7 @@ export const HostRefusalSource = Schema.Union(
     source: Schema.Literal("source_rule"),
     rule: Schema.Literal("file_readback", "card_readback"),
   }),
+  Schema.Struct({ source: Schema.Literal("preflight") }),
 );
 export type HostRefusalSource = typeof HostRefusalSource.Type;
 
@@ -2839,8 +2842,8 @@ export interface DecisionLedger {
 export interface UnansweredQuestion {
   /**
    * Where it was asked: `question` is the minter's own `request_input`, the read-or-write and
-   * capability questions included; `sign_in` is a question a sign-in asked; `execution` is a
-   * question an execution's script asked.
+   * capability questions included; `sign_in` is a question a sign-in or its signed-in marker
+   * check asked; `execution` is a question an execution's script asked.
    */
   readonly step: "question" | "sign_in" | "execution";
   /** The id the question was asked under, when the harness knows it. */
@@ -3237,6 +3240,8 @@ export interface MintDependencies {
    * (`evaluateSignedInMarker` matches it), whether the live page shows it now, after the host
    * loads `openPath` (or the site's origin) again, and on another page the agent visited signed
    * in. It never signs in or sends a value. Absent, the tool reports the check unavailable.
+   * A `noResponse` failure, from a question the check asked that went unanswered, ends the build
+   * as `no_response`, as one from a sign-in does.
    */
   readonly checkSignedInMarker?: (
     marker: SignedInMarkerCheckRequest,
@@ -3335,11 +3340,16 @@ export interface MintDependencies {
   readonly promptCacheKey?: string;
   readonly skills: readonly SkillDescriptor[];
   readonly model: MintModel;
-  /** Validate available host facilities before reserving the one-use example claim. No execution. */
+  /**
+   * Validate available host facilities before reserving the one-use example claim. No execution.
+   * A refusal is the minter's to fix unless it sets `hostRefusal`: no change to the request gets
+   * past it, so the harness records it as a host refusal (`HostRefusalSource` `preflight`).
+   */
   readonly preflight: (
     request: ExecutionRequest,
   ) => Effect.Effect<
-    { readonly supported: true } | { readonly supported: false; readonly reason: string },
+    | { readonly supported: true }
+    | { readonly supported: false; readonly reason: string; readonly hostRefusal?: true },
     MintFailure
   >;
   /** Each call MUST perform fresh Guardian review, await beforeDispatch after approval,

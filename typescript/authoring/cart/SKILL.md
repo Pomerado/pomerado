@@ -41,7 +41,8 @@ skill says.
 Take the product as the identifier and option values the site's own pages use, such as a
 product number and a size, so a caller can pass a search or details tool's output straight in.
 When `reference/site-tools.json` lists such a tool, use its identifier, field names and option
-values (the core skill). Quantity, each option the product offers and, when the site lets a
+values (the core skill). Do the same for any other choice a read tool lists: a write accepts
+that tool's option id. Quantity, each option the product offers and, when the site lets a
 visitor set one, the location or store are inputs. When the store, stock or prices follow the
 delivery address, an add-to-cart tool takes it as an optional input, one of the account's saved
 addresses, and keeps the address the account has selected when it is left out: an add places no

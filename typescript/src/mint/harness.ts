@@ -727,10 +727,11 @@ const restoredHostRefusals = (kept: unknown) => {
  * so the report keeps its reason: a sign-in screen the host refused at its destination check,
  * which a later password or code screen that passes clears; a sign-in step the host refused with
  * no login sent since (`beforeSignIn` false); a task update the host refused; and a step whose
- * source a host source rule refused, which no sign-in causes or clears. A publication or live
- * tests refused while the sign-in never confirmed may be its consequence, such as a recipe
- * nothing verified, as may a refused refill, and a refusal an older checkpoint kept without its
- * source is unknown: none of them keeps the reason. Nor does a challenge the host recorded
+ * source a host source rule refused, or that the host's preflight refused and marked
+ * `hostRefusal`, which no sign-in causes or clears. A publication or live tests refused while the
+ * sign-in never confirmed may be its consequence, such as a recipe nothing verified, as may a
+ * refused refill, and a refusal an older checkpoint kept without its source is unknown: none of
+ * them keeps the reason. Nor does a challenge the host recorded
  * (`challenge`), which may be what stopped the sign-in: the build ends as sign-in unavailable.
  */
 const hostRefusalApartFromSignIn = (refusal: HostRefusalBasis, beforeSignIn: boolean) =>
@@ -738,6 +739,7 @@ const hostRefusalApartFromSignIn = (refusal: HostRefusalBasis, beforeSignIn: boo
   refusal.source === "task_update" ||
   refusal.source === "file_cap" ||
   refusal.source === "source_rule" ||
+  refusal.source === "preflight" ||
   (refusal.source === "sign_in_step" && !beforeSignIn);
 /**
  * Whether a failed sign-in left the site signed out, as its own result tells the agent: the site
@@ -1684,10 +1686,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       /**
        * A host check refused a step the build needs in this attempt: a publication its checks
        * refused, a sign-in the host refused, a task update the host refused, a step a host source
-       * rule refused before it ran, or a download over its file caps, until a later example or
-       * act step settles without one. A `host_refused` block stands on it. A later finish_build
-       * that gets past the host's checks to Guardian's review clears it, setting
-       * `hostRefusalPassed`.
+       * rule refused before it ran, a step its preflight refused and marked `hostRefusal`, or a
+       * download over its file caps, until a later example or act step settles without one. A
+       * `host_refused` block stands on it. A later finish_build that gets past the host's checks
+       * to Guardian's review clears it, setting `hostRefusalPassed`.
        */
       let hostRefused = recovered?.hostRefused === true;
       /**
@@ -6460,7 +6462,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   ? preflighted
                   : { supported: false as const, reason: overLimit };
               // A refused preflight records no host refusal: it refuses the minter's own request,
-              // such as a wrong target or a missing sign-in step, which the minter can fix.
+              // such as a wrong target or a missing sign-in step, which the minter can fix. One the
+              // host marks `hostRefusal` is a host refusal: no change to the request gets past it.
               if (!availability.supported) {
                 const evidence: ExecutionEvidence = {
                   executionId: randomUUID(),
@@ -6476,6 +6479,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   reason: availability.reason,
                 });
                 record(evidence, submitted.purpose);
+                if (availability.hostRefusal === true) {
+                  refuseByHost({ source: "preflight" });
+                  yield* recordHostRefusal("execute", evidence.status, availability.reason);
+                }
                 return yield* visible(evidence, submitted.purpose);
               }
               if (submitted.purpose === "residual") yield* dependencies.authorizeResidual;
@@ -8515,7 +8522,15 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       ...(verdict.accepted ? {} : { refusals: verdict.refusals }),
                       ...(verdict.warnings.length === 0 ? {} : { warnings: verdict.warnings }),
                     });
-                  }),
+                  }).pipe(
+                    // The owner never answered a question the check asked: the build ends as
+                    // no_response, as it does from execute, so the next check does not ask again.
+                    Effect.catchIf(
+                      (error) => error.noResponse !== undefined && !stopUnavailableHost(),
+                      (error) =>
+                        unanswered(error, "signing in to the website", { step: "sign_in" }),
+                    ),
+                  ),
                 ),
             }),
         // A read's live tests: the cases the agent designed and their results, and batches
