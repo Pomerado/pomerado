@@ -456,6 +456,60 @@ test("a choice of account the page never shows is passed at the step wait for a 
   expect(posted).toEqual(["/login/identifier", "/login/password"]);
 });
 
+test("a method choice on the page of a choice of account the page never shows is never taken by its methods' controls, offered as recorded or with fewer methods: nothing is pressed or sent", async ({ page }) => {
+  const posted: string[] = [];
+  const shown = { chosen: false, fewer: false };
+  const way = (id: string, label: string) =>
+    `<button id="${id}" type="button" onclick="location.assign('/login/identifier')">${label}</button>`;
+  await serveSite(
+    page,
+    {
+      "/login": () =>
+        `<main><p>Sign in to your workspace</p>${shown.chosen ? "" : '<button id="choose" type="button" onclick="this.remove()">Use the team account</button>'}${way("use-password", "Use a password")}${shown.fewer ? "" : way("email-me", "Email me a code")}</main>`,
+      "/login/identifier":
+        () => '<form method="post" action="/login/identifier"><label>Username<input id="username" name="username"></label><button id="next">Next</button></form>',
+      "/login/password":
+        () => '<form method="post" action="/login/password"><label>Password<input id="password" name="password" type="password"></label><button id="sign-in">Sign in</button></form>',
+      "/home": () => '<p id="account">Your account</p>',
+    },
+    (path) => {
+      posted.push(path);
+      return path === "/login/identifier" ? "/login/password" : "/home";
+    },
+  );
+  const choose = await scanAt(page, "/login");
+  shown.chosen = true;
+  const methods = [
+    { method: "password", selector: "#use-password" },
+    { method: "email", selector: "#email-me" },
+  ] as const;
+  const library = libraryOf([
+    { fingerprint: choose, step: { page: `${site}/login`, fields: [], submit: "#choose" } },
+    { fingerprint: await scanAt(page, "/login"), step: { page: `${site}/login`, fields: [], submit: "#use-password", methods } },
+    {
+      fingerprint: await scanAt(page, "/login/identifier"),
+      step: { page: `${site}/login/identifier`, fields: [{ selector: "#username", accepts: ["username"] }], submit: "#next" },
+    },
+    {
+      fingerprint: await scanAt(page, "/login/password"),
+      step: { page: `${site}/login/password`, fields: [{ selector: "#password", slot: "password" }], submit: "#sign-in" },
+    },
+  ]);
+  // The page offers the methods as recorded, so it has the method choice's look and ends with the
+  // choice's refusal, then fewer, so it is that method choice only by its methods' controls and
+  // ends as a page no state is.
+  for (const [fewer, reason] of [
+    [false, "not_found"],
+    [true, "unknown_state"],
+  ] as const) {
+    Object.assign(shown, { fewer });
+    posted.length = 0;
+    expect(await signIn(page, library)).toMatchObject({ outcome: "unsent", reason });
+    expect(posted).toEqual([]);
+    expect(new URL(page.url()).pathname).toBe("/login");
+  }
+});
+
 test("a marker that names an identifier other than the login's ends it as the login's refusal, never retyped", async ({ page }) => {
   const posted: string[] = [];
   const shown = { refused: false };
