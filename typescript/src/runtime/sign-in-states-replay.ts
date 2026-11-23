@@ -1148,8 +1148,9 @@ const ledToByControl = <E extends YieldableError, V extends string, L extends Au
  * method choice a page with no box is, as a recipe finds its method screen by any of its methods'
  * controls (`screenProbes`), so a chooser that offers one login other methods than the one it was
  * learned on is still that choice: a state with no box whose step lists methods, with the page's
- * top origin and main message, never one acted in, taken in the order this login takes states of
- * one look (`ranked`), the first one of whose method controls shows, one match on its recorded
+ * top origin and main message, never one acted in nor at the start one a first state that types
+ * nothing leads to on its page (`firstChoice`), taken in the order this login takes states of one
+ * look (`ranked`), the first one of whose method controls shows, one match on its recorded
  * origin (`shownOn`). It then picks among its methods as recorded (`methodFor`). None once this
  * replay picked a method (`chosen`), nor right after a method choice (`after`), whatever it picked:
  * a chooser still drawn after that pick, pressed again, may have the site send once more, as a
@@ -1160,6 +1161,7 @@ const byMethods = <E extends YieldableError, V extends string, L extends Autofil
   fingerprint: StateFingerprint,
   after: StateEntry | undefined,
   next: ReadonlySet<string>,
+  waited: boolean,
 ) =>
   Effect.gen(function* () {
     if (fingerprint.boxes.length > 0 || run.replay.progress.chosen !== undefined || after?.step.methods !== undefined)
@@ -1168,7 +1170,8 @@ const byMethods = <E extends YieldableError, V extends string, L extends Autofil
       state.fingerprint.boxes.length === 0 &&
       state.step.methods !== undefined &&
       state.fingerprint.top === fingerprint.top &&
-      state.fingerprint.message === fingerprint.message;
+      state.fingerprint.message === fingerprint.message &&
+      firstChoice(run, state, after, waited) === undefined;
     const choices = run.input.library.states.filter((state) => here(state) && !run.visited.includes(state.key));
     for (const state of ranked(run, choices, here, next, fingerprint))
       for (const { selector } of state.step.methods ?? []) {
@@ -1496,7 +1499,7 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
         (yield* ledToByControl(run, fingerprint, after, next, at));
       if (known !== undefined) return known;
     }
-    return (yield* byMethods(run, fingerprint, after, next)) ?? (yield* byApproval(run, fingerprint, after, next, waited));
+    return (yield* byMethods(run, fingerprint, after, next, waited)) ?? (yield* byApproval(run, fingerprint, after, next, waited));
   });
 
 const signedIn = <E extends YieldableError, V extends string, L extends AutofillLogin>(
