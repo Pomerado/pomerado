@@ -249,12 +249,13 @@ export const rankChoices = (
     other === one + "s" || other === one + "es" || (one.endsWith("y") && other === one.slice(0, -1) + "ies");
   const pairsAsNoun = (want: string, have: string) => want === have || plural(want, have) || plural(have, want);
   // A text's words for `alike`, past a leading "the": spacing and punctuation split them, except a
-  // period, comma or colon between two digits, which is part of a number, a hyphen between a
+  // period, comma or colon between two digits, or a period that opens a number, as in .5, which
+  // is part of a number, a hyphen between a
   // ZIP's five digits and four more, which make one ZIP+4, and a mark that ends a word, as in C#
   // or 1%, which is part of the word; brackets, quotes and . , : ; ! ? never are.
   const alikeWords = (text: string) => {
     const each = fold(text)
-      .split(/(?:\s|(?!(?<=[\p{L}\p{N}])(?:(?![.,:;!?'"\u00a1\u00bf])\p{Po})+(?=[^\p{L}\p{N}]|$))(?!(?<=\p{N})[.,:]\p{N})(?!(?<=(?<![\p{L}\p{N}-])\d{5})-\d{4}(?![\p{L}\p{N}]|-\p{N}))\p{P})+/u)
+      .split(/(?:\s|(?!(?<=[\p{L}\p{N}])(?:(?![.,:;!?'"\u00a1\u00bf])\p{Po})+(?=[^\p{L}\p{N}]|$))(?!(?<=\p{N})[.,:]\p{N})(?!(?<![\p{L}\p{N}])\.\p{N})(?!(?<=(?<![\p{L}\p{N}-])\d{5})-\d{4}(?![\p{L}\p{N}]|-\p{N}))\p{P})+/u)
       .filter(Boolean);
     return each[0] === "the" && each.length > 1 ? each.slice(1) : each;
   };
@@ -345,7 +346,8 @@ export const rankChoices = (
   }));
   const wordLists = perList((list) => list.map(words).filter((each) => each.length > 0));
   const alikeLists = perList((list) => list.map(alikeWords).filter((each) => each.length > 0));
-  const amounts = perList((list) => new Set(list.map((spelling) => options.units?.(spelling)).filter((amount) => amount !== undefined)));
+  // The spellings' amounts as given, never their other forms', so a state's code is no unit.
+  const amounts = new Set(spellings.map((spelling) => options.units?.(spelling)).filter((amount) => amount !== undefined));
   // A name's text up to each comma that is not a thousands separator, as in 1,000.
   const leadingParts = (text: string) =>
     [...text.matchAll(/(?<!\p{N}),|,(?!\p{N})/gu)].flatMap((comma) => ((comma.index ?? 0) > 0 ? [text.slice(0, comma.index)] : []));
@@ -410,7 +412,7 @@ export const rankChoices = (
           const text = String(name ?? "");
           const texts = options.leading === true ? [text, ...leadingParts(text)] : [text];
           const amount = named.amount(text);
-          return (amount !== undefined && amounts(list).has(amount)) || texts.some((each) => wants.some((want) => alikeAll(want, named.alike(each))));
+          return (amount !== undefined && amounts.has(amount)) || texts.some((each) => wants.some((want) => alikeAll(want, named.alike(each))));
         });
       },
       true,

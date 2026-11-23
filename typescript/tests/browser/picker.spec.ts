@@ -1222,7 +1222,10 @@ test("pickValue in a write picks the value's number in its own unit however the 
   await serve(page, `<form>${labels.map((label, index) => `<label>Weight ${index} <select name="w${index}">
 <option value="">Choose</option><option value="kg">2 kg</option><option value="lb">${label}</option></select></label>`).join("")}
 <label>Quantity <select name="quantity"><option value="">Choose</option><option value="a">2 lb</option>
-<option value="b">Pack of 2</option><option value="c">2-pack</option><option value="d">2 for $5</option></select></label></form>`);
+<option value="b">Pack of 2</option><option value="c">2-pack</option><option value="d">2 for $5</option></select></label>
+<label>Small <select name="small"><option value="">Choose</option><option>.5 lb</option><option>1 lb</option><option>10 lb</option></select></label>
+<label>Bit <select name="bit"><option value="">Choose</option><option>.5mm</option><option>.7mm</option><option>0.9mm</option></select></label>
+<label>Size <select name="size"><option value="">Choose</option><option>2"</option><option>3 in</option></select></label></form>`);
   for (const [index, label] of labels.entries())
     expect(await call(page, `return await pickValue(page.getByLabel("Weight ${index}"), "2 lb", fast);`, 20, "write")).toEqual({
       result: { picked: true, kind: "select", label, value: "lb", rank: label === "2 LB" ? "normalized" : "alike", refills: 0 },
@@ -1230,7 +1233,15 @@ test("pickValue in a write picks the value's number in its own unit however the 
   expect(await call(page, `return await pickValue(page.getByLabel("Quantity"), "2", fast);`, 20, "write")).toMatchObject({
     result: { picked: false, reason: "option_unclear", matches: ["2 lb", "Pack of 2", "2-pack", "2 for $5"] },
   });
-  expect(await submitted(page)).toEqual({ w0: "lb", w1: "lb", w2: "lb", w3: "lb", quantity: "" });
+  // A decimal's leading point is part of its number, so 5 is never .5, and a state's code is no unit.
+  expect(await call(page, `return await pickValue(page.getByLabel("Small"), "5 lb", fast);`, 20, "write")).toMatchObject({
+    result: { picked: false, reason: "option_unclear", matches: [".5 lb"] },
+  });
+  for (const [field, wanted] of [["Small", "5 pounds"], ["Bit", "5 mm"], ["Size", "2 Indiana"]])
+    expect(await call(page, `return await pickValue(page.getByLabel("${field}"), "${wanted}", fast);`, 20, "write")).toMatchObject({
+      result: { picked: false, reason: "option_missing" },
+    });
+  expect(await submitted(page)).toEqual({ w0: "lb", w1: "lb", w2: "lb", w3: "lb", quantity: "", small: "", bit: "", size: "" });
 });
 
 // A read takes a name holding the value among other words, and says so; a write, or code the
