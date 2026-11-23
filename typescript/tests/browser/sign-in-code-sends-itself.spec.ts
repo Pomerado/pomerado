@@ -36,10 +36,10 @@ const boxes = [1, 2, 3, 4, 5, 6]
 /**
  * The code screen: six boxes and a Verify button, or, `inForm`, the boxes alone in a form. The
  * sixth digit sends the code once, `sendsAfterMs` later, unless the page doesn't send it itself
- * (`sendsItself` false), and so does each click of Verify, which is counted, and each Enter in a box. An accepted code
- * puts the account in place of the screen, or below the form, or below the boxes and Verify
- * (`keepsBoxes`), which hide; an expired one signs the session out. Each box's key downs are
- * kept, with whether each was trusted.
+ * (`sendsItself` false), and so does each click of Verify, which is counted, and each Enter in a
+ * box. An accepted code puts the account in place of the screen, or below the form, or below the
+ * boxes and Verify (`keepsBoxes`), which hide; an expired one signs the session out. Each box's key
+ * downs are kept, with whether each was trusted.
  */
 const codeScreen = ({
   inForm,
