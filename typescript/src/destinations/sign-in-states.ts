@@ -1045,9 +1045,11 @@ export const maximumStates = 64;
  * in epoch milliseconds, a state `lastUsed` lacks before every one it names, and oldest first where
  * they tie, so with no `lastUsed` its oldest. It never drops a state `incoming` holds, and drops
  * one whose key `onRoutes` holds, such as a state on a login's saved route
- * (`SignInStatesChoices.states`), only after every other one. A recorded sign-in's append drops
- * them so (`appendSignInStates`), and a host that merges another library's entries, of any number
- * of sign-ins, drops them by the same order.
+ * (`SignInStatesChoices.states`), only after every other one. So it drops at most every state
+ * `incoming` doesn't hold, and falls short when `incoming` alone holds more than `maximumStates`
+ * states: a host that merges checks the total itself. A recorded sign-in's append drops them so
+ * (`appendSignInStates`), and a host that merges another library's entries, of any number of
+ * sign-ins, drops them by the same order.
  */
 export const signInStatesToRetire = (
   library: SignInStates,
