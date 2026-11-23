@@ -43,8 +43,8 @@ const toolOutput = (request: ModelRequest | undefined, callId: string): unknown 
   return JSON.parse(text);
 };
 
-/** One recorded model turn calls the marker check, then the attempt ends. */
-const checkMarker = async (marker: object, host: Partial<MintDependencies>) => {
+/** Recorded model turns call the marker check `checks` times, then the attempt ends. */
+const runMarkerChecks = async (marker: object, host: Partial<MintDependencies>, checks = 1) => {
   const workspace = await portableJobSession({ "src/tool.ts": "export {};" });
   cleanups.push(async () => {
     await workspace.close();
@@ -60,11 +60,11 @@ const checkMarker = async (marker: object, host: Partial<MintDependencies>) => {
       getModel: () => ({
         getResponse: async (request) => {
           requests.push(request);
-          return requests.length === 1
+          return requests.length <= checks
             ? call(
                 "check_signed_in_marker",
                 { ...marker, intent: "Test the account menu as the signed-in marker." },
-                "marker",
+                `marker-${requests.length}`,
               )
             : reportBlocked;
         },
@@ -82,7 +82,7 @@ const checkMarker = async (marker: object, host: Partial<MintDependencies>) => {
     publish: () => Effect.die("A marker check must not publish"),
     ...host,
   };
-  await Effect.runPromise(
+  const outcome = await Effect.runPromise(
     runMint({
       mode: "mint",
       intent: "Read account data",
@@ -90,8 +90,12 @@ const checkMarker = async (marker: object, host: Partial<MintDependencies>) => {
       observations: [],
     }).pipe(Effect.provideService(MintServices, dependencies)),
   );
-  return toolOutput(requests[1], "marker");
+  return { requests, outcome };
 };
+
+/** One recorded model turn calls the marker check; the tool result the model saw for it. */
+const checkMarker = async (marker: object, host: Partial<MintDependencies>) =>
+  toolOutput((await runMarkerChecks(marker, host)).requests[1], "marker-1");
 
 it("reports the check unavailable on a host without it", async () => {
   expect(await checkMarker({ selector: "header nav" }, {})).toMatchObject({
@@ -137,4 +141,21 @@ it("does not report a plain pass when the signed-out page went unchecked", async
     status: "passed_unchecked",
     warnings: ["signed_out_page_unchecked"],
   });
+});
+
+it("ends the build when the owner leaves a question the check asked unanswered", async () => {
+  let asked = 0;
+  const host: Partial<MintDependencies> = {
+    checkSignedInMarker: () =>
+      Effect.suspend(() => {
+        asked += 1;
+        return Effect.fail(
+          new MintFailure({ code: "Unavailable", noResponse: { possibleCommit: false } }),
+        );
+      }),
+  };
+  const { requests, outcome } = await runMarkerChecks({ selector: "role=banner" }, host, 2);
+  expect(asked).toBe(1);
+  expect(requests).toHaveLength(1);
+  expect(outcome).toMatchObject({ build: "incomplete", stopReason: "question_unanswered" });
 });
