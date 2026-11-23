@@ -13,8 +13,8 @@ import type { AutofillField, AutofillSignedIn } from "./autofill-step.js";
 
 // A sign-in as a library of states: what the sign-in shows now, what to do there, and where that
 // led. A build or repair only appends entries, each keyed by a hash of its own content, so two
-// writers never collide and no entry is ever changed or removed. A library lives beside a recipe
-// and never replaces one.
+// writers never collide and no entry is ever changed; a state is removed only to keep a library
+// within its cap (`appendSignInStates`). A library lives beside a recipe and never replaces one.
 
 /** The kind of value a visible box takes, as the page's own attributes say. */
 export const BoxKind = Schema.Literal("identifier", "password", "code", "date_of_birth", "zip");
@@ -856,18 +856,28 @@ export const maximumStates = 64;
  * as they are, and those entries (`added`), none when it knew them all. A state is known by its
  * key, its fingerprint and step alike. A sign-in that stopped before it signed in (`to`) leads to
  * the oldest known state of its own sign-in with that look and top origin, never one the page only
- * reads on (`readsOn`), a step-up's for a step-up, and adds no marker. Refused: a workspace step in
- * a library with no workspace, or a new entry this core can't read back from its stored bytes
+ * reads on (`readsOn`), a step-up's for a step-up, and adds no marker. A library that would pass
+ * `maximumStates` drops its oldest states, as many as it would pass it by, never one the sign-in
+ * went through, went on from (`from`) or led to (`to`), and one whose key `onRoutes` holds, such as
+ * a state on a login's saved route (`SignInStatesChoices.states`), only after every other one; it
+ * names their keys (`retired`) for a host to drop from what it stores, and its transitions and
+ * markers stay. Refused: a workspace step in a
+ * library with no workspace, or a new entry this core can't read back from its stored bytes
  * (`decodeSignInStateEntry`), as a step with a field no reader knows, which a reader would leave out
- * (`unsupported_step`); a state that shows nothing to tell it by; a `to` no such state looks like
- * (`unknown_state`); and a library that would pass `maximumStates`.
+ * (`unsupported_step`); a state that shows nothing to tell it by; and a `to` no such state looks
+ * like (`unknown_state`).
  */
 export const appendSignInStates = (
   library: SignInStates,
   observed: ObservedSignIn,
+  onRoutes?: ReadonlySet<string>,
 ):
-  | { readonly library: SignInStates; readonly added: readonly SignInStateEntry[] }
-  | { readonly refused: "unsupported_step" | "blank_state" | "unknown_state" | "library_full" } => {
+  | {
+      readonly library: SignInStates;
+      readonly added: readonly SignInStateEntry[];
+      readonly retired: readonly string[];
+    }
+  | { readonly refused: "unsupported_step" | "blank_state" | "unknown_state" } => {
   if (observed.states.some(({ step }) => step.origin === "workspace" && library.workspace === undefined))
     return { refused: "unsupported_step" };
   if (observed.states.some(({ fingerprint }) => blankFingerprint(fingerprint)))
@@ -898,15 +908,20 @@ export const appendSignInStates = (
   if (added.some((entry) => decodeSignInStateEntry(signInStateEntryText(entry)) === undefined))
     return { refused: "unsupported_step" };
   const growth = added.filter((entry) => entry.kind === "state").length;
-  if (library.states.length + growth > maximumStates) return { refused: "library_full" };
+  const over = library.states.length + growth - maximumStates;
+  const droppable = library.states.filter((state) => !path.includes(state.key));
+  const routed = (state: StateEntry) => onRoutes?.has(state.key) === true;
+  const retired =
+    over > 0 ? [...droppable.filter((state) => !routed(state)), ...droppable.filter(routed)].slice(0, over) : [];
   return {
     library: signInStatesOf(library, [
-      ...library.states,
+      ...library.states.filter((state) => !retired.includes(state)),
       ...library.transitions,
       ...library.signedIn,
       ...added,
     ]),
     added,
+    retired: retired.map((state) => state.key),
   };
 };
 
