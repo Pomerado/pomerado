@@ -933,33 +933,34 @@ const pressesOnly = <E extends YieldableError, V extends string, L extends Autof
 };
 
 /**
- * At the start, before the step wait ran out (`waited`), whether a first state that types nothing,
- * such as a choice of account, leads to `state` on its own page: `state` is not taken then, as the
- * page may still draw that first state's control and looks like `state` until then, and the recipe
- * replay never passes a screen that types nothing for a later one on its page. A login the page
- * never shows that choice goes on at the step wait; one whose own route (`choices.states`) holds
- * `state` but not that first state, and a replay in place, on the login's own session, never wait
- * for it.
+ * At the start, the first state that types nothing, such as a choice of account, that leads to
+ * `state` on its own page: `state` is not taken then, as the page may still draw that first
+ * state's control and looks like `state` until then, and the recipe replay never passes a screen
+ * that types nothing for a later one on its page. A login the page never shows that choice goes
+ * on at the step wait (`waited`) only where `state` types an identifier, which says the account
+ * itself; else it stops there with the choice's own refusal (`matchState`), never pressing a later
+ * state's control, such as a Continue shown beside the choice, or typing a password, for the
+ * account the page picked. One whose own route (`choices.states`) holds `state` but not that first
+ * state, and a replay in place, on the login's own session, never wait for it.
  */
-const afterChoice = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+const firstChoice = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
   state: StateEntry,
   after: StateEntry | undefined,
   waited: boolean,
 ) => {
   const { states, transitions } = run.input.library;
-  if (after !== undefined || waited || run.input.inPlace === true) return false;
+  if (after !== undefined || run.input.inPlace === true) return undefined;
+  if (waited && resolved(run, state.step).fields.some((field) => isIdentifier(field.slot))) return undefined;
   const route = run.input.choices?.states ?? [];
-  return transitions.some(({ from, to }) => {
-    const first = states.find((known) => known.key === from);
-    return (
-      to === state.key &&
-      (route.includes(from) || !route.includes(to)) &&
-      first?.step.fields.length === 0 &&
-      !transitions.some((before) => before.to === from) &&
-      sameAddress(first.step.page, state.step.page)
-    );
-  });
+  return states.find(
+    (first) =>
+      first.step.fields.length === 0 &&
+      transitions.some(({ from, to }) => from === first.key && to === state.key) &&
+      (route.includes(first.key) || !route.includes(state.key)) &&
+      !transitions.some(({ to }) => to === first.key) &&
+      sameAddress(first.step.page, state.step.page),
+  );
 };
 
 /** Whether two absolute URLs share their host and path. */
@@ -993,8 +994,8 @@ const hashless = (url: string) => URL.parse(url)?.hash === "";
  * the page's top origin and main message, at its recorded page (`at`) as the last marker check
  * read the address (`page`), neither address with a hash, and, on the page of the state just acted
  * in, one that state led to; never the state just acted in nor one acted in that came back
- * (`returnedTo`), nor at the start, before the step wait ran out, one a first state that types
- * nothing leads to on its page (`afterChoice`). They are taken in the order this login takes
+ * (`returnedTo`), nor at the start one a first state that types nothing leads to on its page
+ * (`firstChoice`). They are taken in the order this login takes
  * states of one look (`ranked`), so a route that holds one there besides the state last acted in
  * takes only its own: the first whose control shows, one match on its recorded origin, on a page
  * at its recorded page whose live
@@ -1029,7 +1030,7 @@ const byControl = <E extends YieldableError, V extends string, L extends Autofil
       hashless(URL.parse(state.step.page, page)?.href ?? "") &&
       at(page, state.step) &&
       (!stayed || next.has(state.key)) &&
-      !afterChoice(run, state, after, waited);
+      firstChoice(run, state, after, waited) === undefined;
     const pressing: StateEntry[] = [];
     for (const state of run.input.library.states)
       if (state !== skip && here(state) && !(yield* returnedTo(run, state))) pressing.push(state);
@@ -1298,8 +1299,10 @@ const byFilled = <E extends YieldableError, V extends string, L extends Autofill
  * The known state the page shows: one whose fingerprint it is and whose recorded controls show,
  * one match each, on its recorded origin, in the order this login takes them (`ranked`), never
  * the state just acted in again; in place, one in a pop-up (`inPopup`) that no state leads to, or
- * that `after` led to, whatever the look; at the start, before the step wait ran out, never one a
- * first state that types nothing leads to on its page (`afterChoice`). A state acted in before
+ * that `after` led to, whatever the look; at the start, never one a first state that types nothing
+ * leads to on its page (`firstChoice`), but at the step wait one that types an identifier; the page
+ * of any other is that choice's then: taken where its control shows, else ended with its refusal,
+ * as the recipe replay's first screen is. A state acted in before
  * something went out that the page shows again, with no other, is `returned`, unless a sign-in
  * learned it after the last one (`learnedNext`), and before the step wait (`waited`) not while a
  * look-alike so learned has yet to show, as a known next screen that looks the same as an earlier
@@ -1353,7 +1356,7 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
         (inPopup(run, state) && next.has(state.key)) ||
         (codeSent && loose && takesCodeIn(run, state) && sameBoxes(state, fingerprint, true))) &&
       (after !== undefined || run.input.inPlace !== true || leadsToNewMarker(run, state)) &&
-      !afterChoice(run, state, after, waited);
+      firstChoice(run, state, after, waited) === undefined;
     // A state of the page's look only as the page reads on its top origin (`readsOn`).
     const framed = (state: StateEntry) => readsOn(fingerprint, state) && !(inPopup(run, state) && next.has(state.key));
     const told = (state: StateEntry) => shows(state) && !framed(state);
@@ -1443,6 +1446,18 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
         }
       }
       return ownStateNotShown;
+    }
+    // At the step wait, a page with the look of a state the login may take that a first choice
+    // holds back (`firstChoice`) is that choice's, never that state's or another's by its control.
+    const choice = waited
+      ? states
+          .filter((state) => sameFingerprint(state, fingerprint) && forLogin(run, state))
+          .map((state) => firstChoice(run, state, after, waited))
+          .find((first) => first !== undefined)
+      : undefined;
+    if (choice !== undefined) {
+      const shown = yield* shownOn(run, choice, resolved(run, choice.step));
+      return typeof shown === "string" ? shown : ({ state: choice, inspection: shown } satisfies Shown);
     }
     if (candidates.length > 0 || !loose) return refused;
     // Each match by control looks only where the ones before it found none, the first as it was:

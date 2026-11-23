@@ -8522,7 +8522,15 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       ...(verdict.accepted ? {} : { refusals: verdict.refusals }),
                       ...(verdict.warnings.length === 0 ? {} : { warnings: verdict.warnings }),
                     });
-                  }),
+                  }).pipe(
+                    // The owner never answered a question the check asked: the build ends as
+                    // no_response, as it does from execute, so the next check does not ask again.
+                    Effect.catchIf(
+                      (error) => error.noResponse !== undefined && !stopUnavailableHost(),
+                      (error) =>
+                        unanswered(error, "signing in to the website", { step: "sign_in" }),
+                    ),
+                  ),
                 ),
             }),
         // A read's live tests: the cases the agent designed and their results, and batches
