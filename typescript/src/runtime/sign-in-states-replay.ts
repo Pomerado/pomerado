@@ -3399,10 +3399,11 @@ const linkHere = <E extends YieldableError, V extends string, L extends Autofill
  * last led to an emailed link's approval on a page the recipe replay admits as its screen
  * (`linkHere`), the page takes the code as the recipe replay's link screen does (`onLinkScreen`):
  * never the host generator's, and with no code given, the link's own question is asked as in its
- * state. A state that takes a code, reached by a press that may have had the site send one
- * (`sendsOnPress`, or a method it sends by), where the site answered a POST of the page's own with
- * an error status since that press (`firstCause`), ends the replay `code_not_sent` with no code
- * asked: the site couldn't send it. A recovery code still held once it ends goes back unspent.
+ * state. A state that takes a code, reached by a press that typed nothing and may have had the
+ * site send one (`sendsOnPress`, or a method it sends by), where the site answered a POST of the
+ * page's own with an error status since that press (`firstCause`), ends the replay `code_not_sent`
+ * with no code asked: the site couldn't send it. A press that typed a password or identifier is
+ * never judged so, as a site may answer it with an error that asks for the second step. A recovery code still held once it ends goes back unspent.
  */
 const walk = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -3520,6 +3521,7 @@ const walk = <E extends YieldableError, V extends string, L extends AutofillLogi
       // The site answered the press that was to have it send the code with an error: it couldn't.
       if (
         last !== undefined &&
+        resolved(run, last.acted.step).fields.length === 0 &&
         (last.sends === true || sendsOnPress(run, last.acted, true)) &&
         takesCodeIn(run, arrived.state) &&
         run.replay.firstCause.refused()
