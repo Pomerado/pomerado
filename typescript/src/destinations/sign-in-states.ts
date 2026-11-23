@@ -864,8 +864,7 @@ export const maximumStates = 64;
  * one whose key `onRoutes` holds, such as a state on a login's saved route
  * (`SignInStatesChoices.states`), only after every other one; it names their keys (`retired`) for
  * a host to drop from what it stores, and its transitions and markers stay. Refused: a workspace
- * step in a
- * library with no workspace, or a new entry this core can't read back from its stored bytes
+ * step in a library with no workspace, or a new entry this core can't read back from its stored bytes
  * (`decodeSignInStateEntry`), as a step with a field no reader knows, which a reader would leave out
  * (`unsupported_step`); a state that shows nothing to tell it by; and a `to` no such state looks
  * like (`unknown_state`).
