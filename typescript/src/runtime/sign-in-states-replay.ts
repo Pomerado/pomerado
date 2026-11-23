@@ -54,6 +54,7 @@ import {
   askOne,
   type AutofillReplayInput,
   type AutofillReplayOutcome,
+  emptyReplayFields,
   emptyRetryFields,
   isTwoFactorOption,
   stepDiagnostic,
@@ -1675,7 +1676,8 @@ const rejection = (marked: readonly RejectedMarker["slot"][]) => {
  * Extras the site refused at their markers in the state just acted in, retyped as corrected with
  * the state's own press, as the recipe replay corrects them on their screen (`correctReplayExtras`):
  * only where the state takes each of them and the site refused a value this replay typed there,
- * else the replay ends `extra_rejected`.
+ * else the replay ends `extra_rejected`. A recovery code box of that state the site emptied goes in
+ * beside them with a fresh code, from the host's ledger where it keeps one, never the one used.
  */
 const retypeExtras = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -1688,10 +1690,16 @@ const retypeExtras = <E extends YieldableError, V extends string, L extends Auto
     const fields = full.fields.filter((field) => slots.includes(field.slot));
     if (fields.length !== slots.length || slots.some((slot) => !replay.rejectedValues[slot]?.size))
       return stopped(run, "extra_rejected");
-    const step: AutofillStep = { ...full, fields };
+    const emptied = yield* emptyReplayFields(
+      run.input.hooks,
+      full.fields.filter((field) => field.slot === "recovery_code" && !slots.includes(field.slot)),
+      full.popup,
+    );
+    const step: AutofillStep = { ...full, fields: [...fields, ...emptied] };
+    const corrected = new Set([...slots, ...emptied.map((field) => field.slot)]);
     const here = yield* shownOn(run, acted.acted, step);
     const failed =
-      typeof here === "string" ? "extra_rejected" : yield* replay.runStep(step, here, undefined, false, new Set(slots));
+      typeof here === "string" ? "extra_rejected" : yield* replay.runStep(step, here, undefined, false, corrected);
     return failed === undefined ? undefined : stopped(run, failed);
   });
 
