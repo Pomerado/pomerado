@@ -252,38 +252,59 @@ const scanFrame = `({ deep, dismissed }) => {
   }
   for (const { box, required } of unhinted.sort((a, b) => a.at - b.at))
     if (required || box.submit || found.some((other) => other.form !== null && other.form === box.form)) found.push(box);
-  // Every visible text of its own outside a control, which the host normalizes: what is new after
-  // a press tells a notice the site showed beside the same boxes. Text is read by the block it sits
-  // in, so a name in an inline element of its own, as "Not <b>Sam</b>?", is masked within the
-  // sentence.
+  // Each notice the library dismisses: the dialog, region or aside that holds a control it names.
+  const notices = [...new Set((dismissed ?? []).map((control) =>
+    control.closest('dialog, [role~="dialog"], [role~="alertdialog"], [role~="region"], aside')).filter((notice) => notice !== null))];
+  const apart = (element) => notices.some((notice) => notice.contains(element));
+  // The modal dialog shown over the page, as a covering notice's is found: one that holds what
+  // sits at the window's centre, the last that holds no other shown, and no notice the library
+  // dismisses. A banner at an edge is no such dialog.
+  let centre = document.elementFromPoint(innerWidth / 2, innerHeight / 2);
+  while (centre?.shadowRoot) {
+    const inner = centre.shadowRoot.elementFromPoint(innerWidth / 2, innerHeight / 2);
+    if (inner === null || inner === centre) break;
+    centre = inner;
+  }
+  const covers = (element) => centre !== null && (element.contains(centre) || roots.some((root) => root !== document && element.contains(root.host) && root.contains(centre)));
+  const modals = all('dialog[open], [role~="dialog"], [role~="alertdialog"], [aria-modal="true"]').filter((element) => shows(element) && !apart(element) && covers(element));
+  const modal = modals.findLast((element) => !modals.some((other) => other !== element && element.contains(other)));
+  // Every visible text of its own outside a control, which the host normalizes, from each of
+  // \`starts\` in turn and at most 40 blocks: what is new after a press tells a notice the site showed
+  // beside the same boxes. Text is read by the block it sits in, so a name in an inline element of
+  // its own, as "Not <b>Sam</b>?", is masked within the sentence.
   const blockOf = (element) => {
     let block = element;
     while (block.parentElement !== null && getComputedStyle(block).display.startsWith("inline")) block = block.parentElement;
     return block;
   };
-  const own = new Map();
-  let last;
-  let full = false;
-  for (const root of roots) {
-    if (full) break;
-    const walker = document.createTreeWalker(root === document ? (document.body ?? document.documentElement) : root, NodeFilter.SHOW_TEXT);
-    for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
-      const parent = node.parentElement;
-      if (parent === null || parent.closest('script, style, noscript, template, button, a, label, option, select, textarea, [role="button" i]') !== null || !shows(parent)) continue;
-      const block = blockOf(parent);
-      if (!own.has(block)) {
-        if (node.textContent.trim() === "") continue;
-        if (own.size >= 40) {
-          full = true;
-          break;
+  const textsFrom = (starts, counts) => {
+    const own = new Map();
+    const seen = new Set();
+    let last;
+    for (const start of starts) {
+      const walker = document.createTreeWalker(start, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+        const parent = node.parentElement;
+        if (seen.has(node) || parent === null || parent.closest('script, style, noscript, template, button, a, label, option, select, textarea, [role="button" i]') !== null || !shows(parent) || !counts(parent)) continue;
+        seen.add(node);
+        const block = blockOf(parent);
+        if (!own.has(block)) {
+          if (node.textContent.trim() === "") continue;
+          if (own.size >= 40) return [...own.values()];
+          own.set(block, "");
         }
-        own.set(block, "");
+        // A block's text on both sides of a block inside it reads as two words, not one.
+        own.set(block, own.get(block) + (last === block ? "" : " ") + node.textContent);
+        last = block;
       }
-      // A block's text on both sides of a block inside it reads as two words, not one.
-      own.set(block, own.get(block) + (last === block ? "" : " ") + node.textContent);
-      last = block;
     }
-  }
+    return [...own.values()];
+  };
+  const pageStarts = roots.map((root) => (root === document ? (document.body ?? document.documentElement) : root));
+  const texts = textsFrom(pageStarts, () => true);
+  // The same texts as a person reads them, for the site's answer to a code: the modal dialog's
+  // first, and none under aria-hidden or inert.
+  const shownTexts = textsFrom(modal === undefined ? pageStarts : [modal, ...pageStarts], (parent) => parent.closest("[inert], [aria-hidden=true]") === null);
   const headings = ["h1", "h2", '[role="heading" i]', "h3", "p"];
   const firstSaid = (within) => headings
     .map((selector) => within(selector).find((element) => shows(element) && element.innerText.trim() !== ""))
@@ -313,29 +334,15 @@ const scanFrame = `({ deep, dismissed }) => {
         found.push({ kind: "code", role: "checkbox", labels: [labelOf(grid.at)], grid: grid.at, form: formOf(grid.at), submit: submitIn(formOf(grid.at)),
           empty: !grid.read.choices.some((each) => each.checked === true || each.getAttribute("aria-checked") === "true") });
     }
-  const result = { boxes: found.map(({ form, grid, ...box }) => box), texts: [...own.values()].map((text) => text.slice(0, 2000)) };
+  const result = { boxes: found.map(({ form, grid, ...box }) => box), texts: texts.map((text) => text.slice(0, 2000)),
+    shownTexts: shownTexts.map((text) => text.slice(0, 2000)) };
   const controlText = (element) => (element.getAttribute("aria-label") || element.innerText || element.value || "").slice(0, 500);
   const pressed = 'button, [role="button" i], input[type="submit" i], input[type="button" i]';
   const buttonsIn = (within) => within(pressed).filter(shows).map(controlText).filter((label) => label.trim() !== "").slice(0, 8);
-  // Each notice the library dismisses: the dialog, region or aside that holds a control it names.
-  const notices = [...new Set((dismissed ?? []).map((control) =>
-    control.closest('dialog, [role~="dialog"], [role~="alertdialog"], [role~="region"], aside')).filter((notice) => notice !== null))];
-  const apart = (element) => notices.some((notice) => notice.contains(element));
-  // The page as a look with no box reads it, and apart from what covers it.
+  // The page as a look with no box reads it, and apart from what covers it: the modal dialog,
+  // else the page outside each notice the library dismisses.
   const told = () => {
     const buttons = buttonsIn(all);
-    // The modal dialog shown over the page, as a covering notice's is found: one that holds what
-    // sits at the window's centre, the last that holds no other shown, and no notice the library
-    // dismisses; else the page outside each such notice. A banner at an edge is no such dialog.
-    let centre = document.elementFromPoint(innerWidth / 2, innerHeight / 2);
-    while (centre?.shadowRoot) {
-      const inner = centre.shadowRoot.elementFromPoint(innerWidth / 2, innerHeight / 2);
-      if (inner === null || inner === centre) break;
-      centre = inner;
-    }
-    const covers = (element) => centre !== null && (element.contains(centre) || roots.some((root) => root !== document && element.contains(root.host) && root.contains(centre)));
-    const modals = all('dialog[open], [role~="dialog"], [role~="alertdialog"], [aria-modal="true"]').filter((element) => shows(element) && !apart(element) && covers(element));
-    const modal = modals.findLast((element) => !modals.some((other) => other !== element && element.contains(other)));
     const within = (selector) => (modal === undefined ? all(selector) : [...modal.querySelectorAll(selector)]).filter((element) => !apart(element));
     const [dialogSaid, dialogButtons] = modal === undefined && notices.length === 0 ? [undefined, []] : [firstSaid(within), buttonsIn(within)];
     const same = modal === undefined && dialogSaid === said && JSON.stringify(dialogButtons) === JSON.stringify(buttons);
@@ -496,6 +503,7 @@ const Scan = Schema.Struct({
       origin: Schema.String,
       boxes: Schema.Array(ScannedBox),
       texts: Schema.Array(Schema.String),
+      shownTexts: Schema.Array(Schema.String),
       message: Schema.optional(Schema.String),
       buttons: Schema.optional(Schema.Array(Schema.String)),
       instruction: Schema.optional(Schema.String),
@@ -649,6 +657,10 @@ const readingOf = (
   const shown = empty.length > 0 && !pickedOnly ? frames.find((frame) => kept(frame).some((box) => box.empty)) : undefined;
   const instruction = shown?.instruction === undefined ? "" : normalized(shown.instruction, 200, logins);
   const ways = [...new Set((shown?.ways ?? []).slice(0, 12).map((label) => normalized(label, 120, logins)))];
+  const textsOf = (texts: readonly string[]) =>
+    [...new Set(texts.slice(0, 40).map((text) => normalized(text, 200, logins)))]
+      .filter((text) => text.length >= 2)
+      .slice(0, 40);
   return {
     fingerprint: fingerprintOf({
       top: named(top),
@@ -672,15 +684,7 @@ const readingOf = (
           }),
     }),
     boxes: boxes.map((box) => ({ ...written(box), empty: box.empty, submit: box.submit })),
-    texts: [
-      ...new Set(
-        frames
-          .flatMap((frame) => frame.texts)
-          .slice(0, 40)
-          .map((text) => normalized(text, 200, logins)),
-      ),
-    ]
-      .filter((text) => text.length >= 2)
-      .slice(0, 40),
+    texts: textsOf(frames.flatMap((frame) => frame.texts)),
+    shownTexts: textsOf(frames.flatMap((frame) => frame.shownTexts)),
   };
 };

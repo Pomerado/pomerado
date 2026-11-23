@@ -257,6 +257,31 @@ test("a code page the library never recorded that comes back naming a locked acc
   expect(codes).toEqual([`/verify code=${seedCode}`]);
 });
 
+test("a recorded code page in a dialog over a long hidden page ends there when the dialog names a locked account after the code", async ({ page }) => {
+  // The page behind the dialog, hidden from a reader, holds more text than the scan reads.
+  const behind = `<div aria-hidden="true">${Array.from({ length: 45 }, (_, at) => `<p>Aisle ${at} offers</p>`).join("")}</div>`;
+  const posts: string[] = await serve(
+    page,
+    {
+      "/login": loginPage,
+      get "/verify"() {
+        const notice = posts.some((post) => post.startsWith("/verify")) ? "<p>Your account is locked. Check your email to unlock it.</p>" : "";
+        return `${behind}<div role="dialog" aria-modal="true" style="position:fixed;inset:0;background:#fff"><h2>Verify your email</h2>${notice}${verify}</div>`;
+      },
+    },
+    { "/login": "/verify", "/verify": "/verify" },
+  );
+  const library = await recorded(page, [login, { page: `${site}/verify`, fields: [{ selector: "#code", slot: "code" }], submit: "#verify" }]);
+  await page.goto("about:blank");
+  posts.length = 0;
+  const { ended, asked } = await replay(page, library, { code: sentCode }, () => ({
+    siteAnswer: (texts) => Effect.succeed(texts?.some((text) => /locked/iu.test(text)) === true ? "locked" : undefined),
+  }));
+  expect(ended).toMatchObject({ outcome: "unclear", reason: "account_locked" });
+  expect(asked).toEqual(["code"]);
+  expect(posts.filter((post) => post.startsWith("/verify"))).toEqual([`/verify code=${sentCode}`]);
+});
+
 /** `library` with the code page a replay named, after the state before it, as a host keeps it. */
 const kept = (library: SignInStates, named: SignInStatesOutcome["unrecordedCode"]) => {
   if (named?.step === undefined) throw new Error("No recorded code screen");

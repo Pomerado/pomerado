@@ -1801,6 +1801,12 @@ const takesCodeIn = <E extends YieldableError, V extends string, L extends Autof
 ) => resolved(run, state.step).fields.some((field) => field.slot === "code");
 
 /**
+ * The page's texts the site's answer to a code is read on: as a person reads them (`shownTexts`),
+ * else, from a host whose reading has none, as read.
+ */
+const shownTexts = (observed: ObservedState) => observed.shownTexts ?? observed.texts;
+
+/**
  * The site's own answer to a state whose password or identifier went out and that shows again, as
  * the host reads it (`hosted.siteAnswer`), as the recipe replay reads it for a credential screen
  * that came back: never once an emailed link was asked for, never for a state that takes a code,
@@ -2180,7 +2186,7 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
             // The site's answer to the code: the texts the page shows that it didn't as the state showed.
             const answer = codeMarked ? undefined : run.input.hosted?.siteAnswer;
             if (answer !== undefined) {
-              const said = yield* answer(read.texts.filter((text) => !acted.reached.texts.includes(text)));
+              const said = yield* answer(shownTexts(read).filter((text) => !shownTexts(acted.reached).includes(text)));
               if (said === "locked") return stopped(run, "account_locked");
             }
             return { again: "code", explicit: codeMarked } satisfies Again;
@@ -2890,7 +2896,12 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
         if (run.visited.length >= maximumStateVisits) return stopped(run, "state_limit");
         yield* input.emit({ stage: "state", state: fuller.state.key, reason: "fuller_state" });
         state = fuller.state;
-        reached = { ...reached, fingerprint: state.fingerprint, texts: fuller.observed.texts };
+        reached = {
+          ...reached,
+          fingerprint: state.fingerprint,
+          texts: fuller.observed.texts,
+          shownTexts: fuller.observed.shownTexts,
+        };
         run.visited.push(state.key);
         continue;
       }
@@ -3438,7 +3449,7 @@ const walk = <E extends YieldableError, V extends string, L extends AutofillLogi
           const said =
             answer === undefined || now === undefined
               ? undefined
-              : yield* answer(now.texts.filter((text) => !codeTexts?.includes(text)));
+              : yield* answer(shownTexts(now).filter((text) => !codeTexts?.includes(text)));
           if (said === "locked") return stopped(run, "account_locked").ended;
           retried = true;
           yield* input.emit({ stage: "retried", reason: "unrecorded_code" });
@@ -3461,7 +3472,7 @@ const walk = <E extends YieldableError, V extends string, L extends AutofillLogi
         const before = probe && input.hosted?.siteAnswer !== undefined ? yield* input.observe : undefined;
         const code = probe ? yield* unrecordedCode(run.as, run.replay, probed, link !== undefined, true) : "none";
         if (code === "ran" && unknown !== undefined) {
-          codeTexts = before?.texts;
+          codeTexts = before === undefined ? undefined : shownTexts(before);
           const after = arrived.ended.unknownState?.after;
           // The look was read before the step, so the step is kept only on that look's top page.
           const read = run.replay.progress.unrecordedCodeStep;
