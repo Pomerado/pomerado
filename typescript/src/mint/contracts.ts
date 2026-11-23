@@ -2839,8 +2839,8 @@ export interface DecisionLedger {
 export interface UnansweredQuestion {
   /**
    * Where it was asked: `question` is the minter's own `request_input`, the read-or-write and
-   * capability questions included; `sign_in` is a question a sign-in asked; `execution` is a
-   * question an execution's script asked.
+   * capability questions included; `sign_in` is a question a sign-in or its signed-in marker
+   * check asked; `execution` is a question an execution's script asked.
    */
   readonly step: "question" | "sign_in" | "execution";
   /** The id the question was asked under, when the harness knows it. */
@@ -3237,6 +3237,8 @@ export interface MintDependencies {
    * (`evaluateSignedInMarker` matches it), whether the live page shows it now, after the host
    * loads `openPath` (or the site's origin) again, and on another page the agent visited signed
    * in. It never signs in or sends a value. Absent, the tool reports the check unavailable.
+   * A `noResponse` failure, from a question the check asked that went unanswered, ends the build
+   * as `no_response`, as one from a sign-in does.
    */
   readonly checkSignedInMarker?: (
     marker: SignedInMarkerCheckRequest,
