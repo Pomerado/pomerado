@@ -20,7 +20,7 @@ export const report =
  * site may read without cookies, `/moved?to=<address>` a redirect there and `/missing.pdf` a 404. `received` lists each upload,
  * and `requested` the path of every request the site answered. Its `/drop` page uploads a file the moment its input holds one; with `frame`, the main page
  * embeds that address in an iframe. `/shadow-drop` does the same with its input inside an open
- * shadow root.
+ * shadow root. `/chip` takes the file its input holds on change into a chip, then clears the input.
  */
 export const startFileSite = async (options: { readonly frame?: string } = {}) => {
   const received: { readonly name: string; readonly size: number; readonly sha256: string }[] = [];
@@ -84,6 +84,18 @@ export const startFileSite = async (options: { readonly frame?: string } = {}) =
 document.querySelector("input").addEventListener("change", (event) => {
   const file = event.target.files[0];
   fetch("/upload?name=" + encodeURIComponent(file.name), { method: "POST", body: file });
+});
+</script>`);
+        return;
+      }
+      if (url.pathname === "/chip") {
+        response.end(`<title>Chip</title>
+<label>Attach <input type="file"></label>
+<span id="chip"></span>
+<script>
+document.querySelector("input").addEventListener("change", (event) => {
+  document.getElementById("chip").textContent = event.target.files[0].name;
+  event.target.value = "";
 });
 </script>`);
         return;
