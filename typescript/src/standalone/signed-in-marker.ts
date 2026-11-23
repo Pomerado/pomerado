@@ -131,7 +131,7 @@ const dom = await within(
   primary.evaluate(() => {
     // The copy goes in a document with no window, so its pictures never load again.
     const root = document.implementation.createHTMLDocument("").importNode(document.documentElement, true);
-    for (const element of root.querySelectorAll("script, style")) element.textContent = "";
+    for (const element of root.querySelectorAll("script, style")) element.replaceChildren();
     return "<!doctype html>" + root.outerHTML;
   }),
 ).catch(() => late);
