@@ -5,6 +5,7 @@ import {
   checkAutofillSignedIn,
   type AutofillScreens,
 } from "../../src/destinations/autofill-step.js";
+import { makeMarkerChecks } from "../../src/standalone/signed-in-marker.js";
 import { hostPage } from "./autofill-host-page.js";
 
 // The host's check that an autofill sign-in shows the site signed in, on local Chromium,
@@ -413,3 +414,31 @@ test("the signed-in check with the sign-in pop-up still open", async ({ page }) 
   await popup.waitForURL(/\/dashboard/u);
   expect(await check()).toEqual({ signedIn: true, url: `${site}/account` });
 });
+
+// A page whose policy requires Trusted Types for script text, which Chromium applies to the copy
+// the signed-out read makes too, and which tells the page of each string set as script text.
+for (const header of ["Content-Security-Policy", "Content-Security-Policy-Report-Only"])
+  test(`a signed-out page under ${header} requiring Trusted Types is kept without a violation`, async ({ page }) => {
+    await page.route(`${site}/`, (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        headers: { [header]: "require-trusted-types-for 'script'" },
+        body: `<script>window.violations = 0; addEventListener("securitypolicyviolation", () => violations++);</script><p>Welcome</p>`,
+      }),
+    );
+    await page.goto(`${site}/`);
+    const checks = makeMarkerChecks({
+      page: await hostPage(page),
+      siteOrigin: site,
+      check: () => Effect.die("No marker check here"),
+      typing: { typed: false },
+      loginSent: () => false,
+      writeSessionStarted: () => false,
+      observe: Effect.void,
+    });
+    await Effect.runPromise(checks.afterSignedOutReset);
+    expect(checks.signedOutPages().map(({ dom }) => dom)).toEqual([
+      "<!doctype html><html><head><script></script></head><body><p>Welcome</p></body></html>",
+    ]);
+    expect(await page.evaluate(() => Reflect.get(window, "violations"))).toBe(0);
+  });
