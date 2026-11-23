@@ -2599,14 +2599,29 @@ const submitsBy = (target: AutofillInspection["targets"]["fields"][number] | und
   origins: JSON.stringify([...new Set((target?.actions ?? []).map(urlOrigin))].sort()),
 });
 
-/** Each box typed, by its selector: a step that reads it alone, and how its form submitted before. */
-type ReadBefore = Map<string, { readonly step: AutofillStep; readonly submits: Submits }>;
+/**
+ * What a state's readings found before typing: each box typed, by its selector, with a step that
+ * reads it alone and how its form submitted before it was typed (`boxes`); and how the submission
+ * of the state's submit, or of its key, went before its first box was typed, where a reading found
+ * it (`submit`).
+ */
+type ReadBefore = {
+  readonly boxes: Map<string, { readonly step: AutofillStep; readonly submits: Submits }>;
+  submit?: Submits;
+};
+const readNothing = (): ReadBefore => ({ boxes: new Map() });
 
-/** Notes how each box of `step` submits, as `inspection` found it, unless a reading before did. */
+/**
+ * Notes how each box of `step` submits, as `inspection` found it, unless a reading before did, and,
+ * before the first box, how its submit's submission goes, unless a reading before did.
+ */
 const noteSubmits = (readBefore: ReadBefore, step: AutofillStep, inspection: AutofillInspection) => {
+  const { submit } = inspection.targets;
+  if (readBefore.boxes.size === 0 && readBefore.submit === undefined && submit !== null)
+    readBefore.submit = submitsBy(submit);
   for (const [at, field] of step.fields.entries())
-    if (!readBefore.has(field.selector))
-      readBefore.set(field.selector, {
+    if (!readBefore.boxes.has(field.selector))
+      readBefore.boxes.set(field.selector, {
         step: { fields: [field], ...(step.popup === undefined ? {} : { popup: step.popup }) },
         submits: submitsBy(inspection.targets.fields[at]),
       });
@@ -2617,8 +2632,11 @@ const noteSubmits = (readBefore: ReadBefore, step: AutofillStep, inspection: Aut
  * send what was typed where no reading judged it: a box typed before whose form now submits by
  * GET, names GET, or goes to other origins than the reading before that box was typed found, read
  * from `inspection` where `step` holds the box and read again alone, typing nothing, where it
- * doesn't; or a submit whose own submission now goes by GET where the first box typed was read
- * otherwise, as a page that turns its form or its button to GET once a box was typed. The host
+ * doesn't; or a submit whose own submission now goes by GET where the reading of it before the
+ * state's first box was typed found otherwise (`submit`), or, with no such reading, where the
+ * first box typed was read otherwise, as a page that turns its form or its button to GET once a
+ * box was typed; a submit in a form that went by GET all along, as a form with no method whose
+ * page sends it with its own code, beside a box typed outside it, goes on. The host
  * judges each reading as it finds it, so a press on such a reading would send what was typed by
  * GET or elsewhere. A box `step` types for the first time is the host's own to judge in
  * `inspection`. A box the page no longer shows, or no longer lets be typed, has no reading again,
@@ -2632,12 +2650,12 @@ const submitsChanged = <E extends YieldableError, V extends string, L extends Au
   inspection: AutofillInspection,
 ) =>
   Effect.gen(function* () {
-    const [first] = readBefore.values();
+    const [first] = readBefore.boxes.values();
     if (first === undefined) return false;
-    if (inspection.targets.submit?.submitMethod === "get" && !first.submits.get) return true;
+    if (inspection.targets.submit?.submitMethod === "get" && !(readBefore.submit ?? first.submits).get) return true;
     const turned = (before: Submits, now: Submits) =>
       (now.get && !before.get) || (now.namesGet && !before.namesGet) || now.origins !== before.origins;
-    for (const [selector, typed] of readBefore) {
+    for (const [selector, typed] of readBefore.boxes) {
       const at = step.fields.findIndex((field) => field.selector === selector);
       const read = at === -1 ? yield* run.input.hooks.inspect(typed.step) : inspection;
       if ("outcome" in read) {
@@ -2695,8 +2713,9 @@ const submitGone = <E extends YieldableError, V extends string, L extends Autofi
  * hold too. No fill that presses after boxes typed before it, no press alone and no Enter in its
  * place goes where its reading, with each box typed before it read again, finds such a box's form
  * now submitting by GET, naming GET or going to other origins than the reading before the box was
- * typed found, or its submit now going by GET (`submitsChanged`); and Enter in place of the press
- * follows only a press that never went and whose submit the page took away (`submitGone`).
+ * typed found, or its submit now going by GET where it went otherwise before the state's first box
+ * was typed (`submitsChanged`); and Enter in place of the press follows only a press that never
+ * went and whose submit the page took away (`submitGone`).
  */
 const actIn = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -2710,7 +2729,7 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
     let reached = arrival;
     const typed = new Set<AutofillSlot>();
     // How and where each box's form submits, as the reading before it was typed found it.
-    const readBefore: ReadBefore = new Map();
+    const readBefore = readNothing();
     const acted = (press?: AutofillStep, picked?: NonNullable<AutofillRecipeStep["methods"]>[number]): Acted => ({
       acted: state,
       reached,
@@ -2792,6 +2811,13 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
         // A fill that presses after boxes typed before it, on a reading taken since.
         if ((asked !== typing || keyed) && (yield* submitsChanged(run, readBefore, asked, here)))
           return stopped(run, "credential_target_refused");
+        // How the state's submit's submission goes before its first box is typed, where this
+        // fill's reading doesn't read it.
+        if (readBefore.boxes.size === 0 && here.targets.submit === null && full.submit !== undefined) {
+          const submitted = yield* input.hooks.inspect({ fields: [], ...screenSubmit(full) });
+          if (!("outcome" in submitted) && submitted.targets.submit !== null)
+            readBefore.submit = submitsBy(submitted.targets.submit);
+        }
         noteSubmits(readBefore, asked, here);
         const next = asked === typing ? undefined : learnedNext(run, state)[0]?.step;
         const failed = yield* replay.runStep(
@@ -3116,7 +3142,7 @@ const actAgain = <E extends YieldableError, V extends string, L extends Autofill
     }
     if (again.again === "code") replay.recordRejected(["code"]);
     // How its boxes' forms submit before the code is typed again, for the Enter after it.
-    const readBefore: ReadBefore = new Map();
+    const readBefore = readNothing();
     noteSubmits(readBefore, typing, here);
     const tries = replay.codeAttempts.current;
     const failed =

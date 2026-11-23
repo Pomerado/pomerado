@@ -564,6 +564,39 @@ test("a username box outside the form its password and button post signs in", as
   expect(posts).toEqual([`/login password=${password}`]);
 });
 
+test("a username box outside a form with no method, whose page sends the password with its own code, signs in", async ({ page }) => {
+  // The form names no method, so it reads as GET all along; the page's code posts the password.
+  const split =
+    '<label>Username<input id="username" name="username"></label><form action="/login"><label>Password<input id="password" name="password" type="password"></label><button id="sign-in">Sign in</button></form><script>document.forms[0].addEventListener("submit", (event) => { event.preventDefault(); fetch("/login", { method: "POST", body: new URLSearchParams(new FormData(event.target)) }).then(() => location.replace("/home")); });</script>';
+  const posts = await serve(page, { "/login": split, "/home": '<p id="account">Your account</p>' }, { "/login": "/home" });
+  const library = await recorded(page, [login]);
+  await page.goto("about:blank");
+  posts.length = 0;
+  const { ended } = await replay(page, library, {});
+  expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(posts).toEqual([`/login password=${password}`]);
+});
+
+test("a username box outside the password's form, which the page moves into that form and turns to GET after the username was typed, gets no press and no credential in an address", async ({ page }) => {
+  const pages: Record<string, string> = {};
+  const posts = await serve(page, pages, { "/login": "/login" });
+  for (const after of [2300, 2400]) {
+    pages["/login"] =
+      `<label id="name">Username<input id="username" name="username"></label><form method="post" action="/login"><label>Password<input id="password" name="password" type="password"></label><button id="sign-in">Sign in</button></form><script>document.getElementById("username").addEventListener("input", () => { clearTimeout(window.turn); window.turn = setTimeout(() => { document.forms[0].prepend(document.getElementById("name")); document.forms[0].method = "get"; }, ${after}); });</script>`;
+    const library = await recorded(page, [login]);
+    await page.goto("about:blank");
+    posts.length = 0;
+    const addresses: string[] = [];
+    const heard = (request: { url: () => string }) => void addresses.push(request.url());
+    page.on("request", heard);
+    const { ended } = await replay(page, library, {});
+    page.off("request", heard);
+    expect(addresses.filter((address) => address.includes(username) || address.includes(password))).toEqual([]);
+    expect(posts).toEqual([]);
+    expect(ended.outcome).not.toBe("signed_in");
+  }
+});
+
 test("a username box in a form with no button that posts to another path on its site while the replay waits to press Enter has Enter sent there and signs in", async ({ page }) => {
   // The form posts to another path of the same site from 4 s after the last key.
   const identifier =
