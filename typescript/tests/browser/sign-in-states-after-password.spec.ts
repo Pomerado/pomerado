@@ -188,6 +188,74 @@ test("a code page the library never recorded, after the password, is answered on
   expect(posts.filter((post) => post.startsWith("/verify"))).toEqual([`/verify code=${code}`]);
 });
 
+const seedCode = "135791";
+const sentCode = "246810";
+
+/**
+ * A site whose page after the password is a code page the library never recorded, taking only the
+ * code it sent: any other brings the page back as it was, with no error, or with `locks` naming a
+ * locked account. Each replay of it from the login gets the host's own code, as from a saved
+ * authenticator seed, wherever the replay lets the host give one, else the owner's, `owner` in
+ * turn, each counted, and the host's read of the site's answer: the codes posted, in order.
+ */
+const seededCodePage = async (page: Page, locks = false) => {
+  const lockedNotice = "<p>Too many attempts. Your account is locked.</p>";
+  const codes = () => posts.filter((post) => post.startsWith("/verify"));
+  const posts: string[] = await serve(
+    page,
+    {
+      "/login": loginPage,
+      get "/verify"() {
+        return locks && codes().length > 0 ? lockedNotice + verify : verify;
+      },
+      "/home": '<p id="account">Your account</p>',
+    },
+    {
+      "/login": "/verify",
+      get "/verify"() {
+        return posts.at(-1) === `/verify code=${sentCode}` ? "/home" : "/verify";
+      },
+    },
+  );
+  const library = await recorded(page, [login]);
+  return async (owner: readonly string[]) => {
+    await page.goto("about:blank");
+    posts.length = 0;
+    let asked = 0;
+    const { ended } = await replay(page, library, {}, () => ({
+      login: (base, step) => ({ ...base, seedAllowed: step.seedAllowed }),
+      code: (held) =>
+        Effect.sync(() => ({
+          slot: "code" as const,
+          value: (held as { seedAllowed?: boolean }).seedAllowed === true ? seedCode : (owner[asked++] ?? ""),
+        })),
+      siteAnswer: (texts) => Effect.succeed(texts?.some((text) => /locked/iu.test(text)) === true ? "locked" : undefined),
+    }));
+    return { ended, asked, codes: codes() };
+  };
+};
+
+test("a code page the library never recorded that comes back with no error gets one more code, never the host's again", async ({ page }) => {
+  const run = await seededCodePage(page);
+  const signed = await run([sentCode]);
+  expect(signed.ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(signed.asked).toBe(1);
+  expect(signed.codes).toEqual([`/verify code=${seedCode}`, `/verify code=${sentCode}`]);
+  // An owner's code the site refuses too ends the replay there, with no third code.
+  const refused = await run(["975310", sentCode]);
+  expect(refused.ended).toMatchObject({ outcome: "unclear", reason: "unknown_state" });
+  expect(refused.asked).toBe(1);
+  expect(refused.codes).toEqual([`/verify code=${seedCode}`, "/verify code=975310"]);
+});
+
+test("a code page the library never recorded that comes back naming a locked account ends there, with no code asked again", async ({ page }) => {
+  const run = await seededCodePage(page, true);
+  const { ended, asked, codes } = await run([sentCode]);
+  expect(ended).toMatchObject({ outcome: "unclear", reason: "account_locked" });
+  expect(asked).toBe(0);
+  expect(codes).toEqual([`/verify code=${seedCode}`]);
+});
+
 /** `library` with the code page a replay named, after the state before it, as a host keeps it. */
 const kept = (library: SignInStates, named: SignInStatesOutcome["unrecordedCode"]) => {
   if (named?.step === undefined) throw new Error("No recorded code screen");
