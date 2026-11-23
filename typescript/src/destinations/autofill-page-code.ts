@@ -46,6 +46,48 @@ import { pageControlsCode } from "./page-controls.js";
 const strictSlots: ReadonlySet<string> = new Set(["password", "private_answer"]);
 
 /**
+ * Page code: the row of one-character boxes a box sits in, by the rule `codeBoxesCode` gives, else
+ * null: its boxes in page order and how they take one character (`limit`), by their `maxlength` of 1
+ * (`maxlength`), or by the page's own script (`script`) only where `script` says to look for one,
+ * among at most `mostBoxes`. A row by its `maxlength` may hold fewer than two boxes, or more than
+ * `mostBoxes`; with `off`, it holds the boxes the page switched off too, as a page that switches
+ * each box on once the one before it holds a digit, which a fill waits for (`untrustedTarget`).
+ */
+export const codeRowCode = `(element, script, mostBoxes, off = false) => {
+  const textTypes = ["", "text", "tel", "number", "password", "search"];
+  const shown = (node) => {
+    const rect = node.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0 && node.checkVisibility({ visibilityProperty: true });
+  };
+  const shownChildren = (node) => Array.from(node.children).filter(shown);
+  const editable = (control, switchedOff = false) => {
+    if (control.tagName !== "INPUT") return false;
+    if (!textTypes.includes((control.getAttribute("type") ?? "").toLowerCase())) return false;
+    if ((control.disabled && !switchedOff) || control.readOnly) return false;
+    return shown(control);
+  };
+  if (!editable(element)) return null;
+  if (element.maxLength === 1) {
+    const screen = element.form ?? element.getRootNode();
+    const boxes = Array.from(screen.querySelectorAll("input")).filter((control) => editable(control, off) && control.maxLength === 1);
+    return { boxes, limit: "maxlength" };
+  }
+  if (element.maxLength >= 0 || !script || element.parentNode === null) return null;
+  let boxes = Array.from(element.parentNode.children).filter(editable);
+  const wrapper = element.parentElement;
+  if (boxes.length === 1 && wrapper?.parentNode) {
+    boxes = shownChildren(wrapper.parentNode).map((child) => {
+      const held = shownChildren(child);
+      return held.length === 1 ? held[0] : null;
+    });
+    if (!boxes.every((control) => control !== null && editable(control))) return null;
+  }
+  if (boxes.length > mostBoxes || boxes.some((control) => control.maxLength >= 0 || control.type !== element.type))
+    return null;
+  return { boxes, limit: "script" };
+}`;
+
+/**
  * Page code: a selector that matches `control` alone in its document or shadow root, else null: by
  * its id, else its name, else its `aria-label`. With `kept`, for a screen a library keeps, by its
  * name, else its `aria-label`, else an id with no digit in it, since a page that makes up an id on
@@ -71,45 +113,14 @@ for (const [index, field] of fields.entries()) {
     continue;
   }
   const codeBox = await field.locator.evaluate((element, [codeFields, mostBoxes]) => {
-    const textTypes = ["", "text", "tel", "number", "password", "search"];
-    const shown = (node) => {
-      const rect = node.getBoundingClientRect();
-      return rect.width > 0 && rect.height > 0 && node.checkVisibility({ visibilityProperty: true });
-    };
-    const shownChildren = (node) => Array.from(node.children).filter(shown);
-    const editable = (control) => {
-      if (control.tagName !== "INPUT") return false;
-      if (!textTypes.includes((control.getAttribute("type") ?? "").toLowerCase())) return false;
-      if (control.disabled || control.readOnly) return false;
-      return shown(control);
-    };
-    const place = (boxes, limit) => {
-      const at = boxes.indexOf(element);
-      return boxes.length < 2 || at < 0 ? null : { box: at + 1, of: boxes.length, limit };
-    };
     const nameOf = ${nameOfCode};
-    if (!editable(element)) return null;
-    if (element.maxLength === 1) {
-      const screen = element.form ?? element.getRootNode();
-      const boxes = Array.from(screen.querySelectorAll("input")).filter((control) => editable(control) && control.maxLength === 1);
-      const found = place(boxes, "maxlength");
-      if (found === null || codeFields !== 1 || found.box !== 1 || boxes.length > mostBoxes) return found;
-      const rest = boxes.slice(1);
-      return { ...found, rest: rest.map((box) => nameOf(box, false)), kept: rest.map((box) => nameOf(box, true)) };
-    }
-    if (element.maxLength >= 0 || codeFields < 2 || element.parentNode === null) return null;
-    let boxes = Array.from(element.parentNode.children).filter(editable);
-    const wrapper = element.parentElement;
-    if (boxes.length === 1 && wrapper?.parentNode) {
-      boxes = shownChildren(wrapper.parentNode).map((child) => {
-        const held = shownChildren(child);
-        return held.length === 1 ? held[0] : null;
-      });
-      if (!boxes.every((control) => control !== null && editable(control))) return null;
-    }
-    if (boxes.length > mostBoxes || boxes.some((control) => control.maxLength >= 0 || control.type !== element.type))
-      return null;
-    return place(boxes, "script");
+    const row = (${codeRowCode})(element, codeFields >= 2, mostBoxes);
+    const at = row === null ? -1 : row.boxes.indexOf(element);
+    if (row === null || row.boxes.length < 2 || at < 0) return null;
+    const found = { box: at + 1, of: row.boxes.length, limit: row.limit };
+    if (row.limit === "script" || codeFields !== 1 || found.box !== 1 || row.boxes.length > mostBoxes) return found;
+    const rest = row.boxes.slice(1);
+    return { ...found, rest: rest.map((box) => nameOf(box, false)), kept: rest.map((box) => nameOf(box, true)) };
   }, [codeFields, ${maximumCodeBoxes}], { timeout: ${elementReadMs} }).catch(() => null);
   codeBoxes.push(codeBox);
 }
@@ -138,7 +149,7 @@ const keptCodeBoxes =
  * a digit and its word, which no code could tell apart, and no text field. Names only, never a
  * state; `choices` are the elements the choose call clicks.
  */
-const choicesCode = `(element) => {
+export const choicesCode = `(element) => {
   if (element.matches(":read-write, select") || element.querySelector(":read-write, select") !== null) return null;
   const name = (${String(accessibleNames)})();
   const choices = Array.from(element.querySelectorAll('input[type="checkbox"], [role="checkbox"]')).filter(
