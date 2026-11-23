@@ -370,33 +370,34 @@ test("a code box where an emailed link's page was, with no code given, asks for 
   expect(posts.filter((post) => post.startsWith("/verify"))).toEqual([]);
 });
 
-test("a page with a password box beside a code box after the username is no emailed link's page", async ({ page }) => {
+test("a page with a password box beside a code box after the username is no emailed link's page, at its address or another", async ({ page }) => {
   const named: AutofillRecipeStep = { page: `${site}/login`, fields: [{ selector: "#username", accepts: ["username"] }], submit: "#next" };
   const typed: AutofillRecipeStep = { page: `${site}/password`, fields: [{ selector: "#password", slot: "password" }], submit: "#sign-in" };
   const both =
     '<form method="post" action="/both"><label>Password<input id="password" name="password" type="password"></label><label>Verification code<input id="otp" name="otp" autocomplete="one-time-code" inputmode="numeric"></label><button id="verify">Verify</button></form>';
-  const posts = await serve(
-    page,
-    {
-      "/login": '<form method="post" action="/login"><label>Username<input id="username" name="username"></label><button id="next">Next</button></form>',
-      "/password": '<form method="post" action="/password"><label>Password<input id="password" name="password" type="password"></label><button id="sign-in">Sign in</button></form>',
-      "/check-email": checkEmail,
-      "/both": both,
-    },
-    { "/login": "/both" },
-  );
-  // One sign-in sent the password after the username, and another was emailed a link.
-  const linked = appendSignInStates(await recorded(page, [named, typed]), {
-    states: (await recorded(page, [named, emailedLink])).states,
-    signedIn: { selector: "#account" },
-  });
-  if ("refused" in linked) throw new Error(linked.refused);
-  await page.goto("about:blank");
-  posts.length = 0;
-  const { ended, asked } = await replay(page, linked.library, { code: "246810" });
-  expect(ended).toMatchObject({ outcome: "unclear", reason: "unknown_state" });
-  expect(asked).toEqual([]);
-  expect(posts).toEqual([`/login username=${username}`]);
+  const pages: Record<string, string> = {
+    "/login": '<form method="post" action="/login"><label>Username<input id="username" name="username"></label><button id="next">Next</button></form>',
+    "/password": '<form method="post" action="/password"><label>Password<input id="password" name="password" type="password"></label><button id="sign-in">Sign in</button></form>',
+    "/check-email": checkEmail,
+  };
+  const posts = await serve(page, pages, { "/login": "/both" });
+  // One sign-in sent the password after the username, and another was emailed a link, learned on
+  // its own page or on the one this page now shows.
+  for (const at of ["/check-email", "/both"]) {
+    pages["/both"] = checkEmail;
+    const linked = appendSignInStates(await recorded(page, [named, typed]), {
+      states: (await recorded(page, [named, { ...emailedLink, page: `${site}${at}` }])).states,
+      signedIn: { selector: "#account" },
+    });
+    if ("refused" in linked) throw new Error(linked.refused);
+    pages["/both"] = both;
+    await page.goto("about:blank");
+    posts.length = 0;
+    const { ended, asked } = await replay(page, linked.library, { code: "246810" });
+    expect(ended).toMatchObject({ outcome: "unclear", reason: "unknown_state" });
+    expect(asked).toEqual([]);
+    expect(posts).toEqual([`/login username=${username}`]);
+  }
 });
 
 /**

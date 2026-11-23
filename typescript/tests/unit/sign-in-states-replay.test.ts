@@ -1245,7 +1245,7 @@ it("asks for a new code when the site refuses one from a code box that sends its
   expect(site.fills).toEqual(["code", "code"]);
 });
 
-it("takes an approval on another page of its recorded origin, as a recipe's approval screen is", async () => {
+it("takes an approval on another page of its recorded origin, as a recipe's approval screen is", { timeout: 12_000 }, async () => {
   const approval: Screen = { path: "/approve", boxes: [], texts: ["approve the sign-in on your phone"] };
   const library = libraryOf([
     { fingerprint: arrival(emailScreen), step: stepAt("/sign-in", [email], "#continue") },
@@ -1262,29 +1262,50 @@ it("takes an approval on another page of its recorded origin, as a recipe's appr
   // Never on a page of a state it recorded, such as the sign-in page come back with no box.
   const back = scriptedSite({ start: emailScreen, back: { ...named, path: "/sign-in" } }, (at) => (at === "start" ? "back" : undefined));
   expect(await replay(back, library)).toMatchObject({ outcome: "unclear", reason: "unknown_state", asked: [] });
+  // Nor on its own recorded page, where a page of another look, such as an error, is none of it.
+  const error = scriptedSite({ start: emailScreen, error: { ...approval, texts: ["something went wrong"] } }, (at) =>
+    at === "start" ? "error" : undefined,
+  );
+  expect(await replay(error, library)).toMatchObject({ reason: "unknown_state", asked: [] });
+  // Nor where the host's challenge look finds a challenge there.
+  const walled = scriptedSite({ start: emailScreen, named }, (at) => (at === "start" ? "named" : undefined));
+  const challenge = Effect.succeed({ outcome: "failed" as const, vendor: "first_party" });
+  expect(await replay({ ...walled, hooks: { ...walled.hooks, challenge } }, library)).toMatchObject({
+    reason: "challenge_unsolved",
+    asked: [],
+  });
+  // One the login's own route names next is taken once the page settled, before the step wait.
+  const routed = scriptedSite({ start: emailScreen, named }, (at) => (at === "start" ? "named" : undefined));
+  const began = Date.now();
+  const states = library.states.map((state) => state.key);
+  const taken = await replay(routed, library, { stepWaitMs: 10_000, choices: { states }, approve: () => void (routed.site.screen = "home") });
+  expect(taken).toMatchObject({ outcome: "signed_in", asked: ["approved"] });
+  expect(Date.now() - began).toBeLessThan(5_000);
 });
 
-it("never takes a page shown a moment before the password page for an approval the login's route leaves out", { timeout: 8_000 }, async () => {
+it("takes an approval by its origin only at the step wait, and only one the login's route holds", { timeout: 12_000 }, async () => {
   const approval: Screen = { path: "/approve", boxes: [], texts: ["approve the sign-in on your phone"] };
   const start = { fingerprint: arrival(emailScreen), step: stepAt("/sign-in", [email], "#continue") };
   const library = libraryOf(
     [start, { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") }],
     [start, { fingerprint: arrival(approval), step: stepAt("/approve", [], undefined, { approval: "device" }) }],
   );
-  // The login signed in through the password, and the site shows a page of its own before it.
+  // With no route, a page the site shows for a moment before the password page is no approval.
   const moment: Screen = { path: "/continue", boxes: [], texts: ["one moment"] };
-  const site = scriptedSite({ start: emailScreen, moment, password: passwordScreen }, (_at, clicked) => {
+  const slow = scriptedSite({ start: emailScreen, moment, password: passwordScreen }, (_at, clicked) => {
     if (clicked !== "#continue") return "home";
     setTimeout(() => {
-      site.site.screen = "password";
+      slow.site.screen = "password";
     }, 2_500);
     return "moment";
   });
+  const ended = await replay(slow, library, { stepWaitMs: 10_000 });
+  expect(ended).toMatchObject({ outcome: "signed_in", asked: [] });
+  expect(slow.fills).toEqual(["email", "password"]);
+  // A login that signed in through the password is asked for no approval, even at the step wait.
+  const stuck = scriptedSite({ start: emailScreen, moment }, (at) => (at === "start" ? "moment" : undefined));
   const states = library.states.slice(0, 2).map((state) => state.key);
-  const ended = await replay(site, library, { stepWaitMs: 10_000, choices: { states } });
-  expect(ended).toMatchObject({ outcome: "signed_in" });
-  expect(ended.asked).toEqual([]);
-  expect(site.fills).toEqual(["email", "password"]);
+  expect(await replay(stuck, library, { choices: { states } })).toMatchObject({ reason: "unknown_state", asked: [] });
 });
 
 it("never picks a sign-in method a second time when the page keeps the choice", async () => {
@@ -1349,6 +1370,32 @@ it("never takes another method choice by its methods' controls once a method was
   );
   expect(await replay(site, library, { hostMethod: "sms" })).toMatchObject({ reason: "unknown_state" });
   expect(site.clicks).toEqual(["#continue", "#text-me"]);
+});
+
+it("never takes another login's method choice by its controls right after a way in was picked", async () => {
+  const chooser: Screen = { path: "/method", boxes: [], buttons: ["#use-password", "#email-me"], texts: ["how should we reach you"], labels: ["use password", "email me"] };
+  const emailOnly: Screen = { ...chooser, buttons: ["#email-me"], labels: ["email me"] };
+  const start = { fingerprint: arrival(emailScreen), step: stepAt("/sign-in", [email], "#continue") };
+  const viaEmail = { method: "email" as const, selector: "#email-me" };
+  const library = libraryOf(
+    [
+      start,
+      { fingerprint: arrival(chooser), step: stepAt("/method", [], "#use-password", { methods: [{ method: "password", selector: "#use-password" }, viaEmail] }) },
+      { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") },
+    ],
+    [
+      start,
+      { fingerprint: arrival(emailOnly), step: stepAt("/method", [], "#email-me", { methods: [viaEmail] }) },
+      { fingerprint: arrival(codeScreen), step: stepAt("/verify", [code], "#verify") },
+    ],
+  );
+  // The password is picked, and the chooser stays drawn while the site loads the password page.
+  const loading: Screen = { ...chooser, labels: ["loading", "email me"] };
+  const site = scriptedSite({ start: emailScreen, method: chooser, loading }, (at, clicked) =>
+    at === "start" ? "method" : clicked === "#use-password" ? "loading" : undefined,
+  );
+  expect(await replay(site, library, { hostMethod: "email" })).toMatchObject({ reason: "unknown_state" });
+  expect(site.clicks).toEqual(["#continue", "#use-password"]);
 });
 
 it("never signs in on a page that can't tell before the password went in", { timeout: 8_000 }, async () => {
