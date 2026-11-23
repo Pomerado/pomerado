@@ -300,6 +300,63 @@ test("a login page that comes back typed beside a new code box gets no code, and
   expect(posts).toHaveLength(1);
 });
 
+test("an email box whose own suggestion list covers its Continue has the list closed, and signs in", async ({ page }) => {
+  const identifier = `<form method="post" action="/login" style="position:relative"><p style="margin:0;height:40px"><label>Email<input id="username" name="username" aria-controls="suggest" aria-expanded="false"></label></p><ul id="suggest" role="listbox" hidden style="position:absolute;top:40px;left:0;width:400px;height:120px;margin:0;background:#fff"><li role="option">${username}@example.test</li></ul><p style="margin:0"><button id="next">Continue</button></p></form><script>
+const box = document.getElementById("username"), list = document.getElementById("suggest");
+box.addEventListener("input", () => { list.hidden = false; box.setAttribute("aria-expanded", "true"); });
+box.addEventListener("keydown", (event) => { if (event.key === "Escape") { list.hidden = true; box.setAttribute("aria-expanded", "false"); } });
+</script>`;
+  const passwordPage =
+    '<form method="post" action="/password"><label>Password<input id="password" name="password" type="password"></label><button id="sign-in">Sign in</button></form>';
+  const posts = await serve(
+    page,
+    { "/login": identifier, "/password": passwordPage, "/home": '<p id="account">Your account</p>' },
+    { "/login": "/password", "/password": "/home" },
+  );
+  const library = await recorded(page, [
+    { page: `${site}/login`, fields: [{ selector: "#username", accepts: ["username"] }], submit: "#next" },
+    { page: `${site}/password`, fields: [{ selector: "#password", slot: "password" }], submit: "#sign-in" },
+  ]);
+  await page.goto("about:blank");
+  posts.length = 0;
+  const { ended } = await replay(page, library, {});
+  expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(posts).toEqual([`/login username=${username}`, `/password password=${password}`]);
+});
+
+test("a ZIP code page that signs in on its last digit, taking its button away, signs in", async ({ page }) => {
+  // On the fifth digit the page shows the account in place of the form, so its Verify is gone.
+  const zipPage =
+    '<form method="post" action="/zip"><label>ZIP code<input id="zip" name="zip" autocomplete="postal-code"></label><button id="verify">Verify</button></form><script>document.getElementById("zip").addEventListener("input", (event) => { if (event.target.value.length === 5) document.body.innerHTML = \'<p id="account">Your account</p>\'; });</script>';
+  const posts = await serve(page, { "/login": loginPage, "/zip": zipPage }, { "/login": "/zip" });
+  const library = await recorded(page, [login, { page: `${site}/zip`, fields: [{ selector: "#zip", slot: "zip" }], submit: "#verify" }]);
+  await page.goto("about:blank");
+  posts.length = 0;
+  const { ended } = await replay(page, library, { zip: "94105" });
+  expect(ended).toMatchObject({ outcome: "signed_in", alreadySignedIn: false });
+  expect(posts).toEqual([`/login username=${username}&password=${password}`]);
+});
+
+test("a sign-in whose button switches its form to GET as it fires is refused once, with no second press and no credential in an address", async ({ page }) => {
+  // The button counts its clicks and switches its form to GET, which would put the password in
+  // the address, so the fill's guard refuses the submission as the click fires.
+  const switching = loginPage.replace(
+    '<button id="sign-in">',
+    `<button id="sign-in" onclick="window.clicks = (window.clicks || 0) + 1; this.form.method = 'get'">`,
+  );
+  const posts = await serve(page, { "/login": switching }, { "/login": "/login" });
+  const library = await recorded(page, [login]);
+  await page.goto("about:blank");
+  posts.length = 0;
+  const addresses: string[] = [];
+  page.on("request", (request) => addresses.push(request.url()));
+  const { ended } = await replay(page, library, {});
+  expect(ended).toMatchObject({ reason: "submit_refused" });
+  expect(await page.evaluate(() => Reflect.get(window, "clicks"))).toBe(1);
+  expect(posts).toEqual([]);
+  expect(addresses.filter((address) => address.includes(password) || address.includes(username))).toEqual([]);
+});
+
 test("a code page right after the username, before any password, gets no code", async ({ page }) => {
   const identifier =
     '<form method="post" action="/login"><label>Username<input id="username" name="username"></label><button id="next">Next</button></form>';
