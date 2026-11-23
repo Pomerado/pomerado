@@ -33,15 +33,35 @@ import { pageControlsCode } from "./page-controls.js";
  * A field that is no box, or a screen with fewer than two, has none. Attributes only, never a value.
  * When the step names one code field and it is the first box of such a row by its `maxlength`, as
  * a code screen the recipe never recorded may show, `codeBoxRow` names each other box of that same
- * row, in order, by a selector that matches it alone in its document or shadow root: its id, else
- * its name, else its `aria-label`. A row with a box none of those name alone, or with more than
- * `maximumCodeBoxes` boxes, has none.
+ * row, in order, by a selector that matches it alone in its document or shadow root (`nameOfCode`):
+ * its id, else its name, else its `aria-label`. A row with a box none of those name alone, or with
+ * more than `maximumCodeBoxes` boxes, has none. A step that names one code field also has that
+ * field, then each other box of such a row, named for a library to keep (`keptCodeBoxes`), so a
+ * code screen found by attributes alone can be kept as a recorded screen.
  */
 /**
  * The slots whose field must hold nothing at all before the host types into it: a secret that may
  * hold symbols alone, so any remnant may be part of one.
  */
 const strictSlots: ReadonlySet<string> = new Set(["password", "private_answer"]);
+
+/**
+ * Page code: a selector that matches `control` alone in its document or shadow root, else null: by
+ * its id, else its name, else its `aria-label`. With `kept`, for a screen a library keeps, by its
+ * name, else its `aria-label`, else an id with no digit in it, since a page that makes up an id on
+ * each load, such as `input67` or `ember45`, gives it one.
+ */
+const nameOfCode = `(control, kept) => {
+  const root = control.getRootNode();
+  for (const attribute of kept ? ["name", "aria-label", "id"] : ["id", "name", "aria-label"]) {
+    const value = control.getAttribute(attribute);
+    if (!value || (kept && attribute === "id" && /[0-9]/.test(value))) continue;
+    const selector = "input[" + attribute + '="' + CSS.escape(value) + '"]';
+    const matches = root.querySelectorAll(selector);
+    if (matches.length === 1 && matches[0] === control) return selector;
+  }
+  return null;
+}`;
 
 const codeBoxesCode = `const codeBoxes = [];
 const codeFields = codeSlots.filter(Boolean).length;
@@ -67,24 +87,15 @@ for (const [index, field] of fields.entries()) {
       const at = boxes.indexOf(element);
       return boxes.length < 2 || at < 0 ? null : { box: at + 1, of: boxes.length, limit };
     };
-    const nameOf = (control) => {
-      const root = control.getRootNode();
-      for (const attribute of ["id", "name", "aria-label"]) {
-        const value = control.getAttribute(attribute);
-        if (!value) continue;
-        const selector = "input[" + attribute + '="' + CSS.escape(value) + '"]';
-        const matches = root.querySelectorAll(selector);
-        if (matches.length === 1 && matches[0] === control) return selector;
-      }
-      return null;
-    };
+    const nameOf = ${nameOfCode};
     if (!editable(element)) return null;
     if (element.maxLength === 1) {
       const screen = element.form ?? element.getRootNode();
       const boxes = Array.from(screen.querySelectorAll("input")).filter((control) => editable(control) && control.maxLength === 1);
       const found = place(boxes, "maxlength");
       if (found === null || codeFields !== 1 || found.box !== 1 || boxes.length > mostBoxes) return found;
-      return { ...found, rest: boxes.slice(1).map(nameOf) };
+      const rest = boxes.slice(1);
+      return { ...found, rest: rest.map((box) => nameOf(box, false)), kept: rest.map((box) => nameOf(box, true)) };
     }
     if (element.maxLength >= 0 || codeFields < 2 || element.parentNode === null) return null;
     let boxes = Array.from(element.parentNode.children).filter(editable);
@@ -102,15 +113,21 @@ for (const [index, field] of fields.entries()) {
   }, [codeFields, ${maximumCodeBoxes}], { timeout: ${elementReadMs} }).catch(() => null);
   codeBoxes.push(codeBox);
 }
-const rowRest = codeBoxes.find((codeBox) => codeBox?.rest !== undefined)?.rest;
-const codeBoxRow = rowRest === undefined || rowRest.includes(null) ? undefined : rowRest;
+const row = codeBoxes.find((codeBox) => codeBox?.rest !== undefined);
+const codeBoxRow = row === undefined || row.rest.includes(null) ? undefined : row.rest;
 const scriptBoxes = codeBoxes.filter((codeBox) => codeBox?.limit === "script");
 const scriptAgree =
   new Set(scriptBoxes.map(({ box }) => box)).size === scriptBoxes.length &&
   new Set(scriptBoxes.map(({ of }) => of)).size <= 1;
 for (const [index, codeBox] of codeBoxes.entries())
   codeBoxes[index] =
-    codeBox === null || (codeBox.limit === "script" && !scriptAgree) ? null : { box: codeBox.box, of: codeBox.of };`;
+    codeBox === null || (codeBox.limit === "script" && !scriptAgree) ? null : { box: codeBox.box, of: codeBox.of };
+const keptName =
+  codeFields === 1
+    ? await fields[codeSlots.indexOf(true)].locator.evaluate(${nameOfCode}, true, { timeout: ${elementReadMs} }).catch(() => null)
+    : null;
+const keptCodeBoxes =
+  keptName === null || (row?.kept ?? []).includes(null) ? undefined : [keptName, ...(row?.kept ?? [])];`;
 
 /**
  * Page code: the named checkboxes a code field holds when it takes no typing, as a screen that has
@@ -212,7 +229,8 @@ return {
   buttons,
   ...(submitKey === null || submit === null ? {} : { keySubmit: { submitControls: submit.submitControls } }),
   ...(popupTargetId === undefined ? {} : { popupTargetId }),
-  ...(codeBoxRow === undefined ? {} : { codeBoxRow }),${hostFillChecked ? "\n  ...(hostFillUnsupported === undefined ? {} : { hostFillUnsupported })," : ""}
+  ...(codeBoxRow === undefined ? {} : { codeBoxRow }),
+  ...(keptCodeBoxes === undefined ? {} : { keptCodeBoxes }),${hostFillChecked ? "\n  ...(hostFillUnsupported === undefined ? {} : { hostFillUnsupported })," : ""}
   url: primary.url(),
   document: await documentStart(),
 };`;
