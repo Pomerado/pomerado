@@ -112,8 +112,8 @@ const steps: AutofillRecipeStep[] = [
  * Records the sign-in on a site that can't send a text, each screen noted as the page showed it
  * and its step then taken by hand, then replays it from its screens once the site's `texts` and
  * `calls` are set as given, on a browser that hears each of the page's own requests the site
- * answered with an error: the outcome, the questions asked, and the site's sends and codes in the
- * replay.
+ * answered with an error, a send's marked as its press's own answer as a host that ties the two
+ * marks it: the outcome, the questions asked, and the site's sends and codes in the replay.
  */
 const recordThenSignIn = async (page: Page, texts: boolean, calls = true) => {
   const served = await serve(page);
@@ -159,8 +159,15 @@ const recordThenSignIn = async (page: Page, texts: boolean, calls = true) => {
     onLoadFailure: (listener: (failure: unknown) => void) => {
       const heard = (response: Response) => {
         const request = response.request();
+        const url = new URL(request.url());
         if (response.status() >= 400 && request.resourceType() === "fetch")
-          listener({ kind: "request", method: request.method(), status: response.status() });
+          listener({
+            kind: "request",
+            origin: url.origin,
+            method: request.method(),
+            status: response.status(),
+            ...(url.pathname === "/api/send" ? { answersPress: true } : {}),
+          });
       };
       page.on("response", heard);
       return () => void page.off("response", heard);
