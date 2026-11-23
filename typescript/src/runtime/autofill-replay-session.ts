@@ -1,4 +1,4 @@
-import { makeReplayScreenWait } from "./autofill-replay-screens.js";
+import { type ClearThenResubmit, makeReplayScreenWait } from "./autofill-replay-screens.js";
 import { Effect } from "effect";
 import type { YieldableError } from "effect/Cause";
 import { logicalRejectedField, recordedRejections, rejectableSlot } from "./autofill-rejection.js";
@@ -470,6 +470,7 @@ export const makeReplay = <E extends YieldableError, V extends string, L extends
   input: AutofillReplayInput<E, V, L>,
 ) => {
   const session = makeReplaySession(input);
+  const clearThenResubmit: ClearThenResubmit<E, V> = input.hosted?.resubmit?.(session) ?? ((gate) => gate);
   const run = (
     asked: AutofillStep,
     inspection: AutofillInspection,
@@ -522,7 +523,7 @@ export const makeReplay = <E extends YieldableError, V extends string, L extends
       session.timing,
       (request) => session.values.resolve(request, input.credentials),
       (due) => screenRejection(session, extras, due),
-      input.hosted?.resubmit?.(session) ?? ((gate) => gate),
+      clearThenResubmit,
       {
         onScreens: (page) => input.recipe.steps.some((step) => session.matchesRecorded(page, step)),
         matches: session.matchesRecorded,
@@ -532,6 +533,8 @@ export const makeReplay = <E extends YieldableError, V extends string, L extends
     /** A screen's values, resolved before anything is typed (`replayValues`). */
     values: (asked: AutofillStep, inspection: AutofillInspection) =>
       replayValues(session, asked, inspection),
+    /** The host's challenge look, which may send the last screen again once it cleared one (`resubmit`). */
+    clearThenResubmit,
     /** The sign-in's tries of a code the site refused or that didn't sign in, each sent once. */
     codeAttempts: session.retryState.codeAttempts,
     /** The values the site refused, by field, which no correction gives again. */

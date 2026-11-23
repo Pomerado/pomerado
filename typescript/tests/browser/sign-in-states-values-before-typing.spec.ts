@@ -264,3 +264,18 @@ test("a recovery code held for a page that moved on goes into the recovery code 
   expect(settled).toEqual([{ codes: [codes[0]], reached: true }]);
   expect([...held]).toEqual([codes[0]]);
 });
+
+test("a code beside an identifier box is asked only once the identifier is typed, as its site sends the code then", async ({ page }) => {
+  // The site sends the code once the username is typed in full.
+  const form =
+    '<form method="post" action="/verify"><label>Username<input id="username" name="username"></label><label>Verification code<input id="code" name="code" autocomplete="one-time-code" inputmode="numeric"></label><button id="verify">Verify</button></form><script>document.getElementById("username").addEventListener("input", (event) => { if (event.target.value === "synthetic-user") window.codeSent(); });</script>';
+  const posted = await serve(page, form, (sent) => (sent["code"] === "123456" ? "/home" : "/verify"));
+  const { signIn, asked } = await signInOn(page, [
+    { fields: [{ selector: "#username", accepts: ["username"] }, { selector: "#code", slot: "code" }] },
+  ]);
+  await page.exposeFunction("codeSent", () => void asked.push("code sent"));
+  const signedIn = await signIn({ username: "synthetic-user", password }, { code: "123456" }, false);
+  expect(Either.isRight(signedIn) && signedIn.right.outcome).toBe("signed_in");
+  expect(asked).toEqual(["code sent", "code"]);
+  expect(posted).toEqual([{ username: "synthetic-user", code: "123456" }]);
+});
