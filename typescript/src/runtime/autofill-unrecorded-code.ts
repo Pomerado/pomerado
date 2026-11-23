@@ -17,7 +17,7 @@ import type { AutofillHooks } from "./autofill-state.js";
 /** Words in a field's name or id that alone name a one-time code. */
 const oneTimeCodeWords = ["otp", "totp", "2fa", "mfa"];
 /** Words in a field's name or id that name a one-time code only on a short numeric box. */
-const codeWords = ["code", "verification"];
+export const codeWords = ["code", "verification"];
 /**
  * Words in a field's name, id or autocomplete that name another kind of value, which win over the
  * words above: the one list to add such a word to, or `wholeOtherWords` when it sits inside common

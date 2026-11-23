@@ -36,7 +36,12 @@ const Label = Schema.String.pipe(Schema.maxLength(200));
  * its role (`role`, as `textbox` or `spinbutton`) and its label's shape (`label`), so two code
  * screens whose boxes differ in either are two looks; an identifier box also what it takes
  * (`takes`), so an email box and a phone box are two looks. A look read before boxes had them has
- * none of them.
+ * none of them. A code row that says what it takes is one of identifier boxes, which a look read
+ * before code rows were read held one by one, as identifier boxes taking that (`paired`). A code
+ * box with role `checkbox` is a code picked from named checkboxes, on a page with no box that takes
+ * typing.
+ * A box with role `captcha` is a picture code box, a site's own picture CAPTCHA on a sign-in form,
+ * which a gate fills, never a step, read as before it was told apart (`paired`).
  */
 export const StateBox = Schema.Struct({
   frame: Origin,
@@ -58,6 +63,8 @@ export type StateBox = typeof StateBox.Type;
  * tab opened is marked `popup`, with the pop-up's origin as `top`; a pop-up state recorded before
  * pop-ups were read holds the look of the tab that opened it (`heldOpener`). A core before the one
  * that reads `popup` leaves out a state that has it, as it leaves out any field it does not know.
+ * A state with no box read in a dialog is told by the dialog's message and buttons, and keeps the
+ * page behind it as its instruction and ways (`inDialog`), which no other look with no box has.
  */
 export const StateFingerprint = Schema.Struct({
   top: Origin,
@@ -188,6 +195,12 @@ export type Look =
   | StateFingerprint
   | { readonly fingerprint: StateFingerprint; readonly step?: AutofillRecipeStep | undefined };
 const lookOf = (look: Look) => ("fingerprint" in look ? look : { fingerprint: look, step: undefined });
+/** What two identifier boxes take may be one: the same, or either says nothing (`other`, or none). */
+const takesFits = (a: BoxTakes | undefined, b: BoxTakes | undefined) =>
+  a === undefined || b === undefined || a === "other" || b === "other" || a === b;
+/** How many code fields a known state's step types, one for each box of a row. */
+const codesOf = (step: AutofillRecipeStep | undefined) =>
+  step?.fields.filter((field) => "slot" in field && field.slot === "code").length ?? 0;
 /**
  * Whether a known state sits in a pop-up and holds the look of the tab that opened it, as one
  * recorded before pop-ups were read does: a page is compared with it by that tab's look.
@@ -222,18 +235,105 @@ const facing = (a: Look, b: Look): readonly [Look, Look] => {
   return [heldOpener(b) ? opened(a) : a, heldOpener(a) ? opened(b) : b];
 };
 /**
- * Two looks as they compare by text and place: their code boxes' role and label where both give
- * them, else neither, so a state recorded before code boxes had them matches every page it matched
- * then; what identifier boxes take never, as `takesAgree` compares it.
+ * Two looks' boxes paired, and those of each left: each with one alike by `key`; else, as a look
+ * read before such code rows were read held it, a code row of either with as many boxes of the
+ * other's frame, each with no count: code boxes, as one-character boxes read one by one, or
+ * identifier boxes taking what it says they took (`takes`). A row of any kind pairs with a lone such
+ * box where the other look's step types as many codes as the row has boxes, or one code the fill
+ * spreads across the row from its first box (`codes`), as a look read before a page switched each
+ * box on in turn held its first box alone. A row pairs only with boxes read one by one, never with
+ * another row, whose role and label tell it, nor with a picture code box or a code picked from
+ * checkboxes.
+ * A picture code box left pairs with a box of its kind and frame the other look holds, else with
+ * none, as a site may show it only at times. `folded` holds every box paired so, whose takes are
+ * never compared (`takesAgree`).
  */
-const comparable = (a: StateFingerprint, b: StateFingerprint): readonly [StateFingerprint, StateFingerprint] => {
-  const labels = labelled(a) && labelled(b);
-  const plain = (fingerprint: StateFingerprint): StateFingerprint => ({
-    ...fingerprint,
-    boxes: fingerprint.boxes.map(({ role, label, takes: _takes, ...box }) => ({ ...box, ...(labels ? { role, label } : {}) })),
-  });
-  return [plain(a), plain(b)];
+const paired = (
+  held: readonly StateBox[],
+  holding: readonly StateBox[],
+  key: (box: StateBox) => string,
+  codes: readonly [number, number] = [0, 0],
+) => {
+  const left = [...held];
+  const right = [...holding];
+  for (let at = left.length - 1; at >= 0; at -= 1) {
+    const match = right.findIndex((box) => key(box) === key(left[at] as StateBox));
+    if (match < 0) continue;
+    right.splice(match, 1);
+    left.splice(at, 1);
+  }
+  const folded = new Set<StateBox>();
+  const fold = (rows: StateBox[], alone: StateBox[], codesThere: number) => {
+    for (let at = rows.length - 1; at >= 0; at -= 1) {
+      const row = rows[at] as StateBox;
+      if (row.kind !== "code" || row.count === undefined) continue;
+      const kind = row.takes === undefined ? "code" : "identifier";
+      const boxes = alone.filter(
+        (box) =>
+          box.frame === row.frame &&
+          box.kind === kind &&
+          box.count === undefined &&
+          box.role !== "captcha" &&
+          box.role !== "checkbox" &&
+          (kind === "identifier" ? takesFits(box.takes, row.takes) : box.takes === undefined),
+      );
+      const taken =
+        boxes.length >= row.count
+          ? boxes.slice(0, row.count)
+          : codesThere === row.count || codesThere === 1
+            ? boxes.slice(0, 1)
+            : [];
+      if (taken.length === 0) continue;
+      for (const box of [row, ...taken]) folded.add(box);
+      for (const box of taken) alone.splice(alone.indexOf(box), 1);
+      rows.splice(at, 1);
+    }
+  };
+  fold(left, right, codes[1]);
+  fold(right, left, codes[0]);
+  // A picture code box (role `captcha`), which a site may show only at times, pairs with a box of
+  // its kind and frame the other look holds, as a look read before held it, or with none.
+  const optional = (boxes: StateBox[], others: StateBox[]) => {
+    for (let at = boxes.length - 1; at >= 0; at -= 1) {
+      const box = boxes[at] as StateBox;
+      if (box.role !== "captcha") continue;
+      const match = others.findIndex((other) => other.frame === box.frame && other.kind === box.kind && other.count === undefined);
+      if (match >= 0) folded.add(others.splice(match, 1)[0] as StateBox);
+      folded.add(box);
+      boxes.splice(at, 1);
+    }
+  };
+  optional(left, right);
+  optional(right, left);
+  return { held: left, holding: right, folded };
 };
+/**
+ * Two looks' boxes paired (`paired`), as looks compare: their code boxes' role and label where both
+ * give them, else neither, so a state recorded before code boxes had them matches every page it
+ * matched then; but the role of a picture code box or of a code picked from checkboxes always;
+ * what identifier boxes take never, as `takesAgree` compares it; with `place`, by frame, kind and
+ * count alone, and those roles. A known state's step stands in for a row's codes.
+ */
+const pairedLooks = (a: Look, b: Look, place = false) => {
+  const [left, right] = [lookOf(a), lookOf(b)];
+  const labels = labelled(left.fingerprint) && labelled(right.fingerprint);
+  // A picture code box, or a code picked from checkboxes, pairs by its role always and never with a
+  // code row (`paired`), so it never stands in for a typed code box, as a look read before roles held.
+  const marked = (role: string | undefined) => (role === "captcha" || role === "checkbox" ? { role } : {});
+  const key = place
+    ? ({ frame, kind, count, role }: StateBox) => canonical({ frame, kind, count, ...marked(role) })
+    : ({ role, label, takes: _takes, ...box }: StateBox) =>
+        canonical({ ...box, ...(labels ? { role, label } : marked(role)) });
+  return paired(left.fingerprint.boxes, right.fingerprint.boxes, key, [codesOf(left.step), codesOf(right.step)]);
+};
+/** A look less the boxes `paired` folded, whose takes it compared already. */
+const unfolded = (look: Look, folded: ReadonlySet<StateBox>): Look => {
+  const { fingerprint, step } = lookOf(look);
+  return { fingerprint: { ...fingerprint, boxes: fingerprint.boxes.filter((box) => !folded.has(box)) }, step };
+};
+/** A look's text but its boxes, as looks compare. */
+const textBesideBoxes = (fingerprint: StateFingerprint) =>
+  canonical({ ...fingerprintOf(fingerprint), boxes: undefined, instruction: undefined, ways: undefined });
 /** Each frame's identifier boxes by what they take. */
 const takenOn = (fingerprint: StateFingerprint) => {
   const frames = new Map<string, BoxTakes[]>();
@@ -288,6 +388,38 @@ const takesAgree = (inner: Look, outer: Look, within = false) => {
   const all = (kinds: readonly string[], kind: string) => kinds.length > 0 && kinds.every((taken) => taken === kind);
   return !((all(boxes, "phone") && all(fields, "email")) || (all(boxes, "email") && all(fields, "phone")));
 };
+/**
+ * Whether a look with no box was read apart from what covers the page, a dialog or a notice the
+ * library dismisses: it keeps the page as read whole as its instruction and ways
+ * (`observeSignInState`).
+ */
+const inDialog = (fingerprint: StateFingerprint) =>
+  fingerprint.boxes.length === 0 && (fingerprint.instruction !== undefined || fingerprint.ways !== undefined);
+/**
+ * Whether a look's only boxes are codes picked from named checkboxes (role `checkbox`), with the
+ * page as a look with no box reads it kept as its instruction and ways (`observeSignInState`).
+ */
+const pickedOnly = (fingerprint: StateFingerprint) =>
+  fingerprint.boxes.length > 0 &&
+  fingerprint.boxes.every((box) => box.kind === "code" && box.role === "checkbox") &&
+  (fingerprint.instruction !== undefined || fingerprint.ways !== undefined);
+/**
+ * A look as it reads: itself, and one read apart from a dialog or notice, or with codes picked from
+ * checkboxes, as the page with no box too, as a look read before either was read holds that page.
+ */
+const readings = (look: Look): readonly Look[] => {
+  const { fingerprint, step } = lookOf(look);
+  if (!inDialog(fingerprint) && !pickedOnly(fingerprint)) return [look];
+  const whole: StateFingerprint = {
+    top: fingerprint.top,
+    ...(fingerprint.popup === true ? { popup: true } : {}),
+    boxes: [],
+    submit: false,
+    ...(fingerprint.instruction === undefined ? {} : { message: fingerprint.instruction }),
+    buttons: fingerprint.ways ?? [],
+  };
+  return [look, { fingerprint: whole, step }];
+};
 /** `readsOn` for two looks as they face each other (`facing`). */
 const reads = (look: Look, state: Look) => {
   const [{ fingerprint, step }, known] = [lookOf(look), lookOf(state)];
@@ -309,19 +441,52 @@ export const readsOn = (look: Look, state: Look) => reads(...facing(look, state)
 /** A look as it compares with another it faces (`reads`). */
 const readOn = (look: Look, other: Look): StateFingerprint =>
   reads(look, other) ? { ...lookOf(look).fingerprint, top: lookOf(other).fingerprint.top } : lookOf(look).fingerprint;
+/** Two looks as they face each other, each as it compares with the other (`readOn`). */
+const readBoth = (x: Look, y: Look): readonly [Look, Look] => [
+  { fingerprint: readOn(x, y), step: lookOf(x).step },
+  { fingerprint: readOn(y, x), step: lookOf(y).step },
+];
+/**
+ * Whether two looks are one: alike by text and their boxes (`pairedLooks`), their identifier boxes
+ * taking values alike (`takesAgree`), as either reads (`readings`), so a page read in a dialog is
+ * still the page behind it, as a look read before held it; a page beside a state that holds an
+ * opener's look by its opener's (`facing`), and a page's read on a known state's (`readOn`).
+ */
 export const sameFingerprint = (a: Look, b: Look) => {
-  const [x, y] = facing(a, b);
-  const [left, right] = comparable(readOn(x, y), readOn(y, x));
-  return fingerprintText(left) === fingerprintText(right) && takesAgree(x, y);
+  const [x, y] = readBoth(...facing(a, b));
+  return readings(x).some((left) =>
+    readings(y).some((right) => {
+      if (textBesideBoxes(lookOf(left).fingerprint) !== textBesideBoxes(lookOf(right).fingerprint)) return false;
+      const rest = pairedLooks(left, right);
+      return (
+        rest.held.length === 0 &&
+        rest.holding.length === 0 &&
+        takesAgree(unfolded(left, rest.folded), unfolded(right, rest.folded))
+      );
+    }),
+  );
 };
 /**
- * Whether `twin` is `state` with a `dismiss` added and nothing else: one look and one step but for
- * the covering notice's control `twin` clicks, which a fill clicks only where the page shows it.
+ * The controls a library's steps dismiss a covering notice by (`dismiss`), each once: the scan
+ * reads a page with no box apart from the notices they sit in (`observeSignInState`).
  */
-export const addsDismiss = (twin: StateEntry, state: StateEntry) =>
+export const signInDismisses = (library: SignInStates) => [
+  ...new Set(library.states.flatMap((state) => (state.step.dismiss === undefined ? [] : [state.step.dismiss]))),
+];
+/** Whether two looks with no box show one message, as either reads (`readings`). */
+export const sameMessage = (a: StateFingerprint, b: StateFingerprint) =>
+  readings(a).some((left) => readings(b).some((right) => lookOf(left).fingerprint.message === lookOf(right).fingerprint.message));
+/**
+ * Whether `twin` is `state` with a `dismiss` added and nothing else: one look, or two the `page`
+ * matches, as a page read apart from a notice is both the look recorded under it and the one
+ * recorded with it (`readings`), and one step but for the covering notice's control `twin` clicks,
+ * which a fill clicks only where the page shows it.
+ */
+export const addsDismiss = (twin: StateEntry, state: StateEntry, page?: StateFingerprint) =>
   twin.step.dismiss !== undefined &&
   state.step.dismiss === undefined &&
-  sameFingerprint(twin, state) &&
+  (sameFingerprint(twin, state) ||
+    (page !== undefined && sameFingerprint(twin, page) && sameFingerprint(state, page))) &&
   canonical({ ...twin.step, dismiss: undefined }) === canonical(state.step);
 /** Whether a fingerprint shows nothing to tell it by: no box, no message and no button. */
 export const blankFingerprint = (fingerprint: StateFingerprint) =>
@@ -331,21 +496,19 @@ export const blankFingerprint = (fingerprint: StateFingerprint) =>
 
 /**
  * Whether `outer` holds every box of `inner` and more, on the same top origin, in a pop-up or not
- * alike, as looks compare (`facing`, `readOn`, `comparable`, `takesAgree`): a page that may still
+ * alike, as looks compare (`facing`, `readOn`, `pairedLooks`, `takesAgree`): a page that may still
  * grow from `inner` into `outer`, as a sign-in whose password box draws late.
  */
 export const containsFingerprint = (inner: Look, outer: Look) => {
-  const [x, y] = facing(inner, outer);
-  const [held, holding] = comparable(readOn(x, y), readOn(y, x));
-  if (held.top !== holding.top || held.popup !== holding.popup || held.boxes.length === 0 || !takesAgree(x, y, true))
-    return false;
-  const left = holding.boxes.map((box) => canonical(box));
-  for (const box of held.boxes) {
-    const at = left.indexOf(canonical(box));
-    if (at < 0) return false;
-    left.splice(at, 1);
-  }
-  return left.length > 0;
+  const [x, y] = readBoth(...facing(inner, outer));
+  const [held, holding] = [lookOf(x).fingerprint, lookOf(y).fingerprint];
+  if (held.top !== holding.top || held.popup !== holding.popup || held.boxes.length === 0) return false;
+  const rest = pairedLooks(x, y);
+  return (
+    rest.held.length === 0 &&
+    rest.holding.length > 0 &&
+    takesAgree(unfolded(x, rest.folded), unfolded(y, rest.folded), true)
+  );
 };
 
 /**
@@ -355,6 +518,10 @@ export const containsFingerprint = (inner: Look, outer: Look) => {
  * the site reworded keeps its match.
  */
 export const toldApart = (known: StateFingerprint, page: StateFingerprint): number | undefined => {
+  // Two looks with no box: one read as the page reads stands nearer than one that matched it only
+  // as the page behind a dialog either was read in (`readings`).
+  if (known.boxes.length === 0 && page.boxes.length === 0)
+    return fingerprintText(known) === fingerprintText(page) ? 0 : inDialog(known) || inDialog(page) ? 100 : undefined;
   const told = (look: StateFingerprint) => look.instruction !== undefined || look.ways !== undefined;
   if (!told(known) || !told(page)) return undefined;
   const [ours, theirs] = [known.ways ?? [], page.ways ?? []];
@@ -502,12 +669,23 @@ const standingBoxes = (reached: ObservedState, now: ObservedState) => {
     return at < 0;
   });
 };
+/**
+ * The page's boxes as they stand since `reached`, as `standingFingerprint` reads them; a code box
+ * keeps what the identifier boxes a look read before held there took (`takes`), so it still pairs
+ * with them (`paired`), and a code picked from checkboxes its role and label, as it pairs by them.
+ */
 const standingLook = (reached: ObservedState, now: ObservedState): StateFingerprint => {
   const boxes = standingBoxes(reached, now);
   return fingerprintOf({
     top: now.fingerprint.top,
     ...(now.fingerprint.popup === true ? { popup: true } : {}),
-    boxes: boxes.map(({ frame, kind, count }) => ({ frame, kind, ...(count === undefined ? {} : { count }) })),
+    boxes: boxes.map(({ frame, kind, count, role, label, takes }) => ({
+      frame,
+      kind,
+      ...(count === undefined ? {} : { count }),
+      ...(role === "checkbox" ? { role, ...(label === undefined ? {} : { label }) } : {}),
+      ...(kind === "code" && takes !== undefined ? { takes } : {}),
+    })),
     submit: boxes.some((box) => box.submit),
   });
 };
@@ -522,17 +700,26 @@ export const standingFingerprint = (reached: ObservedState, now: ObservedState):
 const boxText = ({ frame, kind, count }: StateBox) => canonical({ frame, kind, count });
 /**
  * Whether two looks show the same boxes on the same top origin, a page's read on a known state's
- * (`readOn`), in a pop-up or not alike, whatever their text, their identifier boxes taking values
- * alike (`facing`, `takesAgree`).
+ * (`readOn`), in a pop-up or not alike, whatever their text, as boxes pair by place (`facing`,
+ * `pairedLooks`), their identifier boxes taking values alike (`takesAgree`); with `asRead`, as
+ * either reads too (`readings`), as a stored look is matched with a page, never where a state acted
+ * in is judged to stand still, as a look with codes picked from checkboxes reads as any page with
+ * no box then.
  */
-export const sameBoxes = (a: Look, b: Look) => {
-  const [x, y] = facing(a, b);
-  const [left, right] = [readOn(x, y), readOn(y, x)];
-  return (
-    left.top === right.top &&
-    left.popup === right.popup &&
-    canonical(fingerprintOf(left).boxes.map(boxText)) === canonical(fingerprintOf(right).boxes.map(boxText)) &&
-    takesAgree(x, y)
+export const sameBoxes = (a: Look, b: Look, asRead = false) => {
+  const [x, y] = readBoth(...facing(a, b));
+  return (asRead ? readings(x) : [x]).some((left) =>
+    (asRead ? readings(y) : [y]).some((right) => {
+      const [held, holding] = [lookOf(left).fingerprint, lookOf(right).fingerprint];
+      const rest = pairedLooks(left, right, true);
+      return (
+        held.top === holding.top &&
+        held.popup === holding.popup &&
+        rest.held.length === 0 &&
+        rest.holding.length === 0 &&
+        takesAgree(unfolded(left, rest.folded), unfolded(right, rest.folded))
+      );
+    }),
   );
 };
 /**
