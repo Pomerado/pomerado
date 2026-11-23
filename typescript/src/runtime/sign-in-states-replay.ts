@@ -2379,6 +2379,12 @@ const sendsOnPress = <E extends YieldableError, V extends string, L extends Auto
  * box is typed and held until that box's fill (`held`), so a value nobody gives ends the replay
  * with nothing typed. A code is asked only at its own box, as the site may send it only then, and a
  * security answer, as the host counts a saved one by the screen it fills.
+ * The last box goes in with the state's own submit, in one fill, as a recipe screen's do, so the
+ * fill's guards around its click hold for what it typed, such as closing a list the box opened over
+ * the submit; never in a state another known state holds, nor one with methods or whose page sends
+ * itself, nor where the page doesn't show that submit with the box at once. A press so refused
+ * before its click ran, as one the page took away once the box was typed, goes as after the box
+ * alone.
  */
 const actIn = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -2454,27 +2460,48 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
           ...(full.rejectedMarkers === undefined ? {} : { rejectedMarkers: full.rejectedMarkers }),
           ...(keyed ? { submitKey: full.submitKey } : {}),
         };
-        const here = yield* shownWithin(run, state, typing);
+        const pressing: AutofillStep | undefined =
+          index === groups.length - 1 &&
+          !keyed &&
+          !sendsItself &&
+          full.submit !== undefined &&
+          step.methods === undefined &&
+          !input.library.states.some((other) => containsFingerprint(state, other))
+            ? { ...typing, ...screenSubmit(full), ...(step.choice === undefined ? {} : { choice: step.choice }) }
+            : undefined;
+        const ready = pressing === undefined ? undefined : yield* shownOn(run, state, pressing);
+        const asked = typeof ready === "object" && pressing !== undefined ? pressing : typing;
+        const here = typeof ready === "object" ? ready : yield* shownWithin(run, state, typing);
         if (typeof here === "string") return stopped(run, here);
+        const next = asked === typing ? undefined : learnedNext(run, state)[0]?.step;
         const failed = yield* replay.runStep(
-          typing,
+          asked,
           here,
           undefined,
           false,
           undefined,
           step.refills ?? [],
-          undefined,
-          heldFor(run, fields, typing),
+          next,
+          heldFor(run, fields, asked),
         );
-        if (failed !== undefined) {
-          if (run.gone || replay.progress.anythingSent || replay.sent.maySent.size > 0)
+        // A submit refused before its click ran, once every box was typed (`fillFailure`), goes as
+        // after the boxes alone; any other submit the fill failed, as a click the guard refused as
+        // it fired, ends the state, as a press alone would.
+        const unpressed = asked !== typing && failed === "submit_refused" && !replay.progress.ranMaySend;
+        if (failed !== undefined && !unpressed) {
+          if (
+            run.gone ||
+            replay.progress.anythingSent ||
+            replay.sent.maySent.size > 0 ||
+            (asked !== typing && failed.startsWith("submit_"))
+          )
             return stopped(run, failed);
           run.gone = true;
           yield* input.emit({ stage: "retried", reason: "screen_gone" });
           return { acted: state, reached, gone: true };
         }
         for (const field of fields) typed.add(field.slot);
-        if (keyed) {
+        if (keyed || (asked !== typing && !unpressed)) {
           replay.progress.anythingSent = true;
           input.sent.current = true;
           noteExactSent(replay, step, full, here);
