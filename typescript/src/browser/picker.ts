@@ -1,7 +1,7 @@
 import { Schema } from "effect";
 import { timeoutDefaults } from "../runtime/deadline.js";
 import { operationErrors } from "../runtime/operation-failure.js";
-import { foldChoiceText, rankByWords, spellingsOf } from "../runtime/text.js";
+import { foldChoiceText, rankByWords, spellingsOf, unitAmount } from "../runtime/text.js";
 import { typeKeys, typingPauses } from "../runtime/typing-pace.js";
 import { addressRequest } from "./picker-address.js";
 import { cleanRanks, closestFirst, pickerRanks, rankChoices } from "./picker-rank.js";
@@ -565,7 +565,10 @@ const pickerPageCode = String.raw`(element, args) => {
  * Exampleton, CA for a row Example Square above Main St, Exampleton, CA, US), then the same name
  * written another way, word for word, each word as written, a ZIP for its own ZIP+4, a singular or
  * plural, or an abbreviation of the other with no vowel either way, such as Sq for Square, or with
- * one as the first or last of its three letters or more before a unit's number (rank `alike`),
+ * one as the first or last of its three letters or more before a unit's number, or, for a value
+ * that is a number followed only by its unit, such as 2 lb, a name that is that number followed
+ * only by the same unit in another usual spelling, spacing or case, such as 2lb, 2 lbs or 2 pounds
+ * (`unitAmount`), while a value of 2 alone never names 2 lb (rank `alike`),
  * then a
  * name holding the value as whole words (New York for York), then a
  * name made of the value's words, no more and no fewer, with the parts its or the value's commas or
@@ -693,6 +696,7 @@ const pickerFailure = (reason) => Object.assign(new Error(reason), { name: "Pick
 const pickerFold = ${String(foldChoiceText)};
 const pickerRankChoices = ${String(rankChoices)};
 const pickerSpellings = ${String(spellingsOf)};
+const pickerUnits = ${String(unitAmount)};
 const pickerRankByWords = ${String(rankByWords)};
 const pickerClosestFirst = ${String(closestFirst)};
 // A typeahead lists its results by how well they match, so a place it lists first is the one it means.
@@ -701,7 +705,7 @@ const pickerClosestFirst = ${String(closestFirst)};
 // names the options that text cleanly names that hold that value.
 const pickerRank = (s, list, wanted, listedFirst = s.kind === "typeahead", searched = false) => {
   const rank = (spellings) =>
-    pickerRankChoices(list, spellings, pickerFold, { leading: true, stem: s.options.stem === true, extraWords: s.options.extraWords === true, listedFirst, searched, spellings: pickerSpellings });
+    pickerRankChoices(list, spellings, pickerFold, { leading: true, stem: s.options.stem === true, extraWords: s.options.extraWords === true, listedFirst, searched, spellings: pickerSpellings, units: pickerUnits });
   const ranking = rank(wanted);
   const [, text, value] = (!pickerCleanly(ranking) && /^(.+) \[(.+)\]$/u.exec(wanted[0])) || [];
   if (!text) return ranking;
@@ -1579,7 +1583,7 @@ const pickerChips = (s) => pickerEval(s, "chips", { chips: s.options.chips ?? nu
 // punctuation, or written another way), never because its name holds the value as a word or
 // shares its stem: "Blue Grey" is not "Blue".
 const pickerChipIs = (chips, wanted) => {
-  const ranking = pickerRankChoices(chips, wanted, pickerFold, { spellings: pickerSpellings });
+  const ranking = pickerRankChoices(chips, wanted, pickerFold, { spellings: pickerSpellings, units: pickerUnits });
   return ranking.status === "picked" && ["exact", "normalized", "folded", "alike"].includes(ranking.rank) ? ranking : null;
 };
 const pickValues = async (control, values, options = {}) => {
