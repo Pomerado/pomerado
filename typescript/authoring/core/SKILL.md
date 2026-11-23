@@ -673,10 +673,12 @@ that depends on them:
    `field` the input's name and `available` every option the page currently offers as
    selectable, exactly as shown. Leave disabled, sold-out and other unselectable options out of
    `available`, and say in the message that they were left out. Never pick a near match, the
-   page's default or the first option; the same proper noun in another usual form is not a near
-   match (input schema above). A write follows the site's preselected substitute instead when
-   the caller's own task asks for whatever the site ends up with (writes skill). A broader
-   choice that covers the value, such as "Show all", is allowed on a search (search skill).
+   page's default or the first option; an option that states the value's number and meaning,
+   whatever its unit words, spacing or case, or the same proper noun in another usual form, is
+   the value, not a near match (input schema above). A write follows the site's preselected
+   substitute instead when the caller's own task asks for whatever the site ends up with (writes
+   skill). A broader choice that covers the value, such as "Show all", is allowed on a search
+   (search skill).
    - An option the page lists but greys out, disables or marks unavailable, such as a booked
      date, a sold-out size or a full time slot: a read returns it as data, the requested value
      with `available: false`, the page's own reason when it shows one, and the alternatives the

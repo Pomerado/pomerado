@@ -1609,7 +1609,7 @@ it("has every unoffered-value rule name the task-asked substitute exception", as
   const instead =
     "A write follows the site's preselected substitute instead when the caller's own task asks for whatever the site ends up with (writes skill).";
   expect(text("core")).toContain(
-    `Never pick a near match, the page's default or the first option; the same proper noun in another usual form is not a near match (input schema above). ${instead} A broader choice that covers the value`,
+    `Never pick a near match, the page's default or the first option; an option that states the value's number and meaning, whatever its unit words, spacing or case, or the same proper noun in another usual form, is the value, not a near match (input schema above). ${instead} A broader choice that covers the value`,
   );
   expect(text("core")).toContain(
     `A write throws \`InvalidInput\` with \`field\` and \`available\`, the selectable options. Neither picks another value for the caller; ${only} - For an input whose options depend on another`,
@@ -1719,7 +1719,7 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["263155659f2b7cb5666bb4b421e340c71c398ebab063e370f266c93bcd50f9a2", "core"],
+    ["991d6d3d9b4a1713935af9c2ea67822089337987996c48c76b518577bb5e5d4b", "core"],
     ["97e3b5ebdbe8d5fca43790729084de4eef4fbcf5fdf71ad645e679fd72f4e804", "search"],
     ["61b480c71ae366c9693906543639fb35f700d3d1c027ec879753ff9738a985c5", "auth"],
     ["539abe36b602c8e2eff8745dd0462aea41837a20cc0b90cbef7a01cbad6fb89a", "testing"],
