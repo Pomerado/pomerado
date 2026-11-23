@@ -146,7 +146,7 @@ export const codeShownAgain = <E extends YieldableError, V extends string, L ext
  * count as sent there.
  * On a recorded emailed link's screen (`onLinkScreen`), the recording says the site emails, so the
  * code never comes from the host's generator, and a code nobody gave leaves the link's question to
- * ask (`none`), as nothing was typed.
+ * ask (`link_code_unanswered`), as nothing was typed.
  * With `record`, a screen whose code went out is kept as a recorded screen too
  * (`unrecordedCodeStep`, `recordedCodeScreen`), read before the code is typed.
  * `ran` when the code went out, `none` when none shows, or why it stopped.
@@ -176,7 +176,7 @@ export const runFoundCodeScreen = <E extends YieldableError, V extends string, L
     if (failed === "link_code_unanswered") {
       replay.progress.unrecordedCodeScreen = earlier;
       replay.progress.linkCodeScreen = undefined;
-      return "none" as const;
+      return failed;
     }
     if (failed === undefined && replay.sent.maySent.has("code")) {
       replay.progress.unrecordedCodeStep = kept;
@@ -185,22 +185,25 @@ export const runFoundCodeScreen = <E extends YieldableError, V extends string, L
     if (replay.sent.maySent.has("code") || replay.state.filled.has("code"))
       return failed ?? "sign_in_check_failed";
     replay.progress.ran.splice(before);
+    if (onLinkScreen) replay.progress.linkCodeScreen = undefined;
     return "none" as const;
   });
 
 /**
  * A code screen the recipe never recorded, after the screens: looked for once and only while no
  * code may have gone out, so the look never sends a second one (`runFoundCodeScreen`, `record` as
- * there). A fill that typed no code leaves the full check to decide.
+ * there), on a recorded emailed link's screen with its rules (`onLinkScreen`). A fill that typed no
+ * code leaves the full check to decide.
  */
 export const unrecordedCode = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   input: AutofillReplayInput<E, V, L>,
   replay: Replay<E, V, L>,
   probed: { current: boolean },
+  onLinkScreen = false,
   record = false,
 ) =>
   Effect.gen(function* () {
     if (probed.current || replay.sent.maySent.has("code")) return "none" as const;
     probed.current = true;
-    return yield* runFoundCodeScreen(input, replay, false, record);
+    return yield* runFoundCodeScreen(input, replay, onLinkScreen, record);
   });
