@@ -14,11 +14,14 @@ import {
   appendSignInStates,
   type BoxKind,
   type BoxTakes,
+  containsFingerprint,
   decodeSignInStateEntries,
   decodeSignInStateEntry,
   noteSignInState,
   type ObservedState,
   observedSignInOf,
+  sameBoxes,
+  sameFingerprint,
   signInStateEntryText,
   type SignInStates,
   type SignInStatesChoices,
@@ -469,6 +472,14 @@ it("never holds a code picked from checkboxes as still showing on a page with no
   expect(ended).toMatchObject({ outcome: "unclear", reason: "unknown_state" });
   expect(ended.asked.filter((id) => id === "code")).toHaveLength(1);
   expect(site.clicks).toEqual(["#continue", "#verify"]);
+});
+
+it("never matches a code picked from checkboxes with a code box a look read before boxes had a role holds", () => {
+  const plain: StateFingerprint = { top: origin, boxes: [{ frame: origin, kind: "code" }], submit: true };
+  const picked: StateFingerprint = { ...plain, boxes: [{ frame: origin, kind: "code", role: "checkbox" }] };
+  expect(sameFingerprint(picked, plain)).toBe(false);
+  expect(sameBoxes(picked, plain, true)).toBe(false);
+  expect(containsFingerprint(picked, { ...plain, boxes: [...plain.boxes, { frame: origin, kind: "password" }] })).toBe(false);
 });
 
 it("acts in a state recorded under a notice with the dismiss of one recorded with it, where the page read apart from the notice is both", async () => {

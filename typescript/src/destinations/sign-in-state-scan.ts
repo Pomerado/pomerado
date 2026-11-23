@@ -92,10 +92,10 @@ const normalized = (text: string, limit: number, logins: readonly string[]) =>
  * code picked from four or more named checkboxes in one container, as a code step's choices are
  * read (`choicesCode`), as a code box with role `checkbox`, empty while none is ticked, and tells
  * itself as a page with no box too: only where each is named by one digit or letter, or the frame's
- * heading or own text names a code by a word a code box's name may hold (`codeWords`), so a list
- * of topics to pick is no code. A page with no box reads apart from each notice, a dialog,
- * region or aside, that holds one of the `dismissed` controls, as it reads apart from a modal
- * dialog (`dialog`).
+ * heading names a code by a word a code box's name may hold (`codeWords`), so a list of topics or
+ * of ways to be reached is no code, whatever else the page says. A page with no box reads apart
+ * from each notice, a dialog, region or aside, that holds one of the `dismissed` controls, as it
+ * reads apart from a modal dialog (`dialog`).
  *
  * With `deep`, it reads each open shadow root too, as inspect and fill walk them, page order
  * first; without, a frame that shows nothing says whether it holds one (`shadowed`).
@@ -291,14 +291,13 @@ const scanFrame = `({ deep, dismissed }) => {
   const said = firstSaid(all);
   // A code picked from named checkboxes, on a frame with no box that takes typing: each widest
   // container the old step reads such a code from (\`choicesCode\`) that holds four or more, each
-  // named by one digit or letter, or on a frame whose heading or own text names a code.
+  // named by one digit or letter, or on a frame whose heading names a code.
   const digits = ${JSON.stringify(digitNames)};
   const single = (name) => {
     const key = name.normalize("NFKC").toLowerCase();
     return /^(?:[0-9]|\\p{L})$/u.test(digits.includes(key) ? String(digits.indexOf(key)) : key);
   };
-  const namesCode = [said ?? "", ...own.values()].some((text) =>
-    text.toLowerCase().split(/[^\\p{L}]+/u).some((word) => ${JSON.stringify(codeWords)}.includes(word)));
+  const namesCode = (said ?? "").toLowerCase().split(/[^\\p{L}]+/u).some((word) => ${JSON.stringify(codeWords)}.includes(word));
   const checkboxes = 'input[type="checkbox"], [role="checkbox"]';
   const choices = boxes.length === 0 ? all(checkboxes).filter(shows) : [];
   if (choices.length >= 4 && choices.length <= 60)

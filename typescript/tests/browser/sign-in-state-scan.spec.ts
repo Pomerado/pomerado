@@ -544,6 +544,13 @@ test("a code picked from four or more named checkboxes, on a page with no text b
     await open(page, { [site]: body(named(["Sports", "Music", "Travel", "Food", "Movies", "Books"]), "", "Pick your interests") })
   )();
   expect(topics.fingerprint.boxes).toEqual([]);
+  // Nor are ways to reach a login, where only the page's other text names a code.
+  const channels = await (
+    await open(page, {
+      [site]: body(named(["Email", "SMS", "Push", "Call"]), "<p>Turn on verification at every sign-in.</p>", "How should we reach you?"),
+    })
+  )();
+  expect(channels.fingerprint.boxes).toEqual([]);
   const digits = await (
     await open(page, { [site]: body(named(["1", "2", "3", "4", "5", "6"]), "", "Pick your numbers") })
   )();

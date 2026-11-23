@@ -308,14 +308,16 @@ const paired = (
 /**
  * Two looks' boxes paired (`paired`), as looks compare: their code boxes' role and label where both
  * give them, else neither, so a state recorded before code boxes had them matches every page it
- * matched then; what identifier boxes take never, as `takesAgree` compares it; with `place`, by
- * frame, kind and count alone. A known state's step stands in for a row's codes.
+ * matched then; but the role of a picture code box or of a code picked from checkboxes always;
+ * what identifier boxes take never, as `takesAgree` compares it; with `place`, by frame, kind and
+ * count alone, and those roles. A known state's step stands in for a row's codes.
  */
 const pairedLooks = (a: Look, b: Look, place = false) => {
   const [left, right] = [lookOf(a), lookOf(b)];
   const labels = labelled(left.fingerprint) && labelled(right.fingerprint);
-  // A picture code box pairs by its role always, so it never stands in for another box (`paired`).
-  const marked = (role: string | undefined) => (role === "captcha" ? { role } : {});
+  // A picture code box, or a code picked from checkboxes, pairs by its role always, so it never
+  // stands in for another box (`paired`), as a typed code box a look read before roles held.
+  const marked = (role: string | undefined) => (role === "captcha" || role === "checkbox" ? { role } : {});
   const key = place
     ? ({ frame, kind, count, role }: StateBox) => canonical({ frame, kind, count, ...marked(role) })
     : ({ role, label, takes: _takes, ...box }: StateBox) =>
@@ -668,17 +670,18 @@ const standingBoxes = (reached: ObservedState, now: ObservedState) => {
 /**
  * The page's boxes as they stand since `reached`, as `standingFingerprint` reads them; a code box
  * keeps what the identifier boxes a look read before held there took (`takes`), so it still pairs
- * with them (`paired`).
+ * with them (`paired`), and a code picked from checkboxes its role and label, as it pairs by them.
  */
 const standingLook = (reached: ObservedState, now: ObservedState): StateFingerprint => {
   const boxes = standingBoxes(reached, now);
   return fingerprintOf({
     top: now.fingerprint.top,
     ...(now.fingerprint.popup === true ? { popup: true } : {}),
-    boxes: boxes.map(({ frame, kind, count, takes }) => ({
+    boxes: boxes.map(({ frame, kind, count, role, label, takes }) => ({
       frame,
       kind,
       ...(count === undefined ? {} : { count }),
+      ...(role === "checkbox" ? { role, ...(label === undefined ? {} : { label }) } : {}),
       ...(kind === "code" && takes !== undefined ? { takes } : {}),
     })),
     submit: boxes.some((box) => box.submit),
