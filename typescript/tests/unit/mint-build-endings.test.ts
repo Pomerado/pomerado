@@ -2810,14 +2810,15 @@ it("ends a host_refused report on a form refused before the login went out as si
 /**
  * A build that, as asked, first has the host refuse a site change and Guardian deny a publication
  * that passed the host's checks (`before`), then signs in through `steps`, each an authenticate's
- * result or failure, then has the host refuse a site change (`update`) and publication
- * (`publish`), and reports host_refused.
+ * result or failure, then has the host refuse a site change (`update`), a live step in its
+ * preflight (`preflight`) and publication (`publish`), and reports host_refused.
  */
 const hostRefusedAfter = (
   steps: readonly (object | MintFailure)[],
   then: {
     readonly update?: boolean;
     readonly readBack?: boolean;
+    readonly preflight?: boolean;
     readonly publish?: boolean;
     readonly before?: { readonly update: true; readonly guardianDenied: true };
   } = {},
@@ -2840,6 +2841,9 @@ const hostRefusedAfter = (
         ...(then.readBack === true
           ? [call("execute", { ...pureExample, target: "liveBrowser" }, "read_back")]
           : []),
+        ...(then.preflight === true
+          ? [call("execute", { ...pureExample, target: "liveBrowser" }, "preflight")]
+          : []),
         ...(then.publish === true
           ? [call("execute", pureExample, "example"), call("finish_build", finishBuild, "finish")]
           : []),
@@ -2849,6 +2853,18 @@ const hostRefusedAfter = (
         }),
       ][index] ?? prose("Stopping."),
     {
+      preflight: (submitted) =>
+        Effect.succeed(
+          then.preflight === true &&
+            submitted.purpose !== "authenticate" &&
+            submitted.target === "liveBrowser"
+            ? {
+                supported: false as const,
+                reason: "This host does not run this kind of step for this account.",
+                hostRefusal: true as const,
+              }
+            : { supported: true as const },
+        ),
       reviewAndExecute: (submitted, beforeDispatch = () => Effect.void) => {
         // A live step other than the sign-in reads a file back, refused before it runs.
         if (
@@ -2906,8 +2922,8 @@ const refusedPublicationRecord = {
 };
 
 // While the sign-in never confirmed, a host refusal apart from it keeps a host_refused report's
-// reason: a sign-in form the host refused after the login went out, a site change it refused, or a
-// step a host source rule refused before it ran.
+// reason: a sign-in form the host refused after the login went out, a site change it refused, a
+// step a host source rule refused before it ran, or one its preflight refused and marked.
 // A later publication refusal, which may follow from the unconfirmed sign-in, neither hides it
 // nor ends the build as sign-in unavailable, and the record lists every check still standing.
 it.each([
@@ -2940,6 +2956,12 @@ it.each([
     steps: [submittedScreen],
     then: { readBack: true },
     recorded: [refusedReadBackRecord],
+  },
+  {
+    basis: "a step the host's preflight refused and marked",
+    steps: [submittedScreen],
+    then: { preflight: true },
+    recorded: [{ source: "preflight" }],
   },
   // The same form refused again after a later login went out is the latest sign-in event again.
   {
