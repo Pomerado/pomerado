@@ -1260,9 +1260,9 @@ const byPlace = <E extends YieldableError, V extends string, L extends AutofillL
  * (`byPlace`); with no state of its whole look, a page with no box may be a state told by its
  * control and address alone (`byControl`), else, once anything may have gone out, one the state
  * just acted in led to (`ledToByControl`), else a method choice told by its methods' controls
- * (`byMethods`), else, at the step wait, an approval `after` led to on its recorded origin
- * (`byApproval`); their refusals count for nothing, so a page no state is still ends as an unknown
- * state. Where none
+ * (`byMethods`), else an approval `after` led to on its recorded origin (`byApproval`), once the
+ * page settled where the login's own route names it next and else at the step wait; their refusals
+ * count for nothing, so a page no state is still ends as an unknown state. Where none
  * shows and the origin rule refused one whose controls showed (`admission`), that refusal
  * (`refusedOrigin`). Where no state has the page's look, one it has only as read on that state's
  * top origin (`readsOn`) is taken where it shows and is admitted, its refusals counting for
