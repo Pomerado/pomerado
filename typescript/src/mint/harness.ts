@@ -5419,6 +5419,13 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         buildEffect === "read" &&
         (signedInTestsSupported || !signedIn());
       /**
+       * Whether the first passing example carries the build's test plan: never in maintenance on a
+       * host that guides its tests itself (`LiveTestHost.noMaintenanceTestPlan`).
+       */
+      const testPlanOffered = () =>
+        liveTestsOffered() &&
+        (request.mode !== "maintenance" || dependencies.liveTests?.noMaintenanceTestPlan !== true);
+      /**
        * A case's latest result on `entrypoint`'s version, as this read counts it now: once it
        * signed in, only a result run signed in, since one from before tested another session.
        */
@@ -6629,7 +6636,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 submitted.purpose !== "example" ||
                 evidence.status !== "completed" ||
                 testPlanSent ||
-                !liveTestsOffered()
+                !testPlanOffered()
               )
                 return result;
               testPlanSent = true;
