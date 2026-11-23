@@ -1058,6 +1058,45 @@ it("types the password the site emptied beside a refused code again, and ends wh
   expect(unmarked.fills).toEqual(["email", "password", "code"]);
 });
 
+it("never types the password a third time beside a refused code, on a page that asked for it again", async () => {
+  const again: Screen = {
+    path: "/password",
+    boxes: [
+      { selector: "#password", kind: "password" },
+      { selector: "#code", kind: "code" },
+    ],
+    buttons: ["#verify"],
+  };
+  const library = libraryOf([
+    typedEmail,
+    typedPassword,
+    {
+      fingerprint: arrival(again),
+      step: stepAt("/password", [password, code], "#verify", {
+        refills: ["password"],
+        rejectedMarkers: [{ selector: "#bad-code", slot: "code" }],
+      }),
+    },
+  ]);
+  // The site asks for the password again with a code, refuses the first code and empties both
+  // boxes, and would take the password with the next.
+  const site = scriptedSite(
+    { start: emailScreen, password: passwordScreen, again, refused: { ...again, errors: ["#bad-code"] } },
+    (_at, clicked) =>
+      clicked === "#continue"
+        ? "password"
+        : clicked === "#go"
+          ? "again"
+          : site.site.typed.has("#password") && site.site.typed.get("#code") === "222222"
+            ? "home"
+            : "refused",
+  );
+  const ended = await replay(site, library, { codes: ["111111", "222222"] });
+  expect(ended).toMatchObject({ outcome: "unclear", reason: "code_rejected" });
+  expect(site.fills).toEqual(["email", "password", "password", "code"]);
+  expect(ended.asked).toEqual(["code"]);
+});
+
 it("waits for a slow site to check a code before asking for another", async () => {
   const library = libraryOf([
     {

@@ -3103,7 +3103,9 @@ const enterAfterTyping = <E extends YieldableError, V extends string, L extends 
  * a new code from the caller in its code boxes, with its submit and each password box beside them
  * the site emptied, as the recipe replay's code retry types (`emptyRetryFields`), which ends
  * `ambiguous_combined_rejection` where the password box is empty and no code marker showed, as
- * either half may be the one refused; the last code counted refused
+ * either half may be the one refused, and `code_rejected`, asking for no code, where the password
+ * already went out twice, as on a page that asked for it again beside the code, since a password
+ * goes out at most twice this way, as there (`refillRefused`); the last code counted refused
  * whether or not the site showed a refusal, so it never goes in again, and bounded as the recipe
  * replay bounds a refused code's retries (`runStep` with `rejected`), each code typed again one try
  * even when nothing showed it went out, and a state with no submit gets its Enter, or a state whose

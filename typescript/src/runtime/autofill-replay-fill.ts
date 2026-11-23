@@ -388,11 +388,12 @@ export const runReplayStep = <E extends YieldableError, V extends string, L exte
 /**
  * The replay went on from a screen whose values no click sent, such as a code box that submits on
  * its last digit or boxes typed one at a time before their press: they went out, so they count as
- * submitted, its secrets as maybe sent, and each as the value a refusal names (`recordRejected`),
- * as a step that types and sends keeps its own.
+ * submitted, its secrets as maybe sent, one that may have gone out before as sent a second time
+ * (`noteMaySent`), so a password typed alone before its press goes out at most twice too, and each
+ * as the value a refusal names (`recordRejected`), as a step that types and sends keeps its own.
  */
 export const settleCarried = (
-  session: Pick<ReplaySession, "state" | "sent" | "retryState"> & {
+  session: Pick<ReplaySession, "state" | "sent" | "retryState" | "progress"> & {
     readonly input: Pick<ReplaySession["input"], "credentials">;
   },
 ) => {
@@ -401,7 +402,11 @@ export const settleCarried = (
     if (rejectableSlot(slot))
       retryState.lastFilled[logicalRejectedField(slot, input.credentials?.primaryIdentifierKind)] =
         value;
-  for (const slot of submitFilled(state)) if (isSecret(slot)) session.sent.maySent.add(slot);
+  for (const slot of submitFilled(state)) {
+    if (!isSecret(slot)) continue;
+    if (session.sent.maySent.has(slot)) session.progress.refilled.add(slot);
+    session.sent.maySent.add(slot);
+  }
 };
 
 /** Corrects only visibly rejected secondary fields on their existing screen. */
