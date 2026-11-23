@@ -42,6 +42,29 @@ export const foldChoiceText = (text: unknown): string => {
 };
 
 /**
+ * A text that is a number followed only by its unit, written one way: the number as written, a
+ * space and the unit's short form, so 2 lb, 2lb, 2-lb, 2 LBS. and 2 Pounds are all "2 lb", and
+ * .5 lb is ".5 lb", never "5 lb". Any other text is undefined, such as 2, 2 lb bag, Pack of 2,
+ * 2-pack or 2 for $5. The units are weights, volumes, lengths, spans of time, counts (ct) and
+ * pieces (pc), each by its usual short forms, names and plurals, and the inch and foot marks.
+ *
+ * It is pure and self-contained: the page code of `formControlsCode` and `pickerCode` embeds this
+ * same function, so both pickers read a unit alike.
+ */
+export const unitAmount = (text: unknown): string | undefined => {
+  const units =
+    "lb,pound|oz,ounce|fl oz,fluid ounce|mg,milligram|g,gram|kg,kilo,kilogram|ml,milliliter,millilitre|l,liter,litre|" +
+    "gal,gallon|qt,quart|pt,pint|mm,millimeter,millimetre|cm,centimeter,centimetre|m,meter,metre|km,kilometer,kilometre|" +
+    "in,inch,inches,\",”,″|ft,foot,feet,',’,′|yd,yard|mi,mile|min,minute|h,hr,hour|day|wk,week|mo,month|" +
+    "yr,year|night|ct,count|pc,piece";
+  const read = String(text ?? "").toLowerCase().replace(/\.(?!\p{N})/gu, " ").replace(/\s+/gu, " ").trim();
+  const [, number, unit = ""] = /^(\p{N}*[.,]?\p{N}+)[ -]?(\p{L}+(?: \p{L}+)?|["'”’″′])$/u.exec(read) ?? [];
+  const short = (name: string) => units.split("|").find((forms) => forms.split(",").includes(name))?.split(",")[0];
+  const known = short(unit) ?? (unit.length > 2 && unit.endsWith("s") ? short(unit.slice(0, -1)) : undefined);
+  return number === undefined || known === undefined ? undefined : `${number} ${known}`;
+};
+
+/**
  * Whether `shown`, text read from the page, names what `wanted` names, as a person reads them.
  * Case, accents on Latin, Greek and Cyrillic letters, spacing and apostrophes are ignored, and so
  * are periods, commas and hyphens between letters, while marks that change a word in other scripts,

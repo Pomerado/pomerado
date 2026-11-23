@@ -560,6 +560,27 @@ test("chooseOption refuses two options that differ only by accents", async ({ pa
   expect(await submitted(page)).toEqual({ place: "1" });
 });
 
+// A label that states the wanted number followed only by its unit written another way is the
+// option; a count never takes an option in a unit, a pack or a deal.
+test("chooseOption picks the number in its own unit however the label writes it, and none for a count", async ({ page }) => {
+  const labels = ["2lb", "2 lbs", "2 pounds", "2 LB"];
+  await page.setContent(`<form>${labels.map((label, index) => `<label>Weight ${index}<select name="w${index}">
+<option value="">Choose</option><option value="kg">2 kg</option><option value="lb">${label}</option></select></label>`).join("")}
+<label>Quantity<select name="quantity"><option value="">Choose</option><option value="a">2 lb</option>
+<option value="b">Pack of 2</option><option value="c">2-pack</option><option value="d">2 for $5</option></select></label>
+<label>Small<select name="small"><option value="">Choose</option><option>.5 lb</option><option>1 lb</option><option>10 lb</option></select></label>
+<label>Large<select name="large"><option value="">Choose</option><option>5 lbs</option><option>10 lbs</option></select></label></form>`);
+  for (const [index, label] of labels.entries())
+    expect(await call(page, `return await chooseOption(page.getByLabel("Weight ${index}"), "2 lb");`)).toEqual({
+      result: { shape: "select", label, value: "lb" },
+    });
+  expect(await call(page, `return await chooseOption(page.getByLabel("Quantity"), "2");`)).toEqual({ error: "option_missing" });
+  // A decimal's leading point is part of its number, so 5 is never .5.
+  expect(await call(page, `return await chooseOption(page.getByLabel("Small"), "5 lb");`)).toEqual({ error: "option_missing" });
+  expect(await call(page, `return await chooseOption(page.getByLabel("Large"), ".5 lb");`)).toEqual({ error: "option_missing" });
+  expect(await submitted(page)).toEqual({ w0: "lb", w1: "lb", w2: "lb", w3: "lb", quantity: "", small: "", large: "" });
+});
+
 // A label that only holds the name among other words is no clean match, so nothing is chosen.
 test("chooseOption never picks a label that only holds the name among other words", async ({ page }) => {
   await page.setContent(`<form><label>Customer<select name="customer">

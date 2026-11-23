@@ -75,7 +75,7 @@ describe("an order's notice", () => {
         }),
       ),
     ).toBe(
-      'Order: 3 × "Synthetic shake" at 4.99 USD each (14.97 USD); 1.25 lb × "Synthetic pears" at 3.49 USD per lb (4.36 USD); 2 m × "Synthetic rope" at 1.10 USD per m. Discount: 2.00 USD. Fees: "Service fee" 2.99 USD; "Delivery fee" 0.00 USD. Shipping: 0.00 USD. Tax: 1.20 USD. Tip: 3.00 USD. Total: 26.72 USD.',
+      'Order: 3 × "Synthetic shake" at 4.99 USD each (line total 14.97 USD); 1.25 lb × "Synthetic pears" at 3.49 USD per lb (line total 4.36 USD); 2 m × "Synthetic rope" at 1.10 USD per m. Discount: 2.00 USD. Fees: "Service fee" 2.99 USD; "Delivery fee" 0.00 USD. Shipping: 0.00 USD. Tax: 1.20 USD. Tip: 3.00 USD. Total: 26.72 USD.',
     );
   });
 
@@ -95,7 +95,7 @@ describe("an order's notice", () => {
         }),
       ),
     ).toBe(
-      'Order: 3 × "Synthetic shake" (14.97 USD); 1.25 lb × "Synthetic pears" (4.36 USD). Total: 19.33 USD.',
+      'Order: 3 × "Synthetic shake" (line total 14.97 USD); 1.25 lb × "Synthetic pears" (line total 4.36 USD). Total: 19.33 USD.',
     );
   });
 });
@@ -174,10 +174,27 @@ describe("a script's purchase confirm", () => {
     });
     expect(result).toEqual(Either.right({ confirm_order: { confirmed: true } }));
     if (request === undefined) throw new Error("the order was not asked");
-    expect(request.notice).toBe(
-      `Order: 3 × "Synthetic shake" at 4.99 USD each (14.97 USD). Fees: "Service fee" 2.99 USD; "${"x".repeat(199)}…" 0.00 USD. Tip: 0.00 USD. Total: 17.96 USD.`,
-    );
+    const fees = `Fees: "Service fee" 2.99 USD; "${"x".repeat(199)}…" 0.00 USD. Tip: 0.00 USD. Total: 17.96 USD.`;
+    expect(request.notice).toBe(`Order: 3 × "Synthetic shake" at 4.99 USD each (line total 14.97 USD). ${fees}`);
     expect(asksAsDeclared(request, declared)).toBe(true);
+    // A tool on an earlier core sends its lines' totals unlabeled, which a host still accepts.
+    const earlier = `Order: 3 × "Synthetic shake" at 4.99 USD each (14.97 USD). ${fees}`;
+    expect(asksAsDeclared({ ...request, notice: earlier }, declared)).toBe(true);
+    expect(asksAsDeclared({ ...request, notice: `${earlier} Extra.` }, declared)).toBe(false);
+  });
+
+  it("refuses a notice that labels one line's total and leaves another's unlabeled", () => {
+    const { request } = asked({
+      currency: "USD",
+      items: [
+        { name: "Synthetic shake", quantity: 3, lineTotal: "14.97" },
+        { name: "Synthetic cable", quantity: 1, lineTotal: "4.36" },
+      ],
+      total: "19.33",
+    });
+    if (request === undefined) throw new Error("the order was not asked");
+    const mixed = 'Order: 3 × "Synthetic shake" (line total 14.97 USD); 1 × "Synthetic cable" (4.36 USD). Total: 19.33 USD.';
+    expect(asksAsDeclared({ ...request, notice: mixed }, declared)).toBe(false);
   });
 
   // A host that predates fees refuses the key, so an order with none leaves it out.
