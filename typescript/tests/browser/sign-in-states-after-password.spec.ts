@@ -407,6 +407,22 @@ test("a password page whose form switches to GET once the password is typed send
   }
 });
 
+test("a username box in a form with no button that turns to GET while the replay waits to press Enter gets no Enter and no username in an address", async ({ page }) => {
+  // The form submits by POST until 4 s after the last key, then by GET.
+  const identifier =
+    '<form method="post" action="/login"><label>Username<input id="username" name="username"></label></form><script>document.getElementById("username").addEventListener("input", () => { clearTimeout(window.turn); window.turn = setTimeout(() => { document.forms[0].method = "get"; }, 4000); });</script>';
+  const posts = await serve(page, { "/login": identifier }, { "/login": "/login" });
+  const library = await recorded(page, [{ page: `${site}/login`, fields: [{ selector: "#username", accepts: ["username"] }] }]);
+  await page.goto("about:blank");
+  posts.length = 0;
+  const addresses: string[] = [];
+  page.on("request", (request) => addresses.push(request.url()));
+  const { ended } = await replay(page, library, {});
+  expect(ended).toMatchObject({ reason: "credential_target_refused" });
+  expect(posts).toEqual([]);
+  expect(addresses.filter((address) => address.includes(username))).toEqual([]);
+});
+
 test("a code page right after the username, before any password, gets no code", async ({ page }) => {
   const identifier =
     '<form method="post" action="/login"><label>Username<input id="username" name="username"></label><button id="next">Next</button></form>';

@@ -2395,7 +2395,14 @@ const sendsOnPress = <E extends YieldableError, V extends string, L extends Auto
  * its submission takes and its destinations.
  */
 const submitsBy = (target: AutofillInspection["targets"]["fields"][number] | undefined) =>
-  JSON.stringify([target?.methods, target?.explicitGet ?? false, target?.submitMethod, target?.actions]);
+  // A control outside a form has no method, absent or null alike.
+  JSON.stringify([target?.methods, target?.explicitGet ?? false, target?.submitMethod ?? null, target?.actions]);
+
+/** Notes how each box of `step` submits, as `inspection` found it, unless a reading before did. */
+const noteSubmits = (readBefore: Map<string, string>, step: AutofillStep, inspection: AutofillInspection) => {
+  for (const [at, field] of step.fields.entries())
+    if (!readBefore.has(field.selector)) readBefore.set(field.selector, submitsBy(inspection.targets.fields[at]));
+};
 
 /**
  * Whether a reading of the page after typing (`inspection`, of `step`) finds a box the state typed
@@ -2551,8 +2558,7 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
         const here = typeof ready === "object" ? ready : yield* shownWithin(run, state, typing);
         if (typeof here === "string") return stopped(run, here);
         if ("ended" in here) return here;
-        for (const [at, field] of asked.fields.entries())
-          if (!readBefore.has(field.selector)) readBefore.set(field.selector, submitsBy(here.targets.fields[at]));
+        noteSubmits(readBefore, asked, here);
         const next = asked === typing ? undefined : learnedNext(run, state)[0]?.step;
         const failed = yield* replay.runStep(
           asked,
@@ -2616,8 +2622,8 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
         continue;
       }
       if (!hostSubmits(full) || sendsItself) {
-        if (groups.length > 0) yield* enterAfterTyping(run, state, full, reached, false);
-        return acted();
+        const refused = groups.length > 0 ? yield* enterAfterTyping(run, state, full, reached, false, readBefore) : undefined;
+        return refused === undefined ? acted() : stopped(run, refused);
       }
       const method = step.methods === undefined ? undefined : yield* methodFor(run, step);
       const typedHere = full.fields.filter((field) => typed.has(field.slot));
@@ -2745,8 +2751,11 @@ const clickAgain = <E extends YieldableError, V extends string, L extends Autofi
  * counts nothing more. A state whose page sent what was typed itself as it was recorded
  * (`pageSends`) gets its own submit or submit key there in place of Enter, under the same holds,
  * whatever its form shows, and no Tab after it, but only on a host that tells a code the page sent
- * itself (`checksCodeSent`): another host presses nothing there. The replay then waits for the
- * next state as after any typing.
+ * itself (`checksCodeSent`): another host presses nothing there. Neither key, nor that submit,
+ * goes where the reading for it finds a box typed in a form that submits otherwise than the
+ * reading before the box was typed found (`readBefore`, `submitsChanged`): that is
+ * `credential_target_refused`, which ends the replay. The replay then waits for the next state as
+ * after any typing.
  */
 const enterAfterTyping = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -2754,6 +2763,7 @@ const enterAfterTyping = <E extends YieldableError, V extends string, L extends 
   step: AutofillStep,
   reached: ObservedState,
   retry: boolean,
+  readBefore: ReadonlyMap<string, string>,
 ) =>
   Effect.gen(function* () {
     const { replay, input } = run;
@@ -2796,6 +2806,7 @@ const enterAfterTyping = <E extends YieldableError, V extends string, L extends 
         };
     const here = yield* shownOn(run, state, keyed);
     if (typeof here === "string") return yield* skipped(own ? "submit" : "Enter", here);
+    if (submitsChanged(readBefore, keyed, here)) return "credential_target_refused" as const;
     if (!own && (here.screen.submitKey?.submitControls ?? 0) > 0)
       return yield* skipped("Enter", "submit_control");
     // Nothing else shows that a page sent its code itself, or that a box in no form did: a host
@@ -2820,6 +2831,7 @@ const enterAfterTyping = <E extends YieldableError, V extends string, L extends 
     const tabbed: AutofillStep = { ...keyed, codeKey: "Tab" };
     const shown = yield* shownOn(run, state, tabbed);
     if (typeof shown === "string") return yield* skipped("Tab", shown);
+    if (submitsChanged(readBefore, tabbed, shown)) return "credential_target_refused" as const;
     const nudged = yield* resubmit({ step: tabbed, inspection: shown });
     if (maySend(nudged)) yield* input.emit({ stage: "retried", reason: "tab_after_enter" });
     yield* input.emit(stepDiagnostic(tabbed, nudged));
@@ -2862,6 +2874,9 @@ const actAgain = <E extends YieldableError, V extends string, L extends Autofill
       return opened === "opened" ? { acted: state, reached: last.reached } : stopped(run, opened);
     }
     if (again.again === "code") replay.recordRejected(["code"]);
+    // How its boxes' forms submit before the code is typed again, for the Enter after it.
+    const readBefore = new Map<string, string>();
+    noteSubmits(readBefore, typing, here);
     const tries = replay.codeAttempts.current;
     const failed =
       again.again === "code"
@@ -2869,7 +2884,8 @@ const actAgain = <E extends YieldableError, V extends string, L extends Autofill
         : yield* replay.runStep(step, here);
     if (failed !== undefined) return stopped(run, failed);
     if (again.again === "code") {
-      yield* enterAfterTyping(run, state, step, last.reached, true);
+      const refused = yield* enterAfterTyping(run, state, step, last.reached, true, readBefore);
+      if (refused !== undefined) return stopped(run, refused);
       // A box that sends itself, and that the site empties, shows no send: the code still counts.
       if (replay.codeAttempts.current === tries) replay.codeAttempts.current += 1;
     }
