@@ -126,7 +126,12 @@ export interface AutofillHooks<E = unknown, V extends string = string> {
    * identifiers the sign-in used, binding nothing. Absent, such a replay fails its sign-in check.
    */
   readonly confirmCantTell?: (identifiers: SentIdentifiers) => Effect.Effect<void, E>;
-  /** Hears each same-site load that failed, as it fails; returns the removal. */
+  /**
+   * Hears each same-site load that failed, as it fails; returns the removal. A failure that reads
+   * `{ kind: "request", method: "POST", status }`, a POST of the page's own the site answered with
+   * an error status (400 or more), after a press that has the site send a code, tells a replay of
+   * screens the site couldn't send it (`code_not_sent`).
+   */
   readonly onLoadFailure?: (listener: (failure: unknown) => void) => () => void;
   /**
    * A recorded screen that has not shown, once the page settled without it and at its wait's

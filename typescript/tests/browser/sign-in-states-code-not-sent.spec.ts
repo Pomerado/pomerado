@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Response } from "@playwright/test";
 import { Effect, Either } from "effect";
 import type { AutofillRecipeStep } from "../../src/destinations/autofill-recipe.js";
 import { observeSignInState } from "../../src/destinations/sign-in-state-scan.js";
@@ -19,7 +19,7 @@ import { expectNotCarried, hostKeyboard, hostPage } from "./autofill-host-page.j
 // pressed OK, then More options, where the owner picked a phone call, and typed that code into the
 // four boxes. A run that meets the same notice goes the same way, the owner picking the method
 // again. A run whose text the site did send types that code into the same four boxes and presses
-// nothing else.
+// nothing else. A run whose call the site couldn't make either asks for no code.
 
 const site = "https://rides.example.test";
 const code = "4826";
@@ -69,10 +69,10 @@ document.addEventListener("click", async (event) => {
 
 /**
  * The site, with each method a send asked for and each code posted, in order. It can't send a text
- * until `texts` is set.
+ * until `texts` is set, nor make a call once `calls` is unset.
  */
 const serve = async (page: Page) => {
-  const served = { sends: [] as string[], codes: [] as string[], texts: false, signedIn: false };
+  const served = { sends: [] as string[], codes: [] as string[], texts: false, calls: true, signedIn: false };
   await page.route(`${site}/**`, async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
@@ -81,7 +81,8 @@ const serve = async (page: Page) => {
       if (path === "/api/send") served.sends.push(String(Reflect.get(body, "method")));
       if (path === "/api/code") served.codes.push(String(Reflect.get(body, "code")));
       served.signedIn ||= path === "/api/code" && Reflect.get(body, "code") === code;
-      const refused = path === "/api/send" ? Reflect.get(body, "method") === "sms" && !served.texts : !served.signedIn;
+      const sent = Reflect.get(body, "method") === "sms" ? served.texts : served.calls;
+      const refused = path === "/api/send" ? !sent : !served.signedIn;
       await route.fulfill({ status: refused ? 400 : 200, contentType: "application/json", body: "{}" });
       return;
     }
@@ -109,10 +110,12 @@ const steps: AutofillRecipeStep[] = [
 
 /**
  * Records the sign-in on a site that can't send a text, each screen noted as the page showed it
- * and its step then taken by hand, then replays it from its screens once the site's `texts` are
- * set as given: the outcome, the questions asked, and the site's sends and codes in the replay.
+ * and its step then taken by hand, then replays it from its screens once the site's `texts` and
+ * `calls` are set as given, on a browser that hears each of the page's own requests the site
+ * answered with an error: the outcome, the questions asked, and the site's sends and codes in the
+ * replay.
  */
-const recordThenSignIn = async (page: Page, texts: boolean) => {
+const recordThenSignIn = async (page: Page, texts: boolean, calls = true) => {
   const served = await serve(page);
   const host = await hostPage(page);
   const { keyboard } = await hostKeyboard(page);
@@ -133,7 +136,7 @@ const recordThenSignIn = async (page: Page, texts: boolean) => {
   if ("missingFingerprint" in observed) throw new Error(`No note at step ${observed.missingFingerprint}`);
   const appended = appendSignInStates(signInStatesOf({}, []), observed);
   if ("refused" in appended) throw new Error(appended.refused);
-  Object.assign(served, { sends: [], codes: [], texts, signedIn: false });
+  Object.assign(served, { sends: [], codes: [], texts, calls, signedIn: false });
   await page.goto("about:blank");
 
   const asked: string[] = [];
@@ -151,7 +154,18 @@ const recordThenSignIn = async (page: Page, texts: boolean) => {
       return { [question?.id ?? "code"]: code };
     }),
   );
-  const browser = makeSignInBrowser({ page: host, keyboard, siteOrigin: site, authenticationOrigins: [], typing: { typed: false } });
+  const browser = {
+    ...makeSignInBrowser({ page: host, keyboard, siteOrigin: site, authenticationOrigins: [], typing: { typed: false } }),
+    onLoadFailure: (listener: (failure: unknown) => void) => {
+      const heard = (response: Response) => {
+        const request = response.request();
+        if (response.status() >= 400 && request.resourceType() === "fetch")
+          listener({ kind: "request", method: request.method(), status: response.status() });
+      };
+      page.on("response", heard);
+      return () => void page.off("response", heard);
+    },
+  };
   const ended = await Effect.runPromise(
     Effect.either(
       signInForRun({
@@ -189,5 +203,14 @@ test("a code page whose text the site did send gets that code in its boxes, and 
     asked: ["method: Text message", "secret"],
     sends: ["sms"],
     codes: [code],
+  });
+});
+
+test("a code page whose call the site couldn't make either ends the sign-in, asking for no code", async ({ page }) => {
+  expect(await recordThenSignIn(page, false, false)).toEqual({
+    ended: expect.objectContaining({ code: "RecipeFailed", reason: "code_not_sent" }),
+    asked: ["method: Text message", "method: Email, Phone call"],
+    sends: ["sms", "call"],
+    codes: [],
   });
 });

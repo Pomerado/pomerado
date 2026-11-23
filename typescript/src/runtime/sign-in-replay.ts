@@ -128,6 +128,8 @@ export interface SignInReplayBrowser<E> extends SignInBrowser<E> {
     popup?: SignInStatePopup,
     dismiss?: readonly string[],
   ) => Effect.Effect<ObservedState | undefined, E>;
+  /** Hears each same-site load that failed (`AutofillHooks.onLoadFailure`). */
+  readonly onLoadFailure?: AutofillHooks["onLoadFailure"];
 }
 
 /**
@@ -230,6 +232,7 @@ const replayHooks = <E>(
             readNumber.call(browser, selector, screenPage, popup).pipe(Effect.mapError(failed)),
         }),
     ...(allowCantTell ? { confirmCantTell: () => Effect.void } : {}),
+    ...(browser.onLoadFailure === undefined ? {} : { onLoadFailure: browser.onLoadFailure }),
     startedEmpty: true,
     ...(signedInBefore ? { signedInBefore } : {}),
   };

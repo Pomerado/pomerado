@@ -1,5 +1,5 @@
 import { type ClearThenResubmit, makeReplayScreenWait } from "./autofill-replay-screens.js";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import type { YieldableError } from "effect/Cause";
 import { logicalRejectedField, recordedRejections, rejectableSlot } from "./autofill-rejection.js";
 import {
@@ -51,12 +51,26 @@ import {
 const missingScreen: ReadonlySet<string> = new Set(["not_found", "not_editable", "popup_missing"]);
 
 /**
+ * A failed load that is a POST of the page's own to the site, which the site answered with an
+ * error status (`AutofillHooks.onLoadFailure`).
+ */
+const isRefusedPost = Schema.is(
+  Schema.Struct({
+    kind: Schema.Literal("request"),
+    method: Schema.Literal("POST"),
+    status: Schema.Number.pipe(Schema.greaterThanOrEqualTo(400)),
+  }),
+);
+
+/**
  * The first same-site load that failed after the replay's latest submit: a screen that then never
- * shows is its downstream symptom, so the refusal points at it.
+ * shows is its downstream symptom, so the refusal points at it. `refused` says whether the site
+ * answered a POST of the page's own with an error status since then (`isRefusedPost`).
  */
 const makeFirstCause = () => {
   let submitted = false;
   let first: unknown;
+  let refused = false;
   return {
     /**
      * A step fills and submits: a load that failed before it is not what its next screen waits
@@ -65,10 +79,13 @@ const makeFirstCause = () => {
     submitted: () => {
       submitted = true;
       first = undefined;
+      refused = false;
     },
     heard: (failure: unknown) => {
       if (submitted && first === undefined) first = failure;
+      if (submitted && isRefusedPost(failure)) refused = true;
     },
+    refused: () => refused,
     /** A refused screen's first cause, for its step event, when the screen never showed. */
     evidence: (refusal: AutofillRefusal) =>
       first !== undefined && missingScreen.has(refusal.reason) ? { firstCause: first } : {},
