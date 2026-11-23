@@ -1806,6 +1806,40 @@ it("grants no host_refused ending for an authenticate the preflight refused", as
   expect(lastResult(f.requests[2])).toContain("host_not_refused");
 });
 
+// A preflight refusal the host marks as its own (`hostRefusal`), which no change to the request
+// gets past, is a host check refusing a step the build needs: a host_refused report stands on it,
+// and the review of its explanation reads it in the decision ledger.
+it("records a preflight refusal the host marks as a host refusal", async () => {
+  const explanation = "The host refused the step this build needs before it ran.";
+  const reason = "This host does not run this kind of step for this account.";
+  const ledgers: unknown[] = [];
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", { ...pureExample, target: "liveBrowser" }, "refused"),
+        call("report_blocked", { reason: "host_refused", explanation }, "report"),
+      ][index] ?? prose("Stopping."),
+    {
+      preflight: () => Effect.succeed({ supported: false as const, reason, hostRefusal: true }),
+      reviewQuestion: (_candidate, context) =>
+        Effect.sync(() => {
+          ledgers.push(context?.decisionLedger?.hostRefusals);
+          return { outcome: "allow_business" as const, rationale: "The host recorded it." };
+        }),
+    },
+  );
+  const outcome = await f.run();
+  expect(ledgers).toEqual([
+    [{ tool: "execute", code: "unsupported", reason, atUtc: expect.any(String) }],
+  ]);
+  expect(outcome).toMatchObject({
+    build: "incomplete",
+    blocked: { reason: "host_refused", explanation },
+    stopReason: "host_refused",
+  });
+  expect(blockedRecord(outcome)).toMatchObject({ hostRefusals: [{ source: "preflight" }] });
+});
+
 const makeWrite = call(
   "mint_update",
   {
