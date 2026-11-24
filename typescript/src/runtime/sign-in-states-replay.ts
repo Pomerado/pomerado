@@ -1334,6 +1334,22 @@ const byFilled = <E extends YieldableError, V extends string, L extends Autofill
   });
 
 /**
+ * The keys of the states `after` led to, or at the start of those no state leads to, as a recorded
+ * sign-in's first.
+ */
+const nextKeys = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  after: StateEntry | undefined,
+) => {
+  const { states, transitions } = run.input.library;
+  return new Set(
+    after === undefined
+      ? states.filter((state) => !transitions.some((t) => t.to === state.key)).map((state) => state.key)
+      : transitions.filter((t) => t.from === after.key).map((t) => t.to),
+  );
+};
+
+/**
  * The known state the page shows: one whose fingerprint it is and whose recorded controls show,
  * one match each, on its recorded origin, in the order this login takes them (`ranked`), never
  * the state just acted in again; in place, one in a pop-up (`inPopup`) that no state leads to, or
@@ -1378,14 +1394,9 @@ const matchState = <E extends YieldableError, V extends string, L extends Autofi
   sent = false,
 ) =>
   Effect.gen(function* () {
-    const { states, transitions } = run.input.library;
+    const { states } = run.input.library;
     run.admission = undefined;
-    // At the start, the states no state leads to, as a recorded sign-in's first.
-    const next = new Set(
-      after === undefined
-        ? states.filter((state) => !transitions.some((t) => t.to === state.key)).map((state) => state.key)
-        : transitions.filter((t) => t.from === after.key).map((t) => t.to),
-    );
+    const next = nextKeys(run, after);
     const learned = learnedNext(run, after);
     const codeSent = sent && showsCode(fingerprint);
     // In place, a state in a pop-up where the route leads is told by its controls, not the look.
@@ -1936,12 +1947,13 @@ const endsEarly = <E extends YieldableError, V extends string, L extends Autofil
  * (`code`), though at the step wait, with no code marker, a locked account the site's own answer
  * names ends it at once (`account_locked`), with no code asked again; the site's own answer, read
  * once it held still and again at the step wait, opens an emailed link (`link`) or ends a refused
- * login; a page of a state that typed nothing, held still
+ * login; a page of a state that typed nothing, or of a code state whose code went, held still
  * `quietMs`, and `landingSettleMs` at least, with every box empty and no code marker, is a
- * look-alike learned after it that types something, or one the login's own route holds next that
- * presses another control alone in place of the press made once more (`routeNext`), once its
- * controls show (`learnedAlike`) and the host's challenge look found none there, for any host,
- * the page settling again after a look that cleared one; at the step wait, a new text no known
+ * look-alike learned after it that types something, or, after no code, one the login's own route
+ * holds next that presses another control alone in place of the press made once more
+ * (`routeNext`), once its controls show (`learnedAlike`) and the host's challenge look found none
+ * there, for any host, the page settling again after a look that cleared one; at the step wait, a
+ * new text no known
  * state has is an unknown state, else a press alone learned after it is taken so (`learnedAlike`),
  * else a press that typed nothing and sends no code or link is made once more (`repress`), and
  * otherwise it stops
@@ -1966,7 +1978,8 @@ const endsEarly = <E extends YieldableError, V extends string, L extends Autofil
  * known state of its look that settled `landingSettleMs`, or any at the step wait, is that
  * hand-off once the marker's full check failed there and the page settled again
  * (`handOffShown`). Before an unknown state, a returned one, or none, the recipe replay's last
- * check runs (`endCheck`).
+ * check runs (`endCheck`); with nothing sent, on a top origin no state has, the host's refusal of
+ * the next state's controls ends it (`offOriginRefused`).
  */
 const arrive = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -2217,23 +2230,25 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
             if (next !== undefined) return { ...next, observed: read };
           }
           // A fresh page that settled looking like the state just acted in, a press that typed
-          // nothing, with no answer of the site's to explain it, is a look-alike a sign-in learned
-          // to come after it, if one shows and the host's look finds no challenge there. It settles
-          // as for an early look, so a challenge drawn late shows first, as a recipe's button-only
-          // screen holds `landingSettleMs` before the wait passes on to it. One that presses alone
-          // is pressed so only where the login's own route holds it next, else at the step wait.
+          // nothing or a code state whose code went, with no answer of the site's to explain it,
+          // is a look-alike a sign-in learned to come after it, if one shows and the host's look
+          // finds no challenge there. It settles as for an early look, so a challenge drawn late
+          // shows first, as a recipe's button-only screen holds `landingSettleMs` before the wait
+          // passes on to it. One that presses alone is pressed so only where the login's own route
+          // holds it next, else at the step wait, and never after a code.
           const settledHere = at - held.since >= Math.max(quiet.quietMs, landingSettleMs);
+          const codeWent = takesCodeIn(run, state) && replay.sent.maySent.has("code");
           if (
             again &&
             (settledHere || capped) &&
             !codeMarked &&
-            resolved(run, state.step).fields.length === 0 &&
+            (resolved(run, state.step).fields.length === 0 || codeWent) &&
             state.step.approval === undefined &&
             seen.boxes.every((box) => box.empty)
           ) {
             const alike = yield* learnedAlike(run, state, shape, {
               typing: settledHere,
-              pressing: acted.press === undefined ? false : capped || "routed",
+              pressing: acted.press === undefined || codeWent ? false : capped || "routed",
               sent: acted.sends === true || sendsOnPress(run, state, true),
             });
             const gate = challenged ? undefined : run.input.hooks.challenge;
@@ -2330,9 +2345,35 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
     if (back !== undefined) return stopped(run, returnedReason(run, back));
     if (refused === ownStateNotShown && shape !== undefined) return unknownState(run, shape, after);
     if (refused !== undefined) return stopped(run, refused);
+    if (shape !== undefined && (yield* offOriginRefused(run, shape, after)))
+      return stopped(run, "credential_target_refused");
     return shape === undefined || blankFingerprint(shape)
       ? stopped(run, "state_not_shown")
       : unknownState(run, shape, after);
+  });
+
+/**
+ * Whether, with nothing sent, on a page whose top origin no state has, the host refuses the
+ * controls of the state the replay goes to next, the first in the order this login takes them
+ * (`ranked`), as the recipe replay's inspection of its next screen refuses a sign-in off its
+ * origins (`credential_target_refused`). Only inspected, never typed in.
+ */
+const offOriginRefused = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  shape: StateFingerprint,
+  after: StateEntry | undefined,
+) =>
+  Effect.gen(function* () {
+    const { states } = run.input.library;
+    if (mayHaveSent(run) || states.some((state) => state.fingerprint.top === shape.top)) return false;
+    const next = nextKeys(run, after);
+    const [state] = ranked(run, states.filter((other) => next.has(other.key)), (other) => next.has(other.key), next);
+    if (state === undefined) return false;
+    const inspection = yield* run.input.hooks.inspect(resolved(run, state.step));
+    if (!("outcome" in inspection) || inspection.reason !== "credential_target_refused") return false;
+    // Kept for the step event of the replay's end (`refusedState`).
+    run.refused = { state: state.key, refusal: inspection };
+    return true;
   });
 
 /**
