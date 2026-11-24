@@ -13,9 +13,11 @@ the first screen. If a step fails, inspect the site and correct the steps in thi
 A code the site sends as part of signing in or after it, by text message, email or an authenticator app, is
 part of the sign-in: map its screen as a `signInStep` with a `code` field and let `authenticate`
 get the code, which the host fills or asks the caller for. Never ask for it separately with
-`request_input`. A `request_input` or script secret question for a code is only for a code
-the site sends during a write, signed out too (writes skill); `authenticate` is never started just
-for such a code.
+`request_input`. A code screen a later step of the operation shows the signed-in session to verify
+the login is a second sign-in: map it the same way and confirm it with `signedIn`, and the tool
+fills it in its runs, a read tool too. A `request_input` or script secret question for a code is
+only for a code the site sends during a write, signed out too (writes skill), never for a sign-in
+code; `authenticate` is never started just for such a code.
 
 On a one-time-code screen, prefer one read that finds the code fields, the submit and any
 remember-this-device box with its checked state. Then send the code step at once. Codes expire in
@@ -513,6 +515,10 @@ again before you go on. The host signs in on the same browser while your script 
 `ensureSignedIn`, and the operation's deadline pauses meanwhile. Any other browser call the script
 makes during that time, even from a timer or a promise it never awaited, is held until the host is
 done, then sent in order.
+
+A code screen a later step shows is a second sign-in (above): once `signedIn` confirmed it,
+`ensureSignedIn()` fills it in runs, where the host fills the code or asks the caller for it, so
+call it right after the step that reaches that screen.
 
 Never call it between a write's commit and its read-back: read the outcome back first. Let its
 failure propagate. An `OperationFailure` with `sessionLoss: "session_not_kept"` means the host
