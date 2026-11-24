@@ -595,6 +595,39 @@ it("never types into a state whose box sits in a frame off its recorded origin",
   expect(inFrame.fills).toEqual([]);
 });
 
+it("ends with the host's refusal of the next state's controls on a page whose top origin no state has", async () => {
+  const library = libraryOf([{ fingerprint: arrival(emailScreen), step: stepAt("/sign-in", [email], "#continue") }]);
+  const site = scriptedSite({ start: emailScreen }, () => "home");
+  // The page is on an origin the scan reads nothing on, so it looks blank there.
+  const observe = Effect.map(site.observe, (read) => ({
+    ...read,
+    fingerprint: { top: "https://example-login.test", boxes: [], submit: false },
+    boxes: [],
+    texts: [],
+  }));
+  const refusing = (reason: AutofillRefusal["reason"]) => {
+    const inspected: string[] = [];
+    const inspect: typeof site.hooks.inspect = (step) =>
+      Effect.sync((): AutofillRefusal => {
+        inspected.push(...step.fields.map((field) => field.selector));
+        return { outcome: "refused", reason };
+      });
+    return { inspected, site: { ...site, observe, hooks: { ...site.hooks, inspect } } };
+  };
+  const target = refusing("credential_target_refused");
+  const events: Readonly<Record<string, unknown>>[] = [];
+  expect(await replay(target.site, library, { events })).toMatchObject({
+    outcome: "unsent",
+    reason: "credential_target_refused",
+  });
+  expect(target.inspected).toEqual(["#email"]);
+  expect(events).toContainEqual(expect.objectContaining({ stage: "step", outcome: "refused", reason: "credential_target_refused" }));
+  // Where the host finds no such controls there, it is still a page no state shows.
+  const missing = refusing("not_found");
+  expect(await replay(missing.site, library)).toMatchObject({ outcome: "unsent", reason: "state_not_shown" });
+  expect(site.fills).toEqual([]);
+});
+
 const www = "https://www.example.test";
 /** A screen in a frame on the sign-in host, and its state recorded with the host's page on top. */
 const inHostFrame = (screen: Screen): Screen => ({ ...screen, frame: auth });
@@ -2613,6 +2646,68 @@ it("goes on in a learned look-alike of the state just acted in, once the page he
   });
   expect(elsewhere.clicks).toEqual(["#continue", "#text-me"]);
   expect(elsewhere.fills).toEqual(["email"]);
+});
+
+it("goes on in a learned code page that looks like the one whose code went out, for its second code", async () => {
+  const first: Screen = { path: "/verify", boxes: [{ selector: "#first-code", kind: "code" }], buttons: ["#verify"] };
+  const second: Screen = { ...first, path: "/verify-again", boxes: [{ selector: "#second-code", kind: "code" }] };
+  const firstCode = {
+    fingerprint: arrival(first),
+    step: stepAt("/verify", [{ selector: "#first-code", slot: "code" }], "#verify"),
+  };
+  const secondCode = (more: object) => ({
+    fingerprint: arrival(second),
+    step: stepAt("/verify-again", [{ selector: "#second-code", slot: "code" }], "#verify", more),
+  });
+  const site = () =>
+    scriptedSite({ start: emailScreen, first, second }, (at, clicked) =>
+      clicked === "#continue" ? "first" : at === "first" ? "second" : "home",
+    );
+  let given = 0;
+  const hosted = { code: () => Effect.sync(() => ({ slot: "code" as const, value: String(100000 + ++given) })) };
+  const twice = site();
+  const library = libraryOf([emailState, firstCode, secondCode({ refills: ["code"] })]);
+  const { ended } = await replayOnClock(twice, library, undefined, Effect.void, true, false, { hosted });
+  expect(ended).toMatchObject({ outcome: "signed_in" });
+  expect(twice.clicks).toEqual(["#continue", "#verify", "#verify"]);
+  expect(twice.fills).toEqual(["email", "code", "code"]);
+  // With no code refill recorded there, the second code never goes in.
+  const unmarked = site();
+  const once = libraryOf([emailState, firstCode, secondCode({})]);
+  expect((await replayOnClock(unmarked, once, undefined, Effect.void, true, false, { hosted })).ended).toMatchObject({
+    reason: "credential_already_filled",
+  });
+  expect(unmarked.fills).toEqual(["email", "code"]);
+});
+
+it("takes no learned code page after a code while the code state's own controls still show", async () => {
+  const firstCode = { fingerprint: arrival(codeScreen), step: stepAt("/verify", [code], "#verify") };
+  // Learned after it: a page of the same look whose box is the first page's own.
+  const sameBox = { fingerprint: arrival(codeScreen), step: stepAt("/verify-again", [code], "#verify") };
+  const library = libraryOf([emailState, firstCode, sameBox]);
+  let given = 0;
+  const hosted = { code: () => Effect.sync(() => ({ slot: "code" as const, value: String(100000 + ++given) })) };
+  // A slow site empties the box once the code went and takes it 5 seconds later.
+  const slow = scriptedSite({ start: emailScreen, first: codeScreen, checking: codeScreen }, (at, clicked) =>
+    clicked === "#continue" ? "first" : at === "first" ? "checking" : undefined,
+  );
+  const takes = Effect.gen(function* () {
+    while (!slow.clicks.includes("#verify")) yield* Effect.sleep(Duration.millis(100));
+    yield* Effect.sleep(Duration.seconds(5));
+    slow.site.screen = "home";
+  });
+  const waited = await replayOnClock(slow, library, undefined, takes, true, false, { hosted });
+  expect(waited.ended).toMatchObject({ outcome: "signed_in" });
+  expect(waited.endedAt).toBeGreaterThanOrEqual(5_000);
+  expect(slow.fills).toEqual(["email", "code"]);
+  // A second page that shows the first page's own box gets the code again there at the step wait.
+  const shared = scriptedSite(
+    { start: emailScreen, first: codeScreen, second: { ...codeScreen, path: "/verify-again" } },
+    (at, clicked) => (clicked === "#continue" ? "first" : at === "first" ? "second" : "home"),
+  );
+  const again = await replayOnClock(shared, library, undefined, Effect.void, true, false, { hosted });
+  expect(again.ended).toMatchObject({ outcome: "signed_in" });
+  expect(shared.fills).toEqual(["email", "code", "code"]);
 });
 
 it("never takes a learned look-alike that would type a password or identifier that went out again", async () => {
