@@ -859,8 +859,17 @@ const pickerRun = (element, args) => {
   if (args.phase === "cleanup") delete element.ownerDocument.defaultView[Symbol.for("pomerado.picker.page")];
   return { installed: true, value };
 };
-const pickerEval = async (s, phase, extra = {}) => {
-  const popup = s.options.listbox ? await s.options.listbox.elementHandle({ timeout: s.act().timeout }).catch(() => null) : null;
+// The given listbox is waited for, except before the picker opens it (opened false): a listbox the
+// page adds only once open is then looked for once, its one match or none.
+const pickerListbox = async (s, opened) => {
+  if (opened) return s.options.listbox.elementHandle({ timeout: s.act().timeout }).catch(() => null);
+  const found = await s.options.listbox.elementHandles().catch(() => []);
+  if (found.length === 1) return found[0];
+  await Promise.all(found.map((handle) => handle.dispose()));
+  return null;
+};
+const pickerEval = async (s, phase, extra = {}, opened = true) => {
+  const popup = s.options.listbox ? await pickerListbox(s, opened) : null;
   const args = {
     token: s.token,
     phase,
@@ -1195,8 +1204,8 @@ const pickerQuery = async (s, field, wanted, seenAvailable = [], typing = undefi
   return { found, field, available: pickerClosest(available, wanted) };
 };
 const pickerOpen = async (s) => {
-  await pickerEval(s, "snapshot");
-  const first = await pickerEval(s, "scan", { near: false });
+  await pickerEval(s, "snapshot", {}, false);
+  const first = await pickerEval(s, "scan", { near: false }, false);
   if (first.popup && first.options.length > 0 && (first.expanded || ["given", "kept", "owned"].includes(first.via))) return first;
   const before = first.signature;
   const since = pickerMark(s);
@@ -1444,7 +1453,7 @@ const pickerTry = (options, attempt, switches) => {
   const blur = options.blur ?? "auto";
   return { method, blur: blur === "auto" && attempt > 0 ? "tab" : blur };
 };
-const pickerDetect = async (s) => s.options.kind ?? (await pickerEval(s, "detect"));
+const pickerDetect = async (s) => s.options.kind ?? (await pickerEval(s, "detect", {}, false));
 // A native select's or datalist's options, and its loading signs: the control disabled,
 // aria-busy on it or the three elements around it, and "Loading" or "Searching" options.
 const pickerNativeState = (control, s) =>
