@@ -787,6 +787,7 @@ then waits for one run's start, not ten. Prefer opening those detail pages only 
 `readList`, not inside the list reader (pagination skill). When a read opens item pages, pop-ups
 or new tabs to collect details, prefer the list data the page already loads, and close each page
 before opening the next. A browser whose memory fills stops answering, and the run fails. When a
+test case times out twice the same way, prefer changing the approach over running it again. When a
 call needs many independent
 lookups or detail reads, such as one for each returned row, prefer running them in parallel
 batches over one after another, such as the site's own data request for each row sent together
