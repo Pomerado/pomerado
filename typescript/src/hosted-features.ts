@@ -31,6 +31,7 @@ export const hostedFeatures: readonly HostedFeature[] = [
   { id: "direct-sign-in", name: "Direct sign-in" },
   { id: "handoff-sign-in", name: "Hand-off sign-in" },
   { id: "method-question", name: "The host's sign-in method question" },
+  { id: "second-sign-in", name: "Second sign-ins" },
   { id: "private-fallback-publication", name: "Private fallback publication" },
   { id: "saved-dom-tests", name: "savedDOM tests" },
   { id: "execution-capacity", name: "Execution capacity" },
