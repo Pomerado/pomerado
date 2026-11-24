@@ -296,7 +296,9 @@ each version you ship whose source the fixes changed; a version you stopped fixi
 ship needs none. Each batch waits on its slowest case and its own review, so aim for few
 rounds; the cases that passed run again once after your last edit. A
 run that returns partly filled results, or passes only when run again, is missing a wait for
-content: fix the wait, not the retry, then run that input again a few times.
+content: fix the wait, not the retry, then run that input again a few times. When a case times out
+twice at the same step of the tool, and no block or challenge caused it, prefer changing the
+approach over running it again.
 
 A filter or sort case that fails because the results lost the choice is often order or waiting,
 not the control. When setting one control reloads the list, such as a location or store, set it
