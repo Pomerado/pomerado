@@ -1093,6 +1093,32 @@ test("pickValue matches an option by the name in its title or the value in its d
   expect(await submitted(page)).toEqual({ customer: "ACM-3" });
 });
 
+test("pickValue opens a menu whose given listbox the page adds only once open, with no wait for it first", async ({ page }) => {
+  await serve(page, `<form><button type="button" aria-label="Size">Choose</button><input type="hidden" name="size"></form>
+<script>
+const button = document.querySelector("button");
+button.addEventListener("click", () => {
+  const list = document.createElement("ul");
+  list.id = "sizes";
+  list.setAttribute("role", "listbox");
+  list.innerHTML = '<li role="option" data-value="s">Small</li><li role="option" data-value="m">Medium</li>';
+  list.addEventListener("click", (event) => {
+    document.querySelector("[name=size]").value = event.target.dataset.value;
+    button.textContent = event.target.textContent;
+    list.hidden = true;
+  });
+  document.body.append(list);
+});
+</script>`);
+  const started = Date.now();
+  expect(
+    await call(page, `return await pickValue(page.getByRole("button", { name: "Size" }), "Medium", { ...fast, listbox: page.locator("#sizes") });`),
+  ).toEqual({ result: { picked: true, kind: "dropdown", label: "Medium", value: "m", rank: "exact", refills: 0 } });
+  // Waiting for the listbox before the click took the call's whole budget.
+  expect(Date.now() - started).toBeLessThan(4000);
+  expect(await submitted(page)).toEqual({ size: "m" });
+});
+
 test("pickValue reports two options with one label as ambiguous, each by its full text", async ({ page }) => {
   await serve(
     page,

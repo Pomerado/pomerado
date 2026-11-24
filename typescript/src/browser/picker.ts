@@ -859,8 +859,17 @@ const pickerRun = (element, args) => {
   if (args.phase === "cleanup") delete element.ownerDocument.defaultView[Symbol.for("pomerado.picker.page")];
   return { installed: true, value };
 };
-const pickerEval = async (s, phase, extra = {}) => {
-  const popup = s.options.listbox ? await s.options.listbox.elementHandle({ timeout: s.act().timeout }).catch(() => null) : null;
+// The given listbox is waited for, except in a read before the picker opens it or types into it
+// (opened false): a listbox the page adds only then is looked for once, its one match or none.
+const pickerListbox = async (s, opened) => {
+  if (opened) return s.options.listbox.elementHandle({ timeout: s.act().timeout }).catch(() => null);
+  const found = await s.options.listbox.elementHandles().catch(() => []);
+  if (found.length === 1) return found[0];
+  await Promise.all(found.map((handle) => handle.dispose()));
+  return null;
+};
+const pickerEval = async (s, phase, extra = {}, opened = true) => {
+  const popup = s.options.listbox ? await pickerListbox(s, opened) : null;
   const args = {
     token: s.token,
     phase,
@@ -1147,7 +1156,7 @@ const pickerQuery = async (s, field, wanted, seenAvailable = [], typing = undefi
     for (let step = 0; step < 3; step++) {
       let scan, reacted, found;
       try {
-        const snapshot = await pickerEval(s, "snapshot", { near: s.kind === "dropdown" });
+        const snapshot = await pickerEval(s, "snapshot", { near: s.kind === "dropdown" }, false);
         const before = snapshot.signature;
         let since = pickerMark(s);
         if (retyped && !again && step === 0 && query.length > 1) {
@@ -1195,8 +1204,8 @@ const pickerQuery = async (s, field, wanted, seenAvailable = [], typing = undefi
   return { found, field, available: pickerClosest(available, wanted) };
 };
 const pickerOpen = async (s) => {
-  await pickerEval(s, "snapshot");
-  const first = await pickerEval(s, "scan", { near: false });
+  await pickerEval(s, "snapshot", {}, false);
+  const first = await pickerEval(s, "scan", { near: false }, false);
   if (first.popup && first.options.length > 0 && (first.expanded || ["given", "kept", "owned"].includes(first.via))) return first;
   const before = first.signature;
   const since = pickerMark(s);
@@ -1444,7 +1453,7 @@ const pickerTry = (options, attempt, switches) => {
   const blur = options.blur ?? "auto";
   return { method, blur: blur === "auto" && attempt > 0 ? "tab" : blur };
 };
-const pickerDetect = async (s) => s.options.kind ?? (await pickerEval(s, "detect"));
+const pickerDetect = async (s) => s.options.kind ?? (await pickerEval(s, "detect", {}, false));
 // A native select's or datalist's options, and its loading signs: the control disabled,
 // aria-busy on it or the three elements around it, and "Loading" or "Searching" options.
 const pickerNativeState = (control, s) =>
@@ -1578,7 +1587,7 @@ const pickValue = async (control, wanted, options = {}) => {
     await s.handle?.dispose().catch(() => undefined);
   }
 };
-const pickerChips = (s) => pickerEval(s, "chips", { chips: s.options.chips ?? null });
+const pickerChips = (s, opened = true) => pickerEval(s, "chips", { chips: s.options.chips ?? null }, opened);
 // A chip is the value only by its whole name (as written, or ignoring case, spacing, accents and
 // punctuation, or written another way), never because its name holds the value as a word or
 // shares its stem: "Blue Grey" is not "Blue".
@@ -1622,7 +1631,7 @@ const pickValues = async (control, values, options = {}) => {
     const results = [];
     const chipNames = (chip) => ({ names: chip.names.length > 0 ? chip.names : [chip.label], value: chip.value, disabled: false, key: chip.tag });
     for (const wanted of list) {
-      const chips = await pickerChips(s);
+      const chips = await pickerChips(s, false);
       const present = pickerChipIs(chips.map(chipNames), wanted);
       if (present) {
         results.push({ label: chips[present.index].label, value: chips[present.index].value, added: false });
@@ -1717,8 +1726,8 @@ const pickerList = async (control, options = {}) => {
     let field = s.control;
     if (s.kind === "typeahead") {
       if (!options.query) throw pickerFailure("wanted_missing");
-      await pickerEval(s, "snapshot");
-      const before = (await pickerEval(s, "scan")).signature;
+      await pickerEval(s, "snapshot", {}, false);
+      const before = (await pickerEval(s, "scan", {}, false)).signature;
       const since = pickerMark(s);
       await pickerType(s, s.control, String(options.query), 0);
       scan = (await pickerSettle(s, since, before, String(options.query))).scan;
