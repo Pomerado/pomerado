@@ -256,7 +256,8 @@ export type HostRefusalSource = typeof HostRefusalSource.Type;
  * password's fills are spent (`sign_in_refill`), one it refused at its destination check
  * (`sign_in_destination`), a `signedIn` on a page showing the signed-in marker that the host
  * would not verify because the sign-in, after sending a screen, submitted no identifier with a
- * password or code (`sign_in_check`), live tests the host refuses with no batch left
+ * password or code (`sign_in_check`), a one-time code the site asked for that the host refused to
+ * ask anyone for (`sign_in_code`), live tests the host refuses with no batch left
  * (`live_tests_spent`), a
  * challenge on the site the host recorded and could not get past (`challenge`), and a refusal an
  * older worker's checkpoint kept without its source (`unrecorded`).
@@ -268,6 +269,7 @@ export type HostRefusalBasis =
         | "sign_in_refill"
         | "sign_in_destination"
         | "sign_in_check"
+        | "sign_in_code"
         | "live_tests_spent"
         | "challenge"
         | "unrecorded";
@@ -3284,6 +3286,16 @@ export interface MintDependencies {
    * knows only the refusals it was handed as failures.
    */
   readonly signInRefillRefused?: () => boolean;
+  /**
+   * Whether the host refused to ask anyone for a one-time code the site asked for in this attempt's
+   * sign-in, because its policy lets no one be asked here, such as a build that runs beside other
+   * jobs signed in with the same login, whose code may be theirs, and no sign-in verified since. No
+   * step left in the attempt can get that code, so a `host_refused` block stands on it, named as the
+   * source `sign_in_code`, as on any host refusal of a sign-in. The harness reads it when the
+   * minter reports `host_refused`. Absent, the harness knows only the refusals it was handed as
+   * failures.
+   */
+  readonly signInCodeRefused?: () => boolean;
   /**
    * Whether the host refused a sign-in screen at its destination check, typing nothing because a
    * field, its form or its submit would send the login somewhere credentials may not go (an
