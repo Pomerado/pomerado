@@ -2680,6 +2680,36 @@ it("goes on in a learned code page that looks like the one whose code went out, 
   expect(unmarked.fills).toEqual(["email", "code"]);
 });
 
+it("takes no learned code page after a code while the code state's own controls still show", async () => {
+  const firstCode = { fingerprint: arrival(codeScreen), step: stepAt("/verify", [code], "#verify") };
+  // Learned after it: a page of the same look whose box is the first page's own.
+  const sameBox = { fingerprint: arrival(codeScreen), step: stepAt("/verify-again", [code], "#verify") };
+  const library = libraryOf([emailState, firstCode, sameBox]);
+  let given = 0;
+  const hosted = { code: () => Effect.sync(() => ({ slot: "code" as const, value: String(100000 + ++given) })) };
+  // A slow site empties the box once the code went and takes it 5 seconds later.
+  const slow = scriptedSite({ start: emailScreen, first: codeScreen, checking: codeScreen }, (at, clicked) =>
+    clicked === "#continue" ? "first" : at === "first" ? "checking" : undefined,
+  );
+  const takes = Effect.gen(function* () {
+    while (!slow.clicks.includes("#verify")) yield* Effect.sleep(Duration.millis(100));
+    yield* Effect.sleep(Duration.seconds(5));
+    slow.site.screen = "home";
+  });
+  const waited = await replayOnClock(slow, library, undefined, takes, true, false, { hosted });
+  expect(waited.ended).toMatchObject({ outcome: "signed_in" });
+  expect(waited.endedAt).toBeGreaterThanOrEqual(5_000);
+  expect(slow.fills).toEqual(["email", "code"]);
+  // A second page that shows the first page's own box gets the code again there at the step wait.
+  const shared = scriptedSite(
+    { start: emailScreen, first: codeScreen, second: { ...codeScreen, path: "/verify-again" } },
+    (at, clicked) => (clicked === "#continue" ? "first" : at === "first" ? "second" : "home"),
+  );
+  const again = await replayOnClock(shared, library, undefined, Effect.void, true, false, { hosted });
+  expect(again.ended).toMatchObject({ outcome: "signed_in" });
+  expect(shared.fills).toEqual(["email", "code", "code"]);
+});
+
 it("never takes a learned look-alike that would type a password or identifier that went out again", async () => {
   const idPage: Screen = { path: "/sign-in", boxes: [{ selector: "#email", kind: "identifier" }], buttons: ["#continue", "#continue2"] };
   const pwPage: Screen = { path: "/password", boxes: [{ selector: "#password", kind: "password" }], buttons: ["#go", "#go2"] };

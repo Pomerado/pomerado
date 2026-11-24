@@ -1947,11 +1947,11 @@ const endsEarly = <E extends YieldableError, V extends string, L extends Autofil
  * (`code`), though at the step wait, with no code marker, a locked account the site's own answer
  * names ends it at once (`account_locked`), with no code asked again; the site's own answer, read
  * once it held still and again at the step wait, opens an emailed link (`link`) or ends a refused
- * login; a page of a state that typed nothing, or of a code state whose code went, held still
- * `quietMs`, and `landingSettleMs` at least, with every box empty and no code marker, is a
- * look-alike learned after it that types something, or, after no code, one the login's own route
- * holds next that presses another control alone in place of the press made once more
- * (`routeNext`), once its controls show (`learnedAlike`) and the host's challenge look found none
+ * login; a page of a state that typed nothing, or of a code state whose code and own controls
+ * went, held still `quietMs`, and `landingSettleMs` at least, with every box empty and no code
+ * marker, is a look-alike learned after it that types something, or, after no code, one the
+ * login's own route holds next that presses another control alone in place of the press made
+ * once more (`routeNext`), once its controls show (`learnedAlike`) and the host's challenge look found none
  * there, for any host, the page settling again after a look that cleared one; at the step wait, a
  * new text no known
  * state has is an unknown state, else a press alone learned after it is taken so (`learnedAlike`),
@@ -2230,12 +2230,14 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
             if (next !== undefined) return { ...next, observed: read };
           }
           // A fresh page that settled looking like the state just acted in, a press that typed
-          // nothing or a code state whose code went, with no answer of the site's to explain it,
-          // is a look-alike a sign-in learned to come after it, if one shows and the host's look
-          // finds no challenge there. It settles as for an early look, so a challenge drawn late
-          // shows first, as a recipe's button-only screen holds `landingSettleMs` before the wait
-          // passes on to it. One that presses alone is pressed so only where the login's own route
-          // holds it next, else at the step wait, and never after a code.
+          // nothing or a code state whose code went and whose own controls went too, with no
+          // answer of the site's to explain it, is a look-alike a sign-in learned to come after it,
+          // if one shows and the host's look finds no challenge there. While a code state's own
+          // controls show, the site may still be taking its code there. It settles as for an early
+          // look, so a challenge drawn late shows first, as a recipe's button-only screen holds
+          // `landingSettleMs` before the wait passes on to it. One that presses alone is pressed
+          // so only where the login's own route holds it next, else at the step wait, and never
+          // after a code.
           const settledHere = at - held.since >= Math.max(quiet.quietMs, landingSettleMs);
           const codeWent = takesCodeIn(run, state) && replay.sent.maySent.has("code");
           if (
@@ -2244,11 +2246,13 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
             !codeMarked &&
             (resolved(run, state.step).fields.length === 0 || codeWent) &&
             state.step.approval === undefined &&
-            seen.boxes.every((box) => box.empty)
+            seen.boxes.every((box) => box.empty) &&
+            (!codeWent ||
+              (learnedNext(run, state).length > 0 && (yield* goneFrom(run, resolved(run, state.step)))))
           ) {
             const alike = yield* learnedAlike(run, state, shape, {
               typing: settledHere,
-              pressing: acted.press === undefined || codeWent ? false : capped || "routed",
+              pressing: acted.press === undefined ? false : capped || "routed",
               sent: acted.sends === true || sendsOnPress(run, state, true),
             });
             const gate = challenged ? undefined : run.input.hooks.challenge;
