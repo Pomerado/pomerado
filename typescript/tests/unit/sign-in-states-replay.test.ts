@@ -3696,6 +3696,78 @@ it("names the load that failed after the last press where a state's controls nev
   expect(listeners.size).toBe(0);
 });
 
+/** The site, with a load failure the host hears after each press of `on`. */
+const failingAfter = (site: ReturnType<typeof scriptedSite>, on: string, failure: object) => {
+  const listeners = new Set<(failure: unknown) => void>();
+  const hooks: AutofillHooks<TestFailure> = {
+    ...site.hooks,
+    onLoadFailure: (listener) => (listeners.add(listener), () => void listeners.delete(listener)),
+    fill: (request) =>
+      Effect.tap(site.hooks.fill(request), () =>
+        Effect.sync(() => {
+          if (request.step.submit === on) for (const listener of listeners) listener(failure);
+        }),
+      ),
+  };
+  return { ...site, hooks };
+};
+const refusedPost = { kind: "request", origin, method: "POST", status: 400 };
+
+it("ends a sign-in whose method pick the site answered with an error, as the host marks the pick's own answer, asking for no code", async () => {
+  const library = libraryOf([
+    { fingerprint: arrival(texting), step: sendsText },
+    { fingerprint: arrival(textedCode), step: stepAt("/code", [code], "#verify") },
+  ]);
+  const signIn = async (failure: object) => {
+    const site = scriptedSite({ start: texting, code: textedCode }, (_at, clicked) => (clicked === "#sms" ? "code" : "home"));
+    const events: Readonly<Record<string, unknown>>[] = [];
+    return { ended: await replay(failingAfter(site, "#sms", failure), library, { hostMethod: "sms", events }), events };
+  };
+  // Another request of the page's own failed after the pick: the text may have gone.
+  expect((await signIn(refusedPost)).ended).toMatchObject({ outcome: "signed_in", asked: ["code"] });
+  const own = await signIn({ ...refusedPost, answersPress: true });
+  expect(own.ended).toMatchObject({ reason: "code_not_sent", asked: [] });
+  expect(own.events).toContainEqual({ stage: "code_not_sent", state: library.states[0]?.key, status: 400, origin });
+});
+
+it("never judges as a code's refused send a pick of the app method, nor a press before a code the host's generator gives", async () => {
+  const marked = { ...refusedPost, answersPress: true };
+  const choose: Screen = { path: "/choose", boxes: [], buttons: ["#text", "#app"], texts: ["how should we confirm it's you"] };
+  const methods = [
+    { method: "sms" as const, selector: "#text" },
+    { method: "totp" as const, selector: "#app" },
+  ];
+  const picked = libraryOf([
+    { fingerprint: arrival(choose), step: stepAt("/choose", [], "#app", { methods }) },
+    { fingerprint: arrival(codeScreen), step: stepAt("/verify", [code], "#verify") },
+  ]);
+  const pick = scriptedSite({ start: choose, code: codeScreen }, (_at, clicked) => (clicked === "#verify" ? "home" : "code"));
+  expect(await replay(failingAfter(pick, "#app", marked), picked, { hostMethod: "totp" })).toMatchObject({ outcome: "signed_in" });
+  const pressed = libraryOf([
+    { fingerprint: arrival(checkpoint), step: stepAt("/sign-in", [], "#go-on") },
+    { fingerprint: arrival(codeScreen), step: stepAt("/verify", [code], "#verify") },
+  ]);
+  const press = () => scriptedSite({ start: checkpoint, code: codeScreen }, (_at, clicked) => (clicked === "#verify" ? "home" : "code"));
+  expect(await replay(failingAfter(press(), "#go-on", marked), pressed, { hostCodes: true })).toMatchObject({
+    outcome: "signed_in",
+    asked: [],
+  });
+  // With no generator, the press was to have the site send the code.
+  expect(await replay(failingAfter(press(), "#go-on", marked), pressed)).toMatchObject({ reason: "code_not_sent", asked: [] });
+});
+
+it("asks for the code after a password the site answered with an error, as a press that typed is never a code's refused send", async () => {
+  const library = libraryOf([
+    { fingerprint: arrival(emailScreen), step: stepAt("/sign-in", [email], "#continue") },
+    { fingerprint: arrival(passwordScreen), step: stepAt("/password", [password], "#go") },
+    { fingerprint: arrival(codeScreen), step: stepAt("/verify", [code], "#verify") },
+  ]);
+  const next: Readonly<Record<string, string>> = { "#continue": "password", "#go": "code", "#verify": "home" };
+  const site = scriptedSite({ start: emailScreen, password: passwordScreen, code: codeScreen }, (_at, clicked) => next[clicked]);
+  const failure = { ...refusedPost, status: 401, answersPress: true };
+  expect(await replay(failingAfter(site, "#go", failure), library)).toMatchObject({ outcome: "signed_in", asked: ["code"] });
+});
+
 it("learns a look-alike code screen beside the known one, which a new login takes directly, and keeps a login's own route and method", async () => {
   // A repair that met the spinbutton screen went on from the email state and recorded it, and
   // another login's repair recorded a look-alike of the first screen pressing another control.

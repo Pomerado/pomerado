@@ -1,5 +1,5 @@
 import { type ClearThenResubmit, makeReplayScreenWait } from "./autofill-replay-screens.js";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import type { YieldableError } from "effect/Cause";
 import { logicalRejectedField, recordedRejections, rejectableSlot } from "./autofill-rejection.js";
 import {
@@ -51,12 +51,26 @@ import {
 const missingScreen: ReadonlySet<string> = new Set(["not_found", "not_editable", "popup_missing"]);
 
 /**
+ * A failed load the host marks as the site's error answer to the request the replay's latest press
+ * itself made (`answersPress`), with its status and origin (`AutofillHooks.onLoadFailure`).
+ */
+const isPressAnswer = Schema.is(
+  Schema.Struct({
+    answersPress: Schema.Literal(true),
+    status: Schema.Number,
+    origin: Schema.optional(Schema.String),
+  }),
+);
+
+/**
  * The first same-site load that failed after the replay's latest submit: a screen that then never
- * shows is its downstream symptom, so the refusal points at it.
+ * shows is its downstream symptom, so the refusal points at it. `refused` is the site's error answer
+ * to that submit's own request, as the host marks it (`isPressAnswer`): its status and origin only.
  */
 const makeFirstCause = () => {
   let submitted = false;
   let first: unknown;
+  let refused: { readonly status: number; readonly origin?: string } | undefined;
   return {
     /**
      * A step fills and submits: a load that failed before it is not what its next screen waits
@@ -65,10 +79,14 @@ const makeFirstCause = () => {
     submitted: () => {
       submitted = true;
       first = undefined;
+      refused = undefined;
     },
     heard: (failure: unknown) => {
       if (submitted && first === undefined) first = failure;
+      if (submitted && refused === undefined && isPressAnswer(failure))
+        refused = { status: failure.status, ...(failure.origin === undefined ? {} : { origin: failure.origin }) };
     },
+    refused: () => refused,
     /** A refused screen's first cause, for its step event, when the screen never showed. */
     evidence: (refusal: AutofillRefusal) =>
       first !== undefined && missingScreen.has(refusal.reason) ? { firstCause: first } : {},

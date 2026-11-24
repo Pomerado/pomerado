@@ -126,7 +126,14 @@ export interface AutofillHooks<E = unknown, V extends string = string> {
    * identifiers the sign-in used, binding nothing. Absent, such a replay fails its sign-in check.
    */
   readonly confirmCantTell?: (identifiers: SentIdentifiers) => Effect.Effect<void, E>;
-  /** Hears each same-site load that failed, as it fails; returns the removal. */
+  /**
+   * Hears each same-site load that failed, as it fails; returns the removal. A host marks with
+   * `answersPress: true`, beside its `status` and `origin`, the site's error answer (400 or more)
+   * to the request a press itself made, such as the first POST of the page's own that started after
+   * the host's click for it. One after a press that has the site send a code tells a replay of
+   * screens the site couldn't send it (`code_not_sent`); a host that marks none keeps the replay
+   * asking for the code.
+   */
   readonly onLoadFailure?: (listener: (failure: unknown) => void) => () => void;
   /**
    * A recorded screen that has not shown, once the page settled without it and at its wait's

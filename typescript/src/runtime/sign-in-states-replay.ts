@@ -3435,6 +3435,24 @@ const linkHere = <E extends YieldableError, V extends string, L extends Autofill
   });
 
 /**
+ * Whether the press the replay made last (`last`) was to have the site send a code: at a method
+ * choice, a pick of a method it sends by; elsewhere, a press that may have the site send one
+ * (`sendsOnPress`), unless the host's own generator may give the code, as it does with no method
+ * picked or for the app method. A press that typed is never judged so, as a site may answer a
+ * password or identifier with an error that asks for the second step.
+ */
+const sentCodeBy = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  last: Acted,
+) => {
+  if (resolved(run, last.acted.step).fields.length > 0) return false;
+  if (last.acted.step.methods !== undefined) return last.sends === true;
+  const { chosen } = run.replay.progress;
+  const generated = run.input.hosted?.code !== undefined && (chosen === undefined || chosen === "totp");
+  return !generated && sendsOnPress(run, last.acted, true);
+};
+
+/**
  * The replay from the page it is on: each known state it shows in turn, from `first` when given,
  * as the state the page shows now. A value-free replay that stopped for values in a state it
  * reached gives where (`stop`). Once the password went out, or for a login with no password once
@@ -3451,7 +3469,10 @@ const linkHere = <E extends YieldableError, V extends string, L extends Autofill
  * last led to an emailed link's approval on a page the recipe replay admits as its screen
  * (`linkHere`), the page takes the code as the recipe replay's link screen does (`onLinkScreen`):
  * never the host generator's, and with no code given, the link's own question is asked as in its
- * state. A recovery code still held once it ends goes back unspent.
+ * state. A state that takes a code, reached by a press that was to have the site send it
+ * (`sentCodeBy`), where the host marked the site's error answer to that press's own request
+ * (`firstCause`), ends the replay `code_not_sent` with no code asked: the site couldn't send it.
+ * A recovery code still held once it ends goes back unspent.
  */
 const walk = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
@@ -3566,6 +3587,12 @@ const walk = <E extends YieldableError, V extends string, L extends AutofillLogi
             }
           : {}),
       });
+      // The site answered the press that was to have it send the code with an error: it couldn't.
+      const refused = run.replay.firstCause.refused();
+      if (refused !== undefined && last !== undefined && takesCodeIn(run, arrived.state) && sentCodeBy(run, last)) {
+        yield* input.emit({ stage: "code_not_sent", state: last.acted.key, ...refused });
+        return stopped(run, "code_not_sent").ended;
+      }
       const done = yield* actIn(run, arrived, arrived.observed);
       if ("ended" in done) return named(withStop(run, done.ended, arrived.state, last));
       last = done;
