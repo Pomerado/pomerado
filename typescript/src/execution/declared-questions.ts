@@ -86,7 +86,7 @@ const confirmsOrder = (request: InputRequest, declared: ScriptQuestionDeclaratio
 /**
  * Whether a script's request asks only what `declared` allows, and adds no text of its own: its
  * only notice is the facts of the order a choice or a confirm asks about, in the host's words
- * (`orderNotice`).
+ * (`orderNotice`), or as a tool on an earlier core wrote them, its lines' totals unlabeled.
  */
 export const asksAsDeclared = (
   request: InputRequest,
@@ -95,7 +95,9 @@ export const asksAsDeclared = (
   request.source === "script" &&
   (request.order === undefined
     ? request.notice === undefined
-    : request.notice === orderNotice(request.order) && confirmsOrder(request, declared)) &&
+    : [orderNotice(request.order), orderNotice(request.order, { unlabeledTotals: true })].includes(
+        request.notice ?? "",
+      ) && confirmsOrder(request, declared)) &&
   request.questions.every((question) =>
     matchesDeclaration(
       question,

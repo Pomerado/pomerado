@@ -996,15 +996,23 @@ const safeExecutionEvidence = (evidence: ExecutionEvidence): ExecutionEvidence =
   };
 };
 
-const decode = <A, I>(schema: Schema.Schema<A, I>, input: unknown) =>
+/**
+ * Decodes `input`. A tool request the agent sent, with `request` naming its tool, that fails to
+ * decode is the agent's invalid input. Anything else, such as the job's own request, is the host's.
+ */
+const decode = <A, I>(schema: Schema.Schema<A, I>, input: unknown, request?: string) =>
   Schema.decodeUnknown(schema)(input, { onExcessProperty: "error" }).pipe(
     Effect.mapError(
       (error) =>
         new MintFailure({
-          failureDetail: failureDetail("mint_host_dependency_failed", {
-            operation: "Schema.decodeUnknown",
-            error,
-          }),
+          failureDetail: failureDetail(
+            request === undefined ? "mint_host_dependency_failed" : "invalid_input",
+            {
+              operation: "Schema.decodeUnknown",
+              error,
+              ...(request === undefined ? {} : { context: { request } }),
+            },
+          ),
           code: "InvalidRequest",
         }),
     ),
@@ -6299,7 +6307,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             Effect.gen(function* () {
               if (questionOnly) return yield* new MintFailure({ code: "ScopeDenied" });
               yield* active();
-              const submitted = yield* decode(CaptureRequest, input);
+              const submitted = yield* decode(CaptureRequest, input, "retain_capture");
               if ((submitted.kind === "full") !== (submitted.requestId === null))
                 return yield* new MintFailure({ code: "InvalidRequest" });
               if (!dependencies.retainCapture)
@@ -6401,7 +6409,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   instruction: signInAbandonedInstruction(buildEffect),
                 });
               yield* active();
-              const submitted = yield* decode(ExecutionRequest, input);
+              const submitted = yield* decode(ExecutionRequest, input, "execute");
               sentSignInStep =
                 submitted.purpose === "authenticate" && submitted.signInStep !== undefined
                   ? JSON.stringify(submitted.signInStep)
@@ -6725,7 +6733,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               // browser's site block.
               testBrowserBlocked = false;
               const write = buildEffect === "write";
-              const proposed = yield* decode(PublicationRequest, input).pipe(
+              const proposed = yield* decode(PublicationRequest, input, "finish_build").pipe(
                 Effect.tapError(() =>
                   Effect.sync(() => {
                     pendingDecision = hostRefusalDecision(
@@ -7578,7 +7586,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   instruction:
                     "Remove allowOther and allowNote from every question and ask again: the host lets the caller answer every choice and multi_choice in their own words.",
                 });
-              const decoded = yield* decode(AgentRequest, input);
+              const decoded = yield* decode(AgentRequest, input, "request_input");
               // The marks stay the host's own: the caller reads a plain confirm, and Guardian is
               // told which held step a confirm question asks about.
               const endsBuild = endsBuildIds(decoded);
@@ -7889,7 +7897,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 serial.withPermits(1)(
                   Effect.gen(function* () {
                     yield* active("publication");
-                    const report = yield* decode(BlockedReport, input);
+                    const report = yield* decode(BlockedReport, input, "report_blocked");
                     // The host's own end, not the task's: no explanation reaches the caller, so
                     // none is reviewed, and the outcome names the host's cause.
                     if (report.reason === "host_unavailable") {
@@ -8244,7 +8252,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 serial.withPermits(1)(
                   Effect.gen(function* () {
                     yield* active("publication");
-                    const decoded = yield* Effect.either(decode(TaskUpdateRequest, input));
+                    const decoded = yield* Effect.either(
+                      decode(TaskUpdateRequest, input, "mint_update"),
+                    );
                     if (decoded._tag === "Left")
                       return taskUpdateAnswer("update_invalid", {
                         instruction:
@@ -8419,7 +8429,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 return Effect.gen(function* () {
                   if (read === undefined) return yield* new MintFailure({ code: "Unavailable" });
                   yield* active();
-                  yield* decode(Schema.Struct({}), input);
+                  yield* decode(Schema.Struct({}), input, "captcha_state");
                   if (captchaChecks >= read.limit)
                     return JSON.stringify({ kind: "host_captcha_state", ...read.exhausted });
                   captchaChecks += 1;
@@ -8445,6 +8455,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                         rationale: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(4000)),
                       }),
                       input,
+                      "request_browser_recovery",
                     );
                     return JSON.stringify({
                       kind: "host_browser_recovery",
@@ -8504,7 +8515,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 serial.withPermits(1)(
                   Effect.gen(function* () {
                     yield* active();
-                    const marker = yield* decode(SignedInMarkerCheckRequest, input);
+                    const marker = yield* decode(
+                      SignedInMarkerCheckRequest,
+                      input,
+                      "check_signed_in_marker",
+                    );
                     const check = dependencies.checkSignedInMarker;
                     if (check === undefined)
                       return JSON.stringify({
@@ -8550,7 +8565,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 serial.withPermits(1)(
                   Effect.gen(function* () {
                     yield* active();
-                    const request = yield* decode(LiveTestsRequest, input);
+                    const request = yield* decode(LiveTestsRequest, input, "live_tests");
                     yield* Effect.try({
                       try: () => relativeSourcePath(request.entrypoint),
                       catch: () => new MintFailure({ code: "ScopeDenied" }),
