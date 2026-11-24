@@ -26,9 +26,10 @@ import { portableJobSession } from "../support/portable-mint.js";
  * `dismiss` and cites the answer in `confirmedBy`: the step reaches review with the cite, the host
  * clicks the control and signs in, and the build stays a read. The recipe leaves that dismiss out,
  * so runs never accept the notice. A cite of a question this build has no answer to, or one the
- * owner declined, is refused before review, with nothing typed. Each scenario runs the real minter
- * loop on recorded model responses, with the standalone host's sign-in recorder over a synthetic
- * site and a recorded review.
+ * owner declined, is refused before review, with nothing typed, and so is a step that only names
+ * the notice's control, as the agent's invalid request. Each scenario runs the real minter loop on
+ * recorded model responses, with the standalone host's sign-in recorder over a synthetic site and
+ * a recorded review.
  */
 
 const cleanups: (() => Promise<void>)[] = [];
@@ -331,6 +332,24 @@ for (const [named, answered, cites] of [
     expect(site.fills()).toBe(0);
     expect(site.published()).toBeUndefined();
   });
+
+it("a sign-in step that only dismisses a notice is refused as the agent's invalid request, not a host failure, with nothing typed", async () => {
+  const site = coveredSite();
+  const run = await fixture(
+    (_request, index) =>
+      [authenticate("dismiss", { fields: [], dismiss: "#cookie-reject" })][index] ?? stop,
+    site.dependencies,
+    { effect: "read", siteOrigin: origin },
+  );
+  await run.run();
+  expect(answerOf(run.requests[1], "dismiss")).toMatchObject({
+    status: "tool_failed",
+    code: "InvalidRequest",
+    rootCause: { subCause: "invalid_input", errorName: "ParseError" },
+  });
+  expect(site.reviewed).toEqual([]);
+  expect(site.fills()).toBe(0);
+});
 
 it("a sign-in step whose dismiss accepts the notice with no cite reaches review without one, and that review's denial types nothing", async () => {
   const site = coveredSite(() =>
