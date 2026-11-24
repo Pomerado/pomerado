@@ -6185,6 +6185,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         );
       /** Captures retained in this attempt, as evidence a later submission may rest on. */
       let capturesRetained = 0;
+      /** Where Guardian's latest publication denial found an unsupported claim: file and bytes. */
+      let deniedClaims: ReadonlySet<string> = new Set();
       /**
        * What the last publication Guardian denied rested on: the request, the digests of the
        * entrypoint's and the HTTP version's import closures and of each flagged file, and the
@@ -7177,6 +7179,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               }
               const denial = publication._tag === "Left" ? publication.left.review : undefined;
               const deniedCategory = denial?.findings?.[0]?.category;
+              const claims = (denial?.findings ?? [])
+                .filter(({ category }) => category === "unsupported_claim")
+                .map(({ path, byteStart, byteEnd }) => JSON.stringify([path, byteStart, byteEnd]));
+              // The same unsupported claim denied again: the evidence it asked for did not come.
+              const claimRepeated = claims.some((claim) => deniedClaims.has(claim));
               if (
                 publication._tag === "Left" &&
                 publication.left.code === "ReviewDenied" &&
@@ -7195,6 +7202,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   ]),
                 ];
                 deniedSubmission = yield* submissionSnapshot(proposed, paths);
+                deniedClaims = new Set(claims);
                 answerableFindings = new Map(
                   (yield* minterFindings(denial?.findings ?? [])).map(
                     ({ id, category, file, explanation }) => [
@@ -7571,6 +7579,9 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       ? "Not published: Guardian blocked this publication. Each finding's explanation says what is wrong, the evidence and the fix, at its file and byte range. Fix every finding and each missing item the rationale names, then call finish_build again with the same executionId. The existing example and result remain recorded." +
                         findingAnswerInstruction
                       : "Not published. The existing example and result remain recorded. Source edits and another finish_build publication review may continue; this does not guarantee the failure is repairable.") +
+                    (claimRepeated
+                      ? " The last denial made the same unsupported_claim finding: narrow that claim or list it in notTested instead of submitting it again."
+                      : "") +
                     " A fresh reviewed example read requires an available live host and host repeatableRead:true within the same input/account after confirmed executor cleanup. Otherwise never repeat the example or a write step that may have committed.",
                 );
               }

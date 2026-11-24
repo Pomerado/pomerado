@@ -222,6 +222,23 @@ it("refuses an answer sent again unchanged after the review ruled on it", async 
   expect(resultOf(f.requests[4], "unchanged")).toMatchObject({ reason: "unchanged_since_denial" });
 });
 
+// Guardian denying the same unsupported claim again means the evidence it asks for did not come:
+// the reply then points the minter at narrowing that claim or listing it in notTested.
+it("steers a repeated unsupported claim to narrowing or notTested", async () => {
+  const f = await fixture(
+    (_request, index) =>
+      [
+        example,
+        call("finish_build", finishBuild, "first"),
+        call("finish_build", { ...finishBuild, findingResponses: [filterAnswer] }, "repeated"),
+      ][index] ?? prose("Stopping."),
+    { publish: () => Effect.fail(denial([untestedFilter])) },
+  );
+  await f.run();
+  expect(resultOf(f.requests[2], "first").instruction).not.toContain("notTested");
+  expect(resultOf(f.requests[3], "repeated").instruction).toContain("notTested");
+});
+
 // A denial's finding can sit in a schema's description, such as a real person's details written
 // there. A resubmission whose only edit is that description is a new submission, which the host
 // reviews again, though the live tests' digest ignores descriptions.
