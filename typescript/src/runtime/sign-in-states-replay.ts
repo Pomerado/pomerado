@@ -2625,15 +2625,17 @@ const submitsBy = (target: AutofillInspection["targets"]["fields"][number] | und
 
 /**
  * What a state's readings found before typing: each box typed, by its selector, with a step that
- * reads it alone and how its form submitted before it was typed (`boxes`); and how the submission
- * of the state's submit, or of its key, went before its first box was typed, where a reading found
- * it (`submit`).
+ * reads it alone and how its form submitted before it was typed (`boxes`); how the submission of
+ * the state's submit, or of its key, went before its first box was typed, where a reading found it
+ * (`submit`); and when its typing began (`since`), from which a press after it asks whether the
+ * page sent the code itself (`pageSentCode`).
  */
 type ReadBefore = {
   readonly boxes: Map<string, { readonly step: AutofillStep; readonly submits: Submits }>;
   submit?: Submits;
+  readonly since: number;
 };
-const readNothing = (): ReadBefore => ({ boxes: new Map() });
+const readNothing = (since: number): ReadBefore => ({ boxes: new Map(), since });
 
 /**
  * Notes how each box of `step` submits, as `inspection` found it, unless a reading before did, and,
@@ -2752,8 +2754,12 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
     const { inspection } = shown;
     let reached = arrival;
     const typed = new Set<AutofillSlot>();
+    // The code this state typed, held unsent, for the host's look right before the press alone
+    // after it; or true once the fill that typed it may have sent it, as a page that sends the code
+    // on its last digit does (`clickAgain`).
+    let code: string | true | undefined;
     // How and where each box's form submits, as the reading before it was typed found it.
-    const readBefore = readNothing();
+    const readBefore = readNothing(yield* now);
     const acted = (press?: AutofillStep, picked?: NonNullable<AutofillRecipeStep["methods"]>[number]): Acted => ({
       acted: state,
       reached,
@@ -2876,6 +2882,8 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
           return { acted: state, reached, gone: true };
         }
         for (const field of fields) typed.add(field.slot);
+        if (fields.some((field) => field.slot === "code"))
+          code = replay.progress.ranMaySend ? true : replay.state.filled.get("code");
         if (keyed || (asked !== typing && !unpressed)) {
           replay.progress.anythingSent = true;
           input.sent.current = true;
@@ -2944,7 +2952,7 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
           ? here
           : again === undefined
             ? yield* replay.runStep(press, here)
-            : yield* clickAgain(run, again, press, here);
+            : yield* clickAgain(run, again, press, here, readBefore.since, code);
       // Nothing typed and its button kept disabled: nothing was clicked, so the press waits again.
       while (failed === "submit_stayed_disabled" && typed.size === 0 && (yield* now) < until) {
         here = yield* shownWithin(run, state, press, until);
@@ -2991,23 +2999,48 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
   });
 
 /**
+ * Whether the page itself sent `code`, which the replay typed and holds unsent, from `since` on,
+ * as the host's own reading of the tab's requests tells right before a press after it
+ * (`codeSent`); no with no code, on a host without it, or when it fails.
+ */
+const pageSentCode = <E extends YieldableError, V extends string, L extends AutofillLogin>(
+  run: Run<E, V, L>,
+  since: number,
+  code: string | undefined,
+) => {
+  const { codeSent } = run.input.hooks;
+  return code === undefined || codeSent === undefined
+    ? Effect.succeed(false)
+    : Effect.flatten(Effect.try(() => codeSent({ since, code }))).pipe(
+        // error-reporting-allow: typed-recovery a host that can't tell whether the page sent the code leaves the press as without the hook
+        Effect.orElseSucceed(() => false),
+      );
+};
+
+/**
  * A state's press with the boxes it typed, by the host's click again (`resubmit`), which types
  * nothing, as the fill that typed them would press: each box must still hold what was typed, and
  * each box of a split code one character, the submit is found in their form and guarded for them,
  * and a click another element catches goes from the keyboard. What was typed counts as sent once
  * the press may have gone, as after a press alone (`settleCarried`), and the press is the step the
  * replay ran last, with whether it may have sent (`ranMaySend`). It runs none of the fill's own records of a step, as the host's click again
- * after a typing that names no submit runs none (`enterAfterTyping`). Why it did not go, or
- * undefined.
+ * after a typing that names no submit runs none (`enterAfterTyping`). A code the state typed
+ * (`code`) whose fill may have sent it, as when the page sent it on its last digit, or that the
+ * page sent itself since the typing began (`since`, `pageSentCode`), gets no press, heard as
+ * `key_skipped`, and the replay goes on as after one. Why it did not go, or undefined.
  */
 const clickAgain = <E extends YieldableError, V extends string, L extends AutofillLogin>(
   run: Run<E, V, L>,
   resubmit: NonNullable<Run<E, V, L>["input"]["hooks"]["resubmit"]>,
   press: AutofillStep,
   inspection: AutofillInspection,
+  since: number,
+  code: string | true | undefined,
 ) =>
   Effect.gen(function* () {
     const { replay, input } = run;
+    if (code === true || (yield* pageSentCode(run, since, code)))
+      return yield* input.emit({ stage: "key_skipped", key: "submit", reason: "page_sent" });
     replay.firstCause.submitted();
     const report = yield* resubmit({ step: press, inspection });
     if (maySend(report)) settleCarried(replay);
@@ -3025,7 +3058,9 @@ const clickAgain = <E extends YieldableError, V extends string, L extends Autofi
  * of a state acted in shows, Enter in the last field, once, by the host's click again, which types
  * nothing (`resubmit`), as a keyed step's would. A fill that may have sent what it typed, as when
  * the page sent the code itself (the host's `codeSent`), gets none, however long the site takes to
- * answer it; nor does a page that moved, or could not be read, at once. Never where the host
+ * answer it; nor does one whose code the page sent itself since the typing began, as the host's
+ * reading of the tab's requests right before the press tells (`pageSentCode`); nor does a page that
+ * moved, or could not be read, at once. Never where the host
  * refuses the key, nor where the field's form shows a submit control, nor on a host with no click
  * again. On a host that tells a code the page sent itself (`checksCodeSent`), a step whose every
  * field takes a code gets its Enter even in a box in no form, whose page's own script may listen
@@ -3104,6 +3139,7 @@ const enterAfterTyping = <E extends YieldableError, V extends string, L extends 
     if (!checked && (own || (codeOnly && (here.targets.submit?.submitMethod ?? null) === null)))
       return yield* skipped(own ? "submit" : "Enter", "no_code_sent_check");
     if (yield* submitsChanged(run, readBefore, keyed, here)) return "credential_target_refused" as const;
+    if (yield* pageSentCode(run, readBefore.since, replay.state.filled.get("code"))) return yield* skipped(own ? "submit" : "Enter", "page_sent");
     const pressed = yield* resubmit({ step: keyed, inspection: here });
     const sent = maySend(pressed);
     if (sent) yield* input.emit({ stage: "retried", reason: own ? "submit_after_typing" : "enter_after_typing" });
@@ -3173,7 +3209,7 @@ const actAgain = <E extends YieldableError, V extends string, L extends Autofill
     }
     if (again.again === "code") replay.recordRejected(["code"]);
     // How its boxes' forms submit before the code is typed again, for the Enter after it.
-    const readBefore = readNothing();
+    const readBefore = readNothing(yield* now);
     noteSubmits(readBefore, typing, here);
     const tries = replay.codeAttempts.current;
     const failed =
