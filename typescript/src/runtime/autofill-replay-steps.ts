@@ -186,7 +186,7 @@ export const isTwoFactorOption = (
  *   site sign-in's states also reads it once at each step wait its code state stayed through with
  *   no code marker after its code went in, before it asks for another code, given the page's
  *   visible texts, normalized, that it did not show as the state showed (`page`), for `locked`:
- *   a modal dialog's first, and none under aria-hidden or inert.
+ *   a modal dialog's first, and text under aria-hidden or inert last.
  */
 /**
  * What a site's own answer to a submitted credential screen that came back says, as a host reads

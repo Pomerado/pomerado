@@ -257,16 +257,18 @@ test("a code page the library never recorded that comes back naming a locked acc
   expect(codes).toEqual([`/verify code=${seedCode}`]);
 });
 
-test("a recorded code page in a dialog over a long hidden page ends there when the dialog names a locked account after the code", async ({ page }) => {
-  // The page behind the dialog, hidden from a reader, holds more text than the scan reads.
-  const behind = `<div aria-hidden="true">${Array.from({ length: 45 }, (_, at) => `<p>Aisle ${at} offers</p>`).join("")}</div>`;
+/**
+ * A replay of a library that recorded the login and a code page, as `verifyPage` gives it before
+ * and after a code was posted, back on every code: how it ended, with the host's read of the
+ * site's answer naming a locked account.
+ */
+const lockedAfterCode = async (page: Page, verifyPage: (posted: boolean) => string) => {
   const posts: string[] = await serve(
     page,
     {
       "/login": loginPage,
       get "/verify"() {
-        const notice = posts.some((post) => post.startsWith("/verify")) ? "<p>Your account is locked. Check your email to unlock it.</p>" : "";
-        return `${behind}<div role="dialog" aria-modal="true" style="position:fixed;inset:0;background:#fff"><h2>Verify your email</h2>${notice}${verify}</div>`;
+        return verifyPage(posts.some((post) => post.startsWith("/verify")));
       },
     },
     { "/login": "/verify", "/verify": "/verify" },
@@ -277,10 +279,36 @@ test("a recorded code page in a dialog over a long hidden page ends there when t
   const { ended, asked } = await replay(page, library, { code: sentCode }, () => ({
     siteAnswer: (texts) => Effect.succeed(texts?.some((text) => /locked/iu.test(text)) === true ? "locked" : undefined),
   }));
+  return { ended, asked, codes: posts.filter((post) => post.startsWith("/verify")) };
+};
+const lockLine = "<p>Your account is locked. Check your email to unlock it.</p>";
+
+test("a recorded code page in a dialog over a long hidden page ends there when the dialog names a locked account after the code", async ({ page }) => {
+  // The page behind the dialog, hidden from a reader, holds more text than the scan reads.
+  const behind = `<div aria-hidden="true">${Array.from({ length: 45 }, (_, at) => `<p>Aisle ${at} offers</p>`).join("")}</div>`;
+  const { ended, asked, codes } = await lockedAfterCode(
+    page,
+    (posted) =>
+      `${behind}<div role="dialog" aria-modal="true" style="position:fixed;inset:0;background:#fff"><h2>Verify your email</h2>${posted ? lockLine : ""}${verify}</div>`,
+  );
   expect(ended).toMatchObject({ outcome: "unclear", reason: "account_locked" });
   expect(asked).toEqual(["code"]);
-  expect(posts.filter((post) => post.startsWith("/verify"))).toEqual([`/verify code=${sentCode}`]);
+  expect(codes).toEqual([`/verify code=${sentCode}`]);
 });
+
+// A lock a person still sees though the page marks it aria-hidden or inert.
+const lockSeenThoughHidden: Readonly<Record<string, (posted: boolean) => string>> = {
+  "in a dialog shown while its own markup still says aria-hidden": (posted) =>
+    `<p>Welcome</p><div role="dialog" aria-hidden="true" style="position:fixed;inset:0;background:#fff"><h2>Verify your email</h2>${posted ? lockLine : ""}${verify}</div>`,
+  "in an alert in the page a modal dialog's library marked aria-hidden": (posted) =>
+    `<div aria-hidden="true"><p>Welcome</p>${posted ? `<div role="alert">${lockLine}</div>` : ""}</div><div role="dialog" aria-modal="true" style="position:fixed;top:20%;left:20%;right:20%;background:#fff"><h2>Verify your email</h2>${verify}</div>`,
+  "in an inert block beside the code form, with no dialog": (posted) =>
+    `<h2>Verify your email</h2>${posted ? `<div inert>${lockLine}</div>` : ""}${verify}`,
+};
+for (const [where, verifyPage] of Object.entries(lockSeenThoughHidden))
+  test(`a recorded code page that names a locked account ${where} ends there`, async ({ page }) => {
+    expect((await lockedAfterCode(page, verifyPage)).ended).toMatchObject({ outcome: "unclear", reason: "account_locked" });
+  });
 
 /** `library` with the code page a replay named, after the state before it, as a host keeps it. */
 const kept = (library: SignInStates, named: SignInStatesOutcome["unrecordedCode"]) => {

@@ -1801,10 +1801,15 @@ const takesCodeIn = <E extends YieldableError, V extends string, L extends Autof
 ) => resolved(run, state.step).fields.some((field) => field.slot === "code");
 
 /**
- * The page's texts the site's answer to a code is read on: as a person reads them (`shownTexts`),
- * else, from a host whose reading has none, as read.
+ * The texts the site's answer to a code is read on: those the page shows now as a person reads them
+ * (`shownTexts`), else, from a host whose reading has none, as read, less any that either list of
+ * the page as read `before` held, so a dialog found in one read and not the other adds none of its
+ * own words.
  */
-const shownTexts = (observed: ObservedState) => observed.shownTexts ?? observed.texts;
+const newTexts = (now: ObservedState, before: ObservedState | undefined) =>
+  (now.shownTexts ?? now.texts).filter(
+    (text) => before === undefined || (!before.texts.includes(text) && !(before.shownTexts ?? []).includes(text)),
+  );
 
 /**
  * The site's own answer to a state whose password or identifier went out and that shows again, as
@@ -2186,7 +2191,7 @@ const arrive = <E extends YieldableError, V extends string, L extends AutofillLo
             // The site's answer to the code: the texts the page shows that it didn't as the state showed.
             const answer = codeMarked ? undefined : run.input.hosted?.siteAnswer;
             if (answer !== undefined) {
-              const said = yield* answer(shownTexts(read).filter((text) => !shownTexts(acted.reached).includes(text)));
+              const said = yield* answer(newTexts(read, acted.reached));
               if (said === "locked") return stopped(run, "account_locked");
             }
             return { again: "code", explicit: codeMarked } satisfies Again;
@@ -3423,8 +3428,8 @@ const walk = <E extends YieldableError, V extends string, L extends AutofillLogi
     const probed = { current: false };
     let answered: SignInStatesOutcome<V>["unrecordedCode"];
     let retried = false;
-    // The texts that page showed before its code went in, which the site's answer is read against.
-    let codeTexts: readonly string[] | undefined;
+    // That page as read before its code went in, which the site's answer is read against.
+    let codeRead: ObservedState | undefined;
     const named = (ended: SignInStatesOutcome<V>) =>
       answered !== undefined && ended.outcome === "signed_in" ? { ...ended, unrecordedCode: answered } : ended;
     for (;;) {
@@ -3449,7 +3454,7 @@ const walk = <E extends YieldableError, V extends string, L extends AutofillLogi
           const said =
             answer === undefined || now === undefined
               ? undefined
-              : yield* answer(shownTexts(now).filter((text) => !codeTexts?.includes(text)));
+              : yield* answer(newTexts(now, codeRead));
           if (said === "locked") return stopped(run, "account_locked").ended;
           retried = true;
           yield* input.emit({ stage: "retried", reason: "unrecorded_code" });
@@ -3472,7 +3477,7 @@ const walk = <E extends YieldableError, V extends string, L extends AutofillLogi
         const before = probe && input.hosted?.siteAnswer !== undefined ? yield* input.observe : undefined;
         const code = probe ? yield* unrecordedCode(run.as, run.replay, probed, link !== undefined, true) : "none";
         if (code === "ran" && unknown !== undefined) {
-          codeTexts = before === undefined ? undefined : shownTexts(before);
+          codeRead = before;
           const after = arrived.ended.unknownState?.after;
           // The look was read before the step, so the step is kept only on that look's top page.
           const read = run.replay.progress.unrecordedCodeStep;

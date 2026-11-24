@@ -268,43 +268,48 @@ const scanFrame = `({ deep, dismissed }) => {
   const covers = (element) => centre !== null && (element.contains(centre) || roots.some((root) => root !== document && element.contains(root.host) && root.contains(centre)));
   const modals = all('dialog[open], [role~="dialog"], [role~="alertdialog"], [aria-modal="true"]').filter((element) => shows(element) && !apart(element) && covers(element));
   const modal = modals.findLast((element) => !modals.some((other) => other !== element && element.contains(other)));
-  // Every visible text of its own outside a control, which the host normalizes, from each of
-  // \`starts\` in turn and at most 40 blocks: what is new after a press tells a notice the site showed
-  // beside the same boxes. Text is read by the block it sits in, so a name in an inline element of
-  // its own, as "Not <b>Sam</b>?", is masked within the sentence.
+  // Every visible text of its own outside a control, which the host normalizes, at most 40 blocks:
+  // what is new after a press tells a notice the site showed beside the same boxes. Each pass reads
+  // its starts in turn, each node it \`counts\` once, before the next pass. Text is read by the block
+  // it sits in, so a name in an inline element of its own, as "Not <b>Sam</b>?", is masked within
+  // the sentence.
   const blockOf = (element) => {
     let block = element;
     while (block.parentElement !== null && getComputedStyle(block).display.startsWith("inline")) block = block.parentElement;
     return block;
   };
-  const textsFrom = (starts, counts) => {
+  const textsFrom = (passes) => {
     const own = new Map();
     const seen = new Set();
     let last;
-    for (const start of starts) {
-      const walker = document.createTreeWalker(start, NodeFilter.SHOW_TEXT);
-      for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
-        const parent = node.parentElement;
-        if (seen.has(node) || parent === null || parent.closest('script, style, noscript, template, button, a, label, option, select, textarea, [role="button" i]') !== null || !shows(parent) || !counts(parent)) continue;
-        seen.add(node);
-        const block = blockOf(parent);
-        if (!own.has(block)) {
-          if (node.textContent.trim() === "") continue;
-          if (own.size >= 40) return [...own.values()];
-          own.set(block, "");
+    for (const [starts, counts] of passes)
+      for (const start of starts) {
+        const walker = document.createTreeWalker(start, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+          const parent = node.parentElement;
+          if (seen.has(node) || parent === null || !counts(parent)) continue;
+          seen.add(node);
+          if (parent.closest('script, style, noscript, template, button, a, label, option, select, textarea, [role="button" i]') !== null || !shows(parent)) continue;
+          const block = blockOf(parent);
+          if (!own.has(block)) {
+            if (node.textContent.trim() === "") continue;
+            if (own.size >= 40) return [...own.values()];
+            own.set(block, "");
+          }
+          // A block's text on both sides of a block inside it reads as two words, not one.
+          own.set(block, own.get(block) + (last === block ? "" : " ") + node.textContent);
+          last = block;
         }
-        // A block's text on both sides of a block inside it reads as two words, not one.
-        own.set(block, own.get(block) + (last === block ? "" : " ") + node.textContent);
-        last = block;
       }
-    }
     return [...own.values()];
   };
   const pageStarts = roots.map((root) => (root === document ? (document.body ?? document.documentElement) : root));
-  const texts = textsFrom(pageStarts, () => true);
+  const texts = textsFrom([[pageStarts, () => true]]);
   // The same texts as a person reads them, for the site's answer to a code: the modal dialog's
-  // first, and none under aria-hidden or inert.
-  const shownTexts = textsFrom(modal === undefined ? pageStarts : [modal, ...pageStarts], (parent) => parent.closest("[inert], [aria-hidden=true]") === null);
+  // first, and text under aria-hidden or inert, which a page may leave on what it still shows,
+  // last.
+  const firstStarts = modal === undefined ? pageStarts : [modal, ...pageStarts];
+  const shownTexts = textsFrom([[firstStarts, (parent) => parent.closest("[inert], [aria-hidden=true]") === null], [firstStarts, () => true]]);
   const headings = ["h1", "h2", '[role="heading" i]', "h3", "p"];
   const firstSaid = (within) => headings
     .map((selector) => within(selector).find((element) => shows(element) && element.innerText.trim() !== ""))
