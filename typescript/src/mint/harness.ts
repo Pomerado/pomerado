@@ -730,8 +730,8 @@ const restoredHostRefusals = (kept: unknown) => {
  * source a host source rule refused, or that the host's preflight refused and marked
  * `hostRefusal`, which no sign-in causes or clears. A publication or live tests refused while the
  * sign-in never confirmed may be its consequence, such as a recipe nothing verified, as may a
- * refused refill, and a refusal an older checkpoint kept without its source is unknown: none of
- * them keeps the reason. Nor does a challenge the host recorded
+ * refused refill or a sign-in code the host refused to ask for, and a refusal an older checkpoint
+ * kept without its source is unknown: none of them keeps the reason. Nor does a challenge the host recorded
  * (`challenge`), which may be what stopped the sign-in: the build ends as sign-in unavailable.
  */
 const hostRefusalApartFromSignIn = (refusal: HostRefusalBasis, beforeSignIn: boolean) =>

@@ -3289,10 +3289,11 @@ export interface MintDependencies {
   /**
    * Whether the host refused to ask anyone for a one-time code the site asked for in this attempt's
    * sign-in, because its policy lets no one be asked here, such as a build that runs beside other
-   * jobs signed in with the same login, whose code may be theirs. No step left in the attempt can
-   * get that code, so a `host_refused` block stands on it, named as the source `sign_in_code`, as
-   * on any host refusal of a sign-in. The harness reads it when the minter reports `host_refused`.
-   * Absent, the harness knows only the refusals it was handed as failures.
+   * jobs signed in with the same login, whose code may be theirs, and no sign-in verified since. No
+   * step left in the attempt can get that code, so a `host_refused` block stands on it, named as the
+   * source `sign_in_code`, as on any host refusal of a sign-in. The harness reads it when the
+   * minter reports `host_refused`. Absent, the harness knows only the refusals it was handed as
+   * failures.
    */
   readonly signInCodeRefused?: () => boolean;
   /**
