@@ -5,7 +5,11 @@ import { Effect } from "effect";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { MintFailure, type PublicationRequest } from "../../src/mint/contracts.js";
+import {
+  MintFailure,
+  type LiveTestHost,
+  type PublicationRequest,
+} from "../../src/mint/contracts.js";
 import { makeOpenAIMinter } from "../../src/mint/openai.js";
 import { publicationFindingId } from "../../src/guardian/publication.js";
 import type { PublicationFinding } from "../../src/guardian/review-contracts.js";
@@ -223,8 +227,17 @@ it("refuses an answer sent again unchanged after the review ruled on it", async 
 });
 
 // Guardian denying the same unsupported claim again means the evidence it asks for did not come:
-// the reply then points the minter at narrowing that claim or listing it in notTested.
-it("steers a repeated unsupported claim to narrowing or notTested", async () => {
+// the reply then names that finding and points the minter at narrowing that claim, or at listing
+// it in notTested, which the review reads only where live tests are offered.
+const liveTestHost: LiveTestHost = {
+  maxWorkers: 1,
+  schemas: () => Effect.die("unused"),
+  run: () => Effect.die("unused"),
+};
+it.each([
+  ["offered", liveTestHost],
+  ["not offered", undefined],
+])("steers a repeated unsupported claim to narrowing, live tests %s", async (_, liveTests) => {
   const f = await fixture(
     (_request, index) =>
       [
@@ -232,11 +245,16 @@ it("steers a repeated unsupported claim to narrowing or notTested", async () => 
         call("finish_build", finishBuild, "first"),
         call("finish_build", { ...finishBuild, findingResponses: [filterAnswer] }, "repeated"),
       ][index] ?? prose("Stopping."),
-    { publish: () => Effect.fail(denial([untestedFilter])) },
+    {
+      publish: () => Effect.fail(denial([untestedFilter])),
+      ...(liveTests === undefined ? {} : { liveTests }),
+    },
   );
   await f.run();
-  expect(resultOf(f.requests[2], "first").instruction).not.toContain("notTested");
-  expect(resultOf(f.requests[3], "repeated").instruction).toContain("notTested");
+  expect(resultOf(f.requests[2], "first").instruction).not.toContain(filterAnswer.finding);
+  const repeated = String(resultOf(f.requests[3], "repeated").instruction);
+  expect(repeated).toContain(filterAnswer.finding);
+  expect(repeated.includes("notTested")).toBe(liveTests !== undefined);
 });
 
 // A denial's finding can sit in a schema's description, such as a real person's details written
