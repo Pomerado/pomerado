@@ -13,7 +13,8 @@ import { describe, expect, it } from "vitest";
 const workflows = fileURLToPath(new URL("../../../.github/workflows/", import.meta.url));
 const repository = "Pomerado/pomerado";
 const githubHosted = "ubuntu-latest";
-const fallback = "blacksmith-4vcpu-ubuntu-2404";
+// An unset runner variable falls back to a GitHub-hosted runner.
+const fallback = githubHosted;
 const variables = {
   CI_RUNNER_MAINTAINER: "maintainer-runner",
   CI_RUNNER_TRUSTED: "trusted-runner",

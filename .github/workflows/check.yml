@@ -12,7 +12,7 @@
 #   runs on a GitHub-hosted runner. A merge queue needs its own trigger and route here first.
 # A runner either variable names must have 4 vCPUs, as the browser job's --workers=4 and the
 # browser plan's --workers 4 expect.
-# An unset variable falls back to a Blacksmith runner. The scans, test selection's record jobs and
+# An unset variable falls back to a GitHub-hosted runner. The scans, test selection's record jobs and
 # the `CI` job are short and always run on GitHub-hosted runners.
 # typescript/tests/unit/ci-runner-routing.test.ts checks these routes for forks, outside authors,
 # maintainers and pushes.
@@ -22,9 +22,9 @@
 # doesn't allow. docs/RELEASING.md describes what such a runner must do.
 # Approved outside code can still reach a non-GitHub runner, and release publishes the tarball the
 # check job builds, so no job here restores a cache: setup-node's package manager cache is off, and
-# nothing uses actions/cache or a Blacksmith sticky disk. Publish runs on a GitHub-hosted runner,
-# which npm provenance needs. The browser plan reads test durations that Release runs on main
-# record, and they decide only how the tests are split across shards, never what is built or run.
+# nothing uses actions/cache. Publish runs on a GitHub-hosted runner, which npm provenance needs.
+# The browser plan reads test durations that Release runs on main record, and they decide only how
+# the tests are split across shards, never what is built or run.
 name: Check
 on:
   # Pushes to main run this through the release workflow, which publishes the tarball it tests.
@@ -126,7 +126,7 @@ jobs:
       && contains(fromJSON(vars.CI_MAINTAINERS || '[]'), github.event.pull_request.user.login)
       && contains(fromJSON(vars.CI_MAINTAINERS || '[]'), github.actor)
       && contains(fromJSON(vars.CI_MAINTAINERS || '[]'), github.triggering_actor)
-      && (vars.CI_RUNNER_MAINTAINER || 'blacksmith-4vcpu-ubuntu-2404')
+      && (vars.CI_RUNNER_MAINTAINER || 'ubuntu-latest')
       || 'ubuntu-latest' }}
     timeout-minutes: 10
     permissions:
@@ -393,13 +393,13 @@ jobs:
     runs-on: >-
       ${{ github.repository == 'Pomerado/pomerado'
       && github.event_name == 'push' && github.ref == 'refs/heads/main'
-      && (vars.CI_RUNNER_TRUSTED || 'blacksmith-4vcpu-ubuntu-2404')
+      && (vars.CI_RUNNER_TRUSTED || 'ubuntu-latest')
       || github.repository == 'Pomerado/pomerado' && github.event_name == 'pull_request'
       && github.event.pull_request.head.repo.full_name == github.repository
       && contains(fromJSON(vars.CI_MAINTAINERS || '[]'), github.event.pull_request.user.login)
       && contains(fromJSON(vars.CI_MAINTAINERS || '[]'), github.actor)
       && contains(fromJSON(vars.CI_MAINTAINERS || '[]'), github.triggering_actor)
-      && (vars.CI_RUNNER_MAINTAINER || 'blacksmith-4vcpu-ubuntu-2404')
+      && (vars.CI_RUNNER_MAINTAINER || 'ubuntu-latest')
       || 'ubuntu-latest' }}
     timeout-minutes: 15
     strategy:
