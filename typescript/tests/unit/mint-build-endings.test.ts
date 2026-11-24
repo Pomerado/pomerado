@@ -988,6 +988,28 @@ it.each([
   }
 });
 
+// A host that may not ask anyone for a sign-in's one-time code, such as one running a build beside
+// other jobs on the same login, refuses each code request. The minter's host_refused report was
+// refused as host_not_refused, so it could only stop without a tool and the build ended
+// unexplained. The report now stands on the host's record of that refusal (`signInCodeRefused`).
+it("ends as host_refused on a sign-in code the host refused to ask for", async () => {
+  const explanation = "The site asks for a one-time code that no one can be asked for here.";
+  const f = await fixture(
+    (_request, index) =>
+      [call("report_blocked", { reason: "host_refused", explanation }, "report")][index] ??
+      prose("Stopping."),
+    { signInCodeRefused: () => true },
+  );
+  const outcome = await f.run();
+  expect(f.requests).toHaveLength(1);
+  expect(outcome).toMatchObject({
+    build: "incomplete",
+    blocked: { reason: "host_refused", explanation },
+    stopReason: "host_refused",
+  });
+  expect(blockedRecord(outcome)).toMatchObject({ hostRefusals: [{ source: "sign_in_code" }] });
+});
+
 // A download over the host's own file caps is the host's limit, which no change to the source gets
 // past. A repair's host_refused report was refused as host_not_refused, so its minter could stop
 // only by asking the owner to narrow the request. The failed example now names the cap, and the

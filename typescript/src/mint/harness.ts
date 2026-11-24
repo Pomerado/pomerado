@@ -4488,12 +4488,16 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         // So is the host's refusal to verify a sign-in that submitted no identifier with a secret.
         const signInCheckRefused =
           reason === "host_refused" && dependencies.signInCheckRefused?.() === true;
+        // And its refusal to ask anyone for a sign-in code the site asked for.
+        const signInCodeRefused =
+          reason === "host_refused" && dependencies.signInCodeRefused?.() === true;
         const hostCheckRefusing =
           hostRefused ||
           refillRefused ||
           signInDestinationRefused ||
           challengeRefused ||
-          signInCheckRefused;
+          signInCheckRefused ||
+          signInCodeRefused;
         const liveTestsSpent = liveTestsRefusal !== undefined && !liveTestsRefusal.reserveOpen;
         const hostRefusing = hostCheckRefusing || liveTestsSpent;
         if (reason === "owner_declined" && !ownerRefused && stopDeclined)
@@ -4583,7 +4587,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           !refillRefused &&
           !signInDestinationRefused &&
           !challengeRefused &&
-          !signInCheckRefused
+          !signInCheckRefused &&
+          !signInCodeRefused
         ) {
           namedStepsOffered.add(namedStep);
           const told = namedStepInstructions.get(namedStep);
@@ -4626,6 +4631,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           ...(refillRefused ? [{ source: "sign_in_refill" as const }] : []),
           ...(signInDestinationRefused ? [{ source: "sign_in_destination" as const }] : []),
           ...(signInCheckRefused ? [{ source: "sign_in_check" as const }] : []),
+          ...(signInCodeRefused ? [{ source: "sign_in_code" as const }] : []),
           ...(liveTestsSpent ? [{ source: "live_tests_spent" as const }] : []),
           ...(challengeRefused ? [{ source: "challenge" as const }] : []),
         ];
