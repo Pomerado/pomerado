@@ -647,14 +647,17 @@ export interface ObservedBox extends StateBox {
 
 /**
  * The page as read: `fingerprint` from its empty boxes, or from its message and buttons when it
- * shows none; every counted box (`boxes`); and its visible texts, normalized (`texts`). A page
- * read in a pop-up may hold the tab that opened it as read beside it (`opener`), for the states
- * that hold an opener's look (`heldOpener`).
+ * shows none; every counted box (`boxes`); its visible texts, normalized (`texts`); and the same as
+ * a person reads them, a modal dialog's first and text under aria-hidden or inert last
+ * (`shownTexts`), which the site's answer to a code is read on. A page read in a pop-up may hold
+ * the tab that opened it as read beside it (`opener`), for the states that hold an opener's look
+ * (`heldOpener`).
  */
 export interface ObservedState {
   readonly fingerprint: StateFingerprint;
   readonly boxes: readonly ObservedBox[];
   readonly texts: readonly string[];
+  readonly shownTexts?: readonly string[] | undefined;
   readonly opener?: ObservedState | undefined;
 }
 /** The page as the tab that opened its pop-up read beside it (`opener`), else as read. */
