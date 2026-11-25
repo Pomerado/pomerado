@@ -568,10 +568,12 @@ export const publicationWritePathPolicy =
 /**
  * A paying commit's last question shows the caller what they pay. `order` is optional on `ask`,
  * so a script built before it, or a repair that kept its question unchanged, asked with no items
- * or total; the review finds it wherever it is, a repair's unchanged code included.
+ * or total; the review finds it wherever it is, a repair's unchanged code included. A hold the
+ * site keeps only minutes, taken before that question, can lapse while the question is reviewed
+ * and answered, so the site refuses the order after the caller's yes.
  */
 export const publicationPurchaseOrderPolicy =
-  "The last declared choice or confirm a write asks before a commit that buys or pays, once the page shows the items and total that commit pays, passes them as `order` to `ask`. One that passes none is a confirmation finding at that `ask`, in a repair too, even in code the repair did not change.";
+  "The last declared choice or confirm a write asks before a commit that buys or pays, once the page shows the items and total that commit pays, passes them as `order` to `ask`. One that passes none is a confirmation finding at that `ask`, in a repair too, even in code the repair did not change. A time-limited hold that commit uses, taken only before that choice or confirm, is a confirmation finding at that commit.";
 
 /**
  * A choice the caller approved can show a time that moves with the clock, such as an
