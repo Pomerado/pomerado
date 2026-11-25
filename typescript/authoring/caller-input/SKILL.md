@@ -291,7 +291,8 @@ already asked for, or to solve a CAPTCHA.
 
 The run waits with its browser open and its active budget stopped, and the next call
 starts on the same page. Continue from there. Do not reload, search again or repeat an
-earlier step, and never resubmit anything the run already submitted. A second click on a
+earlier step, except to take a quote again as the writes skill says, and never resubmit anything
+the run already submitted. A second click on a
 marked step is not a resubmission when `blockingRequiredFields` returned the fields you
 asked for and you called `notCommitted` for that step before asking: fill the answers, check
 the step again, then call `enteringCommit` again for that step, and click once, as the writes

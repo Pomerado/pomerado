@@ -1431,7 +1431,7 @@ it("has a write retry an expired quote once, which Guardian's reviews accept", a
   const texts = await renderedTexts("typescript/authoring");
   const writes = (texts.get("writes") ?? "").replace(/\s+/g, " ");
   expect(writes).toContain(
-    "can expire before the commit, for example while the step waits for review or the caller's answer, and selecting it again can send back the quote the page already holds. So ask the purchase's final confirm right before the commit step, and after the caller's yes have that step go to the checkout page's URL again, since a reload can resend the form that loaded the page, or start the checkout again, right before its mark, then select the fresh quote, set again any earlier choice this may have reset, such as the tip or a declined add-on, and check the quote and those choices against the caller's limits, such as the cap and the same item or route, before the mark as above, all in that one step, or right before the card fill when the host fills the card.",
+    "can expire before the commit, for example while the step waits for review or the caller's answer, and selecting it again can send back the quote the page already holds. So have the commit step, after the caller's yes to a purchase's final confirm asked right before it, go to the checkout page's URL again, since a reload can resend the form that loaded the page, or start the checkout again, right before its mark, then select the fresh quote, set again any earlier choice this may have reset, such as the tip or a declined add-on, and check the quote and those choices against the caller's limits, such as the cap and the same item or route, before the mark as above, all in that one step, or right before the card fill when the host fills the card.",
   );
   expect(writes).toContain(
     "When the site answers the click by saying the quote expired or the price changed, with that proof that it created nothing, call `notCommitted` for the step with `{ siteRefused: true }`, refresh the quote the same way and check it again, then call `enteringCommit` again and click once more.",
@@ -1726,9 +1726,9 @@ it("renders the pinned standalone authoring", async () => {
     ["f41fa0f1d8a91a956965424c426e2760e809296ebdfce1cc22e70083559db21c", "testing"],
     ["ca80679c4488dec4ee85052fb39f1493b6d5f8ca4a5df9b56d10a2e96078e848", "pagination"],
     ["b0220727e7f21e1c5d10101e74996ddb3d2d4e18061ac85c807203ed4ab0f695", "forms"],
-    ["c00c132cea3a26d68b50e21900d646a496157c277b646771b724103a134382f1", "writes"],
+    ["edf11abb51e0a28d7f3f779a0f53e1b49990e8108d661a2f6dc123546ff1f1be", "writes"],
     ["c57264580481b348972d0e8d64e70889d7a759783c6ac36e915724739de3fce5", "cart"],
-    ["a0c9ea62be24b9fcf921daf77c6c9aa93c65c3869ee8cbcad42d8e1698c32f05", "caller-input"],
+    ["ed37946950ec4ab0e72636474ad359287798b7279d1bf1dce65ae40907e6c34a", "caller-input"],
     ["3573b3f6005645d27cb02a140d3d212ffeb30272c47d05f9851b37824d2beb11", "publication"],
     ["257b832d4c786c59dc1589b8df7fa8b5836625366511d990445399c8b164e300", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
