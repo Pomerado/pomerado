@@ -651,29 +651,32 @@ ${siteMessageCode}
   const fieldCheckOnly = (text) =>
     !saysError(text) && !openWords.test(text) && !/\b(?:another|different|later)\b/i.test(text) &&
     !saysRefusal(words(text).replace(fieldCheckWords, " "));
-  // Whether a message says the write is done: words of it with no negation just before them, and
-  // not an alert, styled as an error, or in words of an error, a refusal or a decline.
-  const doneWords = /(?<!(?:\b(?:not|never|no)|n['’]t)\s+(?:(?:yet|been|be)\s+)?)\b(?:booked|reserved|placed|scheduled|received|confirmed|completed|submitted|all set|thank you)\b/i;
+  // Whether a message says the write is done: words of it, none with a negation up to two words
+  // before it, and not an alert, styled as an error, or in words of an error, a refusal or a decline.
+  const doneWords = "(?:booked|reserved|placed|scheduled|received|confirmed|completed|submitted|all set|thank you)\\b";
   const confirms = (message) =>
     !(message.alert || message.errorStyle || saysError(message.text) || saysRefusal(message.text) || openWords.test(message.text)) &&
-    doneWords.test(message.text);
+    new RegExp("\\b" + doneWords, "i").test(message.text) &&
+    !new RegExp("(?:\\b(?:not|never|no)|n['’]t)(?:\\s+\\S+){0,2}\\s+" + doneWords, "i").test(message.text);
   return { saysError, succeeds, confirms, fieldCheckOnly, messages, messagesInPage, read: (page) => page.locator(messages).evaluateAll(messagesInPage), messageCounts, judgeMessages };
 })();
 // Other sites' hosts whose requests are a bot vendor's, a captcha's or an analytics service's
-// beacons, never a site's write: each host and those below it, under the path when one is named.
-// Any other host, a payment service's included, may carry the write.
+// beacons, never a site's write: each host and those below it, * one label, and with a path, only
+// that path, or under it when it ends in a slash. Any other host, a payment service's included,
+// may carry the write.
 const outcomeWaitBeacons = [
   "perimeterx.net", "px-cloud.net", "px-cdn.net", "pxchk.net", "datadome.co", "captcha-delivery.com", "hcaptcha.com",
   "recaptcha.net", "www.google.com/recaptcha/", "challenges.cloudflare.com", "arkoselabs.com", "funcaptcha.com", "awswaf.com",
   "go-mpulse.net", "akstat.io", "google-analytics.com", "analytics.google.com", "doubleclick.net", "segment.io",
   "amplitude.com", "mixpanel.com", "heapanalytics.com", "hotjar.com", "hotjar.io", "fullstory.com", "clarity.ms", "sentry.io",
-  "browser-intake-datadoghq.com", "nr-data.net", "braze.com", "www.facebook.com/tr", "bat.bing.com", "analytics.tiktok.com",
+  "browser-intake-datadoghq.com", "nr-data.net", "sdk.*.braze.com", "www.facebook.com/tr", "bat.bing.com", "analytics.tiktok.com",
   "px.ads.linkedin.com",
 ];
 const outcomeWaitBeacon = (url) =>
   outcomeWaitBeacons.some((entry) => {
-    const [host, path] = entry.includes("/") ? [entry.slice(0, entry.indexOf("/")), entry.slice(entry.indexOf("/"))] : [entry, "/"];
-    return (url.hostname === host || url.hostname.endsWith("." + host)) && url.pathname.startsWith(path);
+    const [host, path] = entry.includes("/") ? [entry.slice(0, entry.indexOf("/")), entry.slice(entry.indexOf("/"))] : [entry, ""];
+    return new RegExp("(?:^|\\.)" + host.replaceAll(".", "\\.").replace("*", "[^.]+") + "$").test(url.hostname) &&
+      (path === "" || (path.endsWith("/") ? url.pathname.startsWith(path) : [path, path + "/"].includes(url.pathname)));
   });
 // Whether this call already began a wait: in a commit's call only the first reads the site's
 // refusal, and only with an action, since a later one's click came after the commit's.
@@ -1559,9 +1562,9 @@ const waitForChange = async (fields, options = {}) => {
  *   went to a bot vendor's, a captcha's or an analytics service's host on another site than the
  *   page's at the click (`siteDomain`, else a guess from its host), and none got a server error, an
  *   element whose every message says the write is done, such as "Table booked", with no negation
- *   just before those words and none of an error, a refusal or a decline, and that is and sits in
- *   no alert or error-styled message, decides at once. A request to any other host, a payment
- *   service's included, holds it as before. Such an outcome waits up to `noProgressMs` for the
+ *   up to two words before any of those words and none of an error, a refusal or a decline, and
+ *   that is and sits in no alert or error-styled message, decides at once. A request to any other
+ *   host, the page's own site or a payment service's included, holds it as before. Such an outcome waits up to `noProgressMs` for the
  *   answer and then decides as before, and fails so, with `outcome` naming it, when none comes in
  *   time, or at once after a server error to such a request.
  * - `outcome_refused`, in place of `outcome_unknown`, when the wait's `action` is a commit's click

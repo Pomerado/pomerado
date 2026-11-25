@@ -787,45 +787,66 @@ test("in a commit's call, the site's alert, dialog or field errors named as an o
 });
 
 // The site's answer to a commit, the element the tool named, shown on a timer of the page's own
-// while a request that may write has no answer. With only a bot vendor's beacon on another site
-// unanswered, an answer whose words say the write is done decides at once; any other answer, or a
-// request to the site itself or to any other host, such as a payment service's, still holds it.
+// while requests that may write have no answer. With only bot vendors' beacons on other sites
+// unanswered, an answer whose words say the write is done decides at once. Any other answer, a
+// beacon's server error, or a request to the site itself, to a host only named like a beacon's or
+// to any other host, such as a payment service's, still holds it, and so does a page with no host.
 test("in a commit's call, only another site's beacon left unanswered lets a confirmation decide", async ({ page }) => {
   const beacon = "https://collector-pxabc123.px-cloud.net/api/v2/collector";
   const payment = "https://api.payments-example.test/v1/charges";
+  const rooms = `${origin}/`;
   const dialog = (text: string) => `<div role="dialog" aria-modal="true"><h2 class="answer">${text}</h2></div>`;
   const booked = dialog("Table booked");
-  for (const [to, shows, expected] of [
-    [beacon, booked, "answer"],
-    [beacon, dialog("Your table is reserved. Thank you!"), "answer"],
-    [payment, booked, "outcome_unknown"],
-    [`${origin}/book`, booked, "outcome_unknown"],
-    [payment, dialog("Order placed"), "outcome_unknown"],
-    ...["Payment unsuccessful", "Insufficient funds", "Payment timed out", "Pago rechazado", "Your bank didn't approve this payment"].flatMap(
-      (text) => [[payment, dialog(text), "outcome_unknown"], [beacon, dialog(text), "outcome_unknown"]] as const,
-    ),
-    [beacon, dialog("Your table was not booked"), "outcome_unknown"],
-    [beacon, `<div role="alert"><p class="answer">Table booked</p></div>`, "outcome_unknown"],
-    [payment, `<div role="alert"><p class="answer">Table booked</p></div>`, "outcome_unknown"],
-    [beacon, `<div class="error-box"><div><div role="dialog"><p class="answer">Table booked</p></div></div></div>`, "outcome_unknown"],
-    [payment, `<div class="error-box"><div><div role="dialog"><p class="answer">Table booked</p></div></div></div>`, "outcome_unknown"],
+  const inAlert = `<div role="alert"><p class="answer">Table booked</p></div>`;
+  const inErrorBox = `<div class="error-box"><div><div role="dialog"><p class="answer">Table booked</p></div></div></div>`;
+  const declines = ["Payment unsuccessful", "Insufficient funds", "Payment timed out", "Pago rechazado", "Your bank didn't approve this payment"];
+  const negated = ["Your order has not yet been placed", "Request submitted. Not yet confirmed.", "Thank you, but your payment wasn't completed", "No reservation was booked"];
+  for (const [at, posts, shows, expected] of [
+    [rooms, [beacon], booked, "answer"],
+    [rooms, [beacon], dialog("Your table is reserved. Thank you!"), "answer"],
+    [rooms, ["https://sdk.iad-01.braze.com/api/v3/data"], booked, "answer"],
+    [rooms, ["https://www.facebook.com/tr/"], booked, "answer"],
+    [rooms, [payment], booked, "outcome_unknown"],
+    [rooms, [`${origin}/book`], booked, "outcome_unknown"],
+    [rooms, [beacon, payment], booked, "outcome_unknown"],
+    [rooms, [`${beacon}?status=503`], booked, "outcome_unknown"],
+    ["https://www.google.com/", ["https://www.google.com/recaptcha/api2/userverify"], booked, "outcome_unknown"],
+    ["about:blank", [beacon], booked, "outcome_unknown"],
+    [rooms, ["https://evilpx-cloud.net/collect"], booked, "outcome_unknown"],
+    [rooms, ["https://px-cloud.net.payments-example.test/collect"], booked, "outcome_unknown"],
+    [rooms, ["https://dashboard.braze.com/api/v3/data"], booked, "outcome_unknown"],
+    [rooms, ["https://www.facebook.com/transfers"], booked, "outcome_unknown"],
+    [rooms, [payment], dialog("Order placed"), "outcome_unknown"],
+    ...declines.flatMap((text) => [[rooms, [payment], dialog(text), "outcome_unknown"], [rooms, [beacon], dialog(text), "outcome_unknown"]] as const),
+    ...negated.map((text) => [rooms, [beacon], dialog(text), "outcome_unknown"] as const),
+    [rooms, [beacon], dialog("Your table was not booked"), "outcome_unknown"],
+    [rooms, [beacon], inAlert, "outcome_unknown"],
+    [rooms, [payment], inAlert, "outcome_unknown"],
+    [rooms, [beacon], inErrorBox, "outcome_unknown"],
+    [rooms, [payment], inErrorBox, "outcome_unknown"],
   ] as const) {
-    await page.unrouteAll();
-    await page.route(/^https:\/\/(?:collector-pxabc123\.px-cloud\.net|api\.payments-example\.test)\//u, () => undefined);
-    await site(
-      page,
-      `<button type="button" id="reserve">Reserve</button>
+    const html = `<button type="button" id="reserve">Reserve</button>
       <section id="answer"></section>
       <script>
         document.querySelector("#reserve").onclick = () => {
-          fetch(${JSON.stringify(to)}, { method: "POST" }).catch(() => undefined);
+          for (const to of ${JSON.stringify(posts)}) fetch(to, { method: "POST" }).catch(() => undefined);
           setTimeout(() => {
             document.querySelector("#answer").innerHTML = ${JSON.stringify(shows)};
           }, 100);
         };
-      </script>`,
-      () => new Promise<never>(() => undefined),
-    );
+      </script>`;
+    await page.unrouteAll();
+    // The page's own address serves it; a request asking for a status gets it; any other never answers.
+    await page.route("**/*", async (route) => {
+      const url = new URL(route.request().url());
+      if (url.href === at) await route.fulfill({ contentType: "text/html", body: html });
+      else if (url.searchParams.has("status"))
+        await route.fulfill({ status: Number(url.searchParams.get("status")), headers: { "access-control-allow-origin": "*" }, body: "" });
+    });
+    if (at === "about:blank") {
+      await page.goto("about:blank");
+      await page.setContent(html);
+    } else await page.goto(at);
     const result = await call(
       page,
       `try {
@@ -837,7 +858,7 @@ test("in a commit's call, only another site's beacon left unanswered lets a conf
       }`,
       `${commitCall}${waitCode}`,
     );
-    expect.soft(result.result, `${to}: ${shows}`).toBe(expected);
+    expect.soft(result.result, `${at} ${posts.join(" + ")}: ${shows}`).toBe(expected);
   }
 });
 
