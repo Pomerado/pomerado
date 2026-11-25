@@ -2485,6 +2485,7 @@ const heldFor = <E extends YieldableError, V extends string, L extends AutofillL
     const fields = typing.fields.map((field, index) => ({
       ...field,
       slot: held.step.fields[index]?.slot ?? field.slot,
+      ...(held.step.fields[index]?.guessed === true ? { guessed: true as const } : {}),
     }));
     return { ...held, step: { ...typing, fields } } satisfies StepValues;
   });
