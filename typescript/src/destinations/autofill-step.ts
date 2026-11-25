@@ -97,6 +97,12 @@ export interface AutofillField<Slot extends FillSlot = AutofillSlot> {
   /** A `private_identifier` field's own label as the site shows it; never its value. */
   readonly label?: string | undefined;
   /**
+   * Set by the host on an email or phone field it typed the login's own username into, as a guess,
+   * the login holding neither: it is no email address or phone number of the login, so no host
+   * binds it as one, and a build never takes the field as the login's identifier.
+   */
+  readonly guessed?: true | undefined;
+  /**
    * How a `date_of_birth` field takes the date, or the one part of it a dropdown takes; or, on an
    * identifier field that accepts a phone, `national`: it takes the number without its calling
    * code (`PhoneFormat`), which the host types when it sends a phone there (`typedValues`).

@@ -371,9 +371,14 @@ it("types a username-only login's username into an email-or-phone field, and ask
   const held = login({ username: "4155550142" }, ask);
   expect(await Effect.runPromise(autofill.valuesFor(resolved, held))).toMatchObject({
     values: ["4155550142"],
+    step: { fields: [{ slot: "email", guessed: true }] },
   });
   expect(asked).toEqual([]);
-  const refused = { ...held, rejectedValues: { email: new Set(["4155550142"]) } };
+  const refused = {
+    ...held,
+    rejectedValues: { email: new Set(["4155550142"]) },
+    correctionRequests: {},
+  };
   expect(await Effect.runPromise(autofill.valuesFor(resolved, refused))).not.toHaveProperty(
     "values",
   );

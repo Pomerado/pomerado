@@ -30,7 +30,7 @@ import {
   isSecondFactor,
   type RejectedMarker,
 } from "../destinations/autofill-recipe.js";
-import type { AutofillLogin, TakenRecoveryCode } from "./autofill-values.js";
+import { type AutofillLogin, guessRefused, type TakenRecoveryCode } from "./autofill-values.js";
 import {
   type CodeRetry,
   emptyReplayFields,
@@ -449,8 +449,14 @@ export const correctReplayExtras = <
     )
       return "extra_rejected" as const;
     // A compound recovery screen may clear its one-use code when another field is rejected.
-    // Its existing ledger chooses a fresh code; never refill the already-used code.
-    const corrected = new Set(extras);
+    // Its existing ledger chooses a fresh code; never refill the already-used code. A field whose
+    // only refusal is a guessed username asks as before, as no correction (`guessRefused`).
+    const given = input.answers?.given.current ?? {};
+    const corrected = new Set(
+      [...extras].filter(
+        (slot) => !guessRefused(slot, retryState.rejectedValues[slot], input.credentials, given),
+      ),
+    );
     const emptyRecovery = yield* emptyReplayFields(
       hooks,
       previous.fields.filter(

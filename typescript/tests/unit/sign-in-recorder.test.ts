@@ -944,6 +944,39 @@ it("takes a rejected password only once its recorded marker shows, and corrects 
   );
 });
 
+// A username typed as a guess into an email-or-phone field is not the login's identifier there, so
+// the site's refusal of it asks for an email address or phone number, never a corrected login.
+it("asks for an email or phone, never a corrected login, once the site refuses a username guessed into an email-or-phone field", async () => {
+  const held = { username: "4155550142", password: "synthetic-password" };
+  const host = harness({
+    held,
+    visible: ["#no-account"],
+    answers: { email_or_phone: ["ada@example.test"] },
+  });
+  const emailOrPhoneLogin: SignInStep = {
+    fields: [
+      { selector: "#user", accepts: ["email", "phone"] },
+      { selector: "#password", slot: "password" },
+    ],
+    submit: "#sign-in",
+    rejectedMarkers: [{ slot: "email", selector: "#no-account" }],
+  };
+  const refusal = await host.run((recorder) =>
+    Effect.gen(function* () {
+      yield* recorder.step(emailOrPhoneLogin, undefined, Effect.void);
+      const refused = yield* recorder.step({ rejected: { slot: "email" } }, undefined, Effect.void);
+      yield* recorder.step(emailOrPhoneLogin, undefined, Effect.void);
+      return refused;
+    }),
+  );
+  expect(refusal.result).toMatchObject({ rejected: "email" });
+  expect(host.logins).toEqual([]);
+  expect(host.asked.flatMap((request) => request.questions.map(({ id }) => id))).toEqual([
+    "email_or_phone",
+  ]);
+  expect(host.filled.map(({ values }) => values[0])).toEqual([held.username, "ada@example.test"]);
+});
+
 it("takes no verdict on a reported rejection no recorded marker shows, and asks nobody", async () => {
   const host = harness({ held: account });
   const result = await host.run((recorder) =>

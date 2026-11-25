@@ -75,6 +75,23 @@ export const holdsKind =
       ? separateUsername(credentials)
       : heldField(kind, credentials, given) !== undefined;
 
+/**
+ * Whether the site refused only the login's own username in an email or phone field, where it went
+ * as a guess, the login holding no value of that kind (`AutofillField.guessed`). That refusal is no
+ * correction: the owner is asked as if nothing had been typed there.
+ */
+export const guessRefused = (
+  slot: string,
+  rejected: ReadonlySet<string> | undefined,
+  credentials: WebsiteCredentials | undefined,
+  given: AnsweredLoginFields,
+) =>
+  (slot === "email" || slot === "phone") &&
+  credentials !== undefined &&
+  rejected?.size === 1 &&
+  rejected.has(credentials.username) &&
+  heldField(slot, credentials, given) === undefined;
+
 /** Why a sign-in needs a new code: the site rejected the last one, or a takeover restarted it. */
 export type CodeAgain = "rejected" | "resumed";
 /** A recovery code a step's value took from the host, and how many unspent codes remain after it. */
@@ -115,6 +132,8 @@ export type Found =
       readonly slot: AutofillField["slot"];
       readonly value: string;
       readonly recoveryCode?: TakenRecoveryCode;
+      /** The login's own username, guessed into an email or phone field (`AutofillField.guessed`). */
+      readonly guessed?: true;
     };
 
 /**
@@ -145,6 +164,7 @@ const valuesInOrder =
       login: L,
       shown: ShownAnswerField | undefined,
       passwordShown: boolean,
+      usernameTyped: boolean,
     ) => Effect.Effect<Found, E>,
     giveBackTaken: (login: L, taken: readonly TakenRecoveryCode[]) => Effect.Effect<void>,
   ) =>
@@ -176,24 +196,26 @@ const valuesInOrder =
       const passwordShown = step.fields.some(
         (field, index) => field.slot === "password" && screen?.[index] !== undefined,
       );
+      const usernameTyped = step.fields.some((field) => field.slot === "username");
       let code: Exclude<Found, Unanswered> | undefined;
       for (const [index, field] of step.fields.entries()) {
         const found =
           field.slot === "code"
             ? (code ??
               boxedCode(
-                yield* valueFor(field, codeLogin, screen?.[index], passwordShown),
+                yield* valueFor(field, codeLogin, screen?.[index], passwordShown, usernameTyped),
                 boxes,
                 choices,
               ))
-            : yield* valueFor(field, login, screen?.[index], passwordShown);
+            : yield* valueFor(field, login, screen?.[index], passwordShown, usernameTyped);
         if (found instanceof Unanswered) {
           yield* giveBack;
           return found;
         }
         if (field.slot === "code") code = found;
         values.push(found.value);
-        fields.push({ ...field, slot: found.slot });
+        const { guessed: _guessed, ...sent } = field;
+        fields.push({ ...sent, slot: found.slot, ...(found.guessed ? { guessed: true } : {}) });
         if (found.recoveryCode !== undefined) recoveryCodes.push(found.recoveryCode);
       }
       return { values, step: { ...step, fields }, recoveryCodes };
@@ -436,40 +458,52 @@ export const makeAutofillValues = <
       return { slot: "private_identifier" as const, value: answered.value };
     });
   /** Resolves a secondary identifier without guessing a rejected primary alias. */
-  const identifierValue = (field: AutofillField, slot: LoginIdentifierKind, login: AutofillLogin) =>
+  const identifierValue = (
+    field: AutofillField,
+    slot: LoginIdentifierKind,
+    login: AutofillLogin,
+    usernameTyped: boolean,
+  ) =>
     Effect.gen(function* () {
-      const { username } = login.credentials;
       const rejected = login.rejectedValues?.[slot];
-      // The saved record's identifier first, then one the owner gave this attempt; else the owner
-      // is asked for one of the kinds the field accepts.
-      const stored = heldField(slot, login.credentials, given.current);
-      // The login's own username, typed below as a guess, that the site refused alone: the owner is
-      // asked as if it had never been typed, never to correct it.
-      const guessRefused = stored === undefined && rejected?.size === 1 && rejected.has(username);
-      if (rejected?.size && !guessRefused) {
+      const refusedGuess = guessRefused(slot, rejected, login.credentials, given.current);
+      if (rejected?.size && !refusedGuess) {
         const corrected = yield* fieldValue(slot, login);
         return corrected instanceof Unanswered ? corrected : { slot, value: corrected.value };
       }
+      // The saved record's identifier first, then one the owner gave this attempt; else the owner
+      // is asked for one of the kinds the field accepts.
+      const stored = heldField(slot, login.credentials, given.current);
       if (stored !== undefined) return { slot, value: stored };
       const asked = (field.accepts ?? [slot]).filter(
         (kind): kind is LoginIdentifierKind => kind !== "username" && kind !== "private_identifier",
       );
+      const offerSave = login.offerSave === true;
+      // Once the site refused the guess below, the owner is asked as if it had never been typed,
+      // and an answer that repeats it is asked again, never sent.
+      if (refusedGuess)
+        return yield* correctedValue(login, slot, (_, repeated) =>
+          ask(login.ask, asked, repeated ? repeatedValueNotice : undefined, offerSave),
+        );
       // A field for an email address or phone number often takes a username too, though its words
-      // name only those: a login that holds neither types its own username there first.
+      // name only those: a login that holds neither types its own username there first, unless
+      // another field of the screen takes it.
       if (
-        !guessRefused &&
+        !usernameTyped &&
+        (slot === "email" || slot === "phone") &&
         asked.includes("email") &&
         asked.includes("phone") &&
         separateUsername(login.credentials)
       )
-        return { slot, value: username };
-      return yield* ask(login.ask, asked, undefined, login.offerSave === true);
+        return { slot, value: login.credentials.username, guessed: true as const };
+      return yield* ask(login.ask, asked, undefined, offerSave);
     });
   const valueFor = (
     field: AutofillField,
     login: L,
     shown: ShownAnswerField | undefined,
     passwordShown: boolean,
+    usernameTyped: boolean,
   ): Effect.Effect<Found, E> =>
     Effect.gen(function* () {
       const { slot } = field;
@@ -484,7 +518,7 @@ export const makeAutofillValues = <
       if (slot === "username") return { slot, value: login.credentials.username };
       if (slot === "date_of_birth" || slot === "zip") return yield* checkedValue(slot, login);
       if (slot === "private_identifier") return yield* privateIdentifierValue(field, login);
-      return yield* identifierValue(field, slot, login);
+      return yield* identifierValue(field, slot, login, usernameTyped);
     });
   const valuesFor = valuesInOrder<L, E>(
     valueFor,
