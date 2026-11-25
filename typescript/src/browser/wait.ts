@@ -742,9 +742,10 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
       if (committing) {
         const before = await waitBounded(outcomeWaitSite.read(page).catch(() => undefined), 1000);
         if (before !== undefined) state.messagesBefore = outcomeWaitSite.messageCounts(before);
-        // A request that may write, to any host but another site's beacon one (writeOpen), sent from
-        // here on may still save the commit while it has no answer, and a server error to one may have come after the commit saved: as
-        // confirmCommit reads one, the commit is then unclear, never refused.
+        // A request that may write, to any host, sent from here on may still save the commit while
+        // it has no answer, unless it went to another site's beacon host (writeOpen), and a server
+        // error to any one may have come after the commit saved: as confirmCommit reads one, the
+        // commit is then unclear, never refused.
         const writes = (request) => !["GET", "HEAD", "OPTIONS"].includes(request.method());
         const sent = (request) => {
           if (writes(request)) state.unanswered.add(request);
@@ -826,8 +827,8 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
         return false;
       }
     };
-    // Whether a request that may write leaves the commit unclear: one unanswered, other than another
-    // site's beacon, or a server error.
+    // Whether a request that may write leaves the commit unclear: one unanswered, other than
+    // another site's beacon, or a server error to any one.
     const writeOpen = () => state.serverError || [...state.unanswered].some((request) => !otherSitesBeacon(request));
     // Whether an outcome is the site's message, as a refusal is, unless it says a success: fields
     // marked invalid, a native dialog, an announcement, or an element that is, holds or sits in a
@@ -1550,18 +1551,20 @@ const waitForChange = async (fields, options = {}) => {
  *   announcement, or an element, not a control or a frame, that is, holds or sits in a dialog, an
  *   alert or an error-styled message, unless its words say a success. Such an outcome waits up to
  *   `noProgressMs` for the answer and then decides as before, and fails so, with `outcome` naming
- *   it, when none comes in time, or at once after a server error to such a request. A request to
- *   a bot vendor's, a captcha's or an analytics service's beacon host on another site than the
- *   page's at the click (`siteDomain`, else a guess from its host) never carries the write, so it
- *   doesn't count: with only those unanswered, the outcome decides as with none.
+ *   it, when none comes in time, or at once after a server error to any request that may write.
+ *   An unanswered request to a bot vendor's, a captcha's or an analytics service's beacon host on
+ *   another site than the page's at the click (`siteDomain`, else a guess from its host) never
+ *   carries the write, so it doesn't count: with only those unanswered and no server error, the
+ *   outcome decides as with none. A server error to one still counts.
  * - `outcome_refused`, in place of `outcome_unknown`, when the wait's `action` is a commit's click
  *   (the call's first wait, with an `action`, in the call the script sends right after its
  *   `enteringCommit`, which the runtime declares as `__pomeradoCommitting`) and the page shows a
  *   message new since the click that `confirmCommit` judges not done from, or, with a dialog
  *   outcome named, a native dialog no outcome names says the write failed, as `confirmCommit` reads
  *   one. A message that refuses only as a form's own check of a field does, such as "required" or
- *   "please select", is not the site's refusal. A request that may write sent since the click, other than another site's beacon, keeps it `outcome_unknown`
- *   while it has no answer, or once it got a server error. Its `evidence` has the site's words:
+ *   "please select", is not the site's refusal. A request that may write sent since the click
+ *   keeps it `outcome_unknown` while it has no answer, unless it went to another site's beacon
+ *   host, and once it got a server error, whatever its host. Its `evidence` has the site's words:
  *   `messages`, or the dialog's `type` and `message`. The runtime then puts the step back unsent,
  *   as `notCommitted(name, { siteRefused: true })` does. The wait takes its `action` for the commit's
  *   click, so pass the commit's click as the `action`: after a commit clicked outside a wait, the
