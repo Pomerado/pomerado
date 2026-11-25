@@ -1608,7 +1608,7 @@ const waitForChange = async (fields, options = {}) => {
  *   call, says only that the write is done: at most 20 words, at least one a done word such as
  *   booked, placed, confirmed or thank, and each a done word, a thing done such as order or
  *   table, one of a few plain words such as your or now, a number other than 0, or a label of the
- *   site's domain, as "Your table is reserved. Thank you!" or "Order #4821 placed" do. It holds
+ *   site's domain, as "Your table is reserved. Thank you!" or "Order #48210375 placed" do. It holds
  *   when any other word shows, such as a request, a payment, a hold, a negation or a button's
  *   words, when the dialog holds a frame or object that shows or a shadow root with text, and when
  *   the page shows an alert or error-styled message with text that is new since the click. A
