@@ -859,17 +859,19 @@ const pickerRun = (element, args) => {
   if (args.phase === "cleanup") delete element.ownerDocument.defaultView[Symbol.for("pomerado.picker.page")];
   return { installed: true, value };
 };
-// The given listbox is waited for, except in a read before the picker opens it or types into it
-// (opened false): a listbox the page adds only then is looked for once, its one match or none.
-const pickerListbox = async (s, opened) => {
-  if (opened) return s.options.listbox.elementHandle({ timeout: s.act().timeout }).catch(() => null);
+// The given listbox is waited for in the reads that find or act on its options once the picker
+// opened it or typed into it, while the page may still be adding them. The other reads
+// (waitListbox false), before the open and around the pick or close, and cleanup look for it
+// once, its one match or none: the page may add it only once open and remove it once closed.
+const pickerListbox = async (s, waitListbox) => {
+  if (waitListbox) return s.options.listbox.elementHandle({ timeout: s.act().timeout }).catch(() => null);
   const found = await s.options.listbox.elementHandles().catch(() => []);
   if (found.length === 1) return found[0];
   await Promise.all(found.map((handle) => handle.dispose()));
   return null;
 };
-const pickerEval = async (s, phase, extra = {}, opened = true) => {
-  const popup = s.options.listbox ? await pickerListbox(s, opened) : null;
+const pickerEval = async (s, phase, extra = {}, waitListbox = true) => {
+  const popup = s.options.listbox ? await pickerListbox(s, waitListbox && phase !== "cleanup") : null;
   const args = {
     token: s.token,
     phase,
@@ -1350,11 +1352,11 @@ const pickerCommit = async (s, found, method) => {
   if (found.popupKind === "dialog") {
     const until = Math.min(s.until, Date.now() + s.settleMs * 2);
     while (Date.now() < until) {
-      const scan = await pickerEval(s, "scan");
+      const scan = await pickerEval(s, "scan", {}, false);
       if (!scan.popup || scan.kind !== "dialog") return true;
       await pickerSleep(40);
     }
-    const scan = await pickerEval(s, "scan");
+    const scan = await pickerEval(s, "scan", {}, false);
     if (!scan.popup) return true;
     if (s.options.confirm) await s.options.confirm.click(s.act());
     else if (scan.confirm) await pickerTag(s, "data-pomerado-pick-confirm", s.token).click(s.act());
@@ -1371,7 +1373,7 @@ const pickerBlur = async (s, mode, field) => {
     await (field ?? s.control).press("Tab", s.act()).catch(() => undefined);
     return;
   }
-  if (mode === "blur" || (await pickerEval(s, "focus-inside").catch(() => false)))
+  if (mode === "blur" || (await pickerEval(s, "focus-inside", {}, false).catch(() => false)))
     await s.control.blur(s.act()).catch(() => undefined);
 };
 const pickerPhrase = (text) => " " + pickerFold(text).split(/[^\p{L}\p{N}]+/u).filter(Boolean).join(" ") + " ";
@@ -1395,14 +1397,14 @@ const pickerShows = async (s, option) => {
       .catch(() => null);
     return text !== null && (pickerHas(text, names) || (option.value !== "" && text.trim() === option.value));
   }
-  const read = await pickerEval(s, "readback").catch(() => null);
+  const read = await pickerEval(s, "readback", {}, false).catch(() => null);
   if (read === null) return false;
   return pickerHas(read.own + " " + read.around, names) || (option.value !== "" && read.hidden.includes(option.value));
 };
 // The page's state around the field: its read-back, and whether the popup is open.
 const pickerState = async (s) => {
-  const read = s.options.committed ? null : await pickerEval(s, "readback").catch(() => null);
-  const scan = await pickerEval(s, "scan").catch(() => null);
+  const read = s.options.committed ? null : await pickerEval(s, "readback", {}, false).catch(() => null);
+  const scan = await pickerEval(s, "scan", {}, false).catch(() => null);
   return { text: JSON.stringify(read), popup: Boolean(scan?.popup), expanded: Boolean(scan?.expanded), options: scan?.options ?? [] };
 };
 // Whether a click or Enter did anything: the popup closed or collapsed, the field's read-back
@@ -1543,7 +1545,7 @@ const pickerDatalist = async (s, wanted) => {
 };
 // Closes a popup a refused pick left open: Escape, then for a dropdown that ignores it, its control.
 const pickerClose = async (s, field) => {
-  const open = async () => (await pickerEval(s, "scan").catch(() => null))?.popup;
+  const open = async () => (await pickerEval(s, "scan", {}, false).catch(() => null))?.popup;
   if (!(await open())) return;
   await (field ?? s.control).press("Escape", s.act()).catch(() => undefined);
   if (s.kind === "dropdown" && (await open())) await s.control.click(s.act()).catch(() => undefined);
@@ -1587,7 +1589,7 @@ const pickValue = async (control, wanted, options = {}) => {
     await s.handle?.dispose().catch(() => undefined);
   }
 };
-const pickerChips = (s, opened = true) => pickerEval(s, "chips", { chips: s.options.chips ?? null }, opened);
+const pickerChips = (s) => pickerEval(s, "chips", { chips: s.options.chips ?? null }, false);
 // A chip is the value only by its whole name (as written, or ignoring case, spacing, accents and
 // punctuation, or written another way), never because its name holds the value as a word or
 // shares its stem: "Blue Grey" is not "Blue".
@@ -1631,7 +1633,7 @@ const pickValues = async (control, values, options = {}) => {
     const results = [];
     const chipNames = (chip) => ({ names: chip.names.length > 0 ? chip.names : [chip.label], value: chip.value, disabled: false, key: chip.tag });
     for (const wanted of list) {
-      const chips = await pickerChips(s, false);
+      const chips = await pickerChips(s);
       const present = pickerChipIs(chips.map(chipNames), wanted);
       if (present) {
         results.push({ label: chips[present.index].label, value: chips[present.index].value, added: false });

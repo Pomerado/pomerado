@@ -1119,6 +1119,41 @@ button.addEventListener("click", () => {
   expect(await submitted(page)).toEqual({ size: "m" });
 });
 
+test("pickValue and pickerOptions end with no wait for a given listbox the page removes once it closes", async ({ page }) => {
+  await serve(page, `<form><button type="button" aria-label="Size">Choose</button><input type="hidden" name="size"></form>
+<script>
+const button = document.querySelector("button");
+const close = () => document.getElementById("sizes")?.remove();
+button.addEventListener("click", () => {
+  const list = document.createElement("ul");
+  list.id = "sizes";
+  list.setAttribute("role", "listbox");
+  list.innerHTML = '<li role="option" data-value="s">Small</li><li role="option" data-value="m">Medium</li>';
+  list.addEventListener("click", (event) => {
+    document.querySelector("[name=size]").value = event.target.dataset.value;
+    button.textContent = event.target.textContent;
+    close();
+  });
+  document.body.append(list);
+});
+document.addEventListener("keydown", (event) => event.key === "Escape" && close());
+</script>`);
+  let started = Date.now();
+  expect(
+    await call(page, `return await pickValue(page.getByRole("button", { name: "Size" }), "Medium", { ...fast, listbox: page.locator("#sizes") });`),
+  ).toEqual({ result: { picked: true, kind: "dropdown", label: "Medium", value: "m", rank: "exact", refills: 0 } });
+  // Waiting for the removed listbox in the reads after the pick took the call's whole budget.
+  expect(Date.now() - started).toBeLessThan(4000);
+  expect(await submitted(page)).toEqual({ size: "m" });
+  await expect(page.getByRole("button", { name: "Size" })).toHaveText("Medium");
+  started = Date.now();
+  expect(
+    await call(page, `return (await pickerOptions(page.getByRole("button", { name: "Size" }), { ...fast, listbox: page.locator("#sizes") })).options.map((option) => option.label);`),
+  ).toEqual({ result: ["Small", "Medium"] });
+  expect(Date.now() - started).toBeLessThan(4000);
+  await expect(page.locator("#sizes")).toHaveCount(0);
+});
+
 test("pickValue reports two options with one label as ambiguous, each by its full text", async ({ page }) => {
   await serve(
     page,
