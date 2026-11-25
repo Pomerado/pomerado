@@ -373,18 +373,30 @@ const outcomeWaitInvalidInPage = (roots) => {
     }
   return fields.slice(0, 20);
 };
-// Reads one outcome at a look: what it matched, and whether it shows.
-const outcomeWaitRead = async (candidate, state, key, events) => {
+// Reads begun together, each kept from failing unheard: the code awaits them in the order begun,
+// so the first that failed throws, as reading them one after another would.
+const outcomeWaitSent = (reads) => {
+  for (const read of reads) read.catch(() => undefined);
+  return reads;
+};
+// A locator's matches and its visible ones, both counts sent at once: one round trip to the
+// browser. A locator with no match shows none, whatever the second count read.
+const outcomeWaitCounts = async (locator) => {
+  const [counting, showing] = outcomeWaitSent([locator.count(), locator.filter({ visible: true }).count()]);
+  const count = await counting;
+  return { count, visible: count === 0 ? 0 : await showing };
+};
+// Reads one outcome at a look: what it matched, and whether it shows. A locator or gone outcome
+// takes its counts, read beside the others' (outcomeWaitObserve).
+const outcomeWaitRead = async (candidate, state, key, events, counts) => {
   const { kind, name } = candidate;
   if (kind === "locator") {
-    const count = await candidate.locator.count();
-    const visible = count === 0 ? 0 : await candidate.locator.filter({ visible: true }).count();
+    const { count, visible } = counts;
     return key === undefined ? { count, visible }
       : { count, visible, changed: visible === 0 ? 0 : await outcomeWaitChanged(candidate.locator, key) };
   }
   if (kind === "gone") {
-    const count = await candidate.locator.count();
-    const visible = count === 0 ? 0 : await candidate.locator.filter({ visible: true }).count();
+    const { count, visible } = counts;
     const now = Date.now();
     if (visible > 0) {
       state.goneSeen.add(name);
