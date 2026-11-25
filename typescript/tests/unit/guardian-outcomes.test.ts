@@ -393,6 +393,32 @@ it.each([[[]], [["read plans"]]] as const)(
   },
 );
 
+// A host that can't switch a held login says so, so the new build the minter recommends for the
+// owner's other login needs no refused update first.
+it("shows a task update review that the host can't switch the build's login", async () => {
+  const requests = scripted([decision("allow")]);
+  await Effect.runPromise(
+    guardianWith().reviewTaskUpdate(
+      pending,
+      {
+        ...update,
+        changes: [{ setting: "login", change: "different_login" }],
+        recommend: "new_mint",
+        loginSwitchUnsupported: true,
+      },
+      readSource,
+    ),
+  );
+  const request = reviewRequest(requests[0]) as unknown as {
+    trusted_review: { policy: string };
+    update_review: { loginSwitchUnsupported?: true };
+  };
+  expect(request.update_review.loginSwitchUnsupported).toBe(true);
+  expect(request.trusted_review.policy).toContain(
+    "When the host reports it can't move this build to another site or switch its login, that change is a reason for a new build.",
+  );
+});
+
 // The host refused to switch a signed-in build to another login, and Guardian sent back the new
 // build the minter then recommended, as the same task, so the owner's choice of login was lost.
 it("shows a task update review the host's refusal of an earlier update", async () => {

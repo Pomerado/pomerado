@@ -4999,6 +4999,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               ...(dependencies.siteMoveUnsupported === true
                 ? { siteMoveUnsupported: true as const }
                 : {}),
+              // And that another login here can only be a new build.
+              ...(dependencies.loginSwitchUnsupported === true
+                ? { loginSwitchUnsupported: true as const }
+                : {}),
               ...(refusedUpdate === undefined ? {} : { refusedUpdate }),
             },
             {
@@ -5118,7 +5122,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             // harness's refusals before review, and one the host failed to apply, are no host
             // check refusing a step.
             refuseByHost({ source: "task_update", reason: taskUpdateRefusalCode(result.reason) });
-            refusedUpdate = { changes: update.changes, reason: result.reason };
+            refusedUpdate = {
+              changes: update.changes,
+              reason: taskUpdateRefusalCode(result.reason),
+            };
             return yield* heldTaskUpdate("update_refused", {
               reason: result.reason,
               notice: yield* screenMintText(dependencies, result.notice),

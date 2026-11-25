@@ -3139,6 +3139,13 @@ export interface MintDependencies {
    */
   readonly siteMoveUnsupported?: true;
   /**
+   * The host can't switch this build's login to another now: `applyTaskUpdate` would refuse a
+   * `login` `different_login` change. The harness reads it at each update review, which reads it
+   * as a host fact (`PendingTaskUpdate.loginSwitchUnsupported`), so the new build the minter
+   * recommends for another login needs no refused update first. Absent, as before.
+   */
+  readonly loginSwitchUnsupported?: true;
+  /**
    * The host takes a `login` `signed_out` change as narrowing what the build may do: it gives up
    * the sign-in only where the build may go on signed out, and keeps any sign-in that must stay,
    * such as a write's that its owner has not agreed to drop. The harness then sends such an update

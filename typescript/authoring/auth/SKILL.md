@@ -112,9 +112,9 @@ asks the owner which to use before anything is clicked, and refuses a step that 
 naming the owner's pick, so send the step again taking that one. Without that question, first ask
 the owner with one `request_input` choice listing every method the screen offers. Never switch to
 another method once the sign-in took one, such as after a code was sent, unless the owner asks for
-it. Never list or pick a passkey, security key or biometric option, even when the caller asks: the
-host cannot use one. When a passkey is the only way in, end with `report_blocked`
-`site_lacks_capability`.
+it or the request, caller or saved preference names the other one. Never list or pick a passkey,
+security key or biometric option, even when the caller asks: the host cannot use one. When a
+passkey is the only way in, end with `report_blocked` `site_lacks_capability`.
 
 # One screen at a time
 

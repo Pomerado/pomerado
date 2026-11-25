@@ -1016,6 +1016,40 @@ it("shows Guardian the host's refusal of an update when the minter recommends a 
   expect(outcome.blocked).toMatchObject({ reason: "new_mint_recommended", suggestedRequest });
 });
 
+// A host that can't switch a held login tells Guardian up front, so the minter's first new build for
+// the owner's other login reaches review with that fact.
+it("shows Guardian that the host can't switch the build's login", async () => {
+  const updates = updateHost(["allow"]);
+  const suggestedRequest = "Create the catalog with the login that can create catalogs.";
+  const toLogin = {
+    summary: "Start a new build with the other login the owner chose.",
+    changes: [{ setting: "login", change: "different_login" }],
+    confirmedBy: ["login"],
+    recommend: "new_mint",
+    suggestedRequest,
+  };
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("request_input", { questions: [{ id: "login", type: "text", prompt: "Which?" }] }),
+        call("mint_update", toLogin, "new_build"),
+      ][index] ?? prose(),
+    {
+      ...updates.overrides,
+      loginSwitchUnsupported: true,
+      askInput: answering([{ login: "a new build with the other login" }]),
+    },
+    { siteOrigin: site },
+  );
+  const outcome = await f.run();
+  expect(updates.reviews[0]?.update).toMatchObject({
+    recommend: "new_mint",
+    loginSwitchUnsupported: true,
+  });
+  expect(outcome.blocked).toMatchObject({ reason: "new_mint_recommended", suggestedRequest });
+  expect(updates.applied).toEqual([]);
+});
+
 it("asks for the caller's confirmation before a change that widens what the build may do", async () => {
   const updates = updateHost(["allow"]);
   const f = await fixture(

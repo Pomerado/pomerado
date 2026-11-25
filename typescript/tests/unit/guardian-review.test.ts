@@ -658,6 +658,27 @@ describe("OpenAI reviewer policy and trusted authority", () => {
       expect(policy).toContain(rule);
   });
 
+  // The site sent a prompt on its own, and Guardian held the step opening the site's list of
+  // methods to reach the login's saved one as a switch away from a method this sign-in took.
+  it("tells Guardian a step toward the method its order picks is no switch away", async () => {
+    const requests = readThenDecide({
+      outcome: "allow",
+      rationale: "Controlled source was read.",
+      action: "read",
+    });
+    await Effect.runPromise(
+      makeGuardian(reviewer(markedUpstreamPolicy)).review(pending, readEntrypoint),
+    );
+    const rule =
+      "or that switches away from a method this sign-in already took, such as after a code was sent, unless the owner asked for it or it leads to the method that order picks.";
+    for (const policy of [
+      instructionsOf(requests[0]),
+      guardianExecutionPolicy(otherHost),
+      guardianExecutionPolicy(nativeExecutionEnvironment),
+    ])
+      expect(policy).toContain(rule);
+  });
+
   // A site's own trackers carry caller input off-site and its page saves recent searches, and a
   // host recording gap was read as an order to stop probing. None of these is the source's doing.
   it("tells Guardian page traffic and a recording gap are not the source's effects", async () => {
