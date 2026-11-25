@@ -17,7 +17,8 @@ offline and checks against the caller's input.
 
 Use intermediate observations while exploring a site and building the flow. In a published
 multi-action browser operation, remove assertions whose only purpose is to declare each
-intermediate action successful. Validate the requested outcome after the full flow, using the
+intermediate action successful, and prefer removing steps and waits the requested outcome doesn't
+need. Validate the requested outcome after the full flow, using the
 site's meaningful result or saved-state readback. An intermediate UI state can be transient;
 an assertion about it can stop a flow before the final outcome is available.
 
