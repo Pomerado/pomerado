@@ -241,6 +241,8 @@ describe("rankChoices", () => {
     expect(rank([choice("Zorb150"), choice("Zorb250")], "ZORB–150")).toEqual({ status: "picked", index: 0, rank: "alike" });
     expect(rank([choice("Zorb 2.5L"), choice("Zorb 3.5L")], "zorb 2.5 l")).toEqual({ status: "picked", index: 0, rank: "alike" });
     expect(rank([choice("Zorb 90's Edition")], "Zorb 90s Edition")).toEqual({ status: "picked", index: 0, rank: "alike" });
+    // The value as given, read so, comes before its other written forms.
+    expect(rankForms([choice("Fifth Zorb Malls"), choice("5thZorb Mall")], "5th Zorb Mall")).toEqual({ status: "picked", index: 1, rank: "alike" });
   });
 
   test("a name holding the value written with other spacing, hyphens or dashes, word edge to word edge, matches as whole words", () => {
@@ -262,13 +264,18 @@ describe("rankChoices", () => {
     expect(rank([choice(".5mm Lead")], "5 mm")).toEqual({ status: "missing" });
     expect(rank([choice("Level -2")], "Level2")).toEqual({ status: "missing" });
     expect(rank([choice("A&B Sedan"), choice("A/B Coupe"), choice("A+B")], "AB")).toEqual({ status: "missing" });
-    // Only whole words join.
+    // Only whole words join, in any script.
     expect(rank([choice("Pencil Case")], "Pen")).toEqual({ status: "missing" });
+    expect(rank([choice("Pen\u{20000}cil")], "Pen")).toEqual({ status: "missing" });
     expect(rank([choice("Sportback 4D")], "Sport")).toEqual({ status: "missing" });
     expect(rank([choice("XAB-C Sedan")], "ABC")).toEqual({ status: "missing" });
     // A match found as before stays the only one at its rank.
     expect(rank([choice("Zorb-150"), choice("Zorb150")], "Zorb 150")).toEqual({ status: "picked", index: 0, rank: "alike" });
     expect(rank([choice("AB C Sedan"), choice("ABC Coupe")], "AB C")).toEqual({ status: "picked", index: 0, rank: "words" });
+    // A typeahead's earlier option naming the value read so ties with a later match, as written.
+    const listed = [place("Zorb 150 Hotel", "Exampleton, CA"), place("Zorb 150", "Sampleton, TX")];
+    expect(rankListed(listed, "Zorb 150")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
+    expect(rankListed(listed, "Zorb150")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
   });
 
   test("an empty or blank value matches nothing", () => {

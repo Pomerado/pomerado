@@ -130,9 +130,8 @@ export const formControlMessageWords = /\brequired\b|\b(?:is|are) (?:missing|not
  *   A label that equals one wins over a value that does, and a value that does over a label that
  *   states the same number followed only by the same unit written another way, such as 2lb,
  *   2 lbs or 2 pounds for 2 lb, while 2 alone never takes 2 lb, and that over a label that is
- *   one of them without the spaces, hyphens, dashes and apostrophes between two letters or
- *   numbers, as `rankChoices` joins names, such as Zorb150 for Zorb-150; a label that only
- *   holds it among other words is no match; two different options at the winning rank are
+ *   one of them read joined, as `rankChoices` reads names, such as Zorb150 for Zorb-150; a label
+ *   that only holds it among other words is no match; two different options at the winning rank are
  *   ambiguous, while copies with one label and a value, both as read, such as a country
  *   listed twice, are one option, so the first enabled copy is chosen. A custom dropdown is
  *   opened, its own listbox found through `aria-controls` or `aria-owns` (else the one visible

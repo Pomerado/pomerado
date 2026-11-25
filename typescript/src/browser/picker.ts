@@ -568,9 +568,12 @@ const pickerPageCode = String.raw`(element, args) => {
  * one as the first or last of its three letters or more before a unit's number, or, for a value
  * that is a number followed only by its unit, such as 2 lb, a name that is that number followed
  * only by the same unit in another usual spelling, spacing or case, such as 2lb, 2 lbs or 2 pounds
- * (`unitAmount`), while a value of 2 alone never names 2 lb (rank `alike`),
+ * (`unitAmount`), while a value of 2 alone never names 2 lb, or, when no name matches so far, a
+ * name that is the value read joined, as `rankChoices` reads names, such as Zorb150 for Zorb-150
+ * (rank `alike`),
  * then a
- * name holding the value as whole words (New York for York), then a
+ * name holding the value as whole words (New York for York), or, when none does, holding it read
+ * joined from the start of one of its words to the end of one, then a
  * name made of the value's words, no more and no fewer, with the parts its or the value's commas or
  * spaced dashes separate in another order and the numbers in the value's order (rank `allWords`:
  * Harbor Street Station, Example City for Example City Harbor Street Station), then a name some of
