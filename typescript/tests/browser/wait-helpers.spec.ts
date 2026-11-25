@@ -786,6 +786,47 @@ test("in a commit's call, the site's alert, dialog or field errors named as an o
   }
 });
 
+// A confirmation in a dialog whose words the wait doesn't read as a success, such as "booked",
+// shown while another site's request that may write, such as a bot vendor's beacon, has no answer,
+// decides at once. The site's own such request still holds it, as before.
+test("in a commit's call, only the site's own unanswered request that may write holds a confirmation in a dialog", async ({
+  page,
+}) => {
+  for (const [to, expected] of [
+    ["https://collector.example-beacons.test/collect", "booked"],
+    [`${origin}/book`, "outcome_unknown"],
+  ] as const) {
+    await page.unrouteAll();
+    await page.route("https://collector.example-beacons.test/**", () => undefined);
+    await site(
+      page,
+      `<button type="button" id="reserve">Reserve</button>
+      <section id="answer"></section>
+      <script>
+        document.querySelector("#reserve").onclick = () => {
+          fetch(${JSON.stringify(to)}, { method: "POST" }).catch(() => undefined);
+          setTimeout(() => {
+            document.querySelector("#answer").innerHTML = '<div role="dialog" aria-modal="true"><h2 class="booked">Table booked</h2></div>';
+          }, 100);
+        };
+      </script>`,
+      () => new Promise<never>(() => undefined),
+    );
+    const result = await call(
+      page,
+      `try {
+        return (await waitForOutcomeResult({ booked: page.locator(".booked"), declined: page.getByRole("alert") }, {
+          action: () => page.locator("#reserve").click(), noProgressMs: 1000, timeout: 3000,
+        })).outcome;
+      } catch (error) {
+        return error.reason;
+      }`,
+      `${commitCall}${waitCode}`,
+    );
+    expect.soft(result.result, to).toBe(expected);
+  }
+});
+
 test("a write whose commit the site declined behind its own dialog reports the step unsent, with the site's words", async ({
   page,
 }) => {

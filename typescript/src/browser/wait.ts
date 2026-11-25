@@ -453,6 +453,8 @@ const waitProgress = (options = {}) => {
       const now = Date.now();
       return [...pending.values()].some(({ at, caused }) => caused && now - at < waitLimits.lateFillCap);
     },
+    // Whether a URL is on the page's site, as its requests are counted.
+    sameSite,
     diagnostics: () => ({
       signs: Object.fromEntries(Object.entries(signs).map(([kind, sign]) => [kind, { ...sign }])),
       quietSinceMs: lastProgress - started,
@@ -651,7 +653,11 @@ ${siteMessageCode}
   const fieldCheckOnly = (text) =>
     !saysError(text) && !openWords.test(text) && !/\b(?:another|different|later)\b/i.test(text) &&
     !saysRefusal(words(text).replace(fieldCheckWords, " "));
-  return { saysError, succeeds, fieldCheckOnly, messages, messagesInPage, read: (page) => page.locator(messages).evaluateAll(messagesInPage), messageCounts, judgeMessages };
+  // Whether a message may be a refusal by its look or its words: an alert, styled as an error, or
+  // words of an error, a refusal or a decline.
+  const mayRefuse = (message) =>
+    message.alert || message.errorStyle || saysError(message.text) || saysRefusal(message.text) || openWords.test(message.text);
+  return { saysError, succeeds, mayRefuse, fieldCheckOnly, messages, messagesInPage, read: (page) => page.locator(messages).evaluateAll(messagesInPage), messageCounts, judgeMessages };
 })();
 // Whether this call already began a wait: in a commit's call only the first reads the site's
 // refusal, and only with an action, since a later one's click came after the commit's.
@@ -792,12 +798,16 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
       }));
     // Whether a request that may write leaves the commit unclear: one unanswered, or a server error.
     const writeOpen = () => state.serverError || state.unanswered.size > 0;
+    // Whether that is the site's own: a server error, or an unanswered request to the page's site.
+    const ownWriteOpen = () => state.serverError || [...state.unanswered].some((request) => progress.sameSite(request.url()));
     // Whether an outcome is the site's message, as a refusal is, unless it says a success: fields
     // marked invalid, a native dialog, an announcement, or an element that is, holds or sits in a
     // dialog or one of the site's messages as confirmCommit reads them, never a control or a frame.
     // An element gone since the look, one whose text can't be read yet, or a page that can't tell,
-    // counts.
-    const siteMessage = async (candidate) => {
+    // counts. While only requests to other sites, such as a bot vendor's beacons, are unanswered
+    // (own false), such an element counts only as an alert, styled as an error, or in words of an
+    // error, a refusal or a decline, so a confirmation in a dialog decides.
+    const siteMessage = async (candidate, own) => {
       if (candidate.kind === "invalid") return true;
       if (candidate.kind === "dialog" || candidate.kind === "announced") {
         const text = candidate.kind === "dialog" ? events.hit(candidate.name)?.evidence?.message : state.announcedText.get(candidate.name);
@@ -819,7 +829,7 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
       ));
       if (shown === undefined || placed === undefined || placed.count === 0) return true;
       if (!placed.inMessage || placed.control) return false;
-      return shown.length === 0 || !shown.every(outcomeWaitSite.succeeds);
+      return shown.length === 0 || shown.some((message) => !outcomeWaitSite.succeeds(message) && (own || outcomeWaitSite.mayRefuse(message)));
     };
     // When a site's message first showed while a request that may write left the commit unclear.
     let heldSince;
@@ -944,7 +954,7 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
         // After a commit's click, the site's message may be its refusal: while a request that may
         // write has no answer, it waits for one, up to noProgressMs, and decides as before once
         // answered. With none in time, or after a server error to one, the commit is unclear.
-        if (committing && writeOpen() && (await siteMessage(shown))) {
+        if (committing && writeOpen() && (await siteMessage(shown, ownWriteOpen()))) {
           heldSince ??= now;
           if (!state.serverError && now - heldSince < noProgressMs && now < until) {
             await waitSleep(100);
@@ -1511,9 +1521,13 @@ const waitForChange = async (fields, options = {}) => {
  *   commit's click (below), when an outcome that is the site's message shows while a request that
  *   may write, to any host, sent since the click, has no answer: fields marked invalid, a dialog, an
  *   announcement, or an element, not a control or a frame, that is, holds or sits in a dialog, an
- *   alert or an error-styled message, unless its words say a success. Such an outcome waits up to
- *   `noProgressMs` for the answer and then decides as before, and fails so, with `outcome` naming
- *   it, when none comes in time, or at once after a server error to such a request.
+ *   alert or an error-styled message, unless its words say a success. While every such request
+ *   goes to another site than the page's (`siteDomain`, else a guess from the page's host), such
+ *   as a bot vendor's beacon, an element counts only when it is an alert, is styled as an error, or
+ *   its words say an error, a refusal or a decline, so a confirmation in a dialog decides at once.
+ *   Such an outcome waits up to `noProgressMs` for the answer and then decides as before, and fails
+ *   so, with `outcome` naming it, when none comes in time, or at once after a server error to such
+ *   a request.
  * - `outcome_refused`, in place of `outcome_unknown`, when the wait's `action` is a commit's click
  *   (the call's first wait, with an `action`, in the call the script sends right after its
  *   `enteringCommit`, which the runtime declares as `__pomeradoCommitting`) and the page shows a
