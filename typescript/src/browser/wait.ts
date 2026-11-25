@@ -641,9 +641,10 @@ const outcomeWaitSite = (() => {
 ${siteMessageCode}
   // Whether a message says a success: words of one, and none of an error, a refusal, a decline
   // or a negation. Styling alone never does.
+  const negation = /\b(?:not|no|never)\b|n't\b/i;
   const succeeds = (message) =>
     successWords.test(message.text) &&
-    !(saysError(message.text) || saysRefusal(message.text) || openWords.test(message.text) || /\b(?:not|no|never)\b|n't\b/i.test(message.text));
+    !(saysError(message.text) || saysRefusal(message.text) || openWords.test(message.text) || negation.test(message.text));
   // Whether a message refuses only as a form's own check of a field does, such as "required" or
   // "please select": no words of an error, a decline or another choice, and none of a refusal once
   // a field check's are left out.
@@ -651,13 +652,14 @@ ${siteMessageCode}
   const fieldCheckOnly = (text) =>
     !saysError(text) && !openWords.test(text) && !/\b(?:another|different|later)\b/i.test(text) &&
     !saysRefusal(words(text).replace(fieldCheckWords, " "));
-  // Whether a message says the write is done: words of it, none with a negation up to two words
-  // before it, and not an alert, styled as an error, or in words of an error, a refusal or a decline.
-  const doneWords = "(?:booked|reserved|placed|scheduled|received|confirmed|completed|submitted|all set|thank you)\\b";
+  // Whether a message says the write is done: words of it, and, read whole (shorter than the
+  // 500 characters a message keeps), no negation anywhere, as a success has none, no words of it
+  // still to come or only held, and none of an error, a refusal or a decline, nor error styling.
+  const doneWords = /\b(?:booked|reserved|placed|scheduled|received|confirmed|completed|submitted|all set|thank you)\b/i;
+  const notDoneWords = /\b(?:nothing|none|unsuccessful|pending|yet to|will be|once|complete payment|to finish)\b|n['’]t\b/i;
   const confirms = (message) =>
-    !(message.alert || message.errorStyle || saysError(message.text) || saysRefusal(message.text) || openWords.test(message.text)) &&
-    new RegExp("\\b" + doneWords, "i").test(message.text) &&
-    !new RegExp("(?:\\b(?:not|never|no)|n['’]t)(?:\\s+\\S+){0,2}\\s+" + doneWords, "i").test(message.text);
+    message.text.length < 500 && doneWords.test(message.text) && !message.errorStyle &&
+    !(saysError(message.text) || saysRefusal(message.text) || openWords.test(message.text) || negation.test(message.text) || notDoneWords.test(message.text));
   return { saysError, succeeds, confirms, fieldCheckOnly, messages, messagesInPage, read: (page) => page.locator(messages).evaluateAll(messagesInPage), messageCounts, judgeMessages };
 })();
 // Other sites' hosts whose requests are a bot vendor's, a captcha's or an analytics service's
@@ -841,7 +843,8 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
     // dialog or one of the site's messages as confirmCommit reads them, never a control or a frame.
     // An element gone since the look, one whose text can't be read yet, or a page that can't tell,
     // counts. While only other sites' beacons are unanswered (beacons true), an element whose every
-    // message says the write is done, and that sits in no alert or error-styled message, doesn't.
+    // message says the write is done, and that is, holds and sits in no alert or error-styled
+    // message, doesn't.
     const siteMessage = async (candidate, beacons) => {
       if (candidate.kind === "invalid") return true;
       if (candidate.kind === "dialog" || candidate.kind === "announced") {
@@ -857,7 +860,7 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
         (elements, [selector, messages]) => ({
           count: elements.length,
           inMessage: elements.some((element) => element.closest(selector) !== null || element.querySelector(selector) !== null),
-          inAlert: elements.some((element) => element.closest(messages) !== null),
+          inAlert: elements.some((element) => element.closest(messages) !== null || element.querySelector(messages) !== null),
           control: elements.every((element) =>
             element.closest('a, button, label, summary, input, select, textarea, option, [role="button"], [role="link"], iframe, frame, object, embed') !== null),
         }),
@@ -1561,12 +1564,14 @@ const waitForChange = async (fields, options = {}) => {
  *   alert or an error-styled message, unless its words say a success. While every such request
  *   went to a bot vendor's, a captcha's or an analytics service's host on another site than the
  *   page's at the click (`siteDomain`, else a guess from its host), and none got a server error, an
- *   element whose every message says the write is done, such as "Table booked", with no negation
- *   up to two words before any of those words and none of an error, a refusal or a decline, and
- *   that is and sits in no alert or error-styled message, decides at once. A request to any other
- *   host, the page's own site or a payment service's included, holds it as before. Such an outcome waits up to `noProgressMs` for the
- *   answer and then decides as before, and fails so, with `outcome` naming it, when none comes in
- *   time, or at once after a server error to such a request.
+ *   element whose every message says the write is done decides at once: words such as booked,
+ *   placed, confirmed or thank you, as in "Table booked", read whole, with no negation anywhere, no
+ *   words of the write still to come or held, such as pending, once or "complete payment", none of
+ *   an error, a refusal or a decline, and no error styling, the element being, holding and sitting
+ *   in no alert or error-styled message. A request to any other host, the page's own site or a
+ *   payment service's included, holds it as before. Such an outcome waits up to `noProgressMs` for
+ *   the answer and then decides as before, and fails so, with `outcome` naming it, when none comes
+ *   in time, or at once after a server error to such a request.
  * - `outcome_refused`, in place of `outcome_unknown`, when the wait's `action` is a commit's click
  *   (the call's first wait, with an `action`, in the call the script sends right after its
  *   `enteringCommit`, which the runtime declares as `__pomeradoCommitting`) and the page shows a
