@@ -241,8 +241,8 @@ describe("rankChoices", () => {
     expect(rank([choice("Zorb150"), choice("Zorb250")], "ZORB–150")).toEqual({ status: "picked", index: 0, rank: "alike" });
     expect(rank([choice("Zorb 2.5L"), choice("Zorb 3.5L")], "zorb 2.5 l")).toEqual({ status: "picked", index: 0, rank: "alike" });
     expect(rank([choice("Zorb 90's Edition")], "Zorb 90s Edition")).toEqual({ status: "picked", index: 0, rank: "alike" });
-    // The value as given, read so, comes before its other written forms.
-    expect(rankForms([choice("Fifth Zorb Malls"), choice("5thZorb Mall")], "5th Zorb Mall")).toEqual({ status: "picked", index: 1, rank: "alike" });
+    // A match through the value's other written forms, found as before, still wins.
+    expect(rankForms([choice("Fifth Zorb Malls"), choice("5thZorb Mall")], "5th Zorb Mall")).toEqual({ status: "picked", index: 0, rank: "alike" });
   });
 
   test("a name holding the value written with other spacing, hyphens or dashes, word edge to word edge, matches as whole words", () => {

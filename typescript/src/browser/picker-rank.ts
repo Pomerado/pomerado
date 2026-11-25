@@ -65,8 +65,7 @@ export type PickerRanking =
  * When no name matches so far, a name that is a spelling once both are `joined` is `alike` too:
  * read folded, so periods and commas between letters are spaces, then without the spaces, hyphens,
  * dashes and apostrophes between two letters or numbers, except between two digits or before a
- * number's minus sign (Zorb150 for Zorb-150, AB C for ABC). The spellings as given, read joined,
- * still come before their other forms.
+ * number's minus sign (Zorb150 for Zorb-150, AB C for ABC).
  * Then a name holding a spelling as whole words (New
  * York for York), or, when no name does, holding a spelling once both are `joined`, from the start
  * of one of its words to the end of one (AB-C Sport for ABC, not Pencil for Pen), then a name made of a
@@ -390,8 +389,8 @@ export const rankChoices = (
     [...text.matchAll(/(?<!\p{N}),|,(?!\p{N})/gu)].flatMap((comma) => ((comma.index ?? 0) > 0 ? [text.slice(0, comma.index)] : []));
   const partLists = perList((list) => list.map(parted).filter((each) => each.all.length > 1));
   type Test = (choice: PickerChoice, list: readonly string[]) => boolean;
-  // Each rank's test, whether it reads names, and the test it falls back on, with a list of
-  // spellings, when no option passes the first with that list: a name read `joined`.
+  // Each rank's test, whether it reads names, and the test it falls back on when no option passes
+  // the first with any list of spellings: a name read `joined`.
   const tests: readonly (readonly [PickerRank, Test, boolean, Test?])[] = [
     ["exact", (choice, list) => choice.names.some((name) => list.includes(squash(name))), true],
     ["exact", (choice, list) => choice.value !== "" && list.includes(squash(choice.value)), false],
@@ -599,12 +598,11 @@ export const rankChoices = (
     // At `extraWords`, a place's other form is never tried, since that rank reads words anywhere.
     const forms = rank === "words" ? wordOthers : rank === "extraWords" ? plainOthers : others;
     const lists = byName && forms.length > 0 ? [spellings, forms] : [spellings];
-    for (const list of lists) {
-      const passing = (each: Test) => choices.flatMap((choice, index) => (each(choice, list) ? [index] : []));
-      const first = passing(test);
-      const matched = first.length === 0 && fallback !== undefined ? passing(fallback) : first;
+    // A rank's fallback is tried only once its test matches nothing with any list.
+    for (const each of fallback === undefined ? [test] : [test, fallback]) for (const list of lists) {
+      const matched = choices.flatMap((choice, index) => (each(choice, list) ? [index] : []));
       if (matched.length === 0) continue;
-      const withdrawn = byName && options.listedFirst === true ? namedEarlier(rank, list, matched, matched !== first) : undefined;
+      const withdrawn = byName && options.listedFirst === true ? namedEarlier(rank, list, matched, each === fallback) : undefined;
       if (withdrawn !== undefined) return withdrawn;
       const keys = [...new Set(matched.map((index) => choices[index]?.key))];
       if (keys.length > 1) {
