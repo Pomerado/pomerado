@@ -652,19 +652,18 @@ ${siteMessageCode}
   const fieldCheckOnly = (text) =>
     !saysError(text) && !openWords.test(text) && !/\b(?:another|different|later)\b/i.test(text) &&
     !saysRefusal(words(text).replace(fieldCheckWords, " "));
-  // Whether a message says the write is done, read whole (shorter than the 500 characters a
-  // message keeps): each of its clauses, split at punctuation, commas, dashes, "but" and "however",
-  // has a done word; it names no payment, card, funds or charge; and it has no negation anywhere,
-  // as a success has none, no words of the write still to come or held, none of an error, a
-  // refusal or a decline, and no error styling.
-  const doneWords = /\b(?:booked|reserved|placed|scheduled|received|confirmed|completed|submitted|all set|thank you)\b/i;
-  const paymentWords = /\b(?:payment|card|funds?|charge[ds]?)\b/i;
-  const notDoneWords = /\b(?:nothing|none|pending|yet to|will be|once)\b|n['’]t\b/i;
-  const confirms = (message) => {
-    const clauses = message.text.split(/[.!?;:,–—]|\b(?:but|however)\b/i).filter((clause) => clause.trim() !== "");
-    return message.text.length < 500 && !message.errorStyle && clauses.length > 0 && clauses.every((clause) => doneWords.test(clause)) &&
-      !(paymentWords.test(message.text) || negation.test(message.text) || notDoneWords.test(message.text) ||
-        saysError(message.text) || saysRefusal(message.text) || openWords.test(message.text));
+  // Whether a confirmation's whole text, past a beacon, says only that the write is done: at most
+  // 20 words, apostrophes inside them, at least one a done word, and each a done word, a thing
+  // done, a few plain words around them, a number other than 0, or a label of the site's domain,
+  // such as its name, never one letter. Any other word, of a request, a payment, a hold or a
+  // negation such as "can't", leaves it unclear.
+  const doneWords = ["placed", "confirmed", "booked", "reserved", "received", "scheduled", "complete", "completed", "success", "successful", "successfully", "thank", "thanks"];
+  const doneVocabulary = new Set([...doneWords, "order", "booking", "reservation", "table", "appointment",
+    "your", "you", "you're", "we", "we've", "is", "has", "been", "have", "now", "all", "set", "the", "an", "our", "for"]);
+  const confirms = (text, site) => {
+    const words = text.toLowerCase().split(/[^\p{L}\p{N}'’ʼ\x60#]+/u).filter((word) => word !== "").map((word) => word.replace(/[’ʼ\x60]/g, "'"));
+    return words.length <= 20 && words.some((word) => doneWords.includes(word)) && words.every((word) => !/^\p{L}$/u.test(word) &&
+      (doneVocabulary.has(word) || /^#?0*[1-9]\d*$/.test(word) || site.split(".").includes(word)));
   };
   return { saysError, succeeds, confirms, fieldCheckOnly, messages, messagesInPage, read: (page) => page.locator(messages).evaluateAll(messagesInPage), messageCounts, judgeMessages };
 })();
@@ -849,8 +848,9 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
     // dialog or one of the site's messages as confirmCommit reads them, never a control or a frame.
     // An element gone since the look, one whose text can't be read yet, or a page that can't tell,
     // counts. While only other sites' beacons are unanswered (beacons true), an element doesn't
-    // when it and its dialog, read whole, say the write is done, and neither is in an alert or
-    // error-styled message nor holds one that shows.
+    // when its outermost dialog, else itself, read whole, says only that the write is done
+    // (confirms), holds nothing that read can't see, and the page shows no alert or error-styled
+    // message with text that is new since the click.
     const siteMessage = async (candidate, beacons) => {
       if (candidate.kind === "invalid") return true;
       if (candidate.kind === "dialog" || candidate.kind === "announced") {
@@ -863,32 +863,51 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
       // The texts first: an element gone by the second read is gone from both.
       const shown = await read(elements.evaluateAll(outcomeWaitSite.messagesInPage));
       const placed = await read(elements.evaluateAll(
-        (elements, [selector, messages]) => {
-          // A message that shows text, never an empty or hidden placeholder.
-          const showing = (message) => message.innerText.trim() !== "" &&
-            (typeof message.checkVisibility !== "function" || message.checkVisibility({ visibilityProperty: true, opacityProperty: true }));
-          return {
-            count: elements.length,
-            inMessage: elements.some((element) => element.closest(selector) !== null || element.querySelector(selector) !== null),
-            // The element's dialog, or the element when in none, in an alert or error-styled
-            // message, or holding one that shows.
-            inAlert: elements.some((element) => {
-              const around = element.closest('[role="dialog"], dialog') ?? element;
-              return around.closest(messages) !== null || [...around.querySelectorAll(messages)].some(showing);
-            }),
-            control: elements.every((element) =>
-              element.closest('a, button, label, summary, input, select, textarea, option, [role="button"], [role="link"], iframe, frame, object, embed') !== null),
-          };
-        },
-        [outcomeWaitSite.messages + ', [role="dialog"], dialog', outcomeWaitSite.messages],
+        (elements, selector) => ({
+          count: elements.length,
+          inMessage: elements.some((element) => element.closest(selector) !== null || element.querySelector(selector) !== null),
+          control: elements.every((element) =>
+            element.closest('a, button, label, summary, input, select, textarea, option, [role="button"], [role="link"], iframe, frame, object, embed') !== null),
+        }),
+        outcomeWaitSite.messages + ', [role="dialog"], dialog',
       ));
       if (shown === undefined || placed === undefined || placed.count === 0) return true;
       if (!placed.inMessage || placed.control) return false;
-      if (beacons && !placed.inAlert) {
-        // The element, and its dialog read whole.
-        const whole = await read(elements.or(elements.locator('xpath=ancestor::*[@role="dialog" or local-name()="dialog"][1]'))
-          .evaluateAll(outcomeWaitSite.messagesInPage));
-        if (whole !== undefined && whole.length > 0 && whole.every(outcomeWaitSite.confirms)) return false;
+      if (beacons) {
+        // In one page call: each element's outermost dialog, else the element, read whole; whether
+        // it holds text that read can't see, a frame or object that shows or a shadow root with
+        // text; and the alerts and error-styled messages with text the page shows.
+        const seen = await read(elements.evaluateAll(
+          (elements, messages) => {
+            const text = (node) => String(node.innerText ?? node.textContent ?? "");
+            const shows = (node) => typeof node.checkVisibility !== "function" || node.checkVisibility({ visibilityProperty: true, opacityProperty: true });
+            const arounds = elements.map((element) => {
+              let around = element;
+              for (let dialog = element.closest('[role="dialog"], dialog'); dialog !== null; dialog = dialog.parentElement?.closest('[role="dialog"], dialog') ?? null)
+                around = dialog;
+              return around;
+            });
+            return {
+              texts: arounds.map(text),
+              unread: arounds.some((around) => [around, ...around.querySelectorAll("*")].some((node) =>
+                (node.matches("iframe, frame, object, embed") && shows(node)) || (node.shadowRoot?.textContent ?? "").trim() !== "")),
+              messages: [...document.querySelectorAll(messages)].filter((message) => text(message).trim() !== "" && shows(message))
+                .map((message) => text(message).replace(/\s+/g, " ").trim().slice(0, 500).toLowerCase()),
+            };
+          },
+          outcomeWaitSite.messages,
+        ));
+        // Messages the page showed before the click, as the refusal reading counts them, don't
+        // hold it; one more of a text, or any when those couldn't be read, does.
+        const before = new Map(state.messagesBefore ?? []);
+        const newMessage = (text) => {
+          const left = before.get(text) ?? 0;
+          before.set(text, left - 1);
+          return left <= 0;
+        };
+        if (seen !== undefined && !seen.unread && seen.texts.length > 0 && !seen.messages.some(newMessage) &&
+            seen.texts.every((text) => outcomeWaitSite.confirms(text, siteAtClick)))
+          return false;
       }
       return shown.length === 0 || !shown.every(outcomeWaitSite.succeeds);
     };
@@ -1585,15 +1604,18 @@ const waitForChange = async (fields, options = {}) => {
  *   alert or an error-styled message, unless its words say a success. While every such request
  *   went to a bot vendor's, a captcha's or an analytics service's host on another site than the
  *   page's at the click (`siteDomain`, else a guess from its host), and none got a server error, an
- *   element decides at once when it and its dialog, each read whole, say the write is done, as
- *   "Table booked" does: every clause, split at punctuation, commas, dashes, "but" and "however",
- *   has a done word such as booked, placed, confirmed or thank you; no payment, card, funds or
- *   charge is named; there is no negation anywhere and no word such as pending, once or "will be";
- *   there are no words of an error, a refusal or a decline and no error styling; and neither sits
- *   in an alert or error-styled message nor holds one that shows text. A request to any other
- *   host, the page's own site or a payment service's included, holds it as before. Such an outcome
- *   waits up to `noProgressMs` for the answer and then decides as before, and fails so, with
- *   `outcome` naming it, when none comes in time, or at once after a server error to such a request.
+ *   element decides at once when its outermost dialog, else the element, read whole in one page
+ *   call, says only that the write is done: at most 20 words, at least one a done word such as
+ *   booked, placed, confirmed or thank, and each a done word, a thing done such as order or
+ *   table, one of a few plain words such as your or now, a number other than 0, or a label of the
+ *   site's domain, as "Your table is reserved. Thank you!" or "Order #4821 placed" do. It holds
+ *   when any other word shows, such as a request, a payment, a hold, a negation or a button's
+ *   words, when the dialog holds a frame or object that shows or a shadow root with text, and when
+ *   the page shows an alert or error-styled message with text that is new since the click. A
+ *   request to any other host, the page's own site or a payment service's included, holds it as
+ *   before. Such an outcome waits up to `noProgressMs` for the answer and then decides as before,
+ *   and fails so, with `outcome` naming it, when none comes in time, or at once after a server
+ *   error to such a request.
  * - `outcome_refused`, in place of `outcome_unknown`, when the wait's `action` is a commit's click
  *   (the call's first wait, with an `action`, in the call the script sends right after its
  *   `enteringCommit`, which the runtime declares as `__pomeradoCommitting`) and the page shows a

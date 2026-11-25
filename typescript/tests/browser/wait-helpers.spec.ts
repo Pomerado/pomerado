@@ -849,88 +849,51 @@ test("in a commit's call, a confirmation decides past another site's unanswered 
     expect.soft(await commitAnswer(page, posts, inDialog("Table booked"), at), `${at ?? origin} ${posts.join(" + ")}`).toBe(expected);
 });
 
-// Each text below shows in the named heading of a dialog while only a beacon has no answer.
-const holdsPastBeacon = async (page: Page, texts: readonly string[]) => {
-  for (const text of texts) expect.soft(await commitAnswer(page, [beacon], inDialog(text)), text).toBe("outcome_unknown");
-};
-
-test("in a commit's call, past an unanswered beacon, a clause with no done word holds the answer", async ({ page }) => {
-  await holdsPastBeacon(page, [
-    "Pago rechazado",
-    "Order placed. Your order is on hold.",
-    "Booking received — action needed",
-    "Order placed. Awaiting confirmation.",
-    "Table booked, seating unavailable",
-    "Table booked but seating unavailable",
-  ]);
+test("in a commit's call, past an unanswered beacon, a dialog that says only the write is done decides", async ({ page }) => {
+  for (const [shows, at] of [
+    [inDialog("Your table is reserved. Thank you!")],
+    [inDialog("Your booking is now confirmed")],
+    [inDialog("You're booked!")],
+    [inDialog("We’ve received your order")],
+    [inDialog("Order #4821 placed")],
+    [inDialog("Northwind order placed"), "https://www.northwind.test/"],
+    [`${inDialog("Table booked")}<div class="error-message" hidden>Card declined</div>`],
+    [`${inDialog("Table booked")}<div role="alert"></div>`],
+  ] as const)
+    expect.soft(await commitAnswer(page, [beacon], shows, at), shows).toBe("answer");
 });
 
-test("in a commit's call, past an unanswered beacon, a payment, card, funds or charge named holds the answer", async ({ page }) => {
-  await holdsPastBeacon(page, [
-    "Order received. Awaiting payment.",
-    "Booking received. Payment processing.",
-    "Order received. Payment unconfirmed.",
-    "Order placed. Insufficient funds.",
-    "Reservation received. Your card has expired.",
-    "Seats reserved. Payment incomplete.",
-    "Order placed. Payment status: unpaid",
-    "Booking received. Payment under review.",
-    "Order placed. Payment authorization in progress.",
-    "Order placed (awaiting payment)",
-    "Order received — payment processing",
-  ]);
-});
-
-test("in a commit's call, past an unanswered beacon, a payment that failed or is still to come holds the answer", async ({ page }) => {
-  await holdsPastBeacon(page, [
-    "Payment on hold",
-    "Booked, but payment was refused",
-    "Thank you for your order. Unfortunately your payment was not successful.",
-    "Thank you. Your payment didn't go through.",
-    "Payment confirmed: No",
-    "Order received. Payment pending.",
-    "Your order will be placed once payment is received",
-    "Your seats are reserved for 10 minutes. Complete payment to finish booking.",
-  ]);
-});
-
-test("in a commit's call, past an unanswered beacon, a negation or a write still to come holds the answer", async ({ page }) => {
-  await holdsPastBeacon(page, [
-    "Your order has not yet been placed",
-    "Your table wasn’t booked",
-    "Nothing has been booked yet",
-    "None of your seats were reserved",
-    "Your reservation has not yet been fully confirmed",
-  ]);
-});
-
-test("in a commit's call, past an unanswered beacon, an answer whose dialog shows an alert, error styling or more holds", async ({ page }) => {
+test("in a commit's call, past an unanswered beacon, any other word in the answer's dialog holds it", async ({ page }) => {
   for (const shows of [
-    `<div role="alert"><p class="answer">Table booked</p></div>`,
-    `<div class="error-box"><div><div role="dialog"><p class="answer">Table booked</p></div></div></div>`,
-    `<div role="dialog" class="answer"><h2>Booking received</h2><div role="alert">Payment unsuccessful</div></div>`,
-    `<div role="dialog" class="answer"><h2>Booking received</h2><div class="error-message">Insufficient funds</div></div>`,
-    `<div role="dialog"><h2 class="answer">Booking received</h2><div role="alert">Payment unsuccessful</div></div>`,
-    `<div role="dialog"><h2 class="answer">Table booked</h2><div role="alert">Seating unavailable</div></div>`,
-    `<div role="dialog"><h2 class="answer">Booking received</h2><div class="error-message">Insufficient funds</div></div>`,
-    `<div role="dialog"><h2 class="answer">Order placed</h2><p>Payment pending</p></div>`,
-    `<div role="dialog"><h2 class="answer">Order placed</h2><p class="text-red-600">Insufficient funds</p></div>`,
-    `<div role="dialog"><h2 class="answer">Order placed</h2><p aria-live="polite">Insufficient funds</p></div>`,
+    inDialog("Booking request received"),
+    inDialog("Your reservation"),
+    inDialog("Northwind order placed"),
+    inDialog("0 seats reserved"),
+    inDialog("Table booked ".repeat(11)),
     `<div role="dialog"><h2 class="answer">You're booked!</h2><p>You won't be charged if you need to cancel.</p></div>`,
-    `<div role="dialog"><h2 class="answer" data-status="failed">Table booked</h2></div>`,
-    inDialog("Table booked ".repeat(40)),
+    `<div role="dialog"><h2 class="answer">Order placed</h2><p>Your order is on hold</p></div>`,
+    inDialog("Order placed<br>Awaiting confirmation"),
+    inDialog("Booking received - action needed"),
+    inDialog("Booking received and cancelled by the venue"),
+    inDialog("Order placed and payments received"),
+    inDialog("Table booked and deposit taken"),
   ])
     expect.soft(await commitAnswer(page, [beacon], shows), shows).toBe("outcome_unknown");
 });
 
-test("in a commit's call, past an unanswered beacon, words that say the write is done decide", async ({ page }) => {
+test("in a commit's call, past an unanswered beacon, an outer dialog, an alert new on the page or unread content holds the answer", async ({ page }) => {
   for (const shows of [
-    inDialog("Your table is reserved. Thank you!"),
-    inDialog("Your booking is now confirmed"),
-    inDialog("Northwind order placed"),
-    `<div role="dialog"><h2 class="answer">Table booked</h2><div class="error-message" hidden></div></div>`,
+    `<div role="dialog" class="relative"><div style="position:fixed;inset:0"><h2 class="answer">Order placed</h2><p>Payment pending</p></div></div>`,
+    `<div role="dialog"><p>Payment pending</p><div role="dialog"><h2 class="answer">Table booked</h2></div></div>`,
+    `${inDialog("Table booked")}<div role="alert">Your card was declined</div>`,
+    `<div role="dialog"><h2 class="answer">Table booked</h2><iframe srcdoc="<p>Payment failed</p>"></iframe></div>`,
   ])
-    expect.soft(await commitAnswer(page, [beacon], shows), shows).toBe("answer");
+    expect.soft(await commitAnswer(page, [beacon], shows), shows).toBe("outcome_unknown");
+});
+
+test("in a commit's call, an icon with no text in the answer's dialog changes nothing", async ({ page }) => {
+  const shows = `<div role="dialog"><svg class="icon-error"></svg><h2 class="answer">Thank you, your order is confirmed</h2></div>`;
+  expect(await commitAnswer(page, [`${origin}/book`], shows)).toBe("answer");
 });
 
 test("a write whose commit the site declined behind its own dialog reports the step unsent, with the site's words", async ({
