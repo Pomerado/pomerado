@@ -129,8 +129,9 @@ export const formControlMessageWords = /\brequired\b|\b(?:is|are) (?:missing|not
  *   spellings, such as `["CA", "California"]`), ignoring case, accents, spacing and punctuation.
  *   A label that equals one wins over a value that does, and a value that does over a label that
  *   states the same number followed only by the same unit written another way, such as 2lb,
- *   2 lbs or 2 pounds for 2 lb, while 2 alone never takes 2 lb; a label that only
- *   holds it among other words is no match; two different options at the winning rank are
+ *   2 lbs or 2 pounds for 2 lb, while 2 alone never takes 2 lb, and that over a label that is
+ *   one of them read joined, as `rankChoices` reads names, such as Zorb150 for Zorb-150; a label
+ *   that only holds it among other words is no match; two different options at the winning rank are
  *   ambiguous, while copies with one label and a value, both as read, such as a country
  *   listed twice, are one option, so the first enabled copy is chosen. A custom dropdown is
  *   opened, its own listbox found through `aria-controls` or `aria-owns` (else the one visible
@@ -208,6 +209,19 @@ const formControlMessageWords = ${String(formControlMessageWords)};
 const formControlText = ${String(foldChoiceText)};
 /** A number followed only by its unit, written one way, so "2 pounds" and "2lb" state "2 lb". */
 const formControlAmount = ${String(unitAmount)};
+/**
+ * Folded text without the spaces, hyphens, dashes and apostrophes between two letters or numbers,
+ * except between two digits or before a number's minus sign, as rankChoices joins a name, so
+ * "Zorb-150" and "Zorb150" name the same option while "29-59" never names "2959".
+ */
+const formControlJoined = (text) =>
+  formControlText(text).replace(/[\s'\u2018\u2019\u02bc\-\u2010-\u2015]+/gu, (run, at, all) => {
+    const before = all[at - 1] ?? "";
+    const after = all[at + run.length] ?? "";
+    const digits = /\p{N}/u.test(before) && /\p{N}/u.test(after);
+    const sign = /^\s.*[-\u2010-\u2015]$/u.test(run) && /\p{N}/u.test(after);
+    return !/[\p{L}\p{N}]/u.test(before) || !/[\p{L}\p{N}]/u.test(after) || digits || sign ? run : "";
+  });
 const formControlFrame = async (control, options) => {
   const handle = await control.elementHandle(options);
   const frame = handle === null ? null : await handle.ownerFrame();
@@ -246,17 +260,20 @@ const formControlDateCandidates = (iso, format, locale) => {
 };
 /**
  * The one option a choice names, by rank: label, then value, then a label stating its number and
- * unit another way, then, only with words set, as for a date's part, whole words of the label.
+ * unit another way, then a label that is one once both are joined (formControlJoined), then, only
+ * with words set, as for a date's part, whole words of the label.
  */
 const formControlPick = (read, wanted, words = false) => {
   const options = read.map((option) => ({ ...option, label: formControlText(option.label), value: formControlText(option.value), amount: formControlAmount(option.label) }));
   const names = new Set(wanted.map(formControlText).filter((name) => name !== ""));
   const amounts = new Set(wanted.map(formControlAmount));
+  const joinedNames = new Set(wanted.map(formControlJoined).filter((name) => name !== ""));
   const wordsOf = (label) => label.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
   const ranks = [
     (option) => names.has(option.label),
     (option) => option.value !== "" && names.has(option.value),
     (option) => option.amount !== undefined && amounts.has(option.amount),
+    (option) => joinedNames.has(formControlJoined(option.label)),
     ...(words ? [(option) => [...names].some((name) => (" " + wordsOf(option.label).join(" ") + " ").includes(" " + name + " "))] : []),
   ];
   for (const rank of ranks) {
