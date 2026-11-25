@@ -62,8 +62,12 @@ export type PickerRanking =
  * a place ends the value. With `options.units`, such as `unitAmount`, which writes a number
  * followed only by its unit one way, a name that is a spelling's number followed only by the same
  * unit, written another way, is `alike` too: 2lb, 2 lbs or 2 pounds for 2 lb, never 2 lb for 2.
+ * When no name matches so far, a name that is a spelling once both are `joined` is `alike` too:
+ * read folded, without the spaces, hyphens, dashes and apostrophes between two letters or numbers,
+ * except between two digits or before a number's minus sign (Zorb150 for Zorb-150, AB C for ABC).
  * Then a name holding a spelling as whole words (New
- * York for York), then a name made of a
+ * York for York), or, when no name does, holding a spelling once both are `joined`, from the start
+ * of one of its words to the end of one (AB-C Sport for ABC, not Pencil for Pen), then a name made of a
  * spelling's words, no more and no fewer,
  * whose parts, as its own or the spelling's commas, semicolons, colons, slashes, bars, brackets or
  * spaced dashes separate them, come in another order, each part's words in order and the numbers
@@ -225,6 +229,29 @@ export const rankChoices = (
   };
   // Folded, with a leading "the" dropped, so The Example Tower names what Example Tower does.
   const bare = (text: string) => fold(text).replace(/^the\s+/u, "");
+  // Folded, without the spaces, hyphens, dashes and apostrophes between two letters or numbers,
+  // except between two digits or before a number's minus sign, with where each was dropped, so
+  // Zorb-150, Zorb 150 and Zorb150 read alike while 29-59 never reads as 2959.
+  const joined = (text: string) => {
+    const joins = new Set<number>();
+    let dropped = 0;
+    const read = fold(text).replace(/[\s'\u2018\u2019\u02bc\-\u2010-\u2015]+/gu, (run: string, at: number, all: string) => {
+      const before = all[at - 1] ?? "";
+      const after = all[at + run.length] ?? "";
+      const digits = /\p{N}/u.test(before) && /\p{N}/u.test(after);
+      const sign = /^\s.*[-\u2010-\u2015]$/u.test(run) && /\p{N}/u.test(after);
+      if (!/[\p{L}\p{N}]/u.test(before) || !/[\p{L}\p{N}]/u.test(after) || digits || sign) return run;
+      joins.add(at - dropped);
+      dropped += run.length;
+      return "";
+    });
+    // Where a word starts or ends in the joined text. A sign or mark right before a digit, as in
+    // -5, +5 or .5, is part of its number.
+    const inWord = (at: number) =>
+      /[\p{L}\p{N}]/u.test(read[at] ?? "") || (/[.,+\-\u2010-\u2015]/u.test(read[at] ?? "") && /\p{N}/u.test(read[at + 1] ?? ""));
+    const edge = (at: number) => at === 0 || at === read.length || joins.has(at) || !inWord(at - 1) || !inWord(at);
+    return { read, edge };
+  };
   const named = {
     lower: once(lower),
     fold: once(bare),
@@ -232,6 +259,7 @@ export const rankChoices = (
     phrase: once(phrase),
     parted: once(parted),
     alike: once((text: string) => alikeWords(text)),
+    joined: once(joined),
     amount: once((text: string) => options.units?.(text)),
   };
   // Two words pair when they are equal, or when both are Latin letters only and the shorter, of
@@ -346,6 +374,8 @@ export const rankChoices = (
   }));
   const wordLists = perList((list) => list.map(words).filter((each) => each.length > 0));
   const alikeLists = perList((list) => list.map(alikeWords).filter((each) => each.length > 0));
+  const joinedLists = perList((list) => list.map(joined).filter((each) => each.read !== ""));
+  const joinedAnywhere = perList((list) => joinedLists(list.filter((form) => !placed.has(form))));
   // The spellings' amounts as given, never their other forms', so a state's code is no unit.
   const amounts = new Set(spellings.map((spelling) => options.units?.(spelling)).filter((amount) => amount !== undefined));
   // A name's text up to each comma that is not a thousands separator, as in 1,000.
@@ -418,6 +448,15 @@ export const rankChoices = (
       true,
     ],
     [
+      "alike",
+      // Only when no name matched above: the same name once both are joined.
+      (choice, list) => {
+        const wants = joinedLists(list);
+        return choice.names.some((name) => wants.some((want) => want.read === named.joined(name).read));
+      },
+      true,
+    ],
+    [
       "words",
       (choice, list) => {
         const { anywhere, ending } = phrases(list);
@@ -429,6 +468,23 @@ export const rankChoices = (
           return ending.some((want) =>
             ends.some((end) => end >= want.length && want.every((word, at) => all[end - want.length + at] === word)),
           );
+        });
+      },
+      true,
+    ],
+    [
+      "words",
+      // Only when no name holds a spelling's words above: a name holding it once both are joined,
+      // from the start of one of its words to the end of one.
+      (choice, list) => {
+        const wants = joinedAnywhere(list);
+        return choice.names.some((name) => {
+          const have = named.joined(name);
+          return wants.some(({ read }) => {
+            for (let at = have.read.indexOf(read); at >= 0; at = have.read.indexOf(read, at + 1))
+              if (have.edge(at) && have.edge(at + read.length)) return true;
+            return false;
+          });
         });
       },
       true,

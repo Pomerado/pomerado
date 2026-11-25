@@ -551,6 +551,27 @@ test("chooseOption matches a hyphenated name spelled with a space", async ({ pag
   expect(await submitted(page)).toEqual({ City: "SD" });
 });
 
+test("chooseOption matches a name written without the spaces or hyphens between its letters and numbers", async ({ page }) => {
+  await page.setContent(`<form><label>Model<select name="model">
+<option value="">Choose</option><option value="a">AB</option><option value="b">AB-C</option>
+<option value="c">Zorb-150</option><option value="d">29-59</option></select></label>
+<label>Trim<select name="trim"><option value="">Choose</option><option value="e">AB-C</option>
+<option value="f">A BC</option></select></label></form>`);
+  const model = 'page.getByLabel("Model")';
+  expect(await call(page, `return await chooseOption(${model}, "ABC");`)).toEqual({
+    result: { shape: "select", label: "AB-C", value: "b" },
+  });
+  expect(await call(page, `return await chooseOption(${model}, "zorb150");`)).toEqual({
+    result: { shape: "select", label: "Zorb-150", value: "c" },
+  });
+  // Two digits stay apart, and two options that both read as the value tie.
+  expect(await call(page, `return await chooseOption(${model}, "2959");`)).toEqual({ error: "option_missing" });
+  expect(await call(page, `return await chooseOption(page.getByLabel("Trim"), "ABC");`)).toEqual({
+    error: "option_ambiguous",
+  });
+  expect(await submitted(page)).toEqual({ model: "c", trim: "" });
+});
+
 test("chooseOption refuses two options that differ only by accents", async ({ page }) => {
   await page.setContent(`<form><label>Place<select name="place">
 <option value="1">Abaca</option><option value="2">Abacá</option></select></label></form>`);

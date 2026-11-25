@@ -234,6 +234,43 @@ describe("rankChoices", () => {
     expect(rankForms([choice("Level 12, Gate 3")], "Gate 3 Level 12")).toEqual({ status: "missing" });
   });
 
+  test("a name written with other spacing, hyphens or dashes between its letters and numbers is the same name", () => {
+    const models = [choice("Zorb-150"), choice("Zorb-250"), choice("AB-C"), choice("AB")];
+    expect(rank(models, "Zorb150")).toEqual({ status: "picked", index: 0, rank: "alike" });
+    expect(rank(models, "ABC")).toEqual({ status: "picked", index: 2, rank: "alike" });
+    expect(rank([choice("Zorb150"), choice("Zorb250")], "ZORB–150")).toEqual({ status: "picked", index: 0, rank: "alike" });
+    expect(rank([choice("Zorb 2.5L"), choice("Zorb 3.5L")], "zorb 2.5 l")).toEqual({ status: "picked", index: 0, rank: "alike" });
+    expect(rank([choice("Zorb 90's Edition")], "Zorb 90s Edition")).toEqual({ status: "picked", index: 0, rank: "alike" });
+  });
+
+  test("a name holding the value written with other spacing, hyphens or dashes, word edge to word edge, matches as whole words", () => {
+    const styles = [choice("AB-C Sport 4D"), choice("AB Sport 4D"), choice("BC Sport 4D")];
+    expect(rank(styles, "ABC")).toEqual({ status: "picked", index: 0, rank: "words" });
+    const cabs = [choice("Zorb-150 Lux Crew Cab"), choice("Zorb-150 Base Crew Cab")];
+    expect(rank(cabs, "Zorb150 Lux")).toEqual({ status: "picked", index: 0, rank: "words" });
+    expect(rank([choice("Zorb 2.5 S Sedan"), choice("Zorb 2.5 SV Sedan")], "2.5S")).toEqual({ status: "picked", index: 0, rank: "words" });
+  });
+
+  test("names read without their spacing still tie, keep numbers and symbols apart, and join only whole words", () => {
+    // Several names that hold the value tie, so none is picked.
+    expect(rank([choice("AB-C Sedan"), choice("AB C Coupe")], "ABC")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "words" });
+    expect(rank([choice("Zorb-150"), choice("Zorb 150 ")], "Zorb150")).toEqual({ status: "ambiguous", indexes: [0, 1], rank: "alike" });
+    // Two digits stay apart, a decimal point and a minus sign stay, and other symbols stay.
+    expect(rank([choice("11/2")], "1/12")).toEqual({ status: "missing" });
+    expect(rank([choice("29-59")], "2959")).toEqual({ status: "missing" });
+    expect(rank([choice("15 L")], "1.5 L")).toEqual({ status: "missing" });
+    expect(rank([choice(".5mm Lead")], "5 mm")).toEqual({ status: "missing" });
+    expect(rank([choice("Level -2")], "Level2")).toEqual({ status: "missing" });
+    expect(rank([choice("A&B Sedan"), choice("A/B Coupe"), choice("A+B")], "AB")).toEqual({ status: "missing" });
+    // Only whole words join.
+    expect(rank([choice("Pencil Case")], "Pen")).toEqual({ status: "missing" });
+    expect(rank([choice("Sportback 4D")], "Sport")).toEqual({ status: "missing" });
+    expect(rank([choice("XAB-C Sedan")], "ABC")).toEqual({ status: "missing" });
+    // A match found as before stays the only one at its rank.
+    expect(rank([choice("Zorb-150"), choice("Zorb150")], "Zorb 150")).toEqual({ status: "picked", index: 0, rank: "alike" });
+    expect(rank([choice("AB C Sedan"), choice("ABC Coupe")], "AB C")).toEqual({ status: "picked", index: 0, rank: "words" });
+  });
+
   test("an empty or blank value matches nothing", () => {
     expect(rank([choice("Anything"), choice("")], "")).toEqual({ status: "missing" });
     expect(rank([choice("Anything")], "   ")).toEqual({ status: "missing" });
