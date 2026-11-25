@@ -438,17 +438,31 @@ export const makeAutofillValues = <
   /** Resolves a secondary identifier without guessing a rejected primary alias. */
   const identifierValue = (field: AutofillField, slot: LoginIdentifierKind, login: AutofillLogin) =>
     Effect.gen(function* () {
-      if (login.rejectedValues?.[slot]?.size) {
-        const corrected = yield* fieldValue(slot, login);
-        return corrected instanceof Unanswered ? corrected : { slot, value: corrected.value };
-      }
+      const { username } = login.credentials;
+      const rejected = login.rejectedValues?.[slot];
       // The saved record's identifier first, then one the owner gave this attempt; else the owner
       // is asked for one of the kinds the field accepts.
       const stored = heldField(slot, login.credentials, given.current);
+      // The login's own username, typed below as a guess, that the site refused alone: the owner is
+      // asked as if it had never been typed, never to correct it.
+      const guessRefused = stored === undefined && rejected?.size === 1 && rejected.has(username);
+      if (rejected?.size && !guessRefused) {
+        const corrected = yield* fieldValue(slot, login);
+        return corrected instanceof Unanswered ? corrected : { slot, value: corrected.value };
+      }
       if (stored !== undefined) return { slot, value: stored };
       const asked = (field.accepts ?? [slot]).filter(
         (kind): kind is LoginIdentifierKind => kind !== "username" && kind !== "private_identifier",
       );
+      // A field for an email address or phone number often takes a username too, though its words
+      // name only those: a login that holds neither types its own username there first.
+      if (
+        !guessRefused &&
+        asked.includes("email") &&
+        asked.includes("phone") &&
+        separateUsername(login.credentials)
+      )
+        return { slot, value: username };
       return yield* ask(login.ask, asked, undefined, login.offerSave === true);
     });
   const valueFor = (
