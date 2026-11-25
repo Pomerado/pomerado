@@ -860,6 +860,8 @@ test("in a commit's call, past an unanswered beacon, a clause with no done word 
     "Order placed. Your order is on hold.",
     "Booking received — action needed",
     "Order placed. Awaiting confirmation.",
+    "Table booked, seating unavailable",
+    "Table booked but seating unavailable",
   ]);
 });
 
@@ -909,13 +911,14 @@ test("in a commit's call, past an unanswered beacon, an answer whose dialog show
     `<div role="dialog" class="answer"><h2>Booking received</h2><div role="alert">Payment unsuccessful</div></div>`,
     `<div role="dialog" class="answer"><h2>Booking received</h2><div class="error-message">Insufficient funds</div></div>`,
     `<div role="dialog"><h2 class="answer">Booking received</h2><div role="alert">Payment unsuccessful</div></div>`,
+    `<div role="dialog"><h2 class="answer">Table booked</h2><div role="alert">Seating unavailable</div></div>`,
     `<div role="dialog"><h2 class="answer">Booking received</h2><div class="error-message">Insufficient funds</div></div>`,
     `<div role="dialog"><h2 class="answer">Order placed</h2><p>Payment pending</p></div>`,
     `<div role="dialog"><h2 class="answer">Order placed</h2><p class="text-red-600">Insufficient funds</p></div>`,
     `<div role="dialog"><h2 class="answer">Order placed</h2><p aria-live="polite">Insufficient funds</p></div>`,
     `<div role="dialog"><h2 class="answer">You're booked!</h2><p>You won't be charged if you need to cancel.</p></div>`,
     `<div role="dialog"><h2 class="answer" data-status="failed">Table booked</h2></div>`,
-    inDialog(`Table booked. ${"Enjoy your meal. ".repeat(40)}`),
+    inDialog("Table booked ".repeat(40)),
   ])
     expect.soft(await commitAnswer(page, [beacon], shows), shows).toBe("outcome_unknown");
 });
