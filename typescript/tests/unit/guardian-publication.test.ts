@@ -1069,7 +1069,7 @@ describe("the publication policy", () => {
   // site refused the order after the yes; the review finds a hold taken only before it.
   it("finds a write's last question before a commit that pays with no order, or after its hold", () => {
     const rule =
-      "The last declared choice or confirm a write asks before a commit that buys or pays, once the page shows the items and total that commit pays, passes them as `order` to `ask`. One that passes none is a confirmation finding at that `ask`, in a repair too, even in code the repair did not change. A time-limited hold that commit uses, taken only before that question, is a confirmation finding where the script takes it.";
+      "The last declared choice or confirm a write asks before a commit that buys or pays, once the page shows the items and total that commit pays, passes them as `order` to `ask`. One that passes none is a confirmation finding at that `ask`, in a repair too, even in code the repair did not change. A time-limited hold that commit uses, taken only before that choice or confirm, is a confirmation finding at that commit.";
     expect(publicationPurchaseOrderPolicy).toBe(rule);
     expect(guardianPublicationPolicy.split(rule)).toHaveLength(2);
     expect(guardianPublicationPolicy).toContain(

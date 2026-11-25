@@ -573,7 +573,7 @@ export const publicationWritePathPolicy =
  * and answered, so the site refuses the order after the caller's yes.
  */
 export const publicationPurchaseOrderPolicy =
-  "The last declared choice or confirm a write asks before a commit that buys or pays, once the page shows the items and total that commit pays, passes them as `order` to `ask`. One that passes none is a confirmation finding at that `ask`, in a repair too, even in code the repair did not change. A time-limited hold that commit uses, taken only before that question, is a confirmation finding where the script takes it.";
+  "The last declared choice or confirm a write asks before a commit that buys or pays, once the page shows the items and total that commit pays, passes them as `order` to `ask`. One that passes none is a confirmation finding at that `ask`, in a repair too, even in code the repair did not change. A time-limited hold that commit uses, taken only before that choice or confirm, is a confirmation finding at that commit.";
 
 /**
  * A choice the caller approved can show a time that moves with the clock, such as an
