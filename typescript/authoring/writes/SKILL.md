@@ -395,8 +395,9 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   response, and return the site's decline as a refusal the output schema declares, with the
   site's words.
 - A quote the site issued earlier, such as a fare, rate, delivery time, cart price or hold, can
-  expire before the commit, for example while the step waits for review, and selecting it again
-  can send back the quote the page already holds. So have the commit step go to the checkout
+  expire before the commit, for example while the step waits for review or the caller's answer,
+  and selecting it again can send back the quote the page already holds. So ask the purchase's
+  final confirm in the commit step, and after the caller's yes have that step go to the checkout
   page's URL again, since a reload can resend the form that loaded the page, or start the
   checkout again, right before its mark, then select the fresh quote, set again any earlier
   choice this may have reset, such as the tip or a declined add-on, and check the quote and those
