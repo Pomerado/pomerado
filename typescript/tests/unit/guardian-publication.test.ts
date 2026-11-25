@@ -1066,10 +1066,13 @@ describe("the publication policy", () => {
   // and a repair that fixed something else published it unchanged. The review finds that confirm
   // wherever it is, a repair's unchanged code included, beside the rule on checks before a commit.
   // A delivery window picked before that confirm lapsed while it was reviewed and answered, so the
-  // site refused the order after the yes; the review finds a hold taken only before it.
-  it("finds a write's last question before a commit that pays with no order, or a commit whose hold came only before it", () => {
+  // site refused the order after the yes; the review finds a hold taken only before it. A step
+  // after the yes switched the account's credits off, so the order charged more than the caller
+  // approved; the review finds any step between that confirm and the commit that can change the
+  // items or total, apart from taking that hold again.
+  it("finds a write's last question before a commit that pays with no order, a commit whose hold came only before it, or a step between them that changes the order", () => {
     const rule =
-      "The last declared choice or confirm a write asks before a commit that buys or pays, once the page shows the items and total that commit pays, passes them as `order` to `ask`. One that passes none is a confirmation finding at that `ask`, in a repair too, even in code the repair did not change. A time-limited hold that commit uses, taken only before that choice or confirm, is a confirmation finding at that commit.";
+      "The last declared choice or confirm a write asks before a commit that buys or pays, once the page shows the items and total that commit pays, passes them as `order` to `ask`. One that passes none is a confirmation finding at that `ask`, in a repair too, even in code the repair did not change. A time-limited hold that commit uses, taken only before that choice or confirm, is a confirmation finding at that commit. Apart from taking that hold again, a step between that choice or confirm and that commit that can change its items or total is a confirmation finding at that step, in a repair too, even in code the repair did not change.";
     expect(publicationPurchaseOrderPolicy).toBe(rule);
     expect(guardianPublicationPolicy.split(rule)).toHaveLength(2);
     expect(guardianPublicationPolicy).toContain(

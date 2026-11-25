@@ -1026,6 +1026,16 @@ export const withRunEffect = (code: string, effect: "read" | "write") =>
  */
 export const withCommitCall = (code: string) => `const __pomeradoCommitting = true;${code}`;
 
+/** An `ask` whose question passes an `order`: a purchase's final confirm (`ScriptInput`). */
+const passesOrder = (input: unknown) =>
+  typeof input === "object" &&
+  input !== null &&
+  !Array.isArray(input) &&
+  Object.values(input).some(
+    (spec: unknown) =>
+      typeof spec === "object" && spec !== null && Reflect.get(spec, "order") !== undefined,
+  );
+
 /** A commit call that failed because its outcome wait read the site's refusal on the page. */
 const siteRefusedCall = (answer: { readonly success: boolean; readonly error?: string }) =>
   answer.success === false &&
@@ -1062,6 +1072,12 @@ export const runKernelScript = <Input, EncodedInput, Output, EncodedOutput>(
     // Steps the runtime put back after their call's `outcome_refused`, until entered again: the
     // script's own put-back of one still unsent finds it done.
     const putBack = new Set<string>();
+    // The steps already sent when the caller last answered a purchase confirm (an `ask` passing
+    // `order`). A setting step not among them changes the order after that answer, so it is
+    // refused before its mark; one sent before it may be set again, as a hold taken again does.
+    let sentAtConfirm: ReadonlySet<string> | undefined;
+    const declaredSettings: unknown = operation.write?.settings;
+    const settings: readonly unknown[] = Array.isArray(declaredSettings) ? declaredSettings : [];
     const effect = browser.effect ?? (operation.write === undefined ? "read" : "write");
     // The host's sign-in under way. Every browser call the script starts meanwhile, from a timer
     // or an un-awaited promise too, waits for it and is only then sent, in order, so its own
@@ -1175,7 +1191,19 @@ export const runKernelScript = <Input, EncodedInput, Output, EncodedOutput>(
                   ...scriptInput,
                   ask: (...question: Parameters<typeof scriptInput.ask>) => {
                     entering = undefined;
-                    return scriptInput.ask(...question);
+                    return scriptInput.ask(...question).pipe(
+                      Effect.tap(() =>
+                        Effect.sync(() => {
+                          const journal = browser.journal;
+                          if (journal === undefined || !passesOrder(question[0])) return;
+                          sentAtConfirm = new Set(
+                            Effect.runSync(journal.commits)
+                              .filter((mark) => mark.state !== "not_sent")
+                              .map((mark) => mark.name),
+                          );
+                        }),
+                      ),
+                    );
                   },
                 },
               }),
@@ -1189,6 +1217,10 @@ export const runKernelScript = <Input, EncodedInput, Output, EncodedOutput>(
           kernel: scriptKernel,
           // The next call is that step's own (`withCommitCall`).
           enteringCommit: (name) => {
+            if (sentAtConfirm !== undefined && settings.includes(name) && !sentAtConfirm.has(name))
+              throw new OperationFailure(
+                `The setting step "${name}" comes after the caller answered the purchase confirm: ask that confirm right before the commit that pays, once every setting is saved.`,
+              );
             context.enteringCommit(name);
             putBack.delete(name);
             entering = name;
