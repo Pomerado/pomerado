@@ -505,6 +505,74 @@ describe("executeKernelOperation", () => {
     ]);
   });
 
+  it("refuses a setting step first entered after the purchase confirm is answered, before its call", async () => {
+    const questions = { place: { type: "confirm", prompt: "Place this order?" } } as const;
+    const order = { currency: "USD", items: [{ name: "Synthetic item", quantity: 1, price: "6.00" }], total: "6.00" };
+    const write = (steps: readonly string[]) =>
+      defineOperation(
+        {
+          input: Schema.Struct({}),
+          output: Schema.String,
+          questions,
+          write: {
+            confirmation: "readback",
+            commits: ["save-tip", "use-credits", "place-order"],
+            settings: ["save-tip", "use-credits"],
+          },
+        },
+        async ({ kernel, sessionId, enteringCommit, ask }) => {
+          for (const step of steps) {
+            if (step === "confirm") await ask({ place: { order } });
+            else {
+              enteringCommit(step);
+              await kernel.browsers.playwright.execute(sessionId, { code: "return 1;" });
+            }
+          }
+          return "done";
+        },
+      );
+    const attempt = async (steps: readonly string[]) => {
+      let calls = 0;
+      const kernel: KernelExecuteClient = {
+        browsers: {
+          playwright: {
+            execute: async () => {
+              calls += 1;
+              return { success: true, result: null };
+            },
+          },
+        },
+      };
+      const journal = await Effect.runPromise(makeEffectJournal);
+      const scriptInput = makeScriptInput(questions, () => Effect.succeed({ place: { confirmed: true } }));
+      const outcome = await run(
+        executeKernelOperation(write(steps), {}, { kernel, sessionId: "s" }).pipe(
+          Effect.provideService(ScriptInput, scriptInput),
+        ),
+        Effect.succeed(journal),
+      );
+      return { ...outcome, calls, commits: await Effect.runPromise(journal.commits) };
+    };
+    const late = await attempt(["save-tip", "confirm", "save-tip", "use-credits", "place-order"]);
+    expect(failureOf(late.exit)).toEqual(
+      Option.some(
+        expect.objectContaining({
+          _tag: "OperationFailure",
+          message: expect.stringContaining('"use-credits"'),
+        }),
+      ),
+    );
+    expect(late.calls).toBe(2);
+    expect(late.commits).toEqual([
+      { name: "save-tip", state: "sent", setting: true },
+      { name: "use-credits", state: "not_sent", setting: true },
+      { name: "place-order", state: "not_sent" },
+    ]);
+    const right = await attempt(["save-tip", "use-credits", "confirm", "place-order"]);
+    expect(right.exit).toEqual(Exit.succeed("done"));
+    expect(right.commits.map((mark) => mark.state)).toEqual(["sent", "sent", "sent"]);
+  });
+
   it("fails before dispatch when the deadline is already spent, and as unknown when it passes mid-run", async () => {
     const spent = Deadline.after(1);
     await new Promise((resolve) => setTimeout(resolve, 5));

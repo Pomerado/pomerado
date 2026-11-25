@@ -570,10 +570,13 @@ export const publicationWritePathPolicy =
  * so a script built before it, or a repair that kept its question unchanged, asked with no items
  * or total; the review finds it wherever it is, a repair's unchanged code included. A hold the
  * site keeps only minutes, taken before that question, can lapse while the question is reviewed
- * and answered, so the site refuses the order after the caller's yes.
+ * and answered, so the site refuses the order after the caller's yes. That question comes right
+ * before the commit: a step after the yes that changes the order, such as turning credits off,
+ * makes the commit charge what the caller never saw. The runtime refuses a declared setting step
+ * first saved after that yes (`runKernelScript`); the review finds it, and any other such step.
  */
 export const publicationPurchaseOrderPolicy =
-  "The last declared choice or confirm a write asks before a commit that buys or pays, once the page shows the items and total that commit pays, passes them as `order` to `ask`. One that passes none is a confirmation finding at that `ask`, in a repair too, even in code the repair did not change. A time-limited hold that commit uses, taken only before that choice or confirm, is a confirmation finding at that commit.";
+  "The last declared choice or confirm a write asks before a commit that buys or pays, once the page shows the items and total that commit pays, passes them as `order` to `ask`. One that passes none is a confirmation finding at that `ask`, in a repair too, even in code the repair did not change. A time-limited hold that commit uses, taken only before that choice or confirm, is a confirmation finding at that commit. Apart from taking that hold again and setting again what that reset, a step named in write.settings after a choice or confirm that passes `order`, or any other step between that choice or confirm and that commit that can change the items or total that commit pays, is a confirmation finding at that step, in a repair too, even in code the repair did not change.";
 
 /**
  * A choice the caller approved can show a time that moves with the clock, such as an
