@@ -167,7 +167,8 @@ During the session:
   nothing applied. On the caller's no to the tool's own confirm, return a declared refusal
   where one completes the run (below).
 - When one of those checks rules the task out, such as a total over the caller's limit, an
-  item out of stock or a variant the page does not offer, the script refuses before the mark
+  item out of stock, a variant the page does not offer or no control for the action at all, the
+  script refuses before the mark
   with `InvalidInput` (the caller-input skill, "Throw the error that matches what happened"),
   or returns a refusal its output schema declares before its first mark (below). Never return
   a refusal in an output shape the schema does not declare. Apart from such a declared

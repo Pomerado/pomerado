@@ -102,6 +102,9 @@ answers `{ success, result, error, stderr }`. Throw
   anything or skipping a control already in the requested state. The values you return still get
   their one `waitForRows` or `waitForValues` after the last change, which passes at once on a
   settled page.
+- Skip a step whose result the page already shows. Click a control that only reveals more of the
+  page only when what the next step needs isn't shown: wait for that or the control, whichever shows
+  first.
 - `waitForOutcome` already waited for its answer, so prefer no extra wait for that same answer after it.
 - A step that changes the site's own setting, such as a store, location, currency or language,
   may reload the page some time after the site saves it, or redraw it without loading a new one,
