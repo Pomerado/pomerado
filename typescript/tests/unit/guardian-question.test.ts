@@ -243,8 +243,10 @@ it("tells the question review that host sign-in rules are never an owner's prohi
 
 // Without a saved login the host picks no sign-in method, so rewording the minter's question
 // whether to sign in by phone or email left the build on the site's default form, not the owner's
-// login.
-it("allows a question about the sign-in method when the host holds no login", async () => {
+// login. With one, a screen that doesn't show its saved method is the owner's choice too: the
+// question was reworded as the host's, and the build left the methods the page showed for a link
+// that ended the sign-in.
+it("allows a question about the sign-in method when nothing names one the page shows", async () => {
   const requests = scripted([[message({ outcome: "allow_business", rationale: "Allowed." })]]);
   await Effect.runPromise(
     makeGuardian(makeOpenAIReviewer("{{ tenant_policy_config }}", false, native)).reviewQuestion(
@@ -254,7 +256,7 @@ it("allows a question about the sign-in method when the host holds no login", as
     ),
   );
   expect(reviewPolicyOf(requests[0])).toContain(
-    "When credentialsAvailable is true, the host chooses the sign-in method: reword a question asking which method to use. When it is false, a question asking which sign-in method to use, such as phone or email, is always allowed when its choices match the page, and encouraged when it is ambiguous. Never allow one offering a passkey. A question asking where a code is sent, such as text or email, is allowed when nothing the caller gave names one and its choices match the page. Reword it when it names choices the page does not show.",
+    "When credentialsAvailable is true and the caller's choice or the login's saved preference names a method the page shows, the host chooses it: reword a question asking which method to use. When it is true and nothing names one of the methods the page shows, prefer allowing a question asking which of them to use, and reword an option that leaves them or offers a passkey. When it is false, a question asking which sign-in method to use, such as phone or email, is always allowed when its choices match the page, and encouraged when it is ambiguous. Never allow one offering a passkey. A question asking where a code is sent, such as text or email, is allowed when nothing the caller gave names one and its choices match the page. Reword it when it names choices the page does not show.",
   );
   expect(reviewPolicyOf(requests[0])).not.toContain(
     "reword a question asking which method to use, and never allow one offering a passkey",

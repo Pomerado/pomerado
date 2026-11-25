@@ -126,6 +126,10 @@ export interface PendingTaskUpdate {
   readonly maintenance?: { readonly confirmer: ReviewedConfirmer };
   /** Host fact: the host can't move this build to another site, so a site change needs a new build. */
   readonly siteMoveUnsupported?: true;
+  /** Host fact: the host can't switch this build's login, so another login needs a new build. */
+  readonly loginSwitchUnsupported?: true;
+  /** Host fact: the changes of the latest update the host refused in this build, and its reason. */
+  readonly refusedUpdate?: { readonly changes: readonly TaskChange[]; readonly reason: string };
 }
 
 /**
@@ -144,11 +148,22 @@ export interface ReviewedTaskUpdate {
 export const taskUpdateForReview = <E>(
   update: Omit<
     PendingTaskUpdate,
-    "confirmation" | "effect" | "maintenance" | "siteMoveUnsupported"
+    | "confirmation"
+    | "effect"
+    | "maintenance"
+    | "siteMoveUnsupported"
+    | "loginSwitchUnsupported"
+    | "refusedUpdate"
   >,
   facts: Pick<
     PendingTaskUpdate,
-    "confirmation" | "effect" | "publicationDecisions" | "maintenance" | "siteMoveUnsupported"
+    | "confirmation"
+    | "effect"
+    | "publicationDecisions"
+    | "maintenance"
+    | "siteMoveUnsupported"
+    | "loginSwitchUnsupported"
+    | "refusedUpdate"
   >,
   screen: {
     readonly text: (value: string) => Effect.Effect<string, E>;
@@ -193,5 +208,8 @@ export const taskUpdateForReview = <E>(
         : { publicationDecisions: facts.publicationDecisions }),
       ...(facts.maintenance === undefined ? {} : { maintenance: facts.maintenance }),
       ...(facts.siteMoveUnsupported === true ? { siteMoveUnsupported: true as const } : {}),
+      ...(facts.loginSwitchUnsupported === true ? { loginSwitchUnsupported: true as const } : {}),
+      // Recorded by the harness from an update it already screened: nothing to screen.
+      ...(facts.refusedUpdate === undefined ? {} : { refusedUpdate: facts.refusedUpdate }),
     };
   });

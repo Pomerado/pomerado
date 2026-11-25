@@ -4947,6 +4947,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        */
       let newBuildAskedAt: number | undefined;
       /**
+       * The latest update the host refused, which every later update review reads, so Guardian
+       * can let the minter recommend a new build for a change this build can't make.
+       */
+      let refusedUpdate: PendingTaskUpdate["refusedUpdate"];
+      /**
        * The change of the site, the login or the effect the gate last refused until the caller
        * confirms it, which the agent's questions are reviewed with until a confirmed update
        * applies. A takeover forgets it: the gate records it again when the update comes back.
@@ -4994,6 +4999,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               ...(dependencies.siteMoveUnsupported === true
                 ? { siteMoveUnsupported: true as const }
                 : {}),
+              // And that another login here can only be a new build.
+              ...(dependencies.loginSwitchUnsupported === true
+                ? { loginSwitchUnsupported: true as const }
+                : {}),
+              ...(refusedUpdate === undefined ? {} : { refusedUpdate }),
             },
             {
               text: (text) => screenMintText(dependencies, text),
@@ -5112,6 +5122,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             // harness's refusals before review, and one the host failed to apply, are no host
             // check refusing a step.
             refuseByHost({ source: "task_update", reason: taskUpdateRefusalCode(result.reason) });
+            refusedUpdate = {
+              changes: update.changes,
+              reason: taskUpdateRefusalCode(result.reason),
+            };
             return yield* heldTaskUpdate("update_refused", {
               reason: result.reason,
               notice: yield* screenMintText(dependencies, result.notice),
