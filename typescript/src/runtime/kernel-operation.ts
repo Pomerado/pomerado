@@ -227,7 +227,8 @@ export interface KernelOperationContext<
    * order. The mark reads `sent` from then on, even if the call fails, because the site may
    * already have the request. An offline run ignores it. During maintenance, a step the original
    * confirmed, or sent without this run's read-back finding it missing, throws `CommitAlreadySent`
-   * before its execute call.
+   * before its execute call. Once the caller answered a question that passes `order`, a step in
+   * `write.settings` not sent by then throws `OperationFailure` before its mark.
    */
   readonly enteringCommit: (name: string) => void;
   /**
@@ -1219,7 +1220,7 @@ export const runKernelScript = <Input, EncodedInput, Output, EncodedOutput>(
           enteringCommit: (name) => {
             if (sentAtConfirm !== undefined && settings.includes(name) && !sentAtConfirm.has(name))
               throw new OperationFailure(
-                `The setting step "${name}" comes after the caller answered the purchase confirm: ask that confirm right before the commit that pays, once every setting is saved.`,
+                `The setting step "${name}" comes after the caller answered a question that passes an order: pass \`order\` only on the confirm right before the commit that pays, once every setting is saved.`,
               );
             context.enteringCommit(name);
             putBack.delete(name);

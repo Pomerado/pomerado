@@ -718,8 +718,8 @@ An out-of-scope paid upsell is declined, as above. A safety default
 (core skill) is neither: never ask about it, and the script turns it off. An
 account-specific value, such as a passenger, loyalty number, saved card, address or
 account ID, is a free-form input, never an enum member, example or default in the
-public schema (core's input schema rules). The last choice or confirm asked before a commit that
-buys or pays, once the page shows that commit's items and total, passes `order` (the caller-input
+public schema (core's input schema rules). Only the last choice or confirm asked before a commit
+that buys or pays, once the page shows that commit's items and total, passes `order` (the caller-input
 skill). When you change a script whose last such question passes none, add it, whatever the change
 is for. Ask it right before that commit, once every step in `write.settings` and every other step
 that can change the items or total has run.
