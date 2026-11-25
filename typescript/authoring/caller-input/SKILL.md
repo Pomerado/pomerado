@@ -120,8 +120,8 @@ separately are both applied as given, even when they're far apart.
    - A write whose steps may have changed the site and then failed or could not confirm the
      change: let it end as a possible change, which is never retried. Never throw
      `InvalidInput` or `InputNotApplied` to make it look untouched (writes skill).
-   - A control the tool could not find, open or read, or a page that changed: `OperationFailure`,
-     never `InvalidInput` or `InputNotApplied`.
+   - A control the site has but the tool could not find, open or read, or a page that changed:
+     `OperationFailure`, never `InvalidInput` or `InputNotApplied`.
    - Prefer a fast refusal for an item the site has no record of. A tool that takes an item's
      id, key or URL, such as a product, listing, stock or order number, treats the site's own
      not-found or no-results page for that value as `InvalidInput`, with `field` that input and
