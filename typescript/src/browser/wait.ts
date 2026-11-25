@@ -641,10 +641,9 @@ const outcomeWaitSite = (() => {
 ${siteMessageCode}
   // Whether a message says a success: words of one, and none of an error, a refusal, a decline
   // or a negation. Styling alone never does.
-  const negation = /\b(?:not|no|never)\b|n't\b/i;
   const succeeds = (message) =>
     successWords.test(message.text) &&
-    !(saysError(message.text) || saysRefusal(message.text) || openWords.test(message.text) || negation.test(message.text));
+    !(saysError(message.text) || saysRefusal(message.text) || openWords.test(message.text) || /\b(?:not|no|never)\b|n't\b/i.test(message.text));
   // Whether a message refuses only as a form's own check of a field does, such as "required" or
   // "please select": no words of an error, a decline or another choice, and none of a refusal once
   // a field check's are left out.
@@ -652,20 +651,7 @@ ${siteMessageCode}
   const fieldCheckOnly = (text) =>
     !saysError(text) && !openWords.test(text) && !/\b(?:another|different|later)\b/i.test(text) &&
     !saysRefusal(words(text).replace(fieldCheckWords, " "));
-  // Whether a confirmation's whole text, past a beacon, says only that the write is done: at most
-  // 20 words, apostrophes inside them, at least one a done word, and each a done word, a thing
-  // done, a few plain words around them, a number other than 0, or a label of the site's domain,
-  // such as its name, never one letter. Any other word, of a request, a payment, a hold or a
-  // negation such as "can't", leaves it unclear.
-  const doneWords = ["placed", "confirmed", "booked", "reserved", "received", "scheduled", "complete", "completed", "success", "successful", "successfully", "thank", "thanks"];
-  const doneVocabulary = new Set([...doneWords, "order", "booking", "reservation", "table", "appointment",
-    "your", "you", "you're", "we", "we've", "is", "has", "been", "have", "now", "all", "set", "the", "an", "our", "for"]);
-  const confirms = (text, site) => {
-    const words = text.toLowerCase().split(/[^\p{L}\p{N}'’ʼ\x60#]+/u).filter((word) => word !== "").map((word) => word.replace(/[’ʼ\x60]/g, "'"));
-    return words.length <= 20 && words.some((word) => doneWords.includes(word)) && words.every((word) => !/^\p{L}$/u.test(word) &&
-      (doneVocabulary.has(word) || /^#?0*[1-9]\d*$/.test(word) || site.split(".").includes(word)));
-  };
-  return { saysError, succeeds, confirms, fieldCheckOnly, messages, messagesInPage, read: (page) => page.locator(messages).evaluateAll(messagesInPage), messageCounts, judgeMessages };
+  return { saysError, succeeds, fieldCheckOnly, messages, messagesInPage, read: (page) => page.locator(messages).evaluateAll(messagesInPage), messageCounts, judgeMessages };
 })();
 // Other sites' hosts whose requests are a bot vendor's, a captcha's or an analytics service's
 // beacons, never a site's write: each host and those below it, * one label, and with a path, only
@@ -756,8 +742,8 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
       if (committing) {
         const before = await waitBounded(outcomeWaitSite.read(page).catch(() => undefined), 1000);
         if (before !== undefined) state.messagesBefore = outcomeWaitSite.messageCounts(before);
-        // A request that may write, to any host, sent from here on may still save the commit while
-        // it has no answer, and a server error to one may have come after the commit saved: as
+        // A request that may write, to any host but another site's beacon one (writeOpen), sent from
+        // here on may still save the commit while it has no answer, and a server error to one may have come after the commit saved: as
         // confirmCommit reads one, the commit is then unclear, never refused.
         const writes = (request) => !["GET", "HEAD", "OPTIONS"].includes(request.method());
         const sent = (request) => {
@@ -822,8 +808,6 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
         if (waitContextLost(error)) return undefined;
         throw error;
       }));
-    // Whether a request that may write leaves the commit unclear: one unanswered, or a server error.
-    const writeOpen = () => state.serverError || state.unanswered.size > 0;
     // The page's site at the click, the code's siteDomain or else a guess from its host. A page
     // with none, such as about:blank, has no other site's request.
     const siteAtClick = options.siteDomain ?? (() => {
@@ -833,25 +817,24 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
         return "";
       }
     })();
-    // Whether every request that may write still unanswered went to another site's beacon host,
-    // and none got a server error.
-    const beaconsOnly = () => siteAtClick !== "" && !state.serverError && [...state.unanswered].every((request) => {
+    // Whether a request went to another site's beacon host, which never carries the site's write.
+    const otherSitesBeacon = (request) => {
       try {
         const url = new URL(request.url());
-        return url.hostname !== siteAtClick && !url.hostname.endsWith("." + siteAtClick) && outcomeWaitBeacon(url);
+        return siteAtClick !== "" && url.hostname !== siteAtClick && !url.hostname.endsWith("." + siteAtClick) && outcomeWaitBeacon(url);
       } catch {
         return false;
       }
-    });
+    };
+    // Whether a request that may write leaves the commit unclear: one unanswered, other than another
+    // site's beacon, or a server error.
+    const writeOpen = () => state.serverError || [...state.unanswered].some((request) => !otherSitesBeacon(request));
     // Whether an outcome is the site's message, as a refusal is, unless it says a success: fields
     // marked invalid, a native dialog, an announcement, or an element that is, holds or sits in a
     // dialog or one of the site's messages as confirmCommit reads them, never a control or a frame.
     // An element gone since the look, one whose text can't be read yet, or a page that can't tell,
-    // counts. While only other sites' beacons are unanswered (beacons true), an element doesn't
-    // when its outermost dialog, else itself, read whole, says only that the write is done
-    // (confirms), holds nothing that read can't see, and the page shows no alert or error-styled
-    // message with text that is new since the click.
-    const siteMessage = async (candidate, beacons) => {
+    // counts.
+    const siteMessage = async (candidate) => {
       if (candidate.kind === "invalid") return true;
       if (candidate.kind === "dialog" || candidate.kind === "announced") {
         const text = candidate.kind === "dialog" ? events.hit(candidate.name)?.evidence?.message : state.announcedText.get(candidate.name);
@@ -873,42 +856,6 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
       ));
       if (shown === undefined || placed === undefined || placed.count === 0) return true;
       if (!placed.inMessage || placed.control) return false;
-      if (beacons) {
-        // In one page call: each element's outermost dialog, else the element, read whole; whether
-        // it holds text that read can't see, a frame or object that shows or a shadow root with
-        // text; and the alerts and error-styled messages with text the page shows.
-        const seen = await read(elements.evaluateAll(
-          (elements, messages) => {
-            const text = (node) => String(node.innerText ?? node.textContent ?? "");
-            const shows = (node) => typeof node.checkVisibility !== "function" || node.checkVisibility({ visibilityProperty: true, opacityProperty: true });
-            const arounds = elements.map((element) => {
-              let around = element;
-              for (let dialog = element.closest('[role="dialog"], dialog'); dialog !== null; dialog = dialog.parentElement?.closest('[role="dialog"], dialog') ?? null)
-                around = dialog;
-              return around;
-            });
-            return {
-              texts: arounds.map(text),
-              unread: arounds.some((around) => [around, ...around.querySelectorAll("*")].some((node) =>
-                (node.matches("iframe, frame, object, embed") && shows(node)) || (node.shadowRoot?.textContent ?? "").trim() !== "")),
-              messages: [...document.querySelectorAll(messages)].filter((message) => text(message).trim() !== "" && shows(message))
-                .map((message) => text(message).replace(/\s+/g, " ").trim().slice(0, 500).toLowerCase()),
-            };
-          },
-          outcomeWaitSite.messages,
-        ));
-        // Messages the page showed before the click, as the refusal reading counts them, don't
-        // hold it; one more of a text, or any when those couldn't be read, does.
-        const before = new Map(state.messagesBefore ?? []);
-        const newMessage = (text) => {
-          const left = before.get(text) ?? 0;
-          before.set(text, left - 1);
-          return left <= 0;
-        };
-        if (seen !== undefined && !seen.unread && seen.texts.length > 0 && !seen.messages.some(newMessage) &&
-            seen.texts.every((text) => outcomeWaitSite.confirms(text, siteAtClick)))
-          return false;
-      }
       return shown.length === 0 || !shown.every(outcomeWaitSite.succeeds);
     };
     // When a site's message first showed while a request that may write left the commit unclear.
@@ -1034,7 +981,7 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
         // After a commit's click, the site's message may be its refusal: while a request that may
         // write has no answer, it waits for one, up to noProgressMs, and decides as before once
         // answered. With none in time, or after a server error to one, the commit is unclear.
-        if (committing && writeOpen() && (await siteMessage(shown, beaconsOnly()))) {
+        if (committing && writeOpen() && (await siteMessage(shown))) {
           heldSince ??= now;
           if (!state.serverError && now - heldSince < noProgressMs && now < until) {
             await waitSleep(100);
@@ -1599,30 +1546,21 @@ const waitForChange = async (fields, options = {}) => {
  * - `outcome_unknown`, when no outcome shows and the page made no progress for `noProgressMs`: a
  *   challenge, the site's error or a layout the code does not handle, never slowness. Also, after a
  *   commit's click (below), when an outcome that is the site's message shows while a request that
- *   may write, to any host, sent since the click, has no answer: fields marked invalid, a dialog, an
+ *   may write, sent since the click, has no answer: fields marked invalid, a dialog, an
  *   announcement, or an element, not a control or a frame, that is, holds or sits in a dialog, an
- *   alert or an error-styled message, unless its words say a success. While every such request
- *   went to a bot vendor's, a captcha's or an analytics service's host on another site than the
- *   page's at the click (`siteDomain`, else a guess from its host), and none got a server error, an
- *   element decides at once when its outermost dialog, else the element, read whole in one page
- *   call, says only that the write is done: at most 20 words, at least one a done word such as
- *   booked, placed, confirmed or thank, and each a done word, a thing done such as order or
- *   table, one of a few plain words such as your or now, a number other than 0, or a label of the
- *   site's domain, as "Your table is reserved. Thank you!" or "Order #48210375 placed" do. It holds
- *   when any other word shows, such as a request, a payment, a hold, a negation or a button's
- *   words, when the dialog holds a frame or object that shows or a shadow root with text, and when
- *   the page shows an alert or error-styled message with text that is new since the click. A
- *   request to any other host, the page's own site or a payment service's included, holds it as
- *   before. Such an outcome waits up to `noProgressMs` for the answer and then decides as before,
- *   and fails so, with `outcome` naming it, when none comes in time, or at once after a server
- *   error to such a request.
+ *   alert or an error-styled message, unless its words say a success. Such an outcome waits up to
+ *   `noProgressMs` for the answer and then decides as before, and fails so, with `outcome` naming
+ *   it, when none comes in time, or at once after a server error to such a request. A request to
+ *   a bot vendor's, a captcha's or an analytics service's beacon host on another site than the
+ *   page's at the click (`siteDomain`, else a guess from its host) never carries the write, so it
+ *   doesn't count: with only those unanswered, the outcome decides as with none.
  * - `outcome_refused`, in place of `outcome_unknown`, when the wait's `action` is a commit's click
  *   (the call's first wait, with an `action`, in the call the script sends right after its
  *   `enteringCommit`, which the runtime declares as `__pomeradoCommitting`) and the page shows a
  *   message new since the click that `confirmCommit` judges not done from, or, with a dialog
  *   outcome named, a native dialog no outcome names says the write failed, as `confirmCommit` reads
  *   one. A message that refuses only as a form's own check of a field does, such as "required" or
- *   "please select", is not the site's refusal. A request that may write, to any host, sent since the click, keeps it `outcome_unknown`
+ *   "please select", is not the site's refusal. A request that may write sent since the click, other than another site's beacon, keeps it `outcome_unknown`
  *   while it has no answer, or once it got a server error. Its `evidence` has the site's words:
  *   `messages`, or the dialog's `type` and `message`. The runtime then puts the step back unsent,
  *   as `notCommitted(name, { siteRefused: true })` does. The wait takes its `action` for the commit's

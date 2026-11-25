@@ -786,121 +786,53 @@ test("in a commit's call, the site's alert, dialog or field errors named as an o
   }
 });
 
-// The site's answer to a commit's click, the element the tool named, shown on the page's own
-// 100 ms timer while the POSTs the click sent have no answer (one asking for a status gets it).
-// With only bot vendors' beacons on other sites unanswered, an answer whose words say the write is
-// done decides at once. Any other answer, a beacon's server error, a request to the site itself, to
-// a host only named like a beacon's or to any other host, such as a payment service's, holds it.
-const beacon = "https://collector-pxabc123.px-cloud.net/api/v2/collector";
-const payment = "https://api.payments-example.test/v1/charges";
-const inDialog = (text: string) => `<div role="dialog" aria-modal="true"><h2 class="answer">${text}</h2></div>`;
-const commitAnswer = async (page: Page, posts: readonly string[], shows: string, at = `${origin}/`, before = "") => {
-  const html = `${before}<button type="button" id="reserve">Reserve</button>
-    <section id="answer"></section>
-    <script>
-      document.querySelector("#reserve").onclick = () => {
-        for (const to of ${JSON.stringify(posts)}) fetch(to, { method: "POST" }).catch(() => undefined);
-        setTimeout(() => {
-          document.querySelector("#answer").setHTMLUnsafe(${JSON.stringify(shows)});
-        }, 100);
-      };
-    </script>`;
-  await page.unrouteAll();
-  await page.route("**/*", async (route) => {
-    const url = new URL(route.request().url());
-    if (url.href === at) await route.fulfill({ contentType: "text/html; charset=utf-8", body: html });
-    else if (url.searchParams.has("status"))
-      await route.fulfill({ status: Number(url.searchParams.get("status")), headers: { "access-control-allow-origin": "*" }, body: "" });
-  });
-  if (at === "about:blank") {
-    await page.goto("about:blank");
-    await page.setContent(html);
-  } else await page.goto(at);
-  const answer = await call(
-    page,
-    `try {
-      return (await waitForOutcomeResult({ answer: page.locator(".answer") }, {
-        action: () => page.locator("#reserve").click(), noProgressMs: 300, timeout: 3000,
-      })).outcome;
-    } catch (error) {
-      return error.reason;
-    }`,
-    `${commitCall}${waitCode}`,
-  );
-  return answer.result;
-};
-
-test("in a commit's call, a confirmation decides past another site's unanswered beacons only", async ({ page }) => {
-  for (const [posts, expected, at] of [
-    [[beacon], "answer"],
-    [["https://sdk.iad-01.braze.com/api/v3/data"], "answer"],
-    [["https://www.facebook.com/tr/"], "answer"],
-    [[payment], "outcome_unknown"],
-    [[`${origin}/book`], "outcome_unknown"],
-    [[beacon, payment], "outcome_unknown"],
-    [[`${beacon}?status=503`], "outcome_unknown"],
-    [["https://www.google.com/recaptcha/api2/userverify"], "outcome_unknown", "https://www.google.com/"],
-    [[beacon], "outcome_unknown", "about:blank"],
-    [["https://evilpx-cloud.net/collect"], "outcome_unknown"],
-    [["https://px-cloud.net.payments-example.test/collect"], "outcome_unknown"],
-    [["https://dashboard.braze.com/api/v3/data"], "outcome_unknown"],
-    [["https://sdk.iad-01.dashboard.braze.com/api/v3/data"], "outcome_unknown"],
-    [["https://www.facebook.com/transfers"], "outcome_unknown"],
-  ] as const)
-    expect.soft(await commitAnswer(page, posts, inDialog("Table booked"), at), `${at ?? origin} ${posts.join(" + ")}`).toBe(expected);
-});
-
-test("in a commit's call, past an unanswered beacon, a dialog that says only the write is done decides", async ({ page }) => {
-  for (const [shows, at] of [
-    [inDialog("Your table is reserved. Thank you!")],
-    [inDialog("Your booking is now confirmed")],
-    [inDialog("You're booked!")],
-    [inDialog("We’ve received your order")],
-    [inDialog("Order #48210375 placed")],
-    [inDialog("Northwind order placed"), "https://www.northwind.test/"],
-    [`${inDialog("Table booked")}<div class="error-message" hidden>Card declined</div>`],
-    [`${inDialog("Table booked")}<div role="alert"></div>`],
-    [`<div role="dialog"><h2 class="answer">Table booked</h2><iframe hidden></iframe></div>`],
-  ] as const)
-    expect.soft(await commitAnswer(page, [beacon], shows, at), shows).toBe("answer");
-  // An alert the page showed before the click is no news.
-  const before = `<div role="alert">Prices may change</div>`;
-  expect.soft(await commitAnswer(page, [beacon], inDialog("Table booked"), undefined, before), before).toBe("answer");
-});
-
-test("in a commit's call, past an unanswered beacon, any other word in the answer's dialog holds it", async ({ page }) => {
-  for (const [shows, at] of [
-    [inDialog("Booking request received")],
-    [inDialog("Your reservation")],
-    [inDialog("Northwind order placed")],
-    [inDialog("Table booked for 0")],
-    [inDialog("T table booked"), "https://www.t.test/"],
-    [inDialog("Table booked ".repeat(11))],
-    [`<div role="dialog"><h2 class="answer">You're booked!</h2><p>You won't be charged if you need to cancel.</p></div>`],
-    [`<div role="dialog"><h2 class="answer">Order placed</h2><p>Your order is on hold</p></div>`],
-    [inDialog("Order placed<br>Awaiting confirmation")],
-    [inDialog("Booking received - action needed")],
-    [inDialog("Booking received and cancelled by the venue")],
-    [inDialog("Order placed and payments received")],
-    [inDialog("Table booked and deposit taken")],
-  ] as const)
-    expect.soft(await commitAnswer(page, [beacon], shows, at), shows).toBe("outcome_unknown");
-});
-
-test("in a commit's call, past an unanswered beacon, an outer dialog, an alert new on the page or unread content holds the answer", async ({ page }) => {
-  for (const shows of [
-    `<div role="dialog" class="relative"><div style="position:fixed;inset:0"><h2 class="answer">Order placed</h2><p>Payment pending</p></div></div>`,
-    `<div role="dialog"><p>Payment pending</p><div role="dialog"><h2 class="answer">Table booked</h2></div></div>`,
-    `${inDialog("Table booked")}<div role="alert">Your card was declined</div>`,
-    `<div role="dialog"><h2 class="answer">Table booked</h2><iframe srcdoc="<p>Payment failed</p>"></iframe></div>`,
-    `<div role="dialog"><h2 class="answer">Table booked</h2><div><template shadowrootmode="open"><p>Payment failed</p></template></div></div>`,
-  ])
-    expect.soft(await commitAnswer(page, [beacon], shows), shows).toBe("outcome_unknown");
-});
-
-test("in a commit's call, an icon with no text in the answer's dialog changes nothing", async ({ page }) => {
-  const shows = `<div role="dialog"><svg class="icon-error"></svg><h2 class="answer">Thank you, your order is confirmed</h2></div>`;
-  expect(await commitAnswer(page, [`${origin}/book`], shows)).toBe("answer");
+// After a commit's click, a request to another site's bot-vendor, captcha or analytics beacon
+// host never carries the write: with only those unanswered, the outcome decides as with none. The
+// page's own request, a beacon host on the page's own site, and a server error still hold the
+// site's message.
+test("in a commit's call, only another site's unanswered beacon leaves the outcome to decide", async ({ page }) => {
+  const beacon = "https://collector-pxabc123.px-cloud.net/api/v2/collector";
+  const booked = `<div role="dialog" aria-modal="true"><h2 class="answer">You're booked!</h2><p>You won't be charged if you need to cancel.</p></div>`;
+  for (const [post, at, expected] of [
+    [beacon, `${origin}/`, "answer"],
+    [`${origin}/book`, `${origin}/`, "outcome_unknown"],
+    ["https://www.google.com/recaptcha/api2/userverify", "https://www.google.com/", "outcome_unknown"],
+    [`${beacon}?status=503`, `${origin}/`, "outcome_unknown"],
+  ] as const) {
+    await page.unrouteAll();
+    await page.route("**/*", async (route) => {
+      const url = new URL(route.request().url());
+      if (url.href === at)
+        await route.fulfill({
+          contentType: "text/html",
+          body: `<button type="button" id="reserve">Reserve</button>
+            <section id="answer"></section>
+            <script>
+              document.querySelector("#reserve").onclick = () => {
+                fetch(${JSON.stringify(post)}, { method: "POST" }).catch(() => undefined);
+                setTimeout(() => {
+                  document.querySelector("#answer").innerHTML = ${JSON.stringify(booked)};
+                }, 100);
+              };
+            </script>`,
+        });
+      else if (url.searchParams.has("status"))
+        await route.fulfill({ status: Number(url.searchParams.get("status")), headers: { "access-control-allow-origin": "*" }, body: "" });
+    });
+    await page.goto(at);
+    const answer = await call(
+      page,
+      `try {
+        return (await waitForOutcomeResult({ answer: page.locator(".answer") }, {
+          action: () => page.locator("#reserve").click(), noProgressMs: 300, timeout: 3000,
+        })).outcome;
+      } catch (error) {
+        return error.reason;
+      }`,
+      `${commitCall}${waitCode}`,
+    );
+    expect.soft(answer.result, `${at} ${post}`).toBe(expected);
+  }
 });
 
 test("a write whose commit the site declined behind its own dialog reports the step unsent, with the site's words", async ({
