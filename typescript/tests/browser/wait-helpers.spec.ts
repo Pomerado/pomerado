@@ -844,6 +844,7 @@ test("in a commit's call, a confirmation decides past another site's unanswered 
     [["https://evilpx-cloud.net/collect"], "outcome_unknown"],
     [["https://px-cloud.net.payments-example.test/collect"], "outcome_unknown"],
     [["https://dashboard.braze.com/api/v3/data"], "outcome_unknown"],
+    [["https://sdk.iad-01.dashboard.braze.com/api/v3/data"], "outcome_unknown"],
     [["https://www.facebook.com/transfers"], "outcome_unknown"],
   ] as const)
     expect.soft(await commitAnswer(page, posts, inDialog("Table booked"), at), `${at ?? origin} ${posts.join(" + ")}`).toBe(expected);
