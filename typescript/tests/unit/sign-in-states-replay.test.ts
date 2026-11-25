@@ -285,6 +285,7 @@ const replay = (
   site: ReturnType<typeof scriptedSite>,
   library: SignInStates,
   options: {
+    readonly username?: string;
     readonly password?: string;
     readonly valueFree?: boolean;
     /** The host's read of the site's answer: a fixed answer, or one read on each call. */
@@ -348,7 +349,7 @@ const replay = (
         credentials: options.valueFree
           ? undefined
           : {
-              username: "owner@example.test",
+              username: options.username ?? "owner@example.test",
               ...(options.loginWay?.way === "code" ? {} : { password: options.password ?? "secret-1" }),
             },
         ask,
@@ -3422,6 +3423,32 @@ it("orders no state of one look by a password login's way once it typed its pass
   const ended = await replay(site, library, { loginWay: { way: "password", kind: "email" } });
   expect(ended).toMatchObject({ outcome: "signed_in" });
   expect(site.clicks).toEqual(["#continue", "#go", "#verify"]);
+});
+
+// A username typed as a guess into an email-or-phone box is no identifier of the login, so the
+// host binds none, though the screen's boxes are typed one at a time.
+it("binds no username guessed into an email-or-phone box typed beside the password", async () => {
+  const start: Screen = {
+    path: "/sign-in",
+    boxes: [{ selector: "#identifier", kind: "identifier" }, { selector: "#password", kind: "password" }],
+    buttons: ["#sign-in"],
+  };
+  const identifier = { selector: "#identifier", accepts: ["email" as const, "phone" as const] };
+  const site = scriptedSite({ start }, () => "home");
+  const bound: unknown[] = [];
+  const confirm: typeof site.hooks.confirm = (indicator, identifiers, ...rest) => {
+    bound.push(identifiers);
+    return site.hooks.confirm(indicator, identifiers, ...rest);
+  };
+  const library = libraryOf([
+    { fingerprint: arrival(start), step: stepAt("/sign-in", [identifier, password], "#sign-in") },
+  ]);
+  const ended = await replay({ ...site, hooks: { ...site.hooks, confirm } }, library, {
+    username: "4155550142",
+  });
+  expect(ended).toMatchObject({ outcome: "signed_in", asked: [] });
+  expect(site.fills).toEqual(["email", "password"]);
+  expect(bound).toEqual([{}]);
 });
 
 it("takes, for a code login whose own route went through a password state of one look, the code state of that look", async () => {

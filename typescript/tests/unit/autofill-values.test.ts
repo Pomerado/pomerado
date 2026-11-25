@@ -353,6 +353,38 @@ it("asks for the phone number of a login whose username is all digits, and fills
   expect(registered).toEqual([]);
 });
 
+// A field for an email address or phone number often takes a username too, though its words name
+// only those, so a login that holds neither types its own username there; once the site refuses
+// it, the owner is asked for either, as if it had never been typed.
+it("types a username-only login's username into an email-or-phone field, and asks for either once the site refuses it", async () => {
+  const { autofill } = values();
+  const asked: string[] = [];
+  const ask: InputAsker = (request) =>
+    Effect.suspend(() => {
+      asked.push(...request.questions.map((question) => question.id));
+      return Effect.fail(new InputRequestFailure({ code: "NoResponse" }));
+    });
+  const resolved = autofill.resolve(
+    { fields: [{ selector: "#identifier", accepts: ["email", "phone"] }] },
+    { username: "4155550142", password: "synthetic-password" },
+  );
+  const held = login({ username: "4155550142" }, ask);
+  expect(await Effect.runPromise(autofill.valuesFor(resolved, held))).toMatchObject({
+    values: ["4155550142"],
+    step: { fields: [{ slot: "email", guessed: true }] },
+  });
+  expect(asked).toEqual([]);
+  const refused = {
+    ...held,
+    rejectedValues: { email: new Set(["4155550142"]) },
+    correctionRequests: {},
+  };
+  expect(await Effect.runPromise(autofill.valuesFor(resolved, refused))).not.toHaveProperty(
+    "values",
+  );
+  expect(asked).toEqual(["email_or_phone"]);
+});
+
 it("refuses a repeated manual code on resume without asking indefinitely", async () => {
   const { autofill } = values();
   let asked = 0;

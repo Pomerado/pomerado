@@ -66,7 +66,7 @@ import {
 import { admitScreen, noteExactSent } from "./autofill-replay-workspace.js";
 import { codeRowFields, isCodeRowByPlace } from "./autofill-unrecorded-code.js";
 import { isExtraSecret, isIdentifier, provesLogin, screenSubmit, submittedLoginProof } from "./autofill-state.js";
-import type { AutofillLogin } from "./autofill-values.js";
+import { type AutofillLogin, guessRefused } from "./autofill-values.js";
 import { workspaceHost } from "./workspace-origin.js";
 
 // A sign-in replayed from a library of states, never from a recipe: the page is looked at again
@@ -1798,7 +1798,12 @@ const retypeExtras = <E extends YieldableError, V extends string, L extends Auto
       full.popup,
     );
     const step: AutofillStep = { ...full, fields: [...fields, ...emptied] };
-    const corrected = new Set([...slots, ...emptied.map((field) => field.slot)]);
+    // A field whose only refusal is a guessed username asks as before, as no correction.
+    const { credentials, answers } = run.input;
+    const asCorrected = slots.filter(
+      (slot) => !guessRefused(slot, replay.rejectedValues[slot], credentials, answers?.given.current ?? {}),
+    );
+    const corrected = new Set([...asCorrected, ...emptied.map((field) => field.slot)]);
     const here = yield* shownOn(run, acted.acted, step);
     const failed =
       typeof here === "string" ? "extra_rejected" : yield* replay.runStep(step, here, undefined, false, corrected);
@@ -2480,6 +2485,7 @@ const heldFor = <E extends YieldableError, V extends string, L extends AutofillL
     const fields = typing.fields.map((field, index) => ({
       ...field,
       slot: held.step.fields[index]?.slot ?? field.slot,
+      ...(held.step.fields[index]?.guessed === true ? { guessed: true as const } : {}),
     }));
     return { ...held, step: { ...typing, fields } } satisfies StepValues;
   });

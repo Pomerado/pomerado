@@ -649,13 +649,14 @@ export const makeSignInRecorder = (input: {
       );
       if (named !== undefined) return shown(named);
       // The field the login's username went into is its primary identifier; a private
-      // identifier never is one.
+      // identifier never is one, nor a field it was guessed into.
       for (const [index, field] of step.fields.entries())
         if (
           isIdentifier(field.slot) &&
           field.slot !== "private_identifier" &&
           held !== undefined &&
-          filled[index] === held.username
+          filled[index] === held.username &&
+          field.guessed !== true
         )
           h.autofillPrimaryIdentifierKind.current ??= field.slot;
       const previous = { ...h.autofillSentValues.current };

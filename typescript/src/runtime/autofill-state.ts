@@ -418,8 +418,11 @@ export const isExtraSecret = (
  */
 export const submitFilled = (state: AutofillSignInState): readonly AutofillSlot[] => {
   const moved = [...state.filled.keys()];
+  // A username guessed into an email or phone field is none a host binds (`AutofillField.guessed`).
+  const guessed = state.steps.at(-1)?.fields.flatMap((field) => (field.guessed ? [field.slot] : []));
   for (const [slot, value] of state.filled) {
-    if (slot === "email" || slot === "phone") state.sentIdentifiers[slot] = value;
+    if ((slot === "email" || slot === "phone") && !guessed?.includes(slot))
+      state.sentIdentifiers[slot] = value;
     if (slot === "account_number") state.sentIdentifiers.accountNumber = value;
     state.submittedSlots.add(slot);
   }
