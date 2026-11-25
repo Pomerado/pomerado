@@ -786,18 +786,32 @@ test("in a commit's call, the site's alert, dialog or field errors named as an o
   }
 });
 
-// A confirmation in a dialog whose words the wait doesn't read as a success, such as "booked",
-// shown while another site's request that may write, such as a bot vendor's beacon, has no answer,
-// decides at once. The site's own such request still holds it, as before.
-test("in a commit's call, only the site's own unanswered request that may write holds a confirmation in a dialog", async ({
-  page,
-}) => {
-  for (const [to, expected] of [
-    ["https://collector.example-beacons.test/collect", "booked"],
-    [`${origin}/book`, "outcome_unknown"],
+// The site's answer to a commit, the element the tool named, shown on a timer of the page's own
+// while a request that may write has no answer. With only a bot vendor's beacon on another site
+// unanswered, an answer whose words say the write is done decides at once; any other answer, or a
+// request to the site itself or to any other host, such as a payment service's, still holds it.
+test("in a commit's call, only another site's beacon left unanswered lets a confirmation decide", async ({ page }) => {
+  const beacon = "https://collector-pxabc123.px-cloud.net/api/v2/collector";
+  const payment = "https://api.payments-example.test/v1/charges";
+  const dialog = (text: string) => `<div role="dialog" aria-modal="true"><h2 class="answer">${text}</h2></div>`;
+  const booked = dialog("Table booked");
+  for (const [to, shows, expected] of [
+    [beacon, booked, "answer"],
+    [beacon, dialog("Your table is reserved. Thank you!"), "answer"],
+    [payment, booked, "outcome_unknown"],
+    [`${origin}/book`, booked, "outcome_unknown"],
+    [payment, dialog("Order placed"), "outcome_unknown"],
+    ...["Payment unsuccessful", "Insufficient funds", "Payment timed out", "Pago rechazado", "Your bank didn't approve this payment"].flatMap(
+      (text) => [[payment, dialog(text), "outcome_unknown"], [beacon, dialog(text), "outcome_unknown"]] as const,
+    ),
+    [beacon, dialog("Your table was not booked"), "outcome_unknown"],
+    [beacon, `<div role="alert"><p class="answer">Table booked</p></div>`, "outcome_unknown"],
+    [payment, `<div role="alert"><p class="answer">Table booked</p></div>`, "outcome_unknown"],
+    [beacon, `<div class="error-box"><div><div role="dialog"><p class="answer">Table booked</p></div></div></div>`, "outcome_unknown"],
+    [payment, `<div class="error-box"><div><div role="dialog"><p class="answer">Table booked</p></div></div></div>`, "outcome_unknown"],
   ] as const) {
     await page.unrouteAll();
-    await page.route("https://collector.example-beacons.test/**", () => undefined);
+    await page.route(/^https:\/\/(?:collector-pxabc123\.px-cloud\.net|api\.payments-example\.test)\//u, () => undefined);
     await site(
       page,
       `<button type="button" id="reserve">Reserve</button>
@@ -806,7 +820,7 @@ test("in a commit's call, only the site's own unanswered request that may write 
         document.querySelector("#reserve").onclick = () => {
           fetch(${JSON.stringify(to)}, { method: "POST" }).catch(() => undefined);
           setTimeout(() => {
-            document.querySelector("#answer").innerHTML = '<div role="dialog" aria-modal="true"><h2 class="booked">Table booked</h2></div>';
+            document.querySelector("#answer").innerHTML = ${JSON.stringify(shows)};
           }, 100);
         };
       </script>`,
@@ -815,15 +829,15 @@ test("in a commit's call, only the site's own unanswered request that may write 
     const result = await call(
       page,
       `try {
-        return (await waitForOutcomeResult({ booked: page.locator(".booked"), declined: page.getByRole("alert") }, {
-          action: () => page.locator("#reserve").click(), noProgressMs: 1000, timeout: 3000,
+        return (await waitForOutcomeResult({ answer: page.locator(".answer") }, {
+          action: () => page.locator("#reserve").click(), noProgressMs: 600, timeout: 3000,
         })).outcome;
       } catch (error) {
         return error.reason;
       }`,
       `${commitCall}${waitCode}`,
     );
-    expect.soft(result.result, to).toBe(expected);
+    expect.soft(result.result, `${to}: ${shows}`).toBe(expected);
   }
 });
 
