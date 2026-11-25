@@ -786,6 +786,61 @@ test("in a commit's call, the site's alert, dialog or field errors named as an o
   }
 });
 
+// After a commit's click, a request to another site's bot-vendor, captcha or analytics beacon
+// host never carries the write: with only those unanswered, the outcome, or the site's refusal,
+// decides as with none. Any other request, a beacon host on the page's own site or one only named
+// like it, a page with no site, and a server error still hold the site's message or refusal.
+test("in a commit's call, only another site's unanswered beacon leaves the outcome to decide", async ({ page }) => {
+  const beacon = "https://collector-pxabc123.px-cloud.net/api/v2/collector";
+  const payment = "https://api.payments-example.test/v1/charges";
+  const booked = `<div role="dialog" aria-modal="true"><h2 class="answer">You're booked!</h2><p>You won't be charged if you need to cancel.</p></div>`;
+  const refused = `<div role="alert">Payment failed. Please try again.</div>`;
+  for (const [posts, shows, expected, at = `${origin}/`] of [
+    [[beacon], booked, "answer"],
+    [[beacon], refused, "outcome_refused"],
+    [[`${origin}/book`], booked, "outcome_unknown"],
+    [[beacon, payment], booked, "outcome_unknown"],
+    [[beacon, payment], refused, "outcome_unknown"],
+    [[`${beacon}?status=503`], booked, "outcome_unknown"],
+    [["https://www.google.com/recaptcha/api2/userverify"], booked, "outcome_unknown", "https://www.google.com/"],
+    [[beacon], booked, "outcome_unknown", "about:blank"],
+    [["https://evilpx-cloud.net/collect"], booked, "outcome_unknown"],
+    [["https://px-cloud.net.payments-example.test/collect"], booked, "outcome_unknown"],
+  ] as const) {
+    const html = `<button type="button" id="reserve">Reserve</button>
+      <section id="answer"></section>
+      <script>
+        document.querySelector("#reserve").onclick = () => {
+          for (const to of ${JSON.stringify(posts)}) fetch(to, { method: "POST" }).catch(() => undefined);
+          setTimeout(() => {
+            document.querySelector("#answer").innerHTML = ${JSON.stringify(shows)};
+          }, 100);
+        };
+      </script>`;
+    await page.unrouteAll();
+    await page.route("**/*", async (route) => {
+      const url = new URL(route.request().url());
+      if (url.href === at) await route.fulfill({ contentType: "text/html", body: html });
+      else if (url.searchParams.has("status"))
+        await route.fulfill({ status: Number(url.searchParams.get("status")), headers: { "access-control-allow-origin": "*" }, body: "" });
+    });
+    await page.goto(at);
+    if (at === "about:blank") await page.setContent(html);
+    const answer = await call(
+      page,
+      `try {
+        return (await waitForOutcomeResult({ answer: page.locator(".answer") }, {
+          action: () => page.locator("#reserve").click(), noProgressMs: 300, timeout: 3000,
+        })).outcome;
+      } catch (error) {
+        return error.reason;
+      }`,
+      `${commitCall}${waitCode}`,
+    );
+    expect.soft(answer.result, `${at} ${posts.join(" + ")} ${shows}`).toBe(expected);
+  }
+});
+
 test("a write whose commit the site declined behind its own dialog reports the step unsent, with the site's words", async ({
   page,
 }) => {
