@@ -636,6 +636,28 @@ describe("OpenAI reviewer policy and trusted authority", () => {
       expect(policy).toContain(rule);
   });
 
+  // A caller's note to reach an authenticator code by another-ways link was held as a strict
+  // click order: Guardian refused the code the method list already showed, and the link left the
+  // list for a page that ended the sign-in.
+  it("tells Guardian a caller's route to a method names that method", async () => {
+    const requests = readThenDecide({
+      outcome: "allow",
+      rationale: "Controlled source was read.",
+      action: "read",
+    });
+    await Effect.runPromise(
+      makeGuardian(reviewer(markedUpstreamPolicy)).review(pending, readEntrypoint),
+    );
+    const rule =
+      "A caller's instruction that describes how to reach a method names that method: when the screen already lists it, prefer allowing a step that takes it over requiring the route, and prefer escalating for the owner's choice a step that leaves the listed methods instead.";
+    for (const policy of [
+      instructionsOf(requests[0]),
+      guardianExecutionPolicy(otherHost),
+      guardianExecutionPolicy(nativeExecutionEnvironment),
+    ])
+      expect(policy).toContain(rule);
+  });
+
   // A site's own trackers carry caller input off-site and its page saves recent searches, and a
   // host recording gap was read as an order to stop probing. None of these is the source's doing.
   it("tells Guardian page traffic and a recording gap are not the source's effects", async () => {

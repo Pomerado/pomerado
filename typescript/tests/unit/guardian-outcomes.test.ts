@@ -393,6 +393,31 @@ it.each([[[]], [["read plans"]]] as const)(
   },
 );
 
+// The host refused to switch a signed-in build to another login, and Guardian sent back the new
+// build the minter then recommended, as the same task, so the owner's choice of login was lost.
+it("shows a task update review the host's refusal of an earlier update", async () => {
+  const requests = scripted([decision("allow")]);
+  const refusedUpdate = {
+    changes: [{ setting: "login" as const, change: "different_login" as const }],
+    reason: "change_unsupported",
+  };
+  await Effect.runPromise(
+    guardianWith().reviewTaskUpdate(
+      pending,
+      { ...update, changes: refusedUpdate.changes, recommend: "new_mint", refusedUpdate },
+      readSource,
+    ),
+  );
+  const request = reviewRequest(requests[0]) as unknown as {
+    trusted_review: { policy: string };
+    update_review: { refusedUpdate: unknown };
+  };
+  expect(request.update_review.refusedUpdate).toEqual(refusedUpdate);
+  expect(request.trusted_review.policy).toContain(
+    "When update_review.refusedUpdate, a host fact, shows the host refused this same change as change_unsupported, prefer allowing recommend new_mint for it.",
+  );
+});
+
 // The reviews disagreed about an owner's answer: a question review let the agent ask the owner to
 // confirm a step, the next execution review refused the confirmed step, and the task update review
 // refused the update that cited the answer. Every review that weighs an answer now names the same
