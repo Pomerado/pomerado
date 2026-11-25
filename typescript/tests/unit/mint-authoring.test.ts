@@ -1035,7 +1035,7 @@ it("has a write's last question before a commit that pays pass order, in any cha
     " ",
   );
   expect(writes).toContain(
-    "public schema (core's input schema rules). The last choice or confirm asked before a commit that buys or pays, once the page shows that commit's items and total, passes `order` (the caller-input skill). When you change a script whose last such question passes none, add it, whatever the change is for. Ask it right before that commit, once every step that can change the items or total has run. Fill `order` as the checkout shows it,",
+    "public schema (core's input schema rules). The last choice or confirm asked before a commit that buys or pays, once the page shows that commit's items and total, passes `order` (the caller-input skill). When you change a script whose last such question passes none, add it, whatever the change is for. Ask it right before that commit, once every step in `write.settings` and every other step that can change the items or total has run. Fill `order` as the checkout shows it,",
   );
 });
 
@@ -1727,7 +1727,7 @@ it("renders the pinned standalone authoring", async () => {
     ["f41fa0f1d8a91a956965424c426e2760e809296ebdfce1cc22e70083559db21c", "testing"],
     ["ca80679c4488dec4ee85052fb39f1493b6d5f8ca4a5df9b56d10a2e96078e848", "pagination"],
     ["b0220727e7f21e1c5d10101e74996ddb3d2d4e18061ac85c807203ed4ab0f695", "forms"],
-    ["d5cbbfc833f49c936d98aa2ebf0a094ebd71fe810adf5a407286719d9bb9d205", "writes"],
+    ["d17c3bc5380c28a0c77ddb14122f74347393ae16e9cf18b0a3c027d1899a0eb2", "writes"],
     ["c57264580481b348972d0e8d64e70889d7a759783c6ac36e915724739de3fce5", "cart"],
     ["ed37946950ec4ab0e72636474ad359287798b7279d1bf1dce65ae40907e6c34a", "caller-input"],
     ["3573b3f6005645d27cb02a140d3d212ffeb30272c47d05f9851b37824d2beb11", "publication"],

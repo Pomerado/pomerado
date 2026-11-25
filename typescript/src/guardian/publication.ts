@@ -573,10 +573,10 @@ export const publicationWritePathPolicy =
  * and answered, so the site refuses the order after the caller's yes. That question comes right
  * before the commit: a step after the yes that changes the order, such as turning credits off,
  * makes the commit charge what the caller never saw. The runtime refuses a declared setting step
- * saved after that yes (`runKernelScript`); the review finds any other such step.
+ * first saved after that yes (`runKernelScript`); the review finds it, and any other such step.
  */
 export const publicationPurchaseOrderPolicy =
-  "The last declared choice or confirm a write asks before a commit that buys or pays, once the page shows the items and total that commit pays, passes them as `order` to `ask`. One that passes none is a confirmation finding at that `ask`, in a repair too, even in code the repair did not change. A time-limited hold that commit uses, taken only before that choice or confirm, is a confirmation finding at that commit. Apart from taking that hold again, a step between that choice or confirm and that commit that can change its items or total is a confirmation finding at that step, in a repair too, even in code the repair did not change.";
+  "The last declared choice or confirm a write asks before a commit that buys or pays, once the page shows the items and total that commit pays, passes them as `order` to `ask`. One that passes none is a confirmation finding at that `ask`, in a repair too, even in code the repair did not change. A time-limited hold that commit uses, taken only before that choice or confirm, is a confirmation finding at that commit. Apart from taking that hold again and setting again what that reset, a step named in write.settings, or any other step that can change its items or total, between that choice or confirm and that commit is a confirmation finding at that step, in a repair too, even in code the repair did not change.";
 
 /**
  * A choice the caller approved can show a time that moves with the clock, such as an
