@@ -1701,6 +1701,15 @@ it("tells the minter batchFetch backs off on a failed fetch, so it adds no pacin
   );
 });
 
+// A tool that waited for a filter option named after the caller's value timed out when the site
+// offered other options, so its run went to a repair instead of refusing with those options.
+it("has a tool read a filter's options before acting on one named after the caller's value", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  expect((texts.get("caller-input") ?? "").replace(/\s+/g, " ")).toContain(
+    "For a filter or checkbox list, prefer reading the options the control offers before acting on one named after the caller's value, and refuse with those options when the value isn't there.",
+  );
+});
+
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 
 /*
@@ -1729,7 +1738,7 @@ it("renders the pinned standalone authoring", async () => {
     ["b0220727e7f21e1c5d10101e74996ddb3d2d4e18061ac85c807203ed4ab0f695", "forms"],
     ["78c0baac9438aca37bc76f748daaf4e75e14af324913d9f67cbff224d3b16da1", "writes"],
     ["c57264580481b348972d0e8d64e70889d7a759783c6ac36e915724739de3fce5", "cart"],
-    ["631bb19b22880d5b5199ad1784dc85f96df01766da9dd21ce3165695184b7cc2", "caller-input"],
+    ["1b4f256b9d85d7ff371e6f1eefdfadbca9acc4161a938b45fdf771938faac49d", "caller-input"],
     ["07b61ae415889706192db263c00be4635dddb6c7ea0e97017b9b7e53ff1c95a3", "publication"],
     ["257b832d4c786c59dc1589b8df7fa8b5836625366511d990445399c8b164e300", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
