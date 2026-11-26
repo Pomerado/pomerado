@@ -6003,15 +6003,31 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               judged.verdict === "pass";
             // A failure judged by another resultsList whose own output passes by this one was the
             // host's judgment, not a race: the new result replaces it. A next-page case's output is
-            // its page 2, and its new pass shows page 2 moves on from page 1 by this list.
-            const misjudged =
+            // its page 2, judged after this run's page 1, screened alike.
+            const relisted =
               flaky &&
               previous.resultsList !== file.resultsList &&
               typeof before === "object" &&
-              before !== null &&
+              before !== null;
+            const pageOne =
+              relisted && testCase.next_page === true && run.outcome.status === "completed"
+                ? yield* dependencies.projection
+                    .json(run.outcome.output)
+                    .pipe(Effect.orElseSucceed(() => undefined))
+                : undefined;
+            const misjudged =
+              relisted &&
+              (testCase.next_page !== true || pageOne !== undefined) &&
               judgeCase(
                 testCase,
-                { id: run.id, outcome: { status: "completed", output: before }, durationMs: 0 },
+                pageOne === undefined
+                  ? { id: run.id, outcome: { status: "completed", output: before }, durationMs: 0 }
+                  : {
+                      id: run.id,
+                      outcome: { status: "completed", output: pageOne },
+                      followUp: { status: "completed", output: before },
+                      durationMs: 0,
+                    },
                 "list" in shape ? shape.list : undefined,
               ).verdict === "pass";
             if (

@@ -1082,6 +1082,7 @@ it("replaces a next-page failure judged by another resultsList instead of keepin
     },
   );
   expect(record.retired).toEqual([]);
+  expect(record).toMatchObject({ cases: [{ id: "page-2", results: { playwright: { status: "pass" } } }] });
 });
 
 // A challenge or a site block on the rerun tests nothing about the tool, so it neither shows the
