@@ -36,7 +36,9 @@ import {
   Exit,
   FiberSet,
   Option,
+  ParseResult,
   Schema,
+  SchemaAST,
   Scope,
 } from "effect";
 import {
@@ -996,26 +998,38 @@ const safeExecutionEvidence = (evidence: ExecutionEvidence): ExecutionEvidence =
   };
 };
 
+/** The message each of a schema's own checks that refused a decode states: fixed text, no input. */
+const formatReasons = (issue: ParseResult.ParseIssue): readonly string[] => {
+  if (issue._tag === "Refinement" && issue.kind === "Predicate") {
+    const message = Option.getOrUndefined(SchemaAST.getMessageAnnotation(issue.ast))?.(issue);
+    return typeof message === "string" ? [message] : [];
+  }
+  if (issue._tag === "Composite") return [issue.issues].flat().flatMap(formatReasons);
+  return "issue" in issue ? formatReasons(issue.issue) : [];
+};
+
 /**
  * Decodes `input`. A tool request the agent sent, with `request` naming its tool, that fails to
- * decode is the agent's invalid input. Anything else, such as the job's own request, is the host's.
+ * decode is the agent's invalid input, and names the reasons its format's own checks give. Anything
+ * else, such as the job's own request, is the host's.
  */
 const decode = <A, I>(schema: Schema.Schema<A, I>, input: unknown, request?: string) =>
   Schema.decodeUnknown(schema)(input, { onExcessProperty: "error" }).pipe(
-    Effect.mapError(
-      (error) =>
-        new MintFailure({
-          failureDetail: failureDetail(
-            request === undefined ? "mint_host_dependency_failed" : "invalid_input",
-            {
-              operation: "Schema.decodeUnknown",
-              error,
-              ...(request === undefined ? {} : { context: { request } }),
-            },
-          ),
-          code: "InvalidRequest",
-        }),
-    ),
+    Effect.mapError((error) => {
+      const reasons = request === undefined ? [] : [...new Set(formatReasons(error.issue))];
+      return new MintFailure({
+        failureDetail: failureDetail(
+          request === undefined ? "mint_host_dependency_failed" : "invalid_input",
+          {
+            operation: "Schema.decodeUnknown",
+            error,
+            ...(request === undefined ? {} : { context: { request } }),
+          },
+        ),
+        code: "InvalidRequest",
+        ...(reasons.length === 0 ? {} : { formatReasons: reasons }),
+      });
+    }),
   );
 
 /**
