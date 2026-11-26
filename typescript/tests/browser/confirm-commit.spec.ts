@@ -50,14 +50,19 @@ const page = (each: Pick<Case, "extra" | "after" | "click">) => `
   </script>`;
 
 // The commit call: waitCode, the commit paste just before the click's wait, then the check.
-const commitCall = `${waitCode}
+const commitWait = `${waitCode}
   const form = page.getByRole("form", { name: "Edit record" });
   ${confirmCommitCode}
   const answer = await waitForOutcomeResult({
     invalid: { invalid: form },
     saved: { response: { method: "POST", url: "/api/records" } },
-  }, { action: () => page.locator("#save").click(), noProgressMs: 600, timeout: 4000, unchangedMs: 300 });
+  }, { action: () => page.locator("#save").click(), noProgressMs: 600, timeout: 4000, unchangedMs: 300 });`;
+const commitCall = `${commitWait}
   return { outcome: answer.outcome, confirmed: await confirmCommit(answer, page) };`;
+// The same, returning the answer's body beside it.
+const bodyCall = `${commitWait}
+  const confirmed = await confirmCommit(answer, page);
+  return { outcome: answer.outcome, confirmed, body: confirmed.body };`;
 
 const run = async (browserPage: Page, code: string) => {
   const answer = await makeLocalKernel(browserPage).browsers.playwright.execute("session-1", {
@@ -82,7 +87,12 @@ const confirm = async (browserPage: Page, each: Case, code = commitCall) => {
     });
   });
   await browserPage.goto(`${origin}/`);
-  return (await run(browserPage, code)) as { outcome: string; confirmed: Record<string, unknown>; kept?: number | null };
+  return (await run(browserPage, code)) as {
+    outcome: string;
+    confirmed: Record<string, unknown>;
+    kept?: number | null;
+    body?: unknown;
+  };
 };
 
 const json = (value: unknown) => JSON.stringify(value);
@@ -336,6 +346,18 @@ const cases: readonly Case[] = [
     reply: { status: 200, body: json({ hasErrors: true }) },
     expected: notDone,
   },
+  // A challenge or an HTML page is not the site's answer to the write.
+  {
+    name: "an HTML page in answer to a request for JSON is unclear",
+    reply: { status: 200, body: "<!doctype html><title>Just a moment...</title>", contentType: "text/html" },
+    click: `await fetch("/api/records", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });`,
+    expected: unclear,
+  },
+  {
+    name: "a bot check's challenge is unclear",
+    reply: { status: 403, body: "<!doctype html><title>Just a moment...</title>", contentType: "text/html", headers: { "cf-mitigated": "challenge" } },
+    expected: unclear,
+  },
 ];
 
 // The commit call with a dialog outcome, as a write whose site may raise a native alert after its
@@ -537,6 +559,22 @@ test.describe("confirmCommit", () => {
         site.close();
       }
     });
+
+  // The site's reply, so a write reads its new record's id without parsing it again. The call
+  // reads it: an answer returned whole leaves it out, so it carries no more than before.
+  test("a done commit keeps its JSON body, which an answer returned whole leaves out", async ({ page: browserPage }) => {
+    const reply = { status: 200, body: json({ data: { placeOrder: { order: { id: "o-7" } } } }) };
+    const answer = await confirm(browserPage, { name: "", reply, expected: done }, bodyCall);
+    expect(answer.confirmed).toEqual({ ...done, reason: expect.any(String) });
+    expect(answer.body).toEqual({ data: { placeOrder: { order: { id: "o-7" } } } });
+  });
+
+  test("a JSON body over 64 KiB is left out", async ({ page: browserPage }) => {
+    const reply = { status: 200, body: json({ id: "o-7", note: "x".repeat(70_000) }) };
+    const answer = await confirm(browserPage, { name: "", reply, expected: done }, bodyCall);
+    expect(answer.confirmed).toMatchObject(done);
+    expect(answer.body).toBeUndefined();
+  });
 
   test("a body that can't be read in time is unclear", async ({ page: browserPage }) => {
     // The site sends the response's headers at once and its body only later.
