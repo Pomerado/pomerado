@@ -1037,7 +1037,7 @@ describe("the publication policy", () => {
   // address. The shared helpers compare it, for a saved address too.
   it("finds an address read back through a comparison of the tool's own", () => {
     const rule =
-      "Own address read-back: source that fails a run because an address the page shows after the tool set it fails the tool's own comparison with the address it applied or the caller gave. Such a comparison normalizes the address its own way, tests exact equality, or runs over a whole element that holds more than the address. A choice among the account's saved addresses is no exception. Prefer reading the element that holds the address alone and comparing it with readBackMatches(shown, wanted), or with sameText(shown, typed, { rewrite: true }) for a value the site rewrote as typed.";
+      "Own address read-back: source that fails a run because an address the site shows after the tool set it fails the tool's own comparison with the address it applied or the caller gave. Such a comparison normalizes the address its own way, tests exact equality, or runs over a whole element or field that holds more than the address. This holds for a saved address too. Prefer checking the site's own record id where it gives one. Otherwise, prefer reading the element or field that holds the address alone and comparing it with readBackMatches(shown, wanted), or with sameText(shown, typed, { rewrite: true }) for a value the site rewrote as typed.";
     expect(publicationOutputPolicy.split(rule)).toHaveLength(2);
   });
 
@@ -1045,7 +1045,7 @@ describe("the publication policy", () => {
   // landed: the caller gets an error in place of the output.
   it("finds a write that throws for a value that differs after verified()", () => {
     const rule =
-      "Throw after verified: write source that throws for a value that differs, InputNotApplied included, after it called verified(), instead of reporting the difference in an output field its schema declares. Prefer moving the check before the commit mark, or reporting the difference.";
+      "Throw after verified, a confirmation finding instead: write source that throws for a value that differs, InputNotApplied included, after it called verified(), instead of reporting the difference in an output field its schema declares. Prefer moving the check before the commit mark, or reporting the difference.";
     expect(publicationOutputPolicy.split(rule)).toHaveLength(2);
   });
 
