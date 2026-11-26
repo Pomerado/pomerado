@@ -5412,6 +5412,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       const signedInTestInputs: string[] = [...(recovered?.signedInTestInputs ?? [])];
       /** Each case's latest screened output, by version and case id: this attempt's runs only. */
       const liveTestOutputs = new Map<string, unknown>();
+      /** A next-page case's page 1, screened, from the run whose page 2 `liveTestOutputs` holds. */
+      const liveTestPageOnes = new Map<string, unknown>();
       const outputKey = (entrypoint: string, id: string) => `${liveTestVersion(entrypoint)}\n${id}`;
       /**
        * Each case's latest output fields, by version and case id, as paths and counts with no
@@ -5963,6 +5965,17 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             const before = liveTestOutputs.get(outputAt);
             if (screened === undefined) liveTestOutputs.delete(outputAt);
             else liveTestOutputs.set(outputAt, screened);
+            const pageOne =
+              testCase.next_page === true &&
+              run.followUp !== undefined &&
+              run.outcome.status === "completed"
+                ? yield* dependencies.projection
+                    .json(run.outcome.output)
+                    .pipe(Effect.orElseSucceed(() => undefined))
+                : undefined;
+            const pageOneBefore = liveTestPageOnes.get(outputAt);
+            if (pageOne === undefined) liveTestPageOnes.delete(outputAt);
+            else liveTestPageOnes.set(outputAt, pageOne);
             const message =
               judged.message === undefined
                 ? undefined
@@ -6002,32 +6015,25 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               previous.sourceDigest === sourceDigest &&
               judged.verdict === "pass";
             // A failure judged by another resultsList whose own output passes by this one was the
-            // host's judgment, not a race: the new result replaces it. A next-page case's output is
-            // its page 2, judged after this run's page 1, screened alike.
-            const relisted =
+            // host's judgment, not a race: the new result replaces it. A next-page case's own
+            // output is both its pages.
+            const misjudged =
               flaky &&
               previous.resultsList !== file.resultsList &&
               typeof before === "object" &&
-              before !== null;
-            const pageOne =
-              relisted && testCase.next_page === true && run.outcome.status === "completed"
-                ? yield* dependencies.projection
-                    .json(run.outcome.output)
-                    .pipe(Effect.orElseSucceed(() => undefined))
-                : undefined;
-            const misjudged =
-              relisted &&
-              (testCase.next_page !== true || pageOne !== undefined) &&
+              before !== null &&
+              (testCase.next_page !== true ||
+                (typeof pageOneBefore === "object" && pageOneBefore !== null)) &&
               judgeCase(
                 testCase,
-                pageOne === undefined
-                  ? { id: run.id, outcome: { status: "completed", output: before }, durationMs: 0 }
-                  : {
+                testCase.next_page === true
+                  ? {
                       id: run.id,
-                      outcome: { status: "completed", output: pageOne },
+                      outcome: { status: "completed", output: pageOneBefore },
                       followUp: { status: "completed", output: before },
                       durationMs: 0,
-                    },
+                    }
+                  : { id: run.id, outcome: { status: "completed", output: before }, durationMs: 0 },
                 "list" in shape ? shape.list : undefined,
               ).verdict === "pass";
             if (
