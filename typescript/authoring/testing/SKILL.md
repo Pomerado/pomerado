@@ -245,7 +245,8 @@ with why. A choice the request, the caller or the owner declined is not part of 
 skill), so it is never tested.
 
 A read that returns one record with a side list prefers `resultsList: null` in `test/cases.json`,
-so the host judges each case by the record's values, not by that list.
+so the host judges each case by the record's values, not by that list. A list read whose output
+holds more than one list prefers `resultsList` naming its results list.
 
 ## Run and fix the cases
 

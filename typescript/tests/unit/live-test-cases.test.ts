@@ -124,6 +124,19 @@ describe("judgeCase", () => {
     ).toBe("pass");
   });
 
+  // A paged read whose output holds a one-row totals list before its bookings: the host guesses
+  // the first list, which repeats on every page, so the failure names it and asks for resultsList.
+  it("names the list it guessed when page two repeats it", () => {
+    const rows = (name: string) => ({ type: "array", items: object({ [name]: { type: "string" } }) });
+    const input = object({ date: { type: "string" }, cursor: { type: "string" } }, ["date"]);
+    const output = object({ totals: rows("count"), bookings: rows("time"), next_cursor: { type: "string" } });
+    const page = (time: string) => ({ totals: [{ count: "11" }], bookings: [{ time }], next_cursor: "2" });
+    const run = { ...completed(page("9:00")), followUp: { status: "completed" as const, output: page("9:30") } };
+    const { detail } = judgeCase({ expect: "result" }, run, primaryListOf(input, output));
+    expect(detail).toContain("totals");
+    expect(detail).toContain("resultsList");
+  });
+
   it("judges a details record by its values, never by its empty lists", () => {
     const record = { title: "Lamp", price: 10, images: [], variants: [] };
     expect(judgeCase({ expect: "result" }, completed(record), undefined).verdict).toBe("pass");

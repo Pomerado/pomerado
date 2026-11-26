@@ -284,6 +284,8 @@ export interface PrimaryList {
   readonly nullable?: true;
   /** The output's other declared fields, set with `nullable`: what a null list's record is judged by. */
   readonly others?: readonly string[];
+  /** `field` is the first of several arrays of records beside the cursor, none named like results. */
+  readonly guessed?: true;
 }
 
 /**
@@ -322,7 +324,8 @@ export const primaryListOf = (
   const cursor = cursorPairOf(inputSchema, outputSchema);
   if (cursor !== undefined) {
     const list = named ?? arrays[0];
-    return list === undefined ? undefined : at(list);
+    if (list === undefined) return undefined;
+    return named === undefined && arrays.length > 1 ? { ...at(list), guessed: true } : at(list);
   }
   const inputs = objectFields(inputSchema);
   const details =
@@ -576,6 +579,10 @@ export const judgeCase = (
   const outcome =
     run.outcome.status === "completed" && run.followUp !== undefined ? run.followUp : run.outcome;
   const page = run.followUp !== undefined && outcome === run.followUp ? "Page 2: " : "";
+  const guess =
+    list?.guessed === true && list.field !== undefined
+      ? ` The host guessed that ${list.field} holds this tool's results; if another list does, prefer naming it as resultsList in test/cases.json.`
+      : "";
   switch (outcome.status) {
     case "inconclusive":
       return {
@@ -591,19 +598,22 @@ export const judgeCase = (
           ? {
               ...base,
               verdict: "fail",
-              detail: `${page}${shape.detail ?? `Expected results, but the tool returned ${shape.got}.`}`,
+              detail: `${page}${shape.detail ?? `Expected results, but the tool returned ${shape.got}.`}${guess}`,
             }
           : repeatsPageOne(run, list)
             ? {
                 ...base,
                 verdict: "fail",
-                detail: `${page}Every row page 2 returned was already on page 1: the tool read page 1 again instead of the page the cursor names. Fix how the tool applies its cursor.`,
+                detail:
+                  guess === ""
+                    ? `${page}Every row page 2 returned was already on page 1: the tool read page 1 again instead of the page the cursor names. Fix how the tool applies its cursor.`
+                    : `${page}Every row page 2 returned was already on page 1.${guess} Otherwise fix how the tool applies its cursor.`,
               }
             : { ...base, verdict: "pass" };
       if (testCase.expect === "empty")
         return shape.empty || shape.nullList === true
           ? { ...base, verdict: "pass" }
-          : { ...base, verdict: "fail", detail: `${page}Expected no results, but the tool returned ${shape.got}.` };
+          : { ...base, verdict: "fail", detail: `${page}Expected no results, but the tool returned ${shape.got}.${guess}` };
       return {
         ...base,
         verdict: "fail",
