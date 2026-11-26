@@ -1032,6 +1032,23 @@ describe("the publication policy", () => {
     expect(publicationOutputPolicy).not.toMatch(/Shortlist place|a place the caller gives/u);
   });
 
+  // A tool that checks an address the page shows after it set it in its own way, or over an
+  // element that also holds a saved address's name, fails runs where the site applied the right
+  // address. The shared helpers compare it, for a saved address too.
+  it("finds an address read back through a comparison of the tool's own", () => {
+    const rule =
+      "Own address read-back: source that fails a run because an address the site shows after the tool set it fails the tool's own comparison with the address it applied or the caller gave. Such a comparison normalizes the address its own way, tests exact equality, or runs over a whole element or field that holds more than the address. This holds for a saved address too. Prefer checking the site's own record id where it gives one. Otherwise, prefer reading the element or field that holds the address alone and comparing it with readBackMatches(shown, wanted), or with sameText(shown, typed, { rewrite: true }) for a value the site rewrote as typed.";
+    expect(publicationOutputPolicy.split(rule)).toHaveLength(2);
+  });
+
+  // A write that throws for a value that differs once it called verified() fails a run whose write
+  // landed: the caller gets an error in place of the output.
+  it("finds a write that throws for a value that differs after verified()", () => {
+    const rule =
+      "Throw after verified, a confirmation finding instead: write source that throws for a value that differs, InputNotApplied included, after it called verified(), instead of reporting the difference in an output field its schema declares. Prefer moving the check before the commit mark, or reporting the difference.";
+    expect(publicationOutputPolicy.split(rule)).toHaveLength(2);
+  });
+
   // Of several equal matches, taking the first or letting the caller choose is the tool's own
   // choice. Only taking the first without returning the match it used is a finding, and one the
   // publication review can return.
