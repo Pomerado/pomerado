@@ -723,6 +723,11 @@ never with final text, which the host treats as unfinished work:
   A stop the site caused on its own, such as an expired quote, a block, an outage or a site error,
   is not `caller_input`, even when the request says to stop on it. Prefer `site_declined` or
   `site_unavailable`.
+  When the request asks you to honor robots.txt, the general `User-agent: *` group is the one that
+  applies to this build: its browser names no crawler. A group that names another company's crawler
+  is that crawler's rule, not this build's, so it is no stop on its own. Prefer building under the
+  general group's rules. When the request's words may also mean those named groups, prefer one
+  request_input question naming both readings over ending the build with caller_input.
 - `owner_declined`: the owner answered no to a `confirm` question, or declined to sign in, and
   the build needs that step.
 - `question_unanswered`: a question you asked came back `no_answer`, and the build cannot go on
