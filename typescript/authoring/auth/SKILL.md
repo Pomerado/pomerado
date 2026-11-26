@@ -196,9 +196,11 @@ attribute.
     field, which Guardian refuses. A step names one such field at most, and a PIN entered in place
     of a password after another identifier is the `password` slot. Read the label, type and
     placeholder: a field whose label names more than one kind lists each, even when its placeholder
-    shows one. The host sends a kind the login holds (username first, then email, phone and
-    account number) or asks the caller once for one it accepts. If it refuses the step as
-    `identifier_conflict`, the answer was not this login's: send the step again to ask again.
+    shows one. A `private_identifier` field lists that kind alone, as the host's step format
+    requires, even when the field also takes another kind. The host sends a kind the login holds
+    (username first, then email, phone and account number) or asks the caller once for one it
+    accepts. If it refuses the step as `identifier_conflict`, the answer was not this login's: send
+    the step again to ask again.
     For a phone box that keeps only the local number and has no country picker, or a picker that
     already shows the number's country as the screen loads, prefer adding `format: "national"` to
     that field: the host then types the number without its calling code.

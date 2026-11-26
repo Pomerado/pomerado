@@ -369,6 +369,11 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
   /** Where the input schema rejected the input a `contract_input_mismatch` refusal names. */
   readonly inputIssues?: readonly InputIssue[];
   /**
+   * On a tool request the agent sent that failed its format: the reason each of the format's own
+   * checks that refused it gives, once each. Fixed text that carries none of the request.
+   */
+  readonly formatReasons?: readonly string[];
+  /**
    * Where the output schema rejected the output a `contract_output_mismatch` refusal names, which
    * a host may list; the harness returns at most `maximumOutputIssues` of them to the minter.
    */
