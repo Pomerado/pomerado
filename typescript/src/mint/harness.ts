@@ -5988,11 +5988,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               previous.sourceDigest === sourceDigest &&
               judged.verdict === "pass";
             // A failure judged by another resultsList whose own output passes by this one was the
-            // host's judgment, not a race: the new result replaces it.
+            // host's judgment, not a race: the new result replaces it. A next-page case's output is
+            // its page 2, and its new pass shows page 2 moves on from page 1 by this list.
             const misjudged =
               flaky &&
               previous.resultsList !== file.resultsList &&
-              testCase.next_page !== true &&
               typeof before === "object" &&
               before !== null &&
               judgeCase(

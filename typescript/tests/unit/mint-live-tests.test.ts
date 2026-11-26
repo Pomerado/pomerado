@@ -903,9 +903,10 @@ const batchesThenPublish = async (
   outcomes: Outcomes,
   edits: readonly Readonly<Record<string, string>>[],
   schemasAt?: (batch: number) => ToolSchemas,
+  result?: LiveTestBatchResult,
 ) => {
   let turn = 0;
-  const { host, batches } = liveTestHost(outcomes, undefined, {
+  const { host, batches } = liveTestHost(outcomes, result, {
     schemasNow: () => schemasAt?.(Math.min(turn, edits.length - 1)) ?? schemas,
   });
   const published = publications();
@@ -1053,6 +1054,34 @@ it("replaces a failure judged by another resultsList instead of keeping it as fl
     resultsList: null,
     cases: [{ id: "other-store", results: { playwright: { status: "pass" } } }],
   });
+});
+
+// A next-page case the host judged by a one-row totals list that repeats on every page passes once
+// the cases file names the bookings list, on the same source: the new result replaces the failure.
+it("replaces a next-page failure judged by another resultsList instead of keeping it as flaky", async () => {
+  const rows = { type: "array", items: { type: "object" } };
+  const output = { type: "object", properties: { totals: rows, bookings: rows, next_cursor: { type: "string" } } };
+  const page = (time: string) => ({ totals: [{ count: "11" }], bookings: [{ time }], next_cursor: "2" });
+  const file = (more: object) =>
+    JSON.stringify({ cases: [cases.cases[3]], ...more });
+  const record = await batchesThenPublish(
+    {},
+    [{ "src/tool.ts": toolSource, "test/cases.json": file({}) }, { "test/cases.json": file({ resultsList: "bookings" }) }],
+    () => ({ input: schemas.input, output }),
+    {
+      status: "ran",
+      lanes: 1,
+      cases: [
+        {
+          id: "page-2",
+          outcome: { status: "completed", output: page("9:00") },
+          followUp: { status: "completed", output: page("9:30") },
+          durationMs: 1,
+        },
+      ],
+    },
+  );
+  expect(record.retired).toEqual([]);
 });
 
 // A challenge or a site block on the rerun tests nothing about the tool, so it neither shows the
