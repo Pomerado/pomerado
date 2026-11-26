@@ -96,6 +96,10 @@ const confirm = async (browserPage: Page, each: Case, code = commitCall) => {
 };
 
 const json = (value: unknown) => JSON.stringify(value);
+const htmlPage = "<!doctype html><title>Just a moment...</title>";
+/** Save's handler, posting with these request headers. */
+const post = (headers: Record<string, string>) =>
+  `await fetch("/api/records", { method: "POST", headers: ${JSON.stringify(headers)}, body: "{}" });`;
 const saved = { status: 200, body: json({ success: true }) };
 const done = { state: "done", status: "completed" };
 const notDone = { state: "not_done", status: "failed" };
@@ -346,17 +350,35 @@ const cases: readonly Case[] = [
     reply: { status: 200, body: json({ hasErrors: true }) },
     expected: notDone,
   },
-  // A challenge or an HTML page is not the site's answer to the write.
+  // A challenge or a whole HTML page is not the site's answer to a request for JSON.
   {
     name: "an HTML page in answer to a request for JSON is unclear",
-    reply: { status: 200, body: "<!doctype html><title>Just a moment...</title>", contentType: "text/html" },
-    click: `await fetch("/api/records", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });`,
+    reply: { status: 200, body: htmlPage, contentType: "text/html" },
+    click: post({ "content-type": "application/json" }),
     expected: unclear,
   },
   {
     name: "a bot check's challenge is unclear",
-    reply: { status: 403, body: "<!doctype html><title>Just a moment...</title>", contentType: "text/html", headers: { "cf-mitigated": "challenge" } },
+    reply: { status: 403, body: htmlPage, contentType: "text/html", headers: { "cf-mitigated": "challenge" } },
     expected: unclear,
+  },
+  {
+    name: "a short text labelled HTML in answer to a request for JSON is done",
+    reply: { status: 200, body: "success", contentType: "text/html" },
+    click: post({ accept: "application/json" }),
+    expected: done,
+  },
+  {
+    name: "an HTML page in answer to a request that accepts HTML is done",
+    reply: { status: 200, body: htmlPage, contentType: "text/html" },
+    click: post({ "content-type": "application/json", accept: "text/html, */*" }),
+    expected: done,
+  },
+  {
+    name: "a 201 with a Location and an HTML page in answer to a request for JSON is done",
+    reply: { status: 201, body: htmlPage, contentType: "text/html", headers: { location: "/records/r-7" } },
+    click: post({ accept: "application/json" }),
+    expected: done,
   },
 ];
 
@@ -569,7 +591,7 @@ test.describe("confirmCommit", () => {
     expect(answer.body).toEqual({ data: { placeOrder: { order: { id: "o-7" } } } });
   });
 
-  test("a JSON body over 64 KiB is left out", async ({ page: browserPage }) => {
+  test("a JSON body over 65,536 characters is left out", async ({ page: browserPage }) => {
     const reply = { status: 200, body: json({ id: "o-7", note: "x".repeat(70_000) }) };
     const answer = await confirm(browserPage, { name: "", reply, expected: done }, bodyCall);
     expect(answer.confirmed).toMatchObject(done);

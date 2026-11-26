@@ -1701,11 +1701,12 @@ return { outcomeWaitFailure, outcomeWaitNote, outcomeWaitChanged, outcomeWaitObs
  * open is `unclear`.
  *
  * - A 4xx response, or one below 200, is `not_done`; a 5xx is `unclear`, since a server can fail
- *   after it saved; a 201 with a Location is `done` at once. A bot check's challenge
- *   (`cf-mitigated: challenge`), or an HTML page in answer to a request whose `Accept` or
- *   `Content-Type` names JSON, is `unclear` whatever its status, since it is not the site's
- *   answer. A 3xx whose Location is the page that posted (same path), or whose query names an
- *   error or failure, is `unclear` unless the page shows an error.
+ *   after it saved; a 201 with a Location is `done` at once. Otherwise a bot check's challenge
+ *   (`cf-mitigated: challenge`), or a whole HTML page (from `<!doctype html` or `<html`) in answer
+ *   to a request whose `Accept` or `Content-Type` names JSON and whose `Accept` names no HTML, is
+ *   `unclear` at any status below 500, since it is not the site's answer. A 3xx whose Location is
+ *   the page that posted (same path), or whose query names an error or failure, is `unclear`
+ *   unless the page shows an error.
  * - A 2xx body that reads as JSON is `not_done` for a success field (`success`, `succeeded`,
  *   `isSuccess`, any case) that is false, `"false"`, 0 or `"no"` or holds an error word, `ok:
  *   false`, an error field holding an error (not empty, and not a word for none such as "No
@@ -1819,7 +1820,8 @@ ${siteMessageCode}
       return { json: JSON.parse(text), size: text.length };
     } catch {}
     const type = String(response.headers()["content-type"] ?? "").toLowerCase();
-    if (type.includes("html") || /^\s*(?:<!doctype html|<html[\s>])/i.test(text)) return { html: true };
+    const wholePage = /^\s*(?:<!doctype html|<html[\s>])/i.test(text);
+    if (type.includes("html") || wholePage) return { html: true, wholePage };
     return { unclear: "its body is neither JSON nor HTML" + (type === "" ? "" : " (" + clip(type) + ")") };
   };
   const fieldKey = (field) => field.field + "\u0000" + field.message;
@@ -1884,7 +1886,7 @@ ${siteMessageCode}
     // The response's JSON body, once read, is on every answer after it, not enumerable, so an
     // answer a call returns whole carries no more than before.
     let kept;
-    const reply = (answer) => (kept === undefined ? answer : Object.defineProperty(answer, "body", { value: kept }));
+    const reply = (answer) => (kept === undefined ? answer : Object.defineProperty(answer, "body", { value: kept, writable: true, configurable: true }));
     const done = (reason, queued, label) =>
       reply({
         state: "done",
@@ -1929,26 +1931,26 @@ ${siteMessageCode}
       return unclear(where + ", a server error, which can come after a save" + (dialogFailed === undefined ? "" : "; " + dialogFailed));
     const body = await readBody(response, status);
     if (body.json !== undefined && body.size <= 65536) kept = body.json;
-    // A bot check's challenge, or an HTML page in answer to a request for JSON, such as a
-    // challenge or a sign-in page, is not the site's answer to the write.
-    const asked = response.request().headers();
-    const askedJson = /json/i.test(String(asked["accept"] ?? "") + " " + String(asked["content-type"] ?? ""));
-    const notTheSite =
-      String(response.headers()["cf-mitigated"] ?? "").toLowerCase() === "challenge"
-        ? "a bot check's challenge"
-        : askedJson && body.html === true
-          ? "an HTML page to a request for JSON"
-          : undefined;
-    if (notTheSite !== undefined)
-      return unclear(where + " with " + notTheSite + ", not the site's answer" + (dialogFailed === undefined ? "" : "; " + dialogFailed));
     const location = String(response.headers()["location"] ?? "").trim();
     // A 201 with a Location names the record the commit created, so a dialog's words alone can't
     // make it not done.
     const created = status === 201 && location !== "" ? where + " with Location " + clip(location) : undefined;
     if (created !== undefined && dialogFailed !== undefined) return unclear(created + ", which proves a record, but " + dialogFailed);
     if (dialogFailed !== undefined) return notDone(dialogFailed);
-    if (status < 200 || status >= 400) return notDone(where);
     if (created !== undefined) return done(created, false);
+    // A bot check's challenge, or a whole HTML page in answer to a request for JSON, such as a
+    // challenge or a sign-in page, is not the site's answer to the write.
+    const asked = response.request().headers();
+    const accept = String(asked["accept"] ?? "");
+    const askedJson = /json/i.test(accept + " " + String(asked["content-type"] ?? "")) && !/html/i.test(accept);
+    const notTheSite =
+      String(response.headers()["cf-mitigated"] ?? "").toLowerCase() === "challenge"
+        ? "a bot check's challenge"
+        : askedJson && body.wholePage === true
+          ? "an HTML page to a request for JSON"
+          : undefined;
+    if (notTheSite !== undefined) return unclear(where + " with " + notTheSite + ", not the site's answer");
+    if (status < 200 || status >= 400) return notDone(where);
     const found = body.json === undefined ? {} : judgeBody(body.json);
     if (found.failed !== undefined) return notDone(where + "; its body's " + found.failed);
     const seen = await watch(page);
