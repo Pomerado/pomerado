@@ -584,6 +584,14 @@ the request names. Leave out what is unrelated to the tool's purpose or of no us
   default keyed by field name, with every other field through its `fields` and `include` inputs.
   A record type whose fields are fixed and known keeps one typed field per fact.
 
+**Partial results.** When a call cannot return everything it asked for, prefer returning what it
+could read and marking each record or part it could not, with why, over failing the whole call.
+Fail the call only when it has nothing usable to return or the site itself is down; a block or
+the site's rate limit partway through a read still fails it, as the rules above say. Mark a
+record or part missing as a whole, with its own status and reason, and keep each one you return
+as strict as the rules here say. That status and reason are an exception to the rules here on
+unread and unfilled fields.
+
 **Optional sections (`include`).** Some parts of a page cost every run extra clicks or waits, or
 are large and repeated on every record: the filters, facets and sorts the site offers, each
 record's full displayed text, related or recommended records, options that show only on a hover

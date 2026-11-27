@@ -1710,6 +1710,15 @@ it("has a tool read a filter's options before acting on one named after the call
   );
 });
 
+// A tool that read a list of records failed the whole call when one record could not be read, so
+// the caller got none of the records it did read.
+it("has a call return what it could read over failing for one record or part", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  expect((texts.get("core") ?? "").replace(/\s+/g, " ")).toContain(
+    "When a call cannot return everything it asked for, prefer returning what it could read and marking each record or part it could not, with why, over failing the whole call. Fail the call only when it has nothing usable to return or the site itself is down;",
+  );
+});
+
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 
 /*
@@ -1730,7 +1739,7 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["9a84d5744c300dcffc936e74dceb4cba7a3e4b4318e9ea1a2195396c3c69b4f4", "core"],
+    ["5fc8ecc05f122f35bc05c4dca41980db9a40bfdd13ea7b8d8ca70ba9213e9015", "core"],
     ["97e3b5ebdbe8d5fca43790729084de4eef4fbcf5fdf71ad645e679fd72f4e804", "search"],
     ["e6a78355e22e9989ffdccbc5a5f53eef0ec74217c3ae31b68c1ca0421f36ce44", "auth"],
     ["3355021c2daea519d533551d9b6f08f071c792328d39ec5020d6e8b0ca7def52", "testing"],
