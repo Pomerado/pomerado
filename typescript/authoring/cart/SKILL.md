@@ -180,9 +180,11 @@ and the limit (the caller-input skill). Run each refusal of the caller's own inp
 page shows what it needs, before any check of the page's state that fails the run. Check only the
 options the tool sets or the caller asked for; read any other preselected option, except a
 membership, subscription, trial or safety default the tool turns off, as page state and name it in
-the confirm, rather than failing. Check the caller's limit against the total the page
-shows before the purchase click. When tax, fees or shipping aren't shown until after it, check the
-limit against what is shown, name in the confirm what isn't included yet, and don't refuse for it.
+the confirm, rather than failing. Check the caller's limit against the amount the order charges
+after credits, as the page shows it, before the purchase click. When tax, fees or shipping aren't
+shown until after it, check the limit against what is shown, name in the confirm what isn't
+included yet, and don't refuse for it. When the caller set a limit and the page shows no price at
+all, refuse with `InvalidInput`, `field` the limit, before the purchase click.
 Never add items, raise a quantity or change the
 delivery method to meet a limit. While building, ask the
 caller to revise or stop, as `AGENTS.md` says. When they stop, or their answer cannot be met
@@ -192,7 +194,9 @@ limit never completed the write, so it never publishes.
 An account's state can change the add or buy flow, so that its controls would change an open
 order or a line already in the cart instead. A product already in the cart can show that line's
 quantity control in place of its add control, so wait for either with `waitForOutcome` (the core
-skill), not for the add control alone. Read that state before the commit mark. When the tool's
+skill), not for the add control alone. Read that state before the commit mark. A buy control the
+page replaces with one that adds the item to an open order is still the purchase: take it under
+the buy's commit mark, and name in the confirm the order the item joins. When the tool's
 inputs cover that change, as its quantity does for a line already in the cart (Quantity, above),
 continue, bringing a line whose quantity control shows in place of its add control to the earlier
 quantity plus the input, or to the input, with that control under the add's commit mark; otherwise
@@ -255,7 +259,8 @@ typed as the core skill says.
 Prefer returning each line bought with its quantity, its unit when the site sells it by weight or
 measure, its price each and its line total (the core skill's output fields), and each fee as its
 own entry, by its name on the site and its amount, with the tip and any discount in their own
-fields. This output is a suggestion, separate from the `order` a
+fields. Return each credit, gift card balance or promotion applied as its own entry the same way,
+with the total before them and the amount charged after them. This output is a suggestion, separate from the `order` a
 purchase's final confirm passes (the caller-input skill), which has its own fixed fields.
 
 Prefer avoiding these, which fit the tool to the build's one order:

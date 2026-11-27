@@ -1057,7 +1057,7 @@ it("has a purchase confirm's order and a checkout's output give lines, fees and 
     "its `items` (each `name`, `quantity`, `unit` for an item sold by weight or measure, and `price` each, `lineTotal` or both), `fees` (each `name` and `amount`), `discount`, `shipping`, `tax`, `tip` and `total`",
   );
   expect(text("cart")).toContain(
-    "Prefer returning each line bought with its quantity, its unit when the site sells it by weight or measure, its price each and its line total (the core skill's output fields), and each fee as its own entry, by its name on the site and its amount, with the tip and any discount in their own fields. This output is a suggestion, separate from the `order` a purchase's final confirm passes (the caller-input skill), which has its own fixed fields.",
+    "Prefer returning each line bought with its quantity, its unit when the site sells it by weight or measure, its price each and its line total (the core skill's output fields), and each fee as its own entry, by its name on the site and its amount, with the tip and any discount in their own fields. Return each credit, gift card balance or promotion applied as its own entry the same way, with the total before them and the amount charged after them. This output is a suggestion, separate from the `order` a purchase's final confirm passes (the caller-input skill), which has its own fixed fields.",
   );
 });
 
@@ -1127,7 +1127,7 @@ it("has cart tools carry over sibling handling, refuse the caller's input first 
     "When the site has other cart tools (the core skill, `reference/site-tools.json`), prefer carrying over their handling of the page states this tool shares with them.",
     "Run each refusal of the caller's own input as soon as the page shows what it needs, before any check of the page's state that fails the run.",
     "Check only the options the tool sets or the caller asked for; read any other preselected option, except a membership, subscription, trial or safety default the tool turns off, as page state and name it in the confirm, rather than failing.",
-    "Check the caller's limit against the total the page shows before the purchase click. When tax, fees or shipping aren't shown until after it, check the limit against what is shown, name in the confirm what isn't included yet, and don't refuse for it.",
+    "Check the caller's limit against the amount the order charges after credits, as the page shows it, before the purchase click. When tax, fees or shipping aren't shown until after it, check the limit against what is shown, name in the confirm what isn't included yet, and don't refuse for it.",
     "Where the build runs test cases (testing skill), prefer including an item already in the cart, an item the site shows as unavailable, and an item shown at a discounted price, and, for a checkout, a cart under the store's minimum and a limit below the total. These are suggestions: a build that can't find such a case on the site goes on without it.",
     "and return the state the site shows, in its own words, as the refusal for the item,",
     'A delivery speed left unset, or asked for as "standard", takes the free option the page offers that arrives soonest, for each shipment, in place of the tier the site presents as standard; with no free option, ask the caller which to use, showing each fee.',
@@ -1747,6 +1747,30 @@ it("has a tool read each group's required picks, refuse with the page's reason a
   );
 });
 
+// Checkouts refused a buy control the page had replaced with an add to an open order, counted an
+// offered upgrade as a fee, filed a site label they did not know under a catch-all value, read a
+// starting price as zero, checked a limit against the total before credits, went on with a limit
+// and no price at all, and left out the credits they applied.
+it("has a cart or checkout buy into an open order, count only charged fees and check limits after credits", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
+  expect(text("cart")).toContain(
+    "Read that state before the commit mark. A buy control the page replaces with one that adds the item to an open order is still the purchase: take it under the buy's commit mark, and name in the confirm the order the item joins. When the tool's",
+  );
+  expect(text("cart")).toContain(
+    "don't refuse for it. When the caller set a limit and the page shows no price at all, refuse with `InvalidInput`, `field` the limit, before the purchase click.",
+  );
+  expect(text("writes")).toContain(
+    "`total` is what the commit will charge the caller, and the lines add up to it. A fee is only what the chosen options charge, not the price of an upgrade the page offers.",
+  );
+  expect(text("core")).toContain(
+    "(`case_variant`). Return a site label the tool doesn't recognise as the site shows it, not under a catch-all value.",
+  );
+  expect(text("core")).toContain(
+    "- A price the page shows as a starting amount is a minimum price, not zero.",
+  );
+});
+
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 
 /*
@@ -1767,14 +1791,14 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["42961f161a71d1e164c07e37f2e61a8027ac07cab4522c7ea924cdeae9371a78", "core"],
+    ["8baf3c8e03a3eeed8cc03c4115971931832546c36ae16affa969f0edebb4f7e5", "core"],
     ["97e3b5ebdbe8d5fca43790729084de4eef4fbcf5fdf71ad645e679fd72f4e804", "search"],
     ["e6a78355e22e9989ffdccbc5a5f53eef0ec74217c3ae31b68c1ca0421f36ce44", "auth"],
     ["3355021c2daea519d533551d9b6f08f071c792328d39ec5020d6e8b0ca7def52", "testing"],
     ["ca80679c4488dec4ee85052fb39f1493b6d5f8ca4a5df9b56d10a2e96078e848", "pagination"],
     ["b0220727e7f21e1c5d10101e74996ddb3d2d4e18061ac85c807203ed4ab0f695", "forms"],
-    ["9f72a3440d849183d0afde65dd936a70f9adeb6cd728dd92f9a2f9d977b5ef7e", "writes"],
-    ["0982ff7eab53c78619d96948772326f857326ad205764e4e78ce59ebfd9cfa5d", "cart"],
+    ["b23c3918c2990e1743a2ad84983346f114b590424efb8a61d1dd2e240093c20c", "writes"],
+    ["0f41ffe2452c52cdd76a5bbab0a4df63c535c6a7086606d615b80e0319fd307e", "cart"],
     ["5e81a6bb20243badd2f5d781fc302e0fe83b12ad616d5cc66fd664f2a0e28870", "caller-input"],
     ["07b61ae415889706192db263c00be4635dddb6c7ea0e97017b9b7e53ff1c95a3", "publication"],
     ["68624ce51e88e97ab72ff393ac8ecc7b9fc87d5d5518fd4d67a34e45da8be1fc", "workspace/AGENTS.md"],

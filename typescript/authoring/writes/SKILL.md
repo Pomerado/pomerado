@@ -730,7 +730,8 @@ quantity, its `unit` when sold by weight or measure, and its price each, its lin
 fees and a tip go in their own fields, and every discount, credit and promotion, summed, in
 `discount`. When an item's measure is in a unit `unit` does not list, give
 it quantity 1 and its line total, with the measure as the checkout shows it in its name.
-`total` is what the commit will charge the caller, and the lines add up to it.
+`total` is what the commit will charge the caller, and the lines add up to it. A fee is only what
+the chosen options charge, not the price of an upgrade the page offers.
 
 The composed script publishes without ever running end to end, so it ends with a check that
 tells whether its action succeeded: its commit response checked as above, the site's

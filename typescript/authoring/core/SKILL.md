@@ -472,7 +472,8 @@ exception: it is optional unless the task can't run without it (below).
   a currency that is not an ISO 4217 code and a bare clock time in a record that names no
   `time_zone`, unless its field says it is local time (`format_mismatch`), a field whose description
   promises such a notation that no `pattern` holds (`unheld_format`), and one value in two
-  letter cases across a list (`case_variant`).
+  letter cases across a list (`case_variant`). Return a site label the tool doesn't recognise as
+  the site shows it, not under a catch-all value.
 - When `reference/site-tools.json` exists, you can view the site's other tools. Read
   `reference/site-tools/README.md` first: it indexes them, one folder each, with each tool's
   effect, sign-in and a short description. Then read the folders you need: each holds a
@@ -566,6 +567,7 @@ the request names. Leave out what is unrelated to the tool's purpose or of no us
   each read as the site shows it. When the site shows only one, keep both fields anyway, an
   exception to the rules here on unread, always-null and never-filled fields: the other is null,
   never computed, and its description says when it is null.
+- A price the page shows as a starting amount is a minimum price, not zero.
 - Expand collapsed text (a "more", "show all" or similar control) before reading it, and read it
   back: a value that ends in an ellipsis or holds the control's own label was read collapsed or
   cut short.
