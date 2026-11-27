@@ -584,13 +584,18 @@ the request names. Leave out what is unrelated to the tool's purpose or of no us
   default keyed by field name, with every other field through its `fields` and `include` inputs.
   A record type whose fields are fixed and known keeps one typed field per fact.
 
-**Partial results.** When a call cannot return everything it asked for, prefer returning what it
-could read and marking each record or part it could not, with why, over failing the whole call.
-Fail the call only when it has nothing usable to return or the site itself is down; a block or
-the site's rate limit partway through a read still fails it, as the rules above say. Mark a
-record or part missing as a whole, with its own status and reason, and keep each one you return
-as strict as the rules here say. That status and reason are an exception to the rules here on
-unread and unfilled fields.
+**Partial results.** When a read cannot return everything the call asked for, prefer returning
+what it could read and listing each record or part it could not, over failing the whole call.
+Fail the call only when it has nothing usable to return. Catch only that record's or part's own
+read failure: a block, a challenge, the site's rate limit, a caller's value the site refused or
+did not apply, and the call's deadline still end the call, as the rules above say. In a call over
+several identifiers, list a removed or not-found one as missing, and throw `InvalidInput` only
+when none was found. A part that holds a needed value makes its record missing. List them apart
+from the ones returned, in the output's top-level `missing` array: each entry's `key` is the
+record's identifier or the part's name, its `cause` is `site` when the site served it without the
+record or `read` when this code could not read what the site served, and its `reason` says why.
+Each one returned stays as strict as the rules here say. `missing` is an exception to the rules
+here on unread, always-null and unfilled fields.
 
 **Optional sections (`include`).** Some parts of a page cost every run extra clicks or waits, or
 are large and repeated on every record: the filters, facets and sorts the site offers, each

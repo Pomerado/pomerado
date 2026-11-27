@@ -1041,6 +1041,18 @@ describe("the publication policy", () => {
     expect(publicationOutputPolicy.split(rule)).toHaveLength(2);
   });
 
+  // A read that lists a record it could not read beside the ones it returns, as the core skill's
+  // Partial results says, keeps every returned needed value strict; a `site` cause the captures
+  // contradict would hide the tool's own failed read from repair.
+  it("accepts a record listed as missing and finds a missing entry that blames the site wrongly", () => {
+    expect(publicationOutputPolicy).toContain(
+      "A record or part the code lists in the output's top-level `missing` array in place of returning it, as the core skill's Partial results says, is not this finding; a record returned with a needed value null is.",
+    );
+    expect(publicationOutputPolicy).toContain(
+      "So is a `missing` entry whose `cause` is `site` where the captures show the site served that record or part.",
+    );
+  });
+
   // A write that throws for a value that differs once it called verified() fails a run whose write
   // landed: the caller gets an error in place of the output.
   it("finds a write that throws for a value that differs after verified()", () => {
