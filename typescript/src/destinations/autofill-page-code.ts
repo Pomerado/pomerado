@@ -1647,7 +1647,8 @@ const recordedChallengeVisible = async (fields) => {
  * answers `signInPopupOpen` while it shows one of `popupFields` (by selector), or any password
  * field when they are none; otherwise its frames on the site count for the indicator too. Once
  * the indicator shows, on the marker's `urlPath` when it names one, the password field counts only
- * in the page's own document, and no frame is read for it.
+ * in the page's own document and in the first frame on the site that shows the indicator, and no
+ * other frame is read for it.
  */
 export const autofillSignedInCode = (
   targetId: string,
@@ -1677,15 +1678,17 @@ const onSite = (frame) => {
   return onSiteHost(host);
 };
 const authenticationOrigins = ${JSON.stringify(authenticationOrigins)};
-const visibleIn = async (selector, scopes) => {
+// The first of the scopes the selector shows in, or null when it shows in none.
+const shownIn = async (selector, scopes) => {
   for (const scope of scopes) {
     const located = scope.locator(selector);
     const count = Math.min(await located.count(), 100);
     for (let index = 0; index < count; index++)
-      if (await located.nth(index).isVisible()) return true;
+      if (await located.nth(index).isVisible()) return scope;
   }
-  return false;
+  return null;
 };
+const visibleIn = async (selector, scopes) => (await shownIn(selector, scopes)) !== null;
 ${signedInChallengeFormCode}
 const password = 'input[type="password"]';
 // The field itself, or a control of its form as locate reads the form (its form attribute too),
@@ -1740,11 +1743,17 @@ for (const popup of openPopups) {
 }
 const siteFrames = primary.frames().filter(onSite);
 const url = primary.url();
-const indicator = selector === null ? null : popupIndicator || await visibleIn(selector, siteFrames);
-// Once the marker shows on its path, only the page's own document can still show the sign-in's
-// form: no frame is read for it, so the check waits for none still loading.
+const markerFrame = selector === null || popupIndicator ? null : await shownIn(selector, siteFrames);
+const indicator = selector === null ? null : popupIndicator || markerFrame !== null;
+// Once the marker shows on its path, only the page's own document, and the frame the marker shows
+// in, can still show the sign-in's form: no other frame is read for it, so the check waits for
+// none still loading.
 const markerShown = indicator === true && (urlPath === null || new URL(url).pathname === urlPath);
-const formFrames = markerShown ? [primary.mainFrame()] : primary.frames();
+const formFrames = !markerShown
+  ? primary.frames()
+  : markerFrame === null || markerFrame.parentFrame() === null
+    ? [primary.mainFrame()]
+    : [primary.mainFrame(), markerFrame];
 return {
   url,
   indicator,

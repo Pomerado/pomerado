@@ -12,7 +12,8 @@ import { hostPage } from "./autofill-host-page.js";
 // which decides what shows. A password field still showing fails it only when it belongs to the
 // sign-in's own screens: one of their fields, or in the form of one of them that shows. Another
 // form's password field on the signed-in page does not count unless a recorded selector matches
-// in it. Once the marker shows, only the page's own document counts for the password field.
+// in it. Once the marker shows, only the page's own document and the frame the marker shows in
+// count for the password field.
 const site = "https://bank.example.test";
 const widget = "https://vault.widget.example.net";
 const marker = '<p id="identity">Signed in</p>';
@@ -57,7 +58,7 @@ const recorded = (
 
 /**
  * Serves the signed-in page, each of `options.frames` at its path, and `frame` at any other path,
- * then runs the host's check on it.
+ * then runs the host's check on it, with the marker on `options.urlPath` when given.
  */
 const checkPage = async (
   page: Page,
@@ -69,6 +70,7 @@ const checkPage = async (
     readonly authenticationOrigins?: readonly string[];
     readonly challengeScreens?: AutofillScreens;
     readonly frames?: Readonly<Record<string, string>>;
+    readonly urlPath?: string;
   } = {},
 ) => {
   await page.route(/^https:\/\//u, (route) => {
@@ -81,7 +83,7 @@ const checkPage = async (
   await page.goto(`${site}${path}`);
   return Effect.runPromise(
     checkAutofillSignedIn({
-      indicator: { selector: "#identity" },
+      indicator: { selector: "#identity", ...(options.urlPath === undefined ? {} : { urlPath: options.urlPath }) },
       page: await hostPage(page),
       siteOrigin: site,
       screens: signIn,
@@ -158,6 +160,12 @@ for (const [name, body, frame, failed, signIn] of [
     undefined,
   ],
   [
+    "the marker and the sign-in's own password field in the same frame",
+    `<iframe src="${site}/app"></iframe>`,
+    `${marker}<form action="/session" method="post"><label>Password<input id="password" type="password"></label><button>Sign in</button></form>`,
+    "password_field_visible",
+  ],
+  [
     "a password field in the form the sign-in's identifier field joins by its form attribute",
     `${marker}<label>Username<input name="username" form="login"></label><form id="login" action="/session" method="post"><label>Password<input id="pass" type="password"></label><button>Sign in</button></form>`,
     null,
@@ -183,8 +191,9 @@ test("the signed-in check with no sign-in field to go by counts any password fie
   });
 });
 
-// A page without the marker says too whether the sign-in's own password field shows there, so a
-// sign-in form that came back reads signed out where a screen such as an account picker can't tell.
+// A page without the marker, or with it on another path, says too whether the sign-in's own
+// password field shows there, frames included, so a sign-in form that came back reads signed out
+// where a screen such as an account picker can't tell.
 test("the signed-in check without the marker says whether the sign-in's own password field shows", async ({
   page,
 }) => {
@@ -200,6 +209,15 @@ test("the signed-in check without the marker says whether the sign-in's own pass
     signedIn: false,
     failed: "indicator_not_visible",
     url: `${site}/session-ended`,
+    passwordFieldVisible: true,
+  });
+  await page.unrouteAll();
+  expect(
+    await checkPage(page, `${marker}<iframe src="${site}/login-frame"></iframe>`, form, screens, "/account", { urlPath: "/dashboard" }),
+  ).toEqual({
+    signedIn: false,
+    failed: "path_mismatch",
+    url: `${site}/account`,
     passwordFieldVisible: true,
   });
   await page.unrouteAll();
@@ -240,6 +258,20 @@ test("the signed-in check with the marker shown does not wait for a frame still 
   release();
   expect(checked).toEqual({ signedIn: true, url: `${site}/account` });
   expect(frameAnswered).toBe(false);
+});
+
+// A frame the marker does not show in is not read for the password field even when the marker
+// shows in another frame.
+test("the signed-in check with the marker in one frame and the sign-in's own password field only in another", async ({
+  page,
+}) => {
+  const frames = {
+    "/app": marker,
+    "/login-frame": `<form action="/session" method="post"><label>Password<input id="password" type="password"></label><button>Sign in</button></form>`,
+  };
+  expect(
+    await checkPage(page, `<iframe src="/app"></iframe><iframe src="/login-frame"></iframe>`, null, screens, "/account", { frames }),
+  ).toEqual({ signedIn: true, url: `${site}/account` });
 });
 
 test("an account search form containing the signed-in marker does not look like unfinished authentication", async ({ page }) => {

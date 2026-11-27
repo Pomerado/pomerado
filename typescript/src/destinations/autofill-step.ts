@@ -1302,8 +1302,9 @@ export type AutofillScreens = readonly {
  * sign-in pop-up the page opened that is still open fails it as `sign_in_popup_open` while it
  * shows one of its screens' fields, or any password field when they recorded none; otherwise the
  * indicator counts in its frames on the site too. Once the indicator shows on its path, a password
- * field counts only in the page's own document: no frame is read for one, so the check waits for
- * no frame still loading, such as a bot check's or an ad's.
+ * field counts only in the page's own document and in the frame the indicator shows in: no other
+ * frame is read for one, so the check waits for no frame still loading, such as a bot check's or
+ * an ad's.
  */
 export const checkAutofillSignedIn = (input: {
   readonly indicator: AutofillSignedIn;
