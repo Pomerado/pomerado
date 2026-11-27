@@ -88,7 +88,7 @@ answers `{ success, result, error, stderr }`. Throw
   loading a document passes `waitForLoadState` at once. Opening a record by its identifier or URL
   can also answer with a removed or not-found page, or an exact lookup of its key with an empty
   result: name it, and throw `InvalidInput` with `field` and what the page shows, before any
-  commit mark, never a readiness timeout; in a call over several identifiers, list it as missing
+  commit mark, never a readiness timeout; in a read over several identifiers, list it as missing
   instead ("Partial results"); below says when it starts "Caller input error:". The waits paragraph below shows how to
   paste `waitCode` and call it.
 - For a search step, wait for either the site's results or its own no-match state, and return the
