@@ -93,6 +93,8 @@ answers `{ success, result, error, stderr }`. Throw
   paste `waitCode` and call it.
 - For a search step, wait for either the site's results or its own no-match state, and return the
   site's no-match answer with its message rather than waiting on results that may never appear.
+  When the search looks up something in the signed-in account, check the account's own list before
+  returning a no-match.
   Prefer refusing a typed value on that no-match state, quoting it, over an empty suggestion list
   read before the site answered, which is still loading. Prefer refusing a requested date only on
   what the site's own calendar shows for that day once its month has loaded, such as a greyed-out,
