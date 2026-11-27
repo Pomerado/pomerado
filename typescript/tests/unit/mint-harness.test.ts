@@ -1511,6 +1511,46 @@ it("tells the minter how to publish on the site's own no only when the host publ
   );
 });
 
+// A host that lets the step named for publication run once more, stopping it before its first save
+// step (`rerunBeforeSave`), has the minter hear that step as repeatable, with no rule against
+// repeating it; a refusal without it keeps today's reply.
+it("reports a host's one rerun before the first save as repeatable, with no rule against it", async () => {
+  const answers: unknown[] = [];
+  let publications = 0;
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        yield* turn.actions.execute(execution);
+        answers.push(JSON.parse(yield* turn.actions.finish(publication)));
+        answers.push(JSON.parse(yield* turn.actions.finish(publication)));
+        yield* turn.actions.finish(publication);
+      }),
+    {
+      publish: () =>
+        Effect.suspend(() =>
+          publications++ < 2
+            ? Effect.fail(
+                new MintFailure({
+                  code: "PublicationUnavailable",
+                  ...(publications === 1 ? { rerunBeforeSave: true as const } : {}),
+                }),
+              )
+            : Effect.succeed({ publicationRef: "published-revision", diagnostics: [] }),
+        ),
+    },
+  );
+  expect(await f.run()).toMatchObject({ build: "published" });
+  const [rerun, plain] = answers;
+  expect(rerun).toMatchObject({ status: "not_published", repeatableRead: true });
+  expect(plain).toMatchObject({ status: "not_published", repeatableRead: false });
+  const instruction = (answer: unknown) => String(Reflect.get(Object(answer), "instruction"));
+  expect(instruction(plain)).toContain("never repeat");
+  expect(instruction(rerun)).not.toContain("never repeat");
+  expect(instruction(rerun)).not.toContain("fresh reviewed example");
+  // Before the left-out rule, both say the same.
+  expect(instruction(plain).startsWith(instruction(rerun))).toBe(true);
+});
+
 // Each publication decision reaches the host as typed evidence, and the minter's answer names it.
 it("records each publication decision, refused and published, through the host's hook", async () => {
   const recorded: PublicationDecision[] = [];

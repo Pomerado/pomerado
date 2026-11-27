@@ -7738,7 +7738,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       diagnostic._tag === "Right"
                         ? diagnostic.right
                         : "Publication diagnostic unavailable.",
-                    repeatableRead,
+                    repeatableRead: repeatableRead || error.rerunBeforeSave === true,
                   },
                   (error.code === "ReviewDenied" && error.review?.reason === "evidence"
                     ? "Not published yet: Guardian needs more evidence to judge this publication, and the rationale names each missing item. Gather each one within your authority, such as running the live tests or cases it names so their results reach the test record, or exploring the site's own controls for a capture it names, and fix every finding, then call finish_build again. A retired failure in publication/tests.json clears only by a way its clearedBy lists: running the same cases again on the same source clears none. Missing evidence is not a refusal and never a reason for a policy block. The existing example and result remain recorded." +
@@ -7750,7 +7750,10 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                     (repeatedClaims.length === 0
                       ? ""
                       : ` The last denial made the same unsupported_claim finding (${repeatedClaims.join(", ")}): narrow that claim${liveTestsOffered() ? " or list it in notTested" : ""} instead of submitting it again.`) +
-                    " A fresh reviewed example read requires an available live host and host repeatableRead:true within the same input/account after confirmed executor cleanup. Otherwise never repeat the example or a write step that may have committed.",
+                    // The host's own rerun of the named step stops before its first save step.
+                    (error.rerunBeforeSave === true
+                      ? ""
+                      : " A fresh reviewed example read requires an available live host and host repeatableRead:true within the same input/account after confirmed executor cleanup. Otherwise never repeat the example or a write step that may have committed."),
                 );
               }
               return yield* publicationResult(publication.right, coverage, assumptions);
