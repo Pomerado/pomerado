@@ -3247,7 +3247,12 @@ const actAgain = <E extends YieldableError, V extends string, L extends Autofill
         : again.again === "code"
           ? { ...full, fields }
           : { fields: [], ...(full.popup === undefined ? {} : { popup: full.popup }) };
-    yield* input.emit({ stage: "retried", reason: `state_${again.again}` });
+    // A code's says whether the site showed its refusal, or only the code page stayed.
+    yield* input.emit({
+      stage: "retried",
+      reason: `state_${again.again}`,
+      ...(again.again === "code" ? { refusalShown: again.explicit } : {}),
+    });
     const { submit: _submit, submitKey: _key, submitVia: _via, ...alone } = step;
     const typing = again.again === "code" && state.step.pageSends === true ? alone : step;
     const here = yield* shownWithin(run, state, typing);
