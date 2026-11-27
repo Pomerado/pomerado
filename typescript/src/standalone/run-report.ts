@@ -208,9 +208,12 @@ const operationEvidence = (
     error.reported &&
     reason !== "no_response" &&
     unenteredWrite(base, report.marks);
-  // The tool's own refusal after only setting steps changed only those choices.
+  // A write that entered only setting steps changed only those choices, whether its tool refused
+  // or failed in its own way after them.
   const settings =
-    error.reported && reason === "invalid_input" ? settingsOnlyWrite(base, report.marks) : undefined;
+    error.reported && (reason === undefined || reason === "invalid_input")
+      ? settingsOnlyWrite(base, report.marks)
+      : undefined;
   const effect = unsent || (refused && unentered) || settings !== undefined ? "rejected" : base;
   return {
     status: "completed",

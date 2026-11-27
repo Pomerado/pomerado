@@ -323,7 +323,12 @@ describe("a run that failed in its operation", () => {
     {
       case: "a script error after only setting steps",
       error: new LocalOperationFailure("Fixture failure", settingSent),
-      outcome: { code: "outcome_unknown", writeStatus: "may_have_applied", possibleCommit: true },
+      outcome: {
+        code: "execution_failed",
+        details: { settings_changed: ["save-tip"] },
+        writeStatus: "not_applied",
+        possibleCommit: false,
+      },
     },
     {
       case: "a refused input after its commit was sent",
@@ -466,6 +471,12 @@ describe("a run that failed in its operation", () => {
     const refused = new LocalOperationFailure("The total is over the limit.", settingSent, "InvalidInput");
     expect(fail("write", refused).message).toBe(
       "The tool or the website refused a value in the input. The total is over the limit. Only these settings changed on the website, and the final step was not sent: save-tip. Correct the input and run it again.",
+    );
+  });
+
+  it("names the settings a script error changed before it", () => {
+    expect(fail("write", new LocalOperationFailure("Fixture failure", settingSent)).message).toBe(
+      "The run did not produce a validated result. Only these settings changed on the website, and the final step was not sent: save-tip. Check the local browser and the tool, then run it again.",
     );
   });
 
