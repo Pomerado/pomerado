@@ -357,8 +357,10 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
   /**
    * Set by a host whose publication refusal lets the step named for publication, a step that saved
    * nothing, run once more on the current source, which the host stops before its first save step.
-   * The reply reports that step as repeatable and leaves out the rule against repeating an example or
-   * a write step. Absent otherwise, and the minter hears what it always has.
+   * Only the generic not-published reply reads it, for a refusal core has no reply of its own for: it
+   * reports that step as repeatable and leaves out the rule against repeating an example or a write
+   * step. It adds no sentence, so the refusal's review rationale names the rerun, and core's own
+   * execution checks are unchanged. Absent otherwise, and the minter hears what it always has.
    */
   readonly rerunBeforeSave?: true;
   /**

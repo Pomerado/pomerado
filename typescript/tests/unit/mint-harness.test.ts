@@ -1547,6 +1547,8 @@ it("reports a host's one rerun before the first save as repeatable, with no rule
   expect(instruction(plain)).toContain("never repeat");
   expect(instruction(rerun)).not.toContain("never repeat");
   expect(instruction(rerun)).not.toContain("fresh reviewed example");
+  // Before the left-out rule, both say the same.
+  expect(instruction(plain).startsWith(instruction(rerun))).toBe(true);
 });
 
 // Each publication decision reaches the host as typed evidence, and the minter's answer names it.
