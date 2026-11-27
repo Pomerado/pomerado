@@ -141,6 +141,36 @@ test.describe("the round trips of the outcome wait", () => {
     expect(look).toMatchObject({ sent: 6, roundTrips: 2 });
   });
 
+  test("a frame's outcome counted after the page's, both drawn at once: the one listed first, with no action", async ({ page }) => {
+    await page.setContent(`<section id="answer"></section><iframe id="pay" srcdoc="<main></main>"></iframe>`);
+    await page.locator(".err").count();
+    await page.frameLocator("#pay").locator(".ok").count();
+    // Both drawn in one task just after the page's error is first counted, before the frame's
+    // success is: its count first finds its frame.
+    const failed = page.locator(".err");
+    const count = failed.count.bind(failed);
+    let drawn = false;
+    failed.count = () => {
+      const counting = count();
+      if (!drawn) {
+        drawn = true;
+        setTimeout(() =>
+          void page.evaluate(() => {
+            document.querySelector("#answer")!.innerHTML = '<p class="err">Payment declined</p>';
+            document.querySelector<HTMLIFrameElement>("#pay")!.contentDocument!.body.innerHTML = '<p class="ok">Paid</p>';
+          }),
+        );
+      }
+      return counting;
+    };
+    const outcome = await runCode(
+      page,
+      `return (await waitForOutcomeResult({ failed, saved: page.frameLocator("#pay").locator(".ok") }, { noProgressMs: 1000 })).outcome;`,
+      { failed },
+    );
+    expect(outcome).toBe("failed");
+  });
+
   test("before the action, what each outcome shows is noted at once", async ({ page }) => {
     await page.setContent(`<button id="save">Save</button><section id="answer"></section>
       <script>
