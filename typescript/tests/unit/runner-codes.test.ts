@@ -16,3 +16,7 @@ it("keeps an unapplied input's code, and an older runtime's name for it", () => 
   expect(failed("LocationNotApplied")).toBe("LocationNotApplied");
   expect(failed("The page said something")).toBe("unclassified");
 });
+
+it("keeps the code of a site that said it is limiting requests", () => {
+  expect(failed("SiteRateLimited")).toBe("SiteRateLimited");
+});

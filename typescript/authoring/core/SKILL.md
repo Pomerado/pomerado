@@ -133,6 +133,9 @@ pomerado:section core.execute-calls:end -->
   challenge, or `waitPastChallenge` throws there, prefer letting the call fail over retrying or
   looping inside the tool, or over returning the rows read so far: a host may give a blocked
   read another browser or one rerun, and only a failed call reaches it.
+- When the site's own answer says it is limiting requests, prefer throwing
+  `errors.SiteRateLimited` with the site's wording over a plain failure. The host then ends the
+  run as the site's limit, with no repair.
 - An answer that lacks the data you read is not always a changed page. A bot check often answers
   with its own page in place of the site's, sometimes with status 200: a few KB where the site's
   page is far larger, answered faster, with little visible text and none of the site's layout.

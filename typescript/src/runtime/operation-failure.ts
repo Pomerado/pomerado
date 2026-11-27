@@ -287,6 +287,19 @@ export class HandoffStateChanged extends Error {
   }
 }
 
+/**
+ * The site's own answer says it is limiting requests, so the run stops on the site's limit rather
+ * than as the tool's failure. Scripts throw it as `errors.SiteRateLimited`, with the site's
+ * wording as the message. A host may end the run as the site's limit, with no repair.
+ */
+export class SiteRateLimited extends Error {
+  override readonly name = "SiteRateLimited";
+  readonly _tag = "SiteRateLimited";
+  constructor(message: string) {
+    super(message.slice(0, 4096));
+  }
+}
+
 /** A site refused a sign-in value; its field kind contains no credential or page text. */
 export class CredentialsRejected extends Error {
   override readonly name = "CredentialsRejected";
@@ -346,6 +359,7 @@ export type ScriptFailure =
   | InputRejected
   | InputUnapplied
   | HandoffStateChanged
+  | SiteRateLimited
   | CredentialsRejected
   | BrowserActionTimeout
   | ChallengeFailure
@@ -359,6 +373,7 @@ const passThrough = (error: unknown): error is ScriptFailure =>
   error instanceof InputRejected ||
   error instanceof InputUnapplied ||
   error instanceof HandoffStateChanged ||
+  error instanceof SiteRateLimited ||
   error instanceof CredentialsRejected ||
   error instanceof ChallengeFailure ||
   error instanceof DialogFailure ||
@@ -392,4 +407,5 @@ export const operationErrors = {
   LocationNotApplied: InputUnapplied,
   CredentialsRejected,
   HandoffStateChanged,
+  SiteRateLimited,
 } as const;

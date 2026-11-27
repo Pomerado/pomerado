@@ -8,6 +8,7 @@ const runnerErrorCodes = [
   // An older runtime's name for the same refusal.
   "LocationNotApplied",
   "HandoffStateChanged",
+  "SiteRateLimited",
   "InvalidOutput",
   "BrowserFailure",
   "DeadlineExceeded",
