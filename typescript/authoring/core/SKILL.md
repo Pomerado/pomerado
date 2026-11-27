@@ -88,7 +88,8 @@ answers `{ success, result, error, stderr }`. Throw
   loading a document passes `waitForLoadState` at once. Opening a record by its identifier or URL
   can also answer with a removed or not-found page, or an exact lookup of its key with an empty
   result: name it, and throw `InvalidInput` with `field` and what the page shows, before any
-  commit mark, never a readiness timeout; below says when it starts "Caller input error:". The waits paragraph below shows how to
+  commit mark, never a readiness timeout; in a call over several identifiers, list it as missing
+  instead ("Partial results"); below says when it starts "Caller input error:". The waits paragraph below shows how to
   paste `waitCode` and call it.
 - For a search step, wait for either the site's results or its own no-match state, and return the
   site's no-match answer with its message rather than waiting on results that may never appear.
@@ -587,15 +588,19 @@ the request names. Leave out what is unrelated to the tool's purpose or of no us
 **Partial results.** When a read cannot return everything the call asked for, prefer returning
 what it could read and listing each record or part it could not, over failing the whole call.
 Fail the call only when it has nothing usable to return. Catch only that record's or part's own
-read failure: a block, a challenge, the site's rate limit, a caller's value the site refused or
-did not apply, and the call's deadline still end the call, as the rules above say. In a call over
-several identifiers, list a removed or not-found one as missing, and throw `InvalidInput` only
-when none was found. A part that holds a needed value makes its record missing. List them apart
-from the ones returned, in the output's top-level `missing` array: each entry's `key` is the
-record's identifier or the part's name, its `cause` is `site` when the site served it without the
-record or `read` when this code could not read what the site served, and its `reason` says why.
-Each one returned stays as strict as the rules here say. `missing` is an exception to the rules
-here on unread, always-null and unfilled fields.
+read failure: a block, a challenge, the site's rate limit and a caller's value the site refused or
+did not apply still end the call, as the rules above say, so tell a block from the record's own
+failure before listing it, as "An answer that lacks the data" says. In a call over several
+identifiers, list a removed or not-found one as missing, and throw `InvalidInput` only when none
+was found. A part that holds a needed value makes its record missing. List each missing record or
+part apart from the ones returned, in the output's top-level `missing` array: each entry's `key`
+is the record's identifier, its `part` names the part when only a part is missing, its `cause` is
+`site` only for the site's own not-found, removed, blank or server-error answer that the code
+names, and `read` for every other failure, and its `reason` says why. A record returned without a
+listed part returns that part's fields null, and each record returned stays as strict as the
+rules here say. `missing` and a listed part's null fields are an exception to the rules here on
+unread, always-null and unfilled fields. Prefer fixing the read behind a `read` entry the build
+sees, as for a failing case.
 
 **Optional sections (`include`).** Some parts of a page cost every run extra clicks or waits, or
 are large and repeated on every record: the filters, facets and sorts the site offers, each

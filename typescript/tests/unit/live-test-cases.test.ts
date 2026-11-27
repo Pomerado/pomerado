@@ -79,6 +79,16 @@ describe("primaryListOf", () => {
     });
     expect(primaryListOf(input, output)).toEqual({ field: "results" });
   });
+
+  // `missing` lists what a read could not return, so it is never the results list.
+  it("finds the results list beside a list of what the read could not return", () => {
+    const input = object({ query: { type: "string" } }, ["query"]);
+    const output = object({
+      papers: { type: "array", items: object({ title: { type: "string" } }) },
+      missing: { type: "array", items: object({ key: { type: "string" } }) },
+    });
+    expect(primaryListOf(input, output)).toEqual({ field: "papers" });
+  });
 });
 
 describe("judgeCase", () => {

@@ -319,7 +319,8 @@ export const primaryListOf = (
     const chosen = fields.find((field) => field.name === resultsList);
     return chosen === undefined ? { field: resultsList } : at(chosen);
   }
-  const arrays = fields.filter((field) => field.listOfRecords);
+  // `missing` lists what a read could not return (the core skill's Partial results), never results.
+  const arrays = fields.filter((field) => field.listOfRecords && field.name !== "missing");
   const named = fields.find((field) => field.types.includes("array") && listName.test(field.name));
   const cursor = cursorPairOf(inputSchema, outputSchema);
   if (cursor !== undefined) {

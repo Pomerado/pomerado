@@ -1715,7 +1715,7 @@ it("has a tool read a filter's options before acting on one named after the call
 it("has a read return what it could read over failing for one record or part", async () => {
   const texts = await renderedTexts("typescript/authoring");
   expect((texts.get("core") ?? "").replace(/\s+/g, " ")).toContain(
-    "When a read cannot return everything the call asked for, prefer returning what it could read and listing each record or part it could not, over failing the whole call. Fail the call only when it has nothing usable to return. Catch only that record's or part's own read failure: a block, a challenge, the site's rate limit, a caller's value the site refused or did not apply, and the call's deadline still end the call, as the rules above say.",
+    "When a read cannot return everything the call asked for, prefer returning what it could read and listing each record or part it could not, over failing the whole call. Fail the call only when it has nothing usable to return. Catch only that record's or part's own read failure: a block, a challenge, the site's rate limit and a caller's value the site refused or did not apply still end the call, as the rules above say, so tell a block from the record's own failure before listing it,",
   );
 });
 
@@ -1739,7 +1739,7 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["d55a6b8052b2e3ab67189d93ca03f30a65ae666946364a5af42fe5899ff80e36", "core"],
+    ["e26b2626e330df9a1b6ff18c2d42f8f11cb6ad3733fd91a88288dcdceefb6586", "core"],
     ["97e3b5ebdbe8d5fca43790729084de4eef4fbcf5fdf71ad645e679fd72f4e804", "search"],
     ["e6a78355e22e9989ffdccbc5a5f53eef0ec74217c3ae31b68c1ca0421f36ce44", "auth"],
     ["3355021c2daea519d533551d9b6f08f071c792328d39ec5020d6e8b0ca7def52", "testing"],
