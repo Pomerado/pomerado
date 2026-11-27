@@ -3247,7 +3247,7 @@ const actAgain = <E extends YieldableError, V extends string, L extends Autofill
         : again.again === "code"
           ? { ...full, fields }
           : { fields: [], ...(full.popup === undefined ? {} : { popup: full.popup }) };
-    // A code's says whether the site showed its refusal, or only the code page stayed.
+    // A code retry's event says whether the site showed its refusal, or only the code page stayed.
     yield* input.emit({
       stage: "retried",
       reason: `state_${again.again}`,
