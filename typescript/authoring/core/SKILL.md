@@ -695,9 +695,9 @@ that depends on them:
    presents the groups, since one choice can change the options of the next. An input whose
    options depend on another goes after it, such as times after their date, slots after the
    party size, models after the make or regions after the country, even when the page shows it
-   first. A group that takes several picks may take the same option more than once through its
-   own control; confirm the page shows the group complete before adding. When the value is not
-   among the options the page lists at all, throw
+   first. Read each group's required number of picks as the page states it, and confirm the page
+   shows every required group complete before adding. When the value is not among the options
+   the page lists at all, throw
    `new errors.InvalidInput(message, { field, available })` before any commit mark, with
    `field` the input's name and `available` every option the page currently offers as
    selectable, exactly as shown. Leave disabled, sold-out and other unselectable options out of
