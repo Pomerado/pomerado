@@ -87,10 +87,10 @@ export const unenteredWrite = (effect: string, marks: readonly CommitMark[] | un
  * The setting steps a possibly dispatched write entered, when they are all it entered: each
  * entered mark is one its operation declared a setting (`WriteDeclaration.settings`), and a step
  * that is not one stayed unsent. Such a write changed only those choices on the way to its commit,
- * so its own refusal settles as not applied, naming them. Undefined for any other write. Pass the
- * marks as `unenteredWrite` takes them. A journal made with `makeEffectJournalWith({ settledCommits
- * })` reports the settled marks as `not_sent`, although an earlier run sent them, so a maintenance
- * or continuation run that uses one must never be judged by its marks here.
+ * so its own refusal or failure settles as not applied, naming them. Undefined for any other write.
+ * Pass the marks as `unenteredWrite` takes them. A journal made with `makeEffectJournalWith({
+ * settledCommits })` reports the settled marks as `not_sent`, although an earlier run sent them,
+ * so a maintenance or continuation run that uses one must never be judged by its marks here.
  */
 export const settingsOnlyWrite = (effect: string, marks: readonly CommitMark[] | undefined) => {
   const entered = marks?.filter((mark) => mark.state !== "not_sent") ?? [];
@@ -587,6 +587,12 @@ const unappliedRetryable = (view: RunEvidence) =>
   !unsettledEffect(view) &&
   (view.tool_effect === "read" || view.effect === "not_started" || view.effect === "rejected");
 
+/** The setting steps a run changed, all it changed, as its failure's details name them. */
+const settingsChanged = (view: RunEvidence) =>
+  view.settings_changed === undefined || view.settings_changed.length === 0
+    ? {}
+    : { settings_changed: view.settings_changed };
+
 /** Why a settled run failed. */
 export const runError = (view: RunEvidence): RunFailure => {
   switch (view.failure_reason) {
@@ -606,9 +612,7 @@ export const runError = (view: RunEvidence): RunFailure => {
           ? {}
           : { available: view.refusal_available }),
         ...(view.refusal_kind === undefined ? {} : { kind: view.refusal_kind }),
-        ...(view.settings_changed === undefined || view.settings_changed.length === 0
-          ? {}
-          : { settings_changed: view.settings_changed }),
+        ...settingsChanged(view),
       });
     case "input_not_applied":
     // A record an earlier release kept under the location-only reason.
@@ -646,7 +650,10 @@ export const runError = (view: RunEvidence): RunFailure => {
       break;
   }
   if (unsettledEffect(view) && !confirmedWrite(view)) return failure("outcome_unknown");
-  return failure(view.output === "invalid" ? "invalid_output" : "execution_failed");
+  return failure(
+    view.output === "invalid" ? "invalid_output" : "execution_failed",
+    settingsChanged(view),
+  );
 };
 
 /** What a write did to the website; null for a read or a tool whose effect is unknown. */

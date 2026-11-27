@@ -41,8 +41,9 @@ import { withListHost, type ListHost } from "./list-host.js";
  * `settings` names commit steps of `commits` whose click only changes a choice on the way to a
  * later commit, such as a tip or a delivery slot saved at checkout, and cannot place, buy, book,
  * send or charge anything by itself. A step that is not one comes after the last of them. A run
- * that entered only these steps changed only those choices, so its refusal settles as not applied,
- * naming them (`settingsOnlyWrite`). A host or tool from before it treats every step as a commit.
+ * that entered only these steps changed only those choices, so its refusal or its own failure
+ * settles as not applied, naming them (`settingsOnlyWrite`). A host or tool from before it treats
+ * every step as a commit.
  */
 export interface WriteDeclaration {
   readonly confirmation: "message" | "readback" | "unverifiable";
