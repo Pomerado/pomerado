@@ -626,10 +626,11 @@ const outcomeWaitChanged = (locator, key) =>
 // in the same render. Locator and gone outcomes listed together are counted together: their
 // counts go to the browser at once, highest priority last, so they cost one round trip however
 // many there are. The browser runs a page's counts in the order sent, but a locator inside a frame
-// first finds its frame, so its counts can run after counts sent later. So the outcomes above a
-// locator that shows are counted again after its counts, and after an action, after its read of
-// whether it changed. Any other outcome is read alone, in its place. The observations keep the
-// listed order.
+// first finds its frame, so its counts can run after counts sent later. So once a locator shows,
+// or a gone outcome is gone, the outcomes above it are counted again: after its counts and, after
+// an action, after a locator's read of whether it changed. What a look records of an outcome is
+// then read after every lower one that shows or is gone. Any other outcome is read alone, in its
+// place. The observations keep the listed order.
 const outcomeWaitObserve = async (outcomes, key, state, events) => {
   const candidates = Array.isArray(outcomes) ? outcomes
     : Object.entries(outcomes).map(([name, locator]) => ({ name, kind: "locator", locator }));
@@ -641,7 +642,7 @@ const outcomeWaitObserve = async (outcomes, key, state, events) => {
     for (const [index, candidate] of together.entries()) {
       const counted = await counts[index];
       observations[candidate.name] = await outcomeWaitRead(candidate, state, key, events, counted);
-      if (candidate.kind === "locator" && counted.visible > 0)
+      if (candidate.kind === "locator" ? counted.visible > 0 : observations[candidate.name].matched)
         counts = [...counts.slice(0, index + 1), ...count(together.slice(index + 1))];
     }
     together = [];

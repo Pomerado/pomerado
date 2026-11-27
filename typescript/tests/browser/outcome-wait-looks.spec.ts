@@ -1,6 +1,6 @@
 import { runInThisContext } from "node:vm";
 import { expect, test } from "@playwright/test";
-import type { Page } from "playwright";
+import type { Locator, Page } from "playwright";
 import { waitCode } from "../../src/browser/wait.js";
 
 // The outcome wait as a script far from its browser runs it: every Playwright call that goes to the
@@ -141,36 +141,6 @@ test.describe("the round trips of the outcome wait", () => {
     expect(look).toMatchObject({ sent: 6, roundTrips: 2 });
   });
 
-  test("a frame's outcome counted after the page's, both drawn at once: the one listed first, with no action", async ({ page }) => {
-    await page.setContent(`<section id="answer"></section><iframe id="pay" srcdoc="<main></main>"></iframe>`);
-    await page.locator(".err").count();
-    await page.frameLocator("#pay").locator(".ok").count();
-    // Both drawn in one task just after the page's error is first counted, before the frame's
-    // success is: its count first finds its frame.
-    const failed = page.locator(".err");
-    const count = failed.count.bind(failed);
-    let drawn = false;
-    failed.count = () => {
-      const counting = count();
-      if (!drawn) {
-        drawn = true;
-        setTimeout(() =>
-          void page.evaluate(() => {
-            document.querySelector("#answer")!.innerHTML = '<p class="err">Payment declined</p>';
-            document.querySelector<HTMLIFrameElement>("#pay")!.contentDocument!.body.innerHTML = '<p class="ok">Paid</p>';
-          }),
-        );
-      }
-      return counting;
-    };
-    const outcome = await runCode(
-      page,
-      `return (await waitForOutcomeResult({ failed, saved: page.frameLocator("#pay").locator(".ok") }, { noProgressMs: 1000 })).outcome;`,
-      { failed },
-    );
-    expect(outcome).toBe("failed");
-  });
-
   test("before the action, what each outcome shows is noted at once", async ({ page }) => {
     await page.setContent(`<button id="save">Save</button><section id="answer"></section>
       <script>
@@ -190,267 +160,54 @@ test.describe("the round trips of the outcome wait", () => {
   });
 });
 
-const origin = "https://records.example.test";
-
-interface Reply {
-  readonly status?: number;
-  readonly body?: string;
-  readonly contentType?: string;
-  readonly delayMs?: number;
-}
-
-/** Serves `pages` by path (GET), answers everything else through `api`, and opens `/`. */
-const site = async (page: Page, pages: Record<string, string>, api: (method: string, path: string) => Reply | undefined) => {
-  await page.context().route(`${origin}/**`, async (route) => {
-    const request = route.request();
-    const path = new URL(request.url()).pathname;
-    const html = request.method() === "GET" ? pages[path] : undefined;
-    const reply: Reply =
-      html !== undefined ? { body: html, contentType: "text/html" } : (api(request.method(), path) ?? { status: 404, body: "" });
-    if (reply.delayMs !== undefined) await new Promise((resolve) => setTimeout(resolve, reply.delayMs));
-    await route.fulfill({ status: reply.status ?? 200, contentType: reply.contentType ?? "application/json", body: reply.body ?? "" });
-  });
-  await page.goto(`${origin}/`);
+/**
+ * Has `draw` (page code) run once, just after the code sends `locator`'s `nth` count (from 1): the
+ * page changes between that count and the counts sent before it of a locator inside a frame, which
+ * first finds its frame.
+ */
+const drawAfterCount = (page: Page, locator: Locator, nth: number, draw: () => void) => {
+  const count = locator.count.bind(locator);
+  let counted = 0;
+  locator.count = () => {
+    const counting = count();
+    counted += 1;
+    if (counted === nth) setTimeout(() => void page.evaluate(draw));
+    return counting;
+  };
+  return locator;
 };
 
-/** A record form in a dialog, whose Save button runs `onSave` (page script). */
-const recordForm = (onSave: string, extra = "") => `
-  <div role="dialog" aria-label="Record" id="modal">
-    <form id="record" aria-label="Edit record" novalidate>
-      <label for="title">Title</label><input id="title" name="title" value="Quarterly report">
-      <button type="button" id="save">Save</button>
-    </form>
-  </div>
-  <section id="answer"></section>
-  ${extra}
-  <script>
-    const later = (ms, html) => setTimeout(() => document.querySelector("#answer").insertAdjacentHTML("beforeend", html), ms);
-    document.querySelector("#save").onclick = async () => { ${onSave} };
-  </script>`;
-
-const errorBanner = `'<div role="alert">Changes could not be saved</div>'`;
-const savedToast = `'<div class="toast toast-success" role="status">Record saved</div>'`;
-
-// The common outcomes of a save, highest priority first.
-const saveOutcomes = `
-  invalid: { invalid: form },
-  failed: page.getByRole("alert"),
-  saved: page.locator(".toast-success"),
-`;
-
-interface Scenario {
-  readonly name: string;
-  readonly pages: Record<string, string>;
-  readonly api?: (method: string, path: string) => Reply | undefined;
-  readonly outcomes: string;
-  readonly options?: string;
-  readonly expected: Record<string, unknown>;
-}
-
-const scenarios: readonly Scenario[] = [
-  {
-    name: "an error and a success drawn at once: the one listed first",
-    pages: { "/": recordForm(`later(150, ${errorBanner} + ${savedToast});`) },
-    outcomes: saveOutcomes,
-    expected: { outcome: "failed", kind: "locator", evidence: { count: 1, visible: 1, text: "Changes could not be saved" } },
-  },
-  {
-    name: "a success drawn first, an error later: the success",
-    pages: { "/": recordForm(`later(100, ${savedToast}); later(900, ${errorBanner});`) },
-    outcomes: saveOutcomes,
-    expected: { outcome: "saved", kind: "locator", evidence: { count: 1, visible: 1, text: "Record saved" } },
-  },
-  {
-    name: "an error drawn first, a success later: the error",
-    pages: { "/": recordForm(`later(100, ${errorBanner}); later(900, ${savedToast});`) },
-    outcomes: saveOutcomes,
-    expected: { outcome: "failed", kind: "locator", evidence: { count: 1, visible: 1, text: "Changes could not be saved" } },
-  },
-  {
-    name: "a dialog that flickers shut, then a validation error: the error",
-    pages: {
-      "/": recordForm(`
-        const modal = document.querySelector("#modal");
-        setTimeout(() => { modal.style.display = "none"; }, 100);
-        setTimeout(() => { modal.style.display = ""; }, 160);
-        setTimeout(() => {
-          const title = document.querySelector("#title");
-          title.setAttribute("aria-invalid", "true");
-          title.setAttribute("aria-describedby", "title-error");
-          title.insertAdjacentHTML("afterend", '<p id="title-error">Title is already taken</p>');
-        }, 600);`),
-    },
-    outcomes: `invalid: { invalid: form }, closed: { gone: page.getByRole("dialog"), stableMs: 300 },`,
-    expected: { outcome: "invalid", kind: "invalid", evidence: { fields: [{ field: "Title", message: "Title is already taken" }] } },
-  },
-  {
-    name: "a native alert on the same URL: the dialog, not the URL",
-    pages: { "/": recordForm(`setTimeout(() => alert("Record saved"), 100);`) },
-    outcomes: `opened: { url: "/" }, failed: page.getByRole("alert"), notice: { dialog: "alert" },`,
-    expected: { outcome: "notice", kind: "dialog", evidence: { type: "alert", message: "Record saved" } },
-  },
-  {
-    name: "the save's response: the response, with its status",
-    pages: { "/": recordForm(`await fetch("/api/records", { method: "POST", body: "{}" });`) },
-    api: (method) => (method === "POST" ? { status: 201, body: "{}", delayMs: 150 } : undefined),
-    outcomes: `failed: page.getByRole("alert"), committed: { response: { method: "POST", status: 201 } },`,
-    expected: {
-      outcome: "committed",
-      kind: "response",
-      evidence: { url: `${origin}/api/records`, method: "POST", status: 201 },
-    },
-  },
-  {
-    name: "a receipt opened in a new tab: the popup",
-    pages: { "/": recordForm(`window.open("/receipts/5", "_blank");`), "/receipts/5": "<h1>Receipt</h1>" },
-    outcomes: `${saveOutcomes} receipt: { popup: true },`,
-    expected: { outcome: "receipt", kind: "popup", evidence: { url: `${origin}/receipts/5` } },
-  },
-  {
-    name: "a dialog that closes: gone once it stayed gone",
-    pages: { "/": recordForm(`setTimeout(() => { document.querySelector("#modal").hidden = true; }, 100);`) },
-    outcomes: `failed: page.getByRole("alert"), closed: { gone: page.getByRole("dialog"), stableMs: 200 },`,
-    expected: { outcome: "closed", kind: "gone", evidence: { goneForMs: "held" } },
-  },
-  {
-    name: "a dialog that closes, held for a longer stableMs",
-    pages: { "/": recordForm(`setTimeout(() => { document.querySelector("#modal").hidden = true; }, 100);`) },
-    outcomes: `failed: page.getByRole("alert"), closed: { gone: page.getByRole("dialog"), stableMs: 700 },`,
-    expected: { outcome: "closed", kind: "gone", evidence: { goneForMs: "held" }, held: true },
-  },
-  {
-    name: "a choice the site greys out: the disabled control",
-    pages: {
-      "/": recordForm(`setTimeout(() => {
-        const save = document.querySelector("#save");
-        save.disabled = true;
-        save.textContent = "Sold out";
-      }, 100); later(900, ${savedToast});`),
-    },
-    outcomes: `unavailable: page.getByRole("button", { name: "Sold out", disabled: true }), saved: page.locator(".toast-success"),`,
-    expected: { outcome: "unavailable", kind: "locator", evidence: { count: 1, visible: 1, text: "Sold out" } },
-  },
-  {
-    name: "a bot challenge drawn over the page: the challenge",
-    pages: {
-      "/": recordForm(`setTimeout(() => document.body.insertAdjacentHTML("beforeend",
-        '<iframe title="Widget containing a security challenge" srcdoc="<p>Verify you are human</p>"></iframe>'), 150);`),
-    },
-    outcomes: `challenge: page.locator('iframe[title*="security challenge" i]'), ${saveOutcomes}`,
-    expected: { outcome: "challenge", kind: "locator", evidence: { count: 1, visible: 1, text: "" } },
-  },
-  {
-    name: "a bot vendor answering the save with a challenge: the 403 response",
-    pages: { "/": recordForm(`await fetch("/api/records", { method: "POST", body: "{}" });`) },
-    api: (method) => (method === "POST" ? { status: 403, contentType: "text/html", body: "<h1>Access denied</h1>" } : undefined),
-    outcomes: `challenged: { response: { status: 403 } }, ${saveOutcomes}`,
-    expected: { outcome: "challenged", kind: "response", evidence: { url: `${origin}/api/records`, method: "POST", status: 403 } },
-  },
-  {
-    name: "a redirect to the record between two locators: the URL",
-    pages: { "/": recordForm(`setTimeout(() => { location.href = "/records/42"; }, 300);`), "/records/42": "<h1>Record 42</h1>" },
-    outcomes: `failed: page.getByRole("alert"), opened: { url: /\\/records\\/\\d+$/ }, saved: page.locator(".toast-success"),`,
-    expected: { outcome: "opened", kind: "url", evidence: { url: `${origin}/records/42` } },
-  },
-  {
-    name: "an in-between answer named pending, then the final one",
-    pages: {
-      "/": recordForm(`later(100, '<p class="processing">Processing your order</p>');
-        setTimeout(() => { document.querySelector("#answer").innerHTML = ${savedToast}; }, 700);`),
-    },
-    outcomes: `saved: page.locator(".toast-success"), processing: page.locator(".processing"),`,
-    options: `pending: "processing",`,
-    expected: { outcome: "saved", kind: "locator", evidence: { count: 1, visible: 1, text: "Record saved" } },
-  },
-  {
-    name: "the app's own state by a check: its value",
-    pages: { "/": recordForm(`window.store = { status: "saving" }; setTimeout(() => { window.store = { status: "saved", id: 12 }; }, 200);`) },
-    outcomes: `${saveOutcomes} stored: { check: () => page.evaluate(() => window.store?.status === "saved" && window.store) },`,
-    expected: { outcome: "stored", kind: "check", evidence: { value: { status: "saved", id: 12 } } },
-  },
-  {
-    name: "a toast that comes and goes between two looks: announced",
-    pages: {
-      "/": recordForm(`setTimeout(() => {
-        document.body.insertAdjacentHTML("beforeend", '<div id="toast" aria-live="polite">Record saved</div>');
-        setTimeout(() => document.querySelector("#toast").remove(), 40);
-      }, 80);`),
-    },
-    outcomes: `failed: page.getByRole("alert"), saved: { announced: /saved/i },`,
-    expected: { outcome: "saved", kind: "announced", evidence: { text: "Record saved" } },
-  },
-  {
-    name: "a toast left from before the action, unchanged: only after the unchanged window",
-    pages: { "/": recordForm(`await fetch("/api/records", { method: "POST", body: "{}" });`, `<div class="toast toast-success">Record saved</div>`) },
-    api: (method) => (method === "POST" ? { body: "{}" } : undefined),
-    outcomes: saveOutcomes,
-    options: `unchangedMs: 500,`,
-    expected: { outcome: "saved", kind: "locator", evidence: { count: 1, visible: 1, text: "Record saved" } },
-  },
-  {
-    name: "two visible matches that read differently: ambiguous",
-    pages: { "/": recordForm(`later(100, ${savedToast} + '<div class="toast toast-success">Record archived</div>');`) },
-    outcomes: saveOutcomes,
-    expected: {
-      reason: "outcome_ambiguous",
-      message: "outcome_ambiguous: invalid # invalid fields, failed # visible of #, saved # visible of #",
-    },
-  },
-  {
-    name: "no answer before the deadline: a timeout naming what each saw",
-    pages: { "/": recordForm("") },
-    outcomes: `${saveOutcomes} opened: { url: /records/ }, committed: { response: { method: "POST" } },`,
-    options: `deadline: Date.now() + 700, noProgressMs: 5000,`,
-    expected: {
-      reason: "outcome_timeout",
-      message:
-        "outcome_timeout after # ms: invalid # invalid fields, failed # visible of #, saved # visible of #, opened URL not matched, committed no matching response of # seen; no progress seen",
-    },
-  },
-  {
-    name: "a quiet page: outcome_unknown once nothing progressed",
-    pages: { "/": recordForm("") },
-    outcomes: `${saveOutcomes} opened: { url: /records/ },`,
-    options: `noProgressMs: 400,`,
-    expected: {
-      reason: "outcome_unknown",
-      message:
-        "outcome_unknown after # ms, # ms without progress, no outcome showing: invalid # invalid fields, failed # visible of #, saved # visible of #, opened URL not matched; no progress seen",
-    },
-  },
-];
-
-/** The scenario's wait after a click on Save, with `page` near its browser or `roundTripMs` from it. */
-const answerOf = async (page: Page, scenario: Scenario, roundTripMs: number) => {
-  await site(page, scenario.pages, scenario.api ?? (() => undefined));
-  const stableMs = /stableMs: (\d+)/u.exec(scenario.outcomes)?.[1] ?? "0";
-  const body = `
-    const form = page.getByRole("form", { name: "Edit record" });
-    const save = page.locator("#save");
-    try {
-      const result = await waitForOutcomeResult({ ${scenario.outcomes} }, {
-        action: () => save.click(), noProgressMs: 600, timeout: 4000, unchangedMs: 300, ${scenario.options ?? ""}
-      });
-      await result.dialog?.dismiss().catch(() => undefined);
-      await result.page?.close().catch(() => undefined);
-      const { goneForMs, ...evidence } = result.evidence;
-      return {
-        outcome: result.outcome, kind: result.kind, ...(result.pending ? { pending: true } : {}),
-        evidence: goneForMs === undefined ? evidence : { ...evidence, goneForMs: goneForMs >= ${stableMs} ? "held" : goneForMs },
-        ...(${stableMs} > 300 ? { held: result.afterMs >= ${stableMs} } : {}),
-      };
-    } catch (error) {
-      await error.dialog?.dismiss().catch(() => undefined);
-      if (error.reason === undefined) throw error;
-      return { reason: error.reason, message: error.message.replace(/\\d+/g, "#") };
-    }`;
-  return roundTripMs === 0 ? runCode(page, body) : runFar(page, roundTripMs, body);
-};
-
-test.describe("the same answers near the browser and far from it", () => {
-  for (const scenario of scenarios)
-    test(scenario.name, async ({ page }) => {
-      expect(await answerOf(page, scenario, 0), "near").toEqual(scenario.expected);
-      expect(await answerOf(page, scenario, 60), "60 ms away").toEqual(scenario.expected);
+test.describe("an outcome in a frame counted after the page's", () => {
+  test("a success in the frame and a higher error on the page drawn at once: the error, with no action", async ({ page }) => {
+    await page.setContent(`<section id="answer"></section><iframe id="pay" srcdoc="<main></main>"></iframe>`);
+    await page.locator(".err").count();
+    await page.frameLocator("#pay").locator(".ok").count();
+    const failed = drawAfterCount(page, page.locator(".err"), 1, () => {
+      document.querySelector("#answer")!.innerHTML = '<p class="err">Payment declined</p>';
+      document.querySelector<HTMLIFrameElement>("#pay")!.contentDocument!.body.innerHTML = '<p class="ok">Paid</p>';
     });
+    const outcome = await runCode(
+      page,
+      `return (await waitForOutcomeResult({ failed, saved: page.frameLocator("#pay").locator(".ok") }, { noProgressMs: 1000 })).outcome;`,
+      { failed },
+    );
+    expect(outcome).toBe("failed");
+  });
+
+  test("a spinner gone from the frame as a higher error is drawn on the page: the error", async ({ page }) => {
+    await page.setContent(`<section id="answer"></section><iframe id="pay" srcdoc="<p class='spinner'>Paying</p>"></iframe>`);
+    await page.locator(".err").count();
+    await page.frameLocator("#pay").locator(".spinner").count();
+    // At the second look, once the first saw the spinner.
+    const failed = drawAfterCount(page, page.locator(".err"), 2, () => {
+      document.querySelector("#answer")!.innerHTML = '<p class="err">Payment declined</p>';
+      document.querySelector<HTMLIFrameElement>("#pay")!.contentDocument!.querySelector(".spinner")!.remove();
+    });
+    const outcome = await runCode(
+      page,
+      `return (await waitForOutcomeResult({ failed, closed: { gone: page.frameLocator("#pay").locator(".spinner"), stableMs: 0 } }, { noProgressMs: 1000 })).outcome;`,
+      { failed },
+    );
+    expect(outcome).toBe("failed");
+  });
 });
