@@ -1719,6 +1719,15 @@ it("has a read return what it could read over failing for one record or part", a
   );
 });
 
+// A page that showed the same control twice, once per offer, matched both copies, and repairs kept
+// failing on the second match instead of scoping to the requested offer's container.
+it("has a tool scope a control the page repeats to the requested item's container", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  expect((texts.get("core") ?? "").replace(/\s+/g, " ")).toContain(
+    "When the page repeats a control, scope the read and the click to the container of the requested item or offer.",
+  );
+});
+
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 
 /*
@@ -1739,7 +1748,7 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["d37582a92c965cdd81b7adaca422ca90c7d41f0b269994358568418082c4109e", "core"],
+    ["5decdc18624e7a807b6de442e886ee977d6e872f3db93703a0603c8abf49080a", "core"],
     ["97e3b5ebdbe8d5fca43790729084de4eef4fbcf5fdf71ad645e679fd72f4e804", "search"],
     ["e6a78355e22e9989ffdccbc5a5f53eef0ec74217c3ae31b68c1ca0421f36ce44", "auth"],
     ["3355021c2daea519d533551d9b6f08f071c792328d39ec5020d6e8b0ca7def52", "testing"],

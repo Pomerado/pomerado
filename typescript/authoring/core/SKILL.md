@@ -1026,7 +1026,8 @@ match. Scope a role locator to its evidenced container and to visible elements,
 for example `nav.getByRole("link", { name: /log in/i }).filter({ visible: true })`,
 then check that exactly one element matches; `waitForOutcome` checks it for the outcome it
 returns unless its visible matches all read the same text, or all came after a commit's click while no other outcome shows. Links that open the same other page count as one match, as `waitForReady` does: act on the first visible one. When several candidates remain, inspect them and choose by evidence such as
-section, accessible name and destination before clicking or waiting. A readiness wait targets one specific
+section, accessible name and destination before clicking or waiting. When the page repeats a control, scope the
+read and the click to the container of the requested item or offer. A readiness wait targets one specific
 evidenced element or page state.
 
 Never search the open web, such as Google, to find the page a task needs. Make its URL an
