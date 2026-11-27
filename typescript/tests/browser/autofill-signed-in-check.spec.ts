@@ -12,7 +12,7 @@ import { hostPage } from "./autofill-host-page.js";
 // which decides what shows. A password field still showing fails it only when it belongs to the
 // sign-in's own screens: one of their fields, or in the form of one of them that shows. Another
 // form's password field on the signed-in page does not count unless a recorded selector matches
-// in it.
+// in it. Once the marker shows, only the page's own document counts for the password field.
 const site = "https://bank.example.test";
 const widget = "https://vault.widget.example.net";
 const marker = '<p id="identity">Signed in</p>';
@@ -152,10 +152,10 @@ for (const [name, body, frame, failed, signIn] of [
     "password_field_visible",
   ],
   [
-    "the sign-in's own password field in its sign-in frame",
+    "the sign-in's own password field only in a frame",
     `${marker}<iframe src="${site}/login-frame"></iframe>`,
     `<form action="/session" method="post"><label>Password<input id="password" type="password"></label><button>Sign in</button></form>`,
-    "password_field_visible",
+    undefined,
   ],
   [
     "a password field in the form the sign-in's identifier field joins by its form attribute",
@@ -196,12 +196,50 @@ test("the signed-in check without the marker says whether the sign-in's own pass
     passwordFieldVisible: true,
   });
   await page.unrouteAll();
+  expect(await checkPage(page, `<iframe src="${site}/login-frame"></iframe>`, form, screens, "/session-ended")).toEqual({
+    signedIn: false,
+    failed: "indicator_not_visible",
+    url: `${site}/session-ended`,
+    passwordFieldVisible: true,
+  });
+  await page.unrouteAll();
   const chooser = `<h1>Select an account</h1><ul><li><button>Account one</button></li><li><button>Account two</button></li></ul>`;
   expect(await checkPage(page, chooser, null, screens, "/choose-account")).toEqual({
     signedIn: false,
     failed: "indicator_not_visible",
     url: `${site}/choose-account`,
   });
+});
+
+// Once the marker shows, only the page's own document is read for the sign-in's password field,
+// so the check waits for no frame still loading, such as a bot check's or an ad's.
+test("the signed-in check with the marker shown does not wait for a frame still loading", async ({ page }) => {
+  let frameAnswered = false;
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+    setTimeout(resolve, 5_000);
+  });
+  await page.route(`${site}/account`, (route) =>
+    route.fulfill({ contentType: "text/html", body: `${marker}<iframe src="${widget}/frame"></iframe>` }),
+  );
+  await page.route(`${widget}/frame`, async (route) => {
+    await held;
+    frameAnswered = true;
+    return route.fulfill({ contentType: "text/html", body: "<p>Loading</p>" });
+  });
+  await page.goto(`${site}/account`, { waitUntil: "domcontentloaded" });
+  const checked = await Effect.runPromise(
+    checkAutofillSignedIn({
+      indicator: { selector: "#identity" },
+      page: await hostPage(page),
+      siteOrigin: site,
+      screens,
+    }),
+  );
+  release();
+  expect(checked).toEqual({ signedIn: true, url: `${site}/account` });
+  expect(frameAnswered).toBe(false);
 });
 
 test("an account search form containing the signed-in marker does not look like unfinished authentication", async ({ page }) => {
