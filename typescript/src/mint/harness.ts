@@ -36,7 +36,9 @@ import {
   Exit,
   FiberSet,
   Option,
+  ParseResult,
   Schema,
+  SchemaAST,
   Scope,
 } from "effect";
 import {
@@ -241,7 +243,7 @@ const weakenedOutputsText = (weakened: readonly WeakenedOutput[]) =>
         .join("; ")}`;
 
 const effectQuestionInstruction =
-  "Before any website access, ask the person whether this build only looks things up or changes something on the website. Call request_input once with exactly one choice question whose options have the ids read and write: the prompt says in one or two plain sentences what the finished tool would do, and your best guess comes first; filling in or advancing a form that saves data on the site (an application, profile or checkout form) counts as a change, while searching, filtering or opening a checkout only to read it does not. A write build does the requested task once, for real, with the person's values, while it builds (it may take several steps), and ends by reading the site's confirmation. No other tool is available until the person answers.";
+  "Before any website access, ask the person whether this build only looks things up or changes something on the website. Call request_input once with exactly one choice question whose options have the ids read and write: the prompt says in one or two plain sentences what the finished tool would do, and your best guess comes first; filling in or advancing a form that saves data on the site (an application, profile or checkout form) counts as a change, while searching, filtering, opening a checkout only to read it or filling a guest cart that places no hold and lives only inside one run to return its quote does not. A write build does the requested task once, for real, with the person's values, while it builds (it may take several steps), and ends by reading the site's confirmation. No other tool is available until the person answers.";
 
 /**
  * The host's own labels for the two answers of the effect question. The agent writes the prompt,
@@ -996,26 +998,38 @@ const safeExecutionEvidence = (evidence: ExecutionEvidence): ExecutionEvidence =
   };
 };
 
+/** The message each of a schema's own checks that refused a decode states: fixed text, no input. */
+const formatReasons = (issue: ParseResult.ParseIssue): readonly string[] => {
+  if (issue._tag === "Refinement" && issue.kind === "Predicate") {
+    const message = Option.getOrUndefined(SchemaAST.getMessageAnnotation(issue.ast))?.(issue);
+    return typeof message === "string" ? [message] : [];
+  }
+  if (issue._tag === "Composite") return [issue.issues].flat().flatMap(formatReasons);
+  return "issue" in issue ? formatReasons(issue.issue) : [];
+};
+
 /**
  * Decodes `input`. A tool request the agent sent, with `request` naming its tool, that fails to
- * decode is the agent's invalid input. Anything else, such as the job's own request, is the host's.
+ * decode is the agent's invalid input, and names the reasons its format's own checks give. Anything
+ * else, such as the job's own request, is the host's.
  */
 const decode = <A, I>(schema: Schema.Schema<A, I>, input: unknown, request?: string) =>
   Schema.decodeUnknown(schema)(input, { onExcessProperty: "error" }).pipe(
-    Effect.mapError(
-      (error) =>
-        new MintFailure({
-          failureDetail: failureDetail(
-            request === undefined ? "mint_host_dependency_failed" : "invalid_input",
-            {
-              operation: "Schema.decodeUnknown",
-              error,
-              ...(request === undefined ? {} : { context: { request } }),
-            },
-          ),
-          code: "InvalidRequest",
-        }),
-    ),
+    Effect.mapError((error) => {
+      const reasons = request === undefined ? [] : [...new Set(formatReasons(error.issue))];
+      return new MintFailure({
+        failureDetail: failureDetail(
+          request === undefined ? "mint_host_dependency_failed" : "invalid_input",
+          {
+            operation: "Schema.decodeUnknown",
+            error,
+            ...(request === undefined ? {} : { context: { request } }),
+          },
+        ),
+        code: "InvalidRequest",
+        ...(reasons.length === 0 ? {} : { formatReasons: reasons }),
+      });
+    }),
   );
 
 /**
@@ -5398,6 +5412,8 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       const signedInTestInputs: string[] = [...(recovered?.signedInTestInputs ?? [])];
       /** Each case's latest screened output, by version and case id: this attempt's runs only. */
       const liveTestOutputs = new Map<string, unknown>();
+      /** A next-page case's page 1, screened, from the run whose page 2 `liveTestOutputs` holds. */
+      const liveTestPageOnes = new Map<string, unknown>();
       const outputKey = (entrypoint: string, id: string) => `${liveTestVersion(entrypoint)}\n${id}`;
       /**
        * Each case's latest output fields, by version and case id, as paths and counts with no
@@ -5949,6 +5965,17 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             const before = liveTestOutputs.get(outputAt);
             if (screened === undefined) liveTestOutputs.delete(outputAt);
             else liveTestOutputs.set(outputAt, screened);
+            const pageOne =
+              testCase.next_page === true &&
+              run.followUp !== undefined &&
+              run.outcome.status === "completed"
+                ? yield* dependencies.projection
+                    .json(run.outcome.output)
+                    .pipe(Effect.orElseSucceed(() => undefined))
+                : undefined;
+            const pageOneBefore = liveTestPageOnes.get(outputAt);
+            if (pageOne === undefined) liveTestPageOnes.delete(outputAt);
+            else liveTestPageOnes.set(outputAt, pageOne);
             const message =
               judged.message === undefined
                 ? undefined
@@ -5988,16 +6015,25 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               previous.sourceDigest === sourceDigest &&
               judged.verdict === "pass";
             // A failure judged by another resultsList whose own output passes by this one was the
-            // host's judgment, not a race: the new result replaces it.
+            // host's judgment, not a race: the new result replaces it. A next-page case's own
+            // output is both its pages.
             const misjudged =
               flaky &&
               previous.resultsList !== file.resultsList &&
-              testCase.next_page !== true &&
               typeof before === "object" &&
               before !== null &&
+              (testCase.next_page !== true ||
+                (typeof pageOneBefore === "object" && pageOneBefore !== null)) &&
               judgeCase(
                 testCase,
-                { id: run.id, outcome: { status: "completed", output: before }, durationMs: 0 },
+                testCase.next_page === true
+                  ? {
+                      id: run.id,
+                      outcome: { status: "completed", output: pageOneBefore },
+                      followUp: { status: "completed", output: before },
+                      durationMs: 0,
+                    }
+                  : { id: run.id, outcome: { status: "completed", output: before }, durationMs: 0 },
                 "list" in shape ? shape.list : undefined,
               ).verdict === "pass";
             if (

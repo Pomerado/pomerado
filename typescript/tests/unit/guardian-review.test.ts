@@ -615,6 +615,23 @@ describe("OpenAI reviewer policy and trusted authority", () => {
       expect(policy).toContain(sentence);
   });
 
+  // The host's step format refuses private_identifier beside another kind, so a box that takes an
+  // identity number or another identifier had no step Guardian would allow.
+  it("lists a private_identifier field's kind alone, as the step format does", async () => {
+    const requests = readThenDecide({
+      outcome: "allow",
+      rationale: "Controlled source was read.",
+      action: "read",
+    });
+    await Effect.runPromise(
+      makeGuardian(reviewer(markedUpstreamPolicy)).review(pending, readEntrypoint),
+    );
+    const sentence =
+      "never a list that leaves out username on a field that takes one. A private_identifier field lists that kind alone, as the host's step format requires, even when the field also takes another kind.";
+    for (const policy of [instructionsOf(requests[0]), guardianExecutionPolicy(otherHost)])
+      expect(policy).toContain(sentence);
+  });
+
   // The host asks the owner for a sign-in code or answer only while the step runs, after Guardian
   // allowed it. A build deadlocked when Guardian refused such a step for want of an earlier code.
   it("allows a host sign-in step's code or answer slot before any code is supplied", async () => {

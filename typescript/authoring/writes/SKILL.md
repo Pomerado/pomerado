@@ -46,7 +46,8 @@ of a read too, unless the step's requests save an address-book entry, a default 
 preference; that is a write. While building,
 a live step, the example's or a test case's, that enters a name, email or phone asks the owner
 first, as the execution review requires; the answer keeps the build a read. Adding to a cart, a hold on inventory, a seat or a time slot, an upload and a draft stay writes,
-signed out too. Never click a control that can add to a cart in an explore to see what it opens; that click is a write. Read the item's options from the page or the item's own page instead;
+signed out too, except filling a guest cart that places no hold and lives only inside one run to return its
+quote, which is part of a read (.agents/cart/SKILL.md). Never click a control that can add to a cart in an explore to see what it opens; that click is a write. Read the item's options from the page or the item's own page instead;
 opening an item's details or options from its own card, name or picture, not a control labelled
 add or plus, is a read.
 
@@ -167,7 +168,8 @@ During the session:
   nothing applied. On the caller's no to the tool's own confirm, return a declared refusal
   where one completes the run (below).
 - When one of those checks rules the task out, such as a total over the caller's limit, an
-  item out of stock or a variant the page does not offer, the script refuses before the mark
+  item out of stock, a variant the page does not offer or no control for the action at all, the
+  script refuses before the mark
   with `InvalidInput` (the caller-input skill, "Throw the error that matches what happened"),
   or returns a refusal its output schema declares before its first mark (below). Never return
   a refusal in an output shape the schema does not declare. Apart from such a declared

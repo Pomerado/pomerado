@@ -102,6 +102,9 @@ answers `{ success, result, error, stderr }`. Throw
   anything or skipping a control already in the requested state. The values you return still get
   their one `waitForRows` or `waitForValues` after the last change, which passes at once on a
   settled page.
+- Skip a step whose result the page already shows. Click a control that only reveals more of the
+  page only when what the next step needs isn't shown: wait for that or the control, whichever shows
+  first.
 - `waitForOutcome` already waited for its answer, so prefer no extra wait for that same answer after it.
 - A step that changes the site's own setting, such as a store, location, currency or language,
   may reload the page some time after the site saves it, or redraw it without loading a new one,
@@ -1238,7 +1241,8 @@ one, change the code so it reads without causing it, for example by reading the
 value from the page instead of clicking the control that changes it, and run it
 again. Setting a read's location, filter, sort or option through the site's control is part of
 the read, not a saved preference (the input schema above). So is opening a checkout only to read
-what it offers, choosing, entering and saving nothing, with the requests its page sends. For a write session, the list shows the commit your step caused and any
+what it offers, choosing, entering and saving nothing, with the requests its page sends. So is filling a
+guest cart that places no hold and lives only inside one run to return its quote (cart skill). For a write session, the list shows the commit your step caused and any
 autosave, with the status the site answered: a 2xx or 3xx on the commit's route, with no
 error after it, is what the writes skill confirms from. A 200 whose body reports an error, as
 GraphQL can, did not go through. The list is the evidence for the `http` version, and any

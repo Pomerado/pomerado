@@ -1591,7 +1591,7 @@ it("has a write follow the site's substitute only when the caller's task asks fo
   const writes = (texts.get("writes") ?? "").replace(/\s+/g, " ");
   // The refusal rule stays as it was, and the exception comes right after it.
   expect(writes).toContain(
-    "- When one of those checks rules the task out, such as a total over the caller's limit, an item out of stock or a variant the page does not offer, the script refuses before the mark with `InvalidInput` (the caller-input skill, \"Throw the error that matches what happened\"), or returns a refusal its output schema declares before its first mark (below).",
+    "- When one of those checks rules the task out, such as a total over the caller's limit, an item out of stock, a variant the page does not offer or no control for the action at all, the script refuses before the mark with `InvalidInput` (the caller-input skill, \"Throw the error that matches what happened\"), or returns a refusal its output schema declares before its first mark (below).",
   );
   expect(writes).toContain(
     "A report of the form's fields, its validation messages or the options to pick from is a refusal (`InvalidInput` with `available`) or a failure (`OperationFailure`), not the write's output.",
@@ -1701,6 +1701,15 @@ it("tells the minter batchFetch backs off on a failed fetch, so it adds no pacin
   );
 });
 
+// A tool that waited for a filter option named after the caller's value timed out when the site
+// offered other options, so its run went to a repair instead of refusing with those options.
+it("has a tool read a filter's options before acting on one named after the caller's value", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  expect((texts.get("caller-input") ?? "").replace(/\s+/g, " ")).toContain(
+    "For a filter or checkbox list, prefer reading the options the control offers before acting on one named after the caller's value, and refuse with those options when the value isn't there.",
+  );
+});
+
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 
 /*
@@ -1721,17 +1730,17 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["ccfd0aa9f8f407ceae7e5a4fe4b179e616e58016d8704e5f9a8fab3f47a8445c", "core"],
+    ["1d8fe96fd7dd1451e270fa027365d164e0bcbf66ea5352b2a756ebd7e99621d7", "core"],
     ["97e3b5ebdbe8d5fca43790729084de4eef4fbcf5fdf71ad645e679fd72f4e804", "search"],
-    ["d1e444d9be2c518d0bf6f15ec435c33317919ce34d0712c55672d9c87c3c6e06", "auth"],
-    ["f41fa0f1d8a91a956965424c426e2760e809296ebdfce1cc22e70083559db21c", "testing"],
+    ["e6a78355e22e9989ffdccbc5a5f53eef0ec74217c3ae31b68c1ca0421f36ce44", "auth"],
+    ["3355021c2daea519d533551d9b6f08f071c792328d39ec5020d6e8b0ca7def52", "testing"],
     ["ca80679c4488dec4ee85052fb39f1493b6d5f8ca4a5df9b56d10a2e96078e848", "pagination"],
     ["b0220727e7f21e1c5d10101e74996ddb3d2d4e18061ac85c807203ed4ab0f695", "forms"],
-    ["2276d3f5763cf162ced7fcf3ac3ba3b9b37c65a71001f40f1cbe204c2691bd2f", "writes"],
-    ["c57264580481b348972d0e8d64e70889d7a759783c6ac36e915724739de3fce5", "cart"],
-    ["ed37946950ec4ab0e72636474ad359287798b7279d1bf1dce65ae40907e6c34a", "caller-input"],
-    ["3573b3f6005645d27cb02a140d3d212ffeb30272c47d05f9851b37824d2beb11", "publication"],
-    ["257b832d4c786c59dc1589b8df7fa8b5836625366511d990445399c8b164e300", "workspace/AGENTS.md"],
+    ["9f72a3440d849183d0afde65dd936a70f9adeb6cd728dd92f9a2f9d977b5ef7e", "writes"],
+    ["0982ff7eab53c78619d96948772326f857326ad205764e4e78ce59ebfd9cfa5d", "cart"],
+    ["1b4f256b9d85d7ff371e6f1eefdfadbca9acc4161a938b45fdf771938faac49d", "caller-input"],
+    ["07b61ae415889706192db263c00be4635dddb6c7ea0e97017b9b7e53ff1c95a3", "publication"],
+    ["68624ce51e88e97ab72ff393ac8ecc7b9fc87d5d5518fd4d67a34e45da8be1fc", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);
 });
@@ -1852,7 +1861,7 @@ it("renders the search URL fast path only when a host turns it on", async () => 
     [sha256(on.agents), "workspace/AGENTS.md"],
   ]).toStrictEqual([
     ["de172ebf03d92a8782f5abbdd8444d90104634da28f4e21ad444dcbde0734e1f", "search"],
-    ["d7361f40aa3b3e5213ef24e273f5318bf97cbfce60a0f0ad1e97128c68377e8d", "workspace/AGENTS.md"],
+    ["314beb6c4e94c6b74381c9e3622307cbee2c8fd9b32b0a4fa4fa11748c0e895e", "workspace/AGENTS.md"],
   ]);
   expect(on.digests.filter(([, name]) => name !== "search")).toStrictEqual(
     off.digests.filter(([, name]) => name !== "search"),

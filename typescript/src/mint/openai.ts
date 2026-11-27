@@ -305,6 +305,7 @@ const toolFailureFields = (error: unknown, instruction: string) => {
     reviewFailure: failure?.reviewFailure,
     ...(observation ? { destinationReason: "observation_unavailable" } : {}),
     reason: failure?.reason,
+    formatReasons: failure?.formatReasons,
     // What publication needs fixed or regenerated, in finite fields.
     destinationEvidenceGap: failure?.destinationEvidenceGap,
     registryIssue: failure?.registryIssue,

@@ -51,7 +51,9 @@ separately are both applied as given, even when they're far apart.
 3. Throw the error that matches what happened:
    - `InvalidInput`: the caller's value is wrong or the site does not offer it. It breaks a rule
      above, or is not among the options the page lists, such as a store missing from its
-     picker. Pass `field`, and `available`, every option the page offers
+     picker. For a filter or checkbox list, prefer reading the options the control offers
+     before acting on one named after the caller's value, and refuse with those options when
+     the value isn't there. Pass `field`, and `available`, every option the page offers
      as selectable, exactly as shown, whenever the page lists them, and `available: []` when it
      lists none, the refusal has no `kind` and its message doesn't start "Caller input error:".
      `available` lists only values
@@ -120,8 +122,8 @@ separately are both applied as given, even when they're far apart.
    - A write whose steps may have changed the site and then failed or could not confirm the
      change: let it end as a possible change, which is never retried. Never throw
      `InvalidInput` or `InputNotApplied` to make it look untouched (writes skill).
-   - A control the tool could not find, open or read, or a page that changed: `OperationFailure`,
-     never `InvalidInput` or `InputNotApplied`.
+   - A control the site has but the tool could not find, open or read, or a page that changed:
+     `OperationFailure`, never `InvalidInput` or `InputNotApplied`.
    - Prefer a fast refusal for an item the site has no record of. A tool that takes an item's
      id, key or URL, such as a product, listing, stock or order number, treats the site's own
      not-found or no-results page for that value as `InvalidInput`, with `field` that input and

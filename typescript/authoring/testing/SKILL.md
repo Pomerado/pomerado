@@ -245,7 +245,8 @@ with why. A choice the request, the caller or the owner declined is not part of 
 skill), so it is never tested.
 
 A read that returns one record with a side list prefers `resultsList: null` in `test/cases.json`,
-so the host judges each case by the record's values, not by that list.
+so the host judges each case by the record's values, not by that list. A list read whose output
+holds more than one list prefers `resultsList` naming its results list.
 
 ## Run and fix the cases
 
@@ -364,7 +365,8 @@ publication reads the schemas from current source, and only a changed flow needs
 
 - pureFiles: parsers/calculation with ordinary files and meaningful assertions.<!-- pomerado:section testing.saved-targets -->
 - liveBrowser: authorized fresh observation for real-site behavior. Optional read
-  smoke checks do not grant purchases, cart additions, uploads, holds or autosave.
+  smoke checks do not grant purchases, cart additions beyond a read's own guest cart, uploads, holds or
+  autosave.
 
 Choose cases that catch actual risk: applied filters, IDs, units, authoritative empty
 versus absent/loading data, partial coverage, schema failures, variants and changed
