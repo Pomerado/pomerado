@@ -1911,11 +1911,15 @@ it.each(["authentication", "reword"] as const)(
       { siteOrigin: "https://site.invalid" },
     );
     await f.run();
-    // The question's own review; a later one only reviews the minter's last answer for its caller.
+    // The question's own review; later ones only review the minter's last answer for its caller,
+    // and the one revision a reword of that answer asks for.
+    const lastAnswer = {
+      questions: [{ id: "blocked", type: "text", prompt: "I stopped before publication." }],
+    };
     expect(reviewed[0]).toEqual(ask("What is your password?"));
-    expect(reviewed.slice(1)).toEqual([
-      { questions: [{ id: "blocked", type: "text", prompt: "I stopped before publication." }] },
-    ]);
+    expect(reviewed.slice(1)).toEqual(
+      outcome === "reword" ? [lastAnswer, lastAnswer] : [lastAnswer],
+    );
     const feedback = JSON.stringify(f.requests[1]?.input);
     expect(feedback).toContain(
       outcome === "authentication" ? "login_request" : "question_rejected",
