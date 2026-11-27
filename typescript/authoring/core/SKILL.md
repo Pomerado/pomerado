@@ -116,7 +116,7 @@ answers `{ success, result, error, stderr }`. Throw
   name an outcome only the new page shows, such as a changed URL, and look the next element up
   again before typing. If it only redraws, name the new setting shown outside its dialog.
 - Check the null case if possible. Make sure the tool handles a lookup or filter that matches
-  nothing or more than one.
+  nothing or more than one. Run each value a choice input offers at least once before publishing.
 - Start a response wait in the same call as the click that causes it: name the response as a
   `{ response }` answer of `waitForOutcomeResult`, beside the page's other answers, with the click
   as its `action`. Listeners do not outlive a call.
