@@ -908,6 +908,29 @@ const noAnswerInstruction =
  */
 const noAnswerHandBackLimit = 2;
 
+const parsedJson = Schema.decodeUnknownOption(Schema.parseJson());
+
+/**
+ * A signed-in check's answer that the host did not take the page as signed in: its `failed` code
+ * and next step, from the step's result, top-level or nested in the host's result envelope.
+ */
+const signedInRefusal = (
+  observations: unknown,
+  depth = 0,
+): { readonly failed: string; readonly nextStep: unknown } | undefined => {
+  const value =
+    typeof observations === "string" ? Option.getOrUndefined(parsedJson(observations)) : observations;
+  if (value === null || typeof value !== "object" || depth > 3) return undefined;
+  const failed: unknown = Reflect.get(value, "failed");
+  if (Reflect.get(value, "signedIn") === false && typeof failed === "string")
+    return { failed, nextStep: Reflect.get(value, "nextStep") ?? failed };
+  for (const nested of Object.values(value)) {
+    const found = signedInRefusal(nested, depth + 1);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+};
+
 const siteAccessDiagnostic = (evidence: ExecutionEvidence): SiteAccessDiagnostic | undefined => {
   try {
     if (evidence.status !== "failed") return undefined;
@@ -1499,7 +1522,19 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           ? undefined
           : `${current.state}:${"outcome" in current ? current.outcome : ""}:${"reason" in current ? current.reason : ""}:${"page" in current ? (current.page ?? "") : ""}:${"instruction" in current ? (current.instruction ?? "") : ""}`;
       };
+      /**
+       * The HTTP error status the site answered the host's own entry load with, kept once seen, so
+       * a browser replaced since still has it on record.
+       */
+      let entryPageStatus: number | undefined;
+      const recordedEntryStatus = () => {
+        const current = dependencies.entryNavigation?.();
+        if (current?.state === "opened" && current.outcome === "http_error" && current.status !== null)
+          entryPageStatus = current.status;
+        return entryPageStatus;
+      };
       const changedEntryNotice = (): { readonly hostEntryNavigation?: object } => {
+        recordedEntryStatus();
         const state = entryState();
         if (state === undefined || state === shownEntryState) return {};
         const notice = entryNotice();
@@ -2473,6 +2508,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       ) =>
         Effect.gen(function* () {
           record(evidence, purpose);
+          // A signed-in check the host did not take comes back as the step's result.
+          const signedInRefused =
+            purpose === "authenticate" ? signedInRefusal(evidence.observations) : undefined;
+          if (signedInRefused !== undefined)
+            yield* recordHostRefusal("execute", signedInRefused.failed, signedInRefused.nextStep);
           // A download over the host's own file caps is a host check's refusal: a host_refused
           // report stands on it, and the blocked explanation's review reads it in the ledger. It
           // stands only until a later example or act step settles without it, which ran past
@@ -3854,8 +3894,28 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
         providerOutageStartedAt ??= now;
         return now - providerOutageStartedAt < reviewOutageBudgetMs;
       };
+      /**
+       * An execution the host failed before dispatch, such as a sandbox that did not start: a
+       * failure of the host's own dependency, with the finite fields the minter reads.
+       */
+      const recordNotDispatched = ({ code, execution }: MintFailure) =>
+        execution?.dispatch === "not_sent"
+          ? recordHostRefusal(
+              "execute",
+              code,
+              JSON.stringify({
+                reason: execution.reason,
+                stage: execution.stage,
+                providerStatus: execution.providerStatus,
+                dispatch: execution.dispatch,
+              }),
+            )
+          : Effect.void;
       const executionFeedback = (error: MintFailure) =>
-        Effect.flatMap(Clock.currentTimeMillis, (now) => providerFeedback(error, now));
+        recordNotDispatched(error).pipe(
+          Effect.zipRight(Clock.currentTimeMillis),
+          Effect.flatMap((now) => providerFeedback(error, now)),
+        );
       /**
        * Counts a host refusal while typing into a sign-in screen. The `maximumHostRefusals`th
        * identical one in a row spends the attempt's sign-ins: sign-in is unavailable in the build.
@@ -4769,21 +4829,64 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                 }).pipe(Effect.as(undefined)),
           ),
         );
+      /** Whether a stop explanation's review keeps it for the caller (`reviewedStopExplanation`). */
+      const keepsStopExplanation = (
+        review: Effect.Effect.Success<ReturnType<typeof reviewStopExplanation>>,
+      ) =>
+        review?.decision.outcome === "allow_business" ||
+        (review?.decision.outcome === "reword" && review.decision.label === "unclear");
+      /**
+       * The review of the minter's last final answer the model loop asked for as the attempt
+       * stopped (`stopExplanationRevision`), and whether it asked the minter to revise it.
+       */
+      let finalTextReview:
+        | {
+            readonly text: string | undefined;
+            readonly review: Effect.Effect.Success<ReturnType<typeof reviewStopExplanation>>;
+            readonly revised: boolean;
+          }
+        | undefined;
       /**
        * The minter's last final answer as its caller may read it, when it stopped without a tool
-       * call: kept when Guardian allowed it, or asked only for other words (`unclear`), since the
-       * model is gone and can't reword it, and the caller should still hear why. Any other
-       * outcome, label or failure keeps nothing.
+       * call: kept when Guardian allowed it, or asked only for other words (`unclear`), and the
+       * caller should still hear why. Any other outcome, label or failure keeps nothing. Any other
+       * reword already went back to the minter once as the attempt stopped, so this is the review
+       * of its revision; an answer the loop already reviewed is not reviewed again.
        */
       const reviewedStopExplanation = (text: string | undefined) =>
-        reviewStopExplanation(text).pipe(
-          Effect.map((review) =>
-            review?.decision.outcome === "allow_business" ||
-            (review?.decision.outcome === "reword" && review.decision.label === "unclear")
-              ? review.screened
-              : undefined,
-          ),
-        );
+        (finalTextReview !== undefined && !finalTextReview.revised && finalTextReview.text === text
+          ? Effect.succeed(finalTextReview.review)
+          : reviewStopExplanation(text)
+        ).pipe(Effect.map((review) => (keepsStopExplanation(review) ? review?.screened : undefined)));
+      /**
+       * Whether the minter revised its last answer because Guardian did not keep it, and whether
+       * the revision was kept, for the ending's diagnostic.
+       */
+      const explanationRevision = (stopExplanation: string | undefined) =>
+        finalTextReview?.revised === true
+          ? { explanationRevision: stopExplanation === undefined ? "not_kept" : "kept" }
+          : {};
+      /**
+       * Asked by the model loop as the attempt stops after final answers with no tool call: Guardian
+       * reviews the last answer, and a reword it would not keep goes back to the minter once, with
+       * the screened rationale, for a revised answer (`MintTurn.stopExplanationRevision`). An
+       * attempt another ending settles, its input feedback's publication or the closed host's,
+       * gets no revision.
+       */
+      const stopExplanationRevision = (text: string | undefined) =>
+        Effect.gen(function* () {
+          if (terminal !== undefined || executionClosed || inputFeedbackRounds > 0)
+            return undefined;
+          const review = yield* reviewStopExplanation(text);
+          const revised = review?.decision.outcome === "reword" && !keepsStopExplanation(review);
+          finalTextReview = { text, review, revised };
+          if (!revised) return undefined;
+          const rationale = (yield* screenRationale(review.decision.rationale)).replace(
+            /[\s.]+$/,
+            "",
+          );
+          return `Guardian did not let your last answer reach the caller as the reason this build stopped. Its rationale: ${rationale}. Reply once, without a tool call, with a revised explanation for the caller that follows the rationale. Prefer plain facts the record shows over internal names. The build ends after this reply.`;
+        });
       /**
        * A blocked report the harness ends as sign-in unavailable: the reason the minter reported,
        * and its explanation once Guardian allowed it.
@@ -5327,6 +5430,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        * latest verdict. Undefined when there is nothing to record.
        */
       const decisionLedger = (): DecisionLedger | undefined => {
+        const entryStatus = recordedEntryStatus();
         const latest = [...liveTestRecords.playwright.values(), ...liveTestRecords.http.values()];
         const failing = [...liveTestReplaced, ...latest].filter(
           (record) => record.verdict !== "pass",
@@ -5338,6 +5442,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           !ledgerPartial &&
           ledgerDenials.length === 0 &&
           ledgerHostRefusals.length === 0 &&
+          entryStatus === undefined &&
           latest.length === 0 &&
           liveTestReplaced.length === 0
         )
@@ -5385,6 +5490,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             ? { omittedTestFailures: failing.length - shown.length }
             : {}),
           ...(ledgerHostRefusals.length === 0 ? {} : { hostRefusals: [...ledgerHostRefusals] }),
+          ...(entryStatus === undefined ? {} : { entryPageStatus: entryStatus }),
           ...(noMatch.length === 0
             ? {}
             : {
@@ -8537,10 +8643,15 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                       input,
                       "request_browser_recovery",
                     );
-                    return JSON.stringify({
-                      kind: "host_browser_recovery",
-                      ...(yield* request(rationale)),
-                    });
+                    const result = yield* request(rationale);
+                    // A new browser the host could not give, or lost part way, is its own answer.
+                    if (result.outcome === "unavailable" || result.outcome === "lost")
+                      yield* recordHostRefusal(
+                        "request_browser_recovery",
+                        result.outcome === "unavailable" ? result.reason : result.outcome,
+                        result.notice,
+                      );
+                    return JSON.stringify({ kind: "host_browser_recovery", ...result });
                   }),
                 ),
             }),
@@ -9194,6 +9305,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               ),
               Effect.asVoid,
             ),
+          stopExplanationRevision,
           unresolvedGuidance: () =>
             Effect.suspend(() => {
               // Sign-in is unavailable and the model answered without publishing its retained
@@ -9300,6 +9412,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           reason: "sign_in_unavailable",
           reported: signInStopReworded.reported,
           explanationShown: stopExplanation !== undefined,
+          ...explanationRevision(stopExplanation),
         });
       }
       if (
@@ -9319,6 +9432,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           phase: "continuation",
           reason: "repeated_final_without_tool",
           explanationShown: stopExplanation !== undefined,
+          ...explanationRevision(stopExplanation),
         });
       }
       if (terminal === undefined && modelFailure?.modelOutage === "quota_exhausted")

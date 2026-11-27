@@ -86,6 +86,12 @@ const runtimeRecordUnavailable = (observer: ModelObserver | undefined) =>
  * a row another continuation prompt only spends the attempt's budget. */
 const finalsWithoutToolLimit = 3;
 
+/** A segment's final answer, when it ended on text. */
+const finalTextOf = (result: { readonly finalOutput?: unknown }) =>
+  typeof result.finalOutput === "string" && result.finalOutput !== ""
+    ? result.finalOutput
+    : undefined;
+
 /**
  * One model response's calls as the host schedules them. The SDK takes a response's function
  * calls one at a time, in the model's order, and runs them before its native edits, so a function
@@ -1585,6 +1591,12 @@ const openAIMinter = (
                 lastResponseId === undefined
                   ? prefixed
                   : withCacheComparison(prefixed, lastResponseId);
+              // The revision of a stopped attempt's last answer may call no tool.
+              if (revisingStopExplanation)
+                return {
+                  ...compared,
+                  modelSettings: { ...compared.modelSettings, toolChoice: "none" },
+                };
               return turn.effectQuestion
                 ? compared
                 : withAllowedTools(
@@ -1592,6 +1604,8 @@ const openAIMinter = (
                     (name) => !hostTools.has(name) || offeredTools.has(name),
                   );
             };
+            /** Set for the one call that revises a stopped attempt's last answer. */
+            let revisingStopExplanation = false;
             /** The run's last turn response, which the next request's cache diagnostics compare. */
             let lastResponseId: string | undefined;
             /**
@@ -1990,14 +2004,43 @@ const openAIMinter = (
                   ? 0
                   : finalsWithoutTool + 1;
                 if (finalsWithoutTool >= finalsWithoutToolLimit) {
-                  diagnostics?.completed(result.history, totalUsage);
-                  return {
+                  const finalText = finalTextOf(result);
+                  // The host may ask once for a revised last answer, such as one Guardian did not
+                  // let reach the caller: one more call answers it, with no tool allowed. A call
+                  // that fails ends the attempt as it would have, with no answer.
+                  const revision = await turn.runTool(
+                    turn.stopExplanationRevision?.(finalText) ?? Effect.succeed(undefined),
+                  );
+                  let ended: { readonly history: AgentInputItem[]; readonly finalText?: string } = {
                     history: result.history,
-                    stopReason: "repeated_final_without_tool" as const,
-                    ...(typeof result.finalOutput === "string" && result.finalOutput !== ""
-                      ? { finalText: result.finalOutput }
-                      : {}),
+                    ...(finalText === undefined ? {} : { finalText }),
                   };
+                  if (revision !== undefined && !turn.isComplete() && deadline.remainingMs() > 0) {
+                    await archiveBeforeSegment(result.state);
+                    activeState = new RunState(
+                      new RunContext(),
+                      [...result.history, { role: "user", content: revision }],
+                      agent,
+                      turnsPerSegment,
+                    );
+                    liveOffset = nextOffset;
+                    revisingStopExplanation = true;
+                    const revised = await runSegment(activeState).then(
+                      (value) => value,
+                      (error: unknown) => {
+                        if (signal.aborted || runtimeRecordUnavailable(diagnostics)) throw error;
+                        return undefined;
+                      },
+                    );
+                    if (revised !== undefined) totalUsage.add(revised.runContext.usage);
+                    const revisedText = revised === undefined ? undefined : finalTextOf(revised);
+                    ended = {
+                      history: revised?.history ?? result.history,
+                      ...(revisedText === undefined ? {} : { finalText: revisedText }),
+                    };
+                  }
+                  diagnostics?.completed(ended.history, totalUsage);
+                  return { ...ended, stopReason: "repeated_final_without_tool" as const };
                 }
                 // What the agent can still get past, such as a failed sign-in, comes back with
                 // the first final answer after it, well before the guard above ends the attempt.
