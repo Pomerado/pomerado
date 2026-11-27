@@ -911,22 +911,19 @@ const noAnswerHandBackLimit = 2;
 const parsedJson = Schema.decodeUnknownOption(Schema.parseJson());
 
 /**
- * A signed-in check's answer that the host did not take the page as signed in: its `failed` code
- * and next step, from the step's result, top-level or nested in the host's result envelope.
+ * The host's answer to its own signed-in check that it did not take the page as signed in: its
+ * finite `failed` code and next step, as the host gives the answer or inside a runner result's
+ * envelope.
  */
-const signedInRefusal = (
-  observations: unknown,
-  depth = 0,
-): { readonly failed: string; readonly nextStep: unknown } | undefined => {
-  const value =
+const signedInRefusal = (observations: unknown) => {
+  const parsed =
     typeof observations === "string" ? Option.getOrUndefined(parsedJson(observations)) : observations;
-  if (value === null || typeof value !== "object" || depth > 3) return undefined;
-  const failed: unknown = Reflect.get(value, "failed");
-  if (Reflect.get(value, "signedIn") === false && typeof failed === "string")
-    return { failed, nextStep: Reflect.get(value, "nextStep") ?? failed };
-  for (const nested of Object.values(value)) {
-    const found = signedInRefusal(nested, depth + 1);
-    if (found !== undefined) return found;
+  const field = (value: unknown, key: string): unknown =>
+    value !== null && typeof value === "object" ? Reflect.get(value, key) : undefined;
+  for (const answer of [parsed, field(field(field(parsed, "result"), "output"), "value")]) {
+    const failed = field(answer, "failed");
+    if (field(answer, "signedIn") === false && typeof failed === "string" && /^[a-z_]{1,64}$/.test(failed))
+      return { failed, nextStep: field(answer, "nextStep") ?? failed };
   }
   return undefined;
 };
@@ -2508,11 +2505,6 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
       ) =>
         Effect.gen(function* () {
           record(evidence, purpose);
-          // A signed-in check the host did not take comes back as the step's result.
-          const signedInRefused =
-            purpose === "authenticate" ? signedInRefusal(evidence.observations) : undefined;
-          if (signedInRefused !== undefined)
-            yield* recordHostRefusal("execute", signedInRefused.failed, signedInRefused.nextStep);
           // A download over the host's own file caps is a host check's refusal: a host_refused
           // report stands on it, and the blocked explanation's review reads it in the ledger. It
           // stands only until a later example or act step settles without it, which ran past
@@ -6801,6 +6793,13 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
               yield* observeExecution(submitted, evidence, allowed, evidence.status);
               if (evidence.status === "unsupported")
                 yield* recordHostRefusal("execute", evidence.status, evidence.observations);
+              // The host's own signed-in check it did not take comes back as the step's result.
+              const signedInRefused =
+                submitted.signInStep !== undefined && "signedIn" in submitted.signInStep
+                  ? signedInRefusal(evidence.observations)
+                  : undefined;
+              if (signedInRefused !== undefined)
+                yield* recordHostRefusal("execute", signedInRefused.failed, signedInRefused.nextStep);
               const result = yield* executionResult(evidence, submitted.purpose);
               // The first passing example settles the schemas: its receipt reminds the agent to
               // design and run its cases.

@@ -134,6 +134,13 @@ const notRunAfterFailure = JSON.stringify({
     "Not run, nothing was sent. An earlier call in this response did not succeed, and the host runs no call that follows it in the same response. Read that call's result, then send this call again if it is still the next step.",
 });
 
+/** A call the model sent while it revised a stopped attempt's last answer. Nothing was sent. */
+const notRunStopped = JSON.stringify({
+  status: "not_run",
+  effect: "not_sent",
+  instruction: "Not run, nothing was sent: this attempt has stopped.",
+});
+
 /** An execute whose patch did not apply: the step did not run. Nothing was sent. */
 const patchNotApplied = {
   status: "not_run",
@@ -808,6 +815,11 @@ const openAIMinter = (
                 )
               );
             };
+            /**
+             * Set for the one call that revises a stopped attempt's last answer, which may run no
+             * tool: the request allows none, and a call sent anyway is not run.
+             */
+            let revisingStopExplanation = false;
             /** Whether a step of this call's response before it did not succeed. */
             const afterFailure = (callId: string) => {
               const call = placed.get(callId);
@@ -849,6 +861,7 @@ const openAIMinter = (
                 (run: FunctionTool["invoke"]): FunctionTool["invoke"] =>
                 async (context, input, details) => {
                   const callId = details?.toolCall?.callId ?? "";
+                  if (revisingStopExplanation) return notRunStopped;
                   if (afterFailure(callId)) return notRunAfterFailure;
                   const call = placed.get(callId);
                   // Calls run in the model's order, so the first step that fails holds the rest.
@@ -1022,6 +1035,7 @@ const openAIMinter = (
                         needsApproval: async (
                           ...args: Parameters<typeof entry.needsApproval>
                         ): Promise<boolean> =>
+                          revisingStopExplanation ||
                           (args[2] !== undefined && afterFailure(args[2])) ||
                           (await entry.needsApproval(...args)),
                       }
@@ -1604,8 +1618,6 @@ const openAIMinter = (
                     (name) => !hostTools.has(name) || offeredTools.has(name),
                   );
             };
-            /** Set for the one call that revises a stopped attempt's last answer. */
-            let revisingStopExplanation = false;
             /** The run's last turn response, which the next request's cache diagnostics compare. */
             let lastResponseId: string | undefined;
             /**
@@ -1876,11 +1888,12 @@ const openAIMinter = (
               const rerun = input.getInterruptions().length > 0 ? 1 : 0;
               return runner.run(agent, input, {
                 signal,
-                maxTurns:
-                  replayTurnLimit ??
-                  (wrapUp && modelCalls - rerun < wrapUpAt
-                    ? Math.min(turnsPerSegment, input._currentTurn - rerun + wrapUpAt - modelCalls)
-                    : turnsPerSegment),
+                maxTurns: revisingStopExplanation
+                  ? 1
+                  : (replayTurnLimit ??
+                    (wrapUp && modelCalls - rerun < wrapUpAt
+                      ? Math.min(turnsPerSegment, input._currentTurn - rerun + wrapUpAt - modelCalls)
+                      : turnsPerSegment)),
                 sandbox: { session: turn.session },
               });
             };
@@ -2011,9 +2024,10 @@ const openAIMinter = (
                   const revision = await turn.runTool(
                     turn.stopExplanationRevision?.(finalText) ?? Effect.succeed(undefined),
                   );
+                  // Once a revision is asked for, only its answer may stand as the last answer.
                   let ended: { readonly history: AgentInputItem[]; readonly finalText?: string } = {
                     history: result.history,
-                    ...(finalText === undefined ? {} : { finalText }),
+                    ...(finalText === undefined || revision !== undefined ? {} : { finalText }),
                   };
                   if (revision !== undefined && !turn.isComplete() && deadline.remainingMs() > 0) {
                     await archiveBeforeSegment(result.state);
@@ -2027,8 +2041,16 @@ const openAIMinter = (
                     revisingStopExplanation = true;
                     const revised = await runSegment(activeState).then(
                       (value) => value,
-                      (error: unknown) => {
+                      async (error: unknown) => {
                         if (signal.aborted || runtimeRecordUnavailable(diagnostics)) throw error;
+                        await turn.runTool(
+                          turn.reportTrace?.({
+                            phase: "continuation",
+                            reason: "stop_explanation_revision_failed",
+                            error: error instanceof Error ? error.name : "unknown",
+                            modelCalls,
+                          }) ?? Effect.void,
+                        );
                         return undefined;
                       },
                     );
