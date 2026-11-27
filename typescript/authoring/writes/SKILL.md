@@ -46,7 +46,8 @@ of a read too, unless the step's requests save an address-book entry, a default 
 preference; that is a write. While building,
 a live step, the example's or a test case's, that enters a name, email or phone asks the owner
 first, as the execution review requires; the answer keeps the build a read. Adding to a cart, a hold on inventory, a seat or a time slot, an upload and a draft stay writes,
-signed out too. Never click a control that can add to a cart in an explore to see what it opens; that click is a write. Read the item's options from the page or the item's own page instead;
+signed out too, except filling a guest cart that lives only inside one run to return its quote, which
+is part of a read (.agents/cart/SKILL.md). Never click a control that can add to a cart in an explore to see what it opens; that click is a write. Read the item's options from the page or the item's own page instead;
 opening an item's details or options from its own card, name or picture, not a control labelled
 add or plus, is a read.
 

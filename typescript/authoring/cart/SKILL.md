@@ -22,7 +22,8 @@ from the account.
 A tool that fills a cart and returns its quote in one run, such as the items, totals, shipping,
 tax, fees and any quote or cart number the site shows, and stops before checkout, may use the
 site's guest cart when the build holds no login. No later call must find that cart, so the tool
-needs no sign-in, and the rule above is no reason to ask the caller for one. A tool whose cart the
+needs no sign-in, and the rule above is no reason to ask the caller for one. Such a tool is a read
+when it uses the guest cart, and filling that cart is part of the read. A tool whose cart the
 caller means to view, change or check out in a later call is not such a tool, even when it returns
 the cart's lines and totals.
 
