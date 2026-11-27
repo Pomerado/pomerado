@@ -2049,6 +2049,27 @@ it("revises a last answer Guardian reworded as misdescribed once, and keeps the 
   );
 });
 
+// The revision may call no tool: the request allows none, and a call the model sends anyway runs
+// nothing and leaves no answer.
+it("runs no tool the revision of a reworded last answer calls, and keeps no answer", async () => {
+  const f = await fixture(
+    (_request, index) => (index < 3 ? prose("Stopping.") : call("execute", pureExample)),
+    {
+      reviewQuestion: () =>
+        Effect.succeed({
+          outcome: "reword" as const,
+          label: "misdescribed" as const,
+          rationale: "Say what the record shows.",
+        }),
+    },
+  );
+  const outcome = await f.run();
+  expect(outcome.stopReason).toBe("final_text_without_tool");
+  expect(outcome).not.toHaveProperty("stopExplanation");
+  expect(f.requests).toHaveLength(4);
+  expect(f.counts().executed).toBe(0);
+});
+
 // A last answer that says the host's own sandbox never started is true only against the host's
 // record, which its review never had: the execution failed before dispatch and came back as the
 // minter's answer, not a refusal. The review now reads the host's answers the minter read.
@@ -2066,9 +2087,14 @@ it("reviews the last answer against the host's own answers in the decision ledge
       [
         call("execute", pureExample, "example"),
         call("request_browser_recovery", { intent: "The site refused this browser." }),
-        call("execute", authenticate, "signed_in"),
+        call(
+          "execute",
+          { ...authenticate, signInStep: { signedIn: { selector: "#account", urlPath: null, openPath: null } } },
+          "signed_in",
+        ),
       ][index] ?? prose("The host's sandbox never started, so nothing ran."),
     {
+      autofillSignIn: true,
       entryNavigation: () => ({
         state: "opened" as const,
         outcome: "http_error" as const,
@@ -2083,7 +2109,13 @@ it("reviews the last answer against the host's own answers in the decision ledge
           : beforeDispatch({ reviewId: "review_sign_in", action: "authentication" }).pipe(
               Effect.as({
                 ...signInCheck("failed"),
-                observations: { signedIn: false, failed: "credentials_not_submitted", nextStep: notSubmitted },
+                observations: {
+                  result: {
+                    output: {
+                      value: { signedIn: false, failed: "credentials_not_submitted", nextStep: notSubmitted },
+                    },
+                  },
+                },
               }),
             ),
       requestBrowserRecovery: () =>
