@@ -365,7 +365,8 @@ publication reads the schemas from current source, and only a changed flow needs
 
 - pureFiles: parsers/calculation with ordinary files and meaningful assertions.<!-- pomerado:section testing.saved-targets -->
 - liveBrowser: authorized fresh observation for real-site behavior. Optional read
-  smoke checks do not grant purchases, cart additions, uploads, holds or autosave.
+  smoke checks do not grant purchases, cart additions beyond a read's own guest cart, uploads, holds or
+  autosave.
 
 Choose cases that catch actual risk: applied filters, IDs, units, authoritative empty
 versus absent/loading data, partial coverage, schema failures, variants and changed
