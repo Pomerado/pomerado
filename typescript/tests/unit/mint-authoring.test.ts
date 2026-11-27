@@ -1728,6 +1728,25 @@ it("has a tool scope a control the page repeats to the requested item's containe
   );
 });
 
+// A tool read a group's required number of picks as one where the page asked for more, so its add
+// came up short; it also missed the page's own reason an item could not be had now, and handled a
+// lookup that matched nothing but not one that matched more than one.
+it("has a tool read each group's required picks, refuse with the page's reason and handle several matches", async () => {
+  const core = ((await renderedTexts("typescript/authoring")).get("core") ?? "").replace(
+    /\s+/g,
+    " ",
+  );
+  expect(core).toContain(
+    "even when the page shows it first. Read each group's required number of picks as the page states it, and confirm the page shows every required group complete before adding. When the value is not among",
+  );
+  expect(core).toContain(
+    "- When the page shows why an item isn't available now, refuse with that reason as the page states it.",
+  );
+  expect(core).toContain(
+    "Make sure the tool handles a lookup or filter that matches nothing or more than one.",
+  );
+});
+
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 
 /*
@@ -1748,7 +1767,7 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["d3a14deba73960df038119c17c789aa256ac1092a708dc5fe000a0fadeee04fb", "core"],
+    ["42961f161a71d1e164c07e37f2e61a8027ac07cab4522c7ea924cdeae9371a78", "core"],
     ["97e3b5ebdbe8d5fca43790729084de4eef4fbcf5fdf71ad645e679fd72f4e804", "search"],
     ["e6a78355e22e9989ffdccbc5a5f53eef0ec74217c3ae31b68c1ca0421f36ce44", "auth"],
     ["3355021c2daea519d533551d9b6f08f071c792328d39ec5020d6e8b0ca7def52", "testing"],

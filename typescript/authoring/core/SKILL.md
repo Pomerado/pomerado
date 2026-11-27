@@ -116,7 +116,7 @@ answers `{ success, result, error, stderr }`. Throw
   name an outcome only the new page shows, such as a changed URL, and look the next element up
   again before typing. If it only redraws, name the new setting shown outside its dialog.
 - Check the null case if possible. Make sure the tool handles a lookup or filter that matches
-  nothing.
+  nothing or more than one.
 - Start a response wait in the same call as the click that causes it: name the response as a
   `{ response }` answer of `waitForOutcomeResult`, beside the page's other answers, with the click
   as its `action`. Listeners do not outlive a call.
@@ -695,7 +695,9 @@ that depends on them:
    presents the groups, since one choice can change the options of the next. An input whose
    options depend on another goes after it, such as times after their date, slots after the
    party size, models after the make or regions after the country, even when the page shows it
-   first. When the value is not among the options the page lists at all, throw
+   first. Read each group's required number of picks as the page states it, and confirm the page
+   shows every required group complete before adding. When the value is not among the options
+   the page lists at all, throw
    `new errors.InvalidInput(message, { field, available })` before any commit mark, with
    `field` the input's name and `available` every option the page currently offers as
    selectable, exactly as shown. Leave disabled, sold-out and other unselectable options out of
@@ -720,6 +722,8 @@ that depends on them:
      booking controls, such as "Reservations open November 1": the site says no to the whole
      request (caller-input skill), so a read returns those words, preferably as a declared
      refusal with `site_message`, never as no open times or an empty list.
+   - When the page shows why an item isn't available now, refuse with that reason as the page
+     states it.
    - A number on a scale the site steps, such as a price range slider or price boxes, is a
      number, not a choice: never refuse it because no label matches. Set the nearest step inside
      the caller's bound, down for a maximum and up for a minimum, so a maximum of 47 on steps of
