@@ -1103,6 +1103,27 @@ it("asks for a new code when the site refuses one, as many times as a recipe's r
   expect(always.fills).toEqual(["code", "code", "code"]);
 });
 
+it.each([
+  ["at its marker", true],
+  ["only by its code page staying", false],
+] as const)("logs whether the site showed it refused a code, %s, when it asks for a new one", async (_case, shown) => {
+  const library = libraryOf([
+    {
+      fingerprint: arrival(codeScreen),
+      step: stepAt("/verify", [code], "#verify", { rejectedMarkers: [{ selector: "#bad-code", slot: "code" }] }),
+    },
+  ]);
+  let tries = 0;
+  const site = scriptedSite(
+    { start: codeScreen, refused: { ...codeScreen, errors: ["#bad-code"] } },
+    () => (++tries > 1 ? "home" : shown ? "refused" : undefined),
+  );
+  const events: Readonly<Record<string, unknown>>[] = [];
+  expect(await replay(site, library, { events })).toMatchObject({ outcome: "signed_in" });
+  expect(site.fills).toEqual(["code", "code"]);
+  expect(events).toContainEqual({ stage: "retried", reason: "state_code", refusalShown: shown });
+});
+
 it("types the password the site emptied beside a refused code again, and ends where either may be the one refused", async () => {
   const both: Screen = {
     path: "/verify",
