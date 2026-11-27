@@ -137,7 +137,12 @@ const scriptedSite = (script: SiteScript) => {
 };
 
 /** Replays `recipe` with a phone login, the owner answering each code question in turn. */
-const replay = (recipe: SignInRecipe, hooks: AutofillHooks<TestFailure>, answers: string[]) => {
+const replay = (
+  recipe: SignInRecipe,
+  hooks: AutofillHooks<TestFailure>,
+  answers: string[],
+  events: Readonly<Record<string, unknown>>[] = [],
+) => {
   const codes = [...answers];
   const asked: string[] = [];
   const ask = makeInputAsker((request) =>
@@ -166,7 +171,7 @@ const replay = (recipe: SignInRecipe, hooks: AutofillHooks<TestFailure>, answers
         },
         site: "example.test",
         correlation: undefined,
-        emit: () => Effect.void,
+        emit: (details) => Effect.sync(() => void events.push(details)),
         failures: {
           unanswered: (cause) => new TestFailure({ code: `unanswered:${String(cause)}` }),
           unavailable: () => new TestFailure({ code: "unavailable" }),
@@ -482,3 +487,35 @@ it("sends no code refill into the same box when the first box's naming held the 
     Either.right(expect.objectContaining({ reason: "credential_already_filled" })),
   );
 });
+
+it.each([
+  ["shows it refused the code", true],
+  ["only shows the code screen again", false],
+] as const)(
+  "logs whether the site showed a refusal when it %s and the replay asks for a fresh code",
+  async (_case, shown) => {
+    const site = scriptedSite({
+      screens,
+      fill: (screen, values) =>
+        screen === "sign-in"
+          ? { next: "text" }
+          : values[0] === "111111"
+            ? { next: "home", signIn: true }
+            : { markers: shown ? ["#text-code-error"] : [] },
+    });
+    const marked = {
+      ...textCodeStep,
+      rejectedMarkers: [{ slot: "code" as const, selector: "#text-code-error" }],
+    };
+    const events: Readonly<Record<string, unknown>>[] = [];
+    const { outcome } = await replay(
+      twoCodes(phoneStep, marked),
+      site.hooks,
+      ["000000", "111111"],
+      events,
+    );
+    expect(outcome).toEqual(Either.right(expect.objectContaining({ outcome: "signed_in" })));
+    expect(site.codes()).toEqual(["000000", "111111"]);
+    expect(events).toContainEqual({ stage: "retried", reason: "code", refusalShown: shown });
+  },
+);

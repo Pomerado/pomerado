@@ -690,6 +690,8 @@ const retryCode = <E extends YieldableError, V extends string, L extends Autofil
     };
     const inspected = yield* input.hooks.inspect(retryStep);
     if ("outcome" in inspected) return "none" as const;
+    // Whether the site showed its code refusal, or only the code screen came back.
+    yield* input.emit({ stage: "retried", reason: "code", refusalShown: rejected === "code" });
     return (
       (yield* replay.runStep(retryStep, inspected, "rejected", rejected === "code")) ??
       ("retried" as const)
