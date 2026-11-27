@@ -476,8 +476,9 @@ interface FillInput extends CallInput {
    * fill began), matched against `code`, the step's code fields' values joined in field order, in
    * the host alone and never in a page call. Asked on a step whose every field takes a code, with
    * each look before the click that finds the screen as typed and again before each click, or, on
-   * one with no submit, each look that finds it as typed while the host waits on the page; true
-   * reports the screen sent by the page (`page`) and clicks nothing. One that fails says no.
+   * one with no submit, each look that finds it as typed while the host waits on the page, and on
+   * a code step once more when a call before any click finds a typed field empty; true reports the
+   * screen sent by the page (`page`) and clicks nothing. One that fails says no.
    */
   readonly codeSent?: (typed: {
     readonly since: number;
@@ -1267,10 +1268,13 @@ const afterFieldCall = (
  * with it, before the click or within `pageSendMs` of a look that found them gone: the page sent
  * the form itself (`page`, `screenGone`, `awaitNewDocument`), and the host clicks nothing. A form
  * that locks, redraws itself or changes its address with pushState has sent nothing, and the host
- * waits on it or refuses as before. A code step gets the same looks once every box is typed, when
- * its submit call finds a box empty or fails, or the last box's typing loses its answer, as when
- * its page sends the code itself on the last digit and loads a new document while the host checks
- * the boxes (`codeSentBySite`). Its fields gone with a new document within `pageSendMs` is `page`,
+ * waits on it or refuses as before, unless, on a code step, a call before any click finds a typed
+ * field empty and the host's own reading finds the page's own request carried the code
+ * (`codeSent`): that is `page`, with every field filled. A code step gets the same looks once
+ * every box is typed, when its submit call finds a box empty or fails, or the last box's typing
+ * loses its answer, as when its page sends the code itself on the last digit and loads a new
+ * document while the host checks the boxes (`codeSentBySite`). Its fields gone with a new
+ * document within `pageSendMs` is `page`,
  * with every box filled; else the report is as it would have been. A step whose every field takes
  * a code, whose submit call finds its submit or a field gone from the very document the host typed
  * in, gets the same looks, and when no new document comes is `refused` with `closedInPlace`: it may
@@ -1654,7 +1658,10 @@ const closeFieldList = (input: CallInput, progress: FillProgress): Effect.Effect
  * (`navigated`, `reportedNavigation`) only when `typed`, every value the sign-in typed on this
  * browser, is known: a click again, or a fill whose host did not say what it typed before
  * (`typedBefore`), never reports it. `clickAgain`, on a click again only, presses the submit from
- * the keyboard when another element catches its click, and clicks with no look first.
+ * the keyboard when another element catches its click, and clicks with no look first. A call that
+ * found a typed field empty, or a code box holding other than one character, before any click asks
+ * `sent` once more: a code screen may empty its field as it sends the code itself, then move on
+ * with pushState, and a yes is the page's own send (`page`), with every field filled.
  */
 const submitStep = (
   input: CallInput,
@@ -1677,6 +1684,8 @@ const submitStep = (
       return failedCall(progress, clicked.left, { mayMutate: hostSubmits(step) });
     const answer = clicked.right;
     if ("pageSent" in answer) return filledReport(step, progress, "page", answer.url);
+    if ("checked" in answer && (yield* sent))
+      return filledReport(step, progress, "page", answer.url);
     if ("refusal" in answer || "checked" in answer)
       return stopped(step, progress, answer, "submit");
     if ("submission" in answer)

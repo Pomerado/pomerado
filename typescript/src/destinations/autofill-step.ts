@@ -654,7 +654,9 @@ export type AutofillStepReport =
        * `page`: on a step with no submit, once every field was typed, the page moved on before the
        * host clicked anything, as a code widget that sends itself on its last box does: the step's
        * fields went away or were all disabled, its popup closed, the page's address moved to
-       * another path, or a step of several fields came back with every field empty. What the step
+       * another path, or a step of several fields came back with every field empty. On a code
+       * step, a field the host typed found empty before any click is `page` too when the host's
+       * own reading finds the page's own request carried the code (`codeSent`). What the step
        * filled may have gone out (`maySend`); the sign-in's own check decides what it did.
        */
       readonly submit:
