@@ -2219,6 +2219,15 @@ export interface MintTurn {
    * `isComplete` then reports, so the loop ends without another prompt.
    */
   readonly unresolvedGuidance?: () => Effect.Effect<string | undefined, MintFailure>;
+  /**
+   * Called once when the repeated-final guard is about to end the attempt, with the model's last
+   * final answer, unscreened. A screened message asks for one revised answer: the loop sends it
+   * and makes one more model call, with no tool allowed, whose answer becomes `finalText`.
+   * Undefined ends the attempt as before.
+   */
+  readonly stopExplanationRevision?: (
+    finalText: string | undefined,
+  ) => Effect.Effect<string | undefined, MintFailure>;
 }
 
 export interface MintModel {
@@ -2227,7 +2236,10 @@ export interface MintModel {
       readonly history: readonly AgentInputItem[];
       /** The model kept giving final answers with no tool call, so the loop stopped. */
       readonly stopReason?: "repeated_final_without_tool";
-      /** With `stopReason`: the model's last final answer, unscreened. */
+      /**
+       * With `stopReason`: the model's last final answer, unscreened, or its answer to the
+       * revision `stopExplanationRevision` asked for.
+       */
       readonly finalText?: string;
     },
     MintFailure
@@ -2824,18 +2836,32 @@ export interface DecisionLedger {
    * failure code, status or refusal reason, the screened reason and when, in ISO time, the same
    * refusal kept once at its latest. An execution's include a hold on a live step
    * (`ReconciliationRequired`), a saved login another job holds (`login_in_use`, as on
-   * `request_input`'s login) and a failure of the host's own dependency, both with the finite
-   * fields the minter read as the reason. `report_blocked` names a blocked report the host refused,
-   * such as `host_not_refused`, with the reported reason, and `mint_update` a task update the host
-   * held for a confirmation or refused. A host on an older core sends only `live_tests` and
-   * `execute`.
+   * `request_input`'s login), a failure of the host's own dependency and a failure before
+   * dispatch (`dispatch: not_sent`, such as a sandbox that did not start), each with the finite
+   * fields the minter read as the reason, and a signed-in check the host answered with
+   * `signedIn: false`, with its `failed` code and next step. `report_blocked` names a blocked
+   * report the host refused, such as `host_not_refused`, with the reported reason, `mint_update` a
+   * task update the host held for a confirmation or refused, and `request_browser_recovery` a new
+   * browser the host could not give (`unavailable`, with its reason) or lost part way (`lost`). A
+   * host on an older core sends only `live_tests` and `execute`.
    */
   readonly hostRefusals?: readonly {
-    readonly tool: "live_tests" | "execute" | "request_input" | "report_blocked" | "mint_update";
+    readonly tool:
+      | "live_tests"
+      | "execute"
+      | "request_input"
+      | "report_blocked"
+      | "mint_update"
+      | "request_browser_recovery";
     readonly code: string;
     readonly reason: string;
     readonly atUtc: string;
   }[];
+  /**
+   * The HTTP error status the site answered the host's own load of the requested page with,
+   * before the minter's first step, from `MintDependencies.entryNavigation`.
+   */
+  readonly entryPageStatus?: number;
   /**
    * Each no-match case's latest verdict, a pass included: a case that expects no results, or one
    * marked `noMatch`, with a short screened excerpt of its output.

@@ -86,6 +86,12 @@ const runtimeRecordUnavailable = (observer: ModelObserver | undefined) =>
  * a row another continuation prompt only spends the attempt's budget. */
 const finalsWithoutToolLimit = 3;
 
+/** A segment's final answer, when it ended on text. */
+const finalTextOf = (result: { readonly finalOutput?: unknown }) =>
+  typeof result.finalOutput === "string" && result.finalOutput !== ""
+    ? result.finalOutput
+    : undefined;
+
 /**
  * One model response's calls as the host schedules them. The SDK takes a response's function
  * calls one at a time, in the model's order, and runs them before its native edits, so a function
@@ -126,6 +132,13 @@ const notRunAfterFailure = JSON.stringify({
   effect: "not_sent",
   instruction:
     "Not run, nothing was sent. An earlier call in this response did not succeed, and the host runs no call that follows it in the same response. Read that call's result, then send this call again if it is still the next step.",
+});
+
+/** A call the model sent while it revised a stopped attempt's last answer. Nothing was sent. */
+const notRunStopped = JSON.stringify({
+  status: "not_run",
+  effect: "not_sent",
+  instruction: "Not run, nothing was sent: this attempt has stopped.",
 });
 
 /** An execute whose patch did not apply: the step did not run. Nothing was sent. */
@@ -802,6 +815,11 @@ const openAIMinter = (
                 )
               );
             };
+            /**
+             * Set for the one call that revises a stopped attempt's last answer, which may run no
+             * tool: the request allows none, and a call sent anyway is not run.
+             */
+            let revisingStopExplanation = false;
             /** Whether a step of this call's response before it did not succeed. */
             const afterFailure = (callId: string) => {
               const call = placed.get(callId);
@@ -843,6 +861,7 @@ const openAIMinter = (
                 (run: FunctionTool["invoke"]): FunctionTool["invoke"] =>
                 async (context, input, details) => {
                   const callId = details?.toolCall?.callId ?? "";
+                  if (revisingStopExplanation) return notRunStopped;
                   if (afterFailure(callId)) return notRunAfterFailure;
                   const call = placed.get(callId);
                   // Calls run in the model's order, so the first step that fails holds the rest.
@@ -1016,6 +1035,7 @@ const openAIMinter = (
                         needsApproval: async (
                           ...args: Parameters<typeof entry.needsApproval>
                         ): Promise<boolean> =>
+                          revisingStopExplanation ||
                           (args[2] !== undefined && afterFailure(args[2])) ||
                           (await entry.needsApproval(...args)),
                       }
@@ -1585,6 +1605,12 @@ const openAIMinter = (
                 lastResponseId === undefined
                   ? prefixed
                   : withCacheComparison(prefixed, lastResponseId);
+              // The revision of a stopped attempt's last answer may call no tool.
+              if (revisingStopExplanation)
+                return {
+                  ...compared,
+                  modelSettings: { ...compared.modelSettings, toolChoice: "none" },
+                };
               return turn.effectQuestion
                 ? compared
                 : withAllowedTools(
@@ -1862,11 +1888,12 @@ const openAIMinter = (
               const rerun = input.getInterruptions().length > 0 ? 1 : 0;
               return runner.run(agent, input, {
                 signal,
-                maxTurns:
-                  replayTurnLimit ??
-                  (wrapUp && modelCalls - rerun < wrapUpAt
-                    ? Math.min(turnsPerSegment, input._currentTurn - rerun + wrapUpAt - modelCalls)
-                    : turnsPerSegment),
+                maxTurns: revisingStopExplanation
+                  ? 1
+                  : (replayTurnLimit ??
+                    (wrapUp && modelCalls - rerun < wrapUpAt
+                      ? Math.min(turnsPerSegment, input._currentTurn - rerun + wrapUpAt - modelCalls)
+                      : turnsPerSegment)),
                 sandbox: { session: turn.session },
               });
             };
@@ -1990,14 +2017,52 @@ const openAIMinter = (
                   ? 0
                   : finalsWithoutTool + 1;
                 if (finalsWithoutTool >= finalsWithoutToolLimit) {
-                  diagnostics?.completed(result.history, totalUsage);
-                  return {
+                  const finalText = finalTextOf(result);
+                  // The host may ask once for a revised last answer, such as one Guardian did not
+                  // let reach the caller: one more call answers it, with no tool allowed. A call
+                  // that fails ends the attempt as it would have, with no answer.
+                  const revision = await turn.runTool(
+                    turn.stopExplanationRevision?.(finalText) ?? Effect.succeed(undefined),
+                  );
+                  // Once a revision is asked for, only its answer may stand as the last answer.
+                  let ended: { readonly history: AgentInputItem[]; readonly finalText?: string } = {
                     history: result.history,
-                    stopReason: "repeated_final_without_tool" as const,
-                    ...(typeof result.finalOutput === "string" && result.finalOutput !== ""
-                      ? { finalText: result.finalOutput }
-                      : {}),
+                    ...(finalText === undefined || revision !== undefined ? {} : { finalText }),
                   };
+                  if (revision !== undefined && !turn.isComplete() && deadline.remainingMs() > 0) {
+                    await archiveBeforeSegment(result.state);
+                    activeState = new RunState(
+                      new RunContext(),
+                      [...result.history, { role: "user", content: revision }],
+                      agent,
+                      turnsPerSegment,
+                    );
+                    liveOffset = nextOffset;
+                    revisingStopExplanation = true;
+                    const revised = await runSegment(activeState).then(
+                      (value) => value,
+                      async (error: unknown) => {
+                        if (signal.aborted || runtimeRecordUnavailable(diagnostics)) throw error;
+                        await turn.runTool(
+                          turn.reportTrace?.({
+                            phase: "continuation",
+                            reason: "stop_explanation_revision_failed",
+                            error: error instanceof Error ? error.name : "unknown",
+                            modelCalls,
+                          }) ?? Effect.void,
+                        );
+                        return undefined;
+                      },
+                    );
+                    if (revised !== undefined) totalUsage.add(revised.runContext.usage);
+                    const revisedText = revised === undefined ? undefined : finalTextOf(revised);
+                    ended = {
+                      history: revised?.history ?? result.history,
+                      ...(revisedText === undefined ? {} : { finalText: revisedText }),
+                    };
+                  }
+                  diagnostics?.completed(ended.history, totalUsage);
+                  return { ...ended, stopReason: "repeated_final_without_tool" as const };
                 }
                 // What the agent can still get past, such as a failed sign-in, comes back with
                 // the first final answer after it, well before the guard above ends the attempt.
