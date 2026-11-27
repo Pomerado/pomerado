@@ -586,21 +586,21 @@ the request names. Leave out what is unrelated to the tool's purpose or of no us
   A record type whose fields are fixed and known keeps one typed field per fact.
 
 **Partial results.** When a read cannot return everything the call asked for, prefer returning
-what it could read and listing each record or part it could not, over failing the whole call.
-Fail the call only when it has nothing usable to return. Catch only that record's or part's own
-read failure: a block, a challenge, the site's rate limit and a caller's value the site refused or
-did not apply still end the call, as the rules above say, so tell a block from the record's own
+what it could read and listing each record or part it could not, over failing the whole call. Fail
+the call only when it has nothing usable to return. Catch only that record's or part's own read
+failure: a block, a challenge, the site's rate limit and a caller's value the site refused or did
+not apply still end the call, as the rules above say, so tell a block from the record's own
 failure before listing it, as "An answer that lacks the data" says. In a call over several
-identifiers, list a removed or not-found one as missing, and throw `InvalidInput` only when none
-was found. A part that holds a needed value makes its record missing. List each missing record or
-part apart from the ones returned, in the output's top-level `missing` array: each entry's `key`
-is the record's identifier, its `part` names the part when only a part is missing, its `cause` is
-`site` only for the site's own not-found, removed, blank or server-error answer that the code
-names, and `read` for every other failure, and its `reason` says why. A record returned without a
-listed part returns that part's fields null, and each record returned stays as strict as the
-rules here say. `missing` and a listed part's null fields are an exception to the rules here on
-unread, always-null and unfilled fields. Prefer fixing the read behind a `read` entry the build
-sees, as for a failing case.
+identifiers, list one the site's own answer refuses, removes or does not find as missing, and
+throw `InvalidInput` only when none was found. A part that holds a needed value makes its record
+missing. List each missing record or part apart from the ones returned, in the output's top-level
+`missing` array: each entry's `key` is the record's identifier, its `part` names the part when
+only a part is missing, its `cause` is `site` only for the site's own answer about that record or
+part that the code names, and `read` for every other failure, and its `reason` says why. A record
+returned without a listed part returns that part's fields null, and each record returned stays as
+strict as the rules here say. `missing` and a listed part's null fields are an exception to the
+rules here on unread, always-null and unfilled fields. Prefer fixing the read behind a `read`
+entry the build sees, as for a failing case.
 
 **Optional sections (`include`).** Some parts of a page cost every run extra clicks or waits, or
 are large and repeated on every record: the filters, facets and sorts the site offers, each

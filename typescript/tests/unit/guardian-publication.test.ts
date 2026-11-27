@@ -1046,7 +1046,7 @@ describe("the publication policy", () => {
   // contradict would hide the tool's own failed read from repair.
   it("accepts a record listed as missing and finds a missing entry that blames the site wrongly", () => {
     expect(publicationOutputPolicy).toContain(
-      "A record or part the code lists in the output's top-level `missing` array in place of returning it, as the core skill's Partial results says, is not this finding; a record returned with a needed value null or absent is.",
+      "A record or part the code lists in the output's top-level `missing` array in place of returning it, as the core skill's Partial results says, is not this finding; a record it returns is judged by this rule as any other.",
     );
     expect(publicationOutputPolicy).toContain(
       "So is a `missing` entry whose `cause` is `site` where the captures show the site served that record or part, source that sets `site` for a failure other than the site's own answer it names, or source that lists a block, a challenge or the site's rate limit in `missing`. So is the source behind a `read` entry in the example output.",
