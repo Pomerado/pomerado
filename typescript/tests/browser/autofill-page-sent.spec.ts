@@ -118,6 +118,7 @@ const serve = async (page: Page, screen: string) => {
 
 /**
  * The host's inspection and fill of `step` with `values`, its calls made through `wrap` when
+ * given, and with the host's own reading of whether the page sent the code (`codeSent`) when
  * given. No call's script or answer holds a value, nor a code typed one digit per box as a whole.
  */
 const fill = async (
@@ -127,7 +128,12 @@ const fill = async (
   {
     wrap = (host) => host,
     settleMs = 500,
-  }: { readonly wrap?: (host: AutofillPage) => AutofillPage; readonly settleMs?: number } = {},
+    codeSent,
+  }: {
+    readonly wrap?: (host: AutofillPage) => AutofillPage;
+    readonly settleMs?: number;
+    readonly codeSent?: Parameters<typeof fillAutofillStep>[0]["codeSent"];
+  } = {},
 ) => {
   const host = await hostPage(page);
   const calls = wrap(host);
@@ -143,6 +149,7 @@ const fill = async (
       page: calls,
       keyboard: (await hostKeyboard(page)).keyboard,
       settleMs,
+      ...(codeSent === undefined ? {} : { codeSent }),
     }),
   );
   for (const value of new Set([values.join(""), ...values.filter((each) => each.length > 1)]))
@@ -422,6 +429,58 @@ test("a one-box code screen with no button that takes its box away as a submit c
   expect(sent).toEqual([code]);
   await expect(page.locator("#account")).toBeVisible();
 });
+
+/**
+ * A code screen of one box and no button that empties its box as it sends the code itself on the
+ * sixth digit, and, once the site took it, shows the account and puts `/home` in the address with
+ * pushState, loading no new document.
+ */
+const oneBoxEmptiedAsItSends = `<main id="view"><input id="otp" name="otp" maxlength="6" inputmode="numeric" aria-label="Code" autocomplete="one-time-code"></main>
+<script>
+const view = document.getElementById("view");
+const box = document.getElementById("otp");
+box.addEventListener("input", () => {
+  if (!/^[0-9]{6}$/.test(box.value)) return;
+  const typed = box.value;
+  box.value = "";
+  fetch("/api/code", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code: typed }) })
+    .then((response) => {
+      if (!response.ok) return;
+      view.innerHTML = '<p id="account">Signed in</p>';
+      history.pushState(null, "", "/home");
+    });
+});
+</script>`;
+
+for (const found of [true, false])
+  test(`a one-box code screen with no button that empties its box as it sends the code itself, whose host's reading of the tab's requests ${found ? "finds the code" : "finds none"}, is reported ${found ? "sent by the page" : "with the box failed"}`, async ({
+    page,
+  }) => {
+    const { sent, release } = await serve(page, oneBoxEmptiedAsItSends);
+    const requests: { readonly at: number; readonly body: string }[] = [];
+    page.on("request", (request) =>
+      requests.push({ at: Date.now(), body: request.postData() ?? "" }),
+    );
+    // The host's reading: a request of the tab's from `since` on whose body holds the code.
+    const codeSent = (typed: { readonly since: number; readonly code: string }) =>
+      Effect.succeed(
+        found &&
+          requests.some(
+            ({ at, body }) => at >= typed.since && body.includes(JSON.stringify(typed.code)),
+          ),
+      );
+    const oneBoxStep: AutofillStep = { fields: [{ selector: "#otp", slot: "code" }] };
+    // The site answers only once the fill ended: the host finds the box emptied on the same page.
+    const report = await fill(page, oneBoxStep, [code], { codeSent }).finally(release);
+    expect(report).toMatchObject({
+      outcome: "filled",
+      fields: [{ slot: "code", status: found ? "filled" : "failed" }],
+      submit: found ? "page" : "not_attempted",
+    });
+    expect(sent).toEqual([code]);
+    await expect(page.locator("#account")).toBeVisible();
+    expect(new URL(page.url()).pathname).toBe("/home");
+  });
 
 /**
  * The host's calls, its first submit call that may click failing as a call that never reached the
