@@ -623,13 +623,38 @@ const outcomeWaitChanged = (locator, key) =>
     return elements.filter((element) => noted?.get(element) !== element.innerText).length;
   }, key);
 // Reads the outcomes highest priority last, so a look that sees one also sees a higher one drawn
-// in the same render. The observations keep the listed order.
+// in the same render. Locator and gone outcomes listed together are counted together: their
+// counts go to the browser at once, highest priority last, so they cost one round trip however
+// many there are. The browser runs a page's counts in the order sent, but a locator inside a frame
+// first finds its frame, so its counts can run after counts sent later. So once a locator shows,
+// or a gone outcome is gone, the outcomes above it are counted again: after its counts and, after
+// an action, after a locator's read of whether it changed. What a look records of an outcome is
+// then read after every lower one that shows or is gone. Any other outcome is read alone, in its
+// place. The observations keep the listed order.
 const outcomeWaitObserve = async (outcomes, key, state, events) => {
   const candidates = Array.isArray(outcomes) ? outcomes
     : Object.entries(outcomes).map(([name, locator]) => ({ name, kind: "locator", locator }));
   const observations = {};
-  for (const candidate of [...candidates].reverse())
-    observations[candidate.name] = await outcomeWaitRead(candidate, state, key, events);
+  const count = (counted) => outcomeWaitSent(counted.map((candidate) => outcomeWaitCounts(candidate.locator)));
+  let together = [];
+  const readTogether = async () => {
+    let counts = count(together);
+    for (const [index, candidate] of together.entries()) {
+      const counted = await counts[index];
+      observations[candidate.name] = await outcomeWaitRead(candidate, state, key, events, counted);
+      if (candidate.kind === "locator" ? counted.visible > 0 : observations[candidate.name].matched)
+        counts = [...counts.slice(0, index + 1), ...count(together.slice(index + 1))];
+    }
+    together = [];
+  };
+  for (const candidate of [...candidates].reverse()) {
+    if (candidate.kind === "locator" || candidate.kind === "gone") together.push(candidate);
+    else {
+      await readTogether();
+      observations[candidate.name] = await outcomeWaitRead(candidate, state, key, events);
+    }
+  }
+  await readTogether();
   return Object.fromEntries(candidates.map(({ name }) => [name, observations[name]]));
 };
 // How long a look the page holds up may still finish once a response or popup outcome arrived, and
@@ -733,13 +758,15 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
   try {
     if (options.action !== undefined) {
       key = "pomerado.outcomeWait." + Date.now() + "." + Math.random();
-      for (const candidate of candidates) {
+      // What each outcome shows before the action, all read at once.
+      const noting = outcomeWaitSent(candidates.map(async (candidate) => {
         if (candidate.kind === "locator") await outcomeWaitNote(candidate.locator, key);
         if (candidate.kind === "gone" && (await candidate.locator.filter({ visible: true }).count()) > 0)
           state.goneSeen.add(candidate.name);
         if (candidate.kind === "invalid")
           state.invalidBefore.set(candidate.name, outcomeWaitInvalidKey(await candidate.locator.evaluateAll(outcomeWaitInvalidInPage)));
-      }
+      }));
+      for (const noted of noting) await noted;
       // How many of the site's messages show each text before a commit's click, as confirmCommit
       // notes them where it is pasted. A page it can't read then has its messages read as none new.
       if (committing) {
@@ -1097,17 +1124,19 @@ const waitForOutcomeResult = async (outcomes, options = {}) => {
     stopWrites?.();
     // With a native dialog open the page cannot run the cleanup; what it leaves is inert.
     const inPage = !events.dialogOpen();
-    // A page held up by a pending navigation gets a moment; what it keeps is inert.
-    for (const each of [key, state.announceKey])
-      if (each !== undefined && inPage)
-        await waitBounded(
+    // A page held up by a pending navigation gets a moment; what it keeps is inert. The cleanups
+    // go out at once.
+    await Promise.all([
+      ...[key, state.announceKey].filter((each) => each !== undefined && inPage).map((each) =>
+        waitBounded(
           page.evaluate((key) => {
             globalThis[Symbol.for(key)]?.observer?.disconnect?.();
             delete globalThis[Symbol.for(key)];
           }, each),
           cleanupMs(),
-        ).catch(() => undefined);
-    await progress.stop(inPage && cleanupMs() > 0);
+        ).catch(() => undefined)),
+      progress.stop(inPage && cleanupMs() > 0),
+    ]);
   }
 };
 const waitForOutcome = async (outcomes, options = {}) => (await waitForOutcomeResult(outcomes, options)).outcome;
@@ -1523,7 +1552,8 @@ const waitForChange = async (fields, options = {}) => {
  * unavailable, empty, results }`: when several show at once, the first listed wins, so list a
  * refusal, the site's error or a greyed-out choice before an empty state, and an empty state before
  * results. Each locator names one element, such as the results list rather than its rows. It only
- * observes: about every 100 ms it counts each locator's matches and its visible ones, and never
+ * observes: about every 100 ms it counts each locator's matches and its visible ones, every locator
+ * at once, so a look costs one round trip to the browser however many it names, and it never
  * clicks, types or navigates itself. It answers at the first look that shows an outcome.
  * `timeout` (default `answerCap`, 30 s) is the hard cap, reached only while the page keeps
  * progressing. `action` is the step itself, such as `() => apply.click()`, which it runs exactly
