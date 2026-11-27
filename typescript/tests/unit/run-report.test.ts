@@ -373,6 +373,18 @@ describe("a run that failed in its operation", () => {
       outcome: { code: "outcome_unknown", writeStatus: "may_have_applied", possibleCommit: true },
     },
     {
+      case: "an expired deadline after only setting steps",
+      error: new LocalOperationFailure(
+        "Local operation deadline expired; execution was not replayed",
+        settingSent,
+        undefined,
+        undefined,
+        undefined,
+        { reported: false },
+      ),
+      outcome: { code: "outcome_unknown", writeStatus: "may_have_applied", possibleCommit: true },
+    },
+    {
       case: "a child that exited before reporting, whose commit was never entered",
       error: new LocalOperationFailure(
         "Local operation child exited 1; completion uncertain",
