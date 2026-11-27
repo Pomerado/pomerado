@@ -355,6 +355,13 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
    */
   readonly publishesOnRefusal?: true;
   /**
+   * Set by a host whose publication refusal lets the step named for publication, a step that saved
+   * nothing, run once more on the current source, which the host stops before its first save step.
+   * The reply reports that step as repeatable and leaves out the rule against repeating an example or
+   * a write step. Absent otherwise, and the minter hears what it always has.
+   */
+  readonly rerunBeforeSave?: true;
+  /**
    * Set on a `write_path_unfinished` or `commit_marks_unentered` refusal when the host passed
    * `checkWriteSession` its `publishOnReadBack`, so the minter hears how a session whose page
    * already showed the request's end state publishes. Absent otherwise.
