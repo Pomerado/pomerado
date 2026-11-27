@@ -1994,7 +1994,7 @@ it("ends three tool-free answers as final_text_without_tool, with the reviewed l
 });
 
 it.each(["unsafe", "misdescribed", undefined] as const)(
-  "keeps no last answer Guardian did not allow (reword labelled %s)",
+  "keeps no last answer Guardian did not allow, revised once (reword labelled %s)",
   async (label) => {
     const f = await fixture(() => prose("Call 555-0100 to finish this request."), {
       reviewQuestion: () =>
@@ -2008,8 +2008,116 @@ it.each(["unsafe", "misdescribed", undefined] as const)(
     expect(outcome.stopReason).toBe("final_text_without_tool");
     expect(outcome).not.toHaveProperty("stopExplanation");
     expect(JSON.stringify(outcome)).not.toContain("555-0100");
+    expect(f.requests).toHaveLength(4);
   },
 );
+
+// Guardian's reword of a stopped build's last answer, for anything but its wording, dropped the
+// answer: the minter never heard why, so its caller read no reason at all. The minter now revises
+// it once, with no tool allowed, and the revision Guardian allows reaches the caller.
+it("revises a last answer Guardian reworded as misdescribed once, and keeps the allowed revision", async () => {
+  const first = "The execution provider failed every start and the page was published.";
+  const revised = "The page contents could not be verified, and nothing was changed.";
+  const reviewed: unknown[] = [];
+  const f = await fixture((_request, index) => prose(index < 3 ? first : revised), {
+    reviewQuestion: (candidate) =>
+      Effect.sync(() => {
+        reviewed.push(candidate.questions[0]?.prompt);
+        return reviewed.length === 1
+          ? {
+              outcome: "reword" as const,
+              label: "misdescribed" as const,
+              rationale: "Say only that the page contents could not be verified.",
+            }
+          : { outcome: "allow_business" as const, rationale: "Plain and supported." };
+      }),
+  });
+  const outcome = await f.run();
+  expect(outcome).toMatchObject({
+    build: "incomplete",
+    stopReason: "final_text_without_tool",
+    stopExplanation: revised,
+  });
+  expect(reviewed).toEqual([first, revised]);
+  expect(f.requests).toHaveLength(4);
+  expect(f.requests[3]?.modelSettings.toolChoice).toBe("none");
+  expect(JSON.stringify(f.requests[3]?.input)).toContain(
+    "Guardian did not let your last answer reach the caller as the reason this build stopped. Its rationale: Say only that the page contents could not be verified. Reply once, without a tool call, with a revised explanation for the caller that follows the rationale. Prefer plain facts the record shows over internal names. The build ends after this reply.",
+  );
+  expect(outcome.diagnostics).toContainEqual(
+    expect.stringContaining('"explanationShown":true,"explanationRevision":"kept"'),
+  );
+});
+
+// A last answer that says the host's own sandbox never started is true only against the host's
+// record, which its review never had: the execution failed before dispatch and came back as the
+// minter's answer, not a refusal. The review now reads the host's answers the minter read.
+it("reviews the last answer against the host's own answers in the decision ledger", async () => {
+  const notStarted = new MintFailure({
+    code: "Unavailable",
+    reason: "executor_unavailable",
+    execution: { phase: "prepare", reason: "isolation_unverified", dispatch: "not_sent", stage: "setup" },
+  });
+  const noExit = "No other exit is left for this attempt's browser.";
+  const notSubmitted = "No screen was submitted after the host filled the login.";
+  const ledgers: unknown[] = [];
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", pureExample, "example"),
+        call("request_browser_recovery", { intent: "The site refused this browser." }),
+        call("execute", authenticate, "signed_in"),
+      ][index] ?? prose("The host's sandbox never started, so nothing ran."),
+    {
+      entryNavigation: () => ({
+        state: "opened" as const,
+        outcome: "http_error" as const,
+        requestedUrl: "https://shop.example.test/",
+        resolvedUrl: "https://shop.example.test/",
+        redirects: [],
+        status: 403,
+      }),
+      reviewAndExecute: (submitted, beforeDispatch = () => Effect.void) =>
+        submitted.purpose === "example"
+          ? Effect.fail(notStarted)
+          : beforeDispatch({ reviewId: "review_sign_in", action: "authentication" }).pipe(
+              Effect.as({
+                ...signInCheck("failed"),
+                observations: { signedIn: false, failed: "credentials_not_submitted", nextStep: notSubmitted },
+              }),
+            ),
+      requestBrowserRecovery: () =>
+        Effect.succeed({ outcome: "unavailable" as const, reason: "no_proxy_left" as const, notice: noExit }),
+      reviewQuestion: (_candidate, context) =>
+        Effect.sync(() => {
+          ledgers.push(context?.decisionLedger);
+          return { outcome: "allow_business" as const, rationale: "The host recorded each failure." };
+        }),
+    },
+  );
+  const outcome = await f.run();
+  expect(ledgers).toEqual([
+    {
+      denials: [],
+      testFailures: [],
+      hostRefusals: [
+        {
+          tool: "execute",
+          code: "Unavailable",
+          reason: JSON.stringify({ reason: "isolation_unverified", stage: "setup", dispatch: "not_sent" }),
+          atUtc: expect.any(String),
+        },
+        { tool: "request_browser_recovery", code: "no_proxy_left", reason: noExit, atUtc: expect.any(String) },
+        { tool: "execute", code: "credentials_not_submitted", reason: notSubmitted, atUtc: expect.any(String) },
+      ],
+      entryPageStatus: 403,
+    },
+  ]);
+  expect(outcome).toMatchObject({
+    stopReason: "final_text_without_tool",
+    stopExplanation: "The host's sandbox never started, so nothing ran.",
+  });
+});
 
 it("keeps a last answer Guardian asked only to word differently", async () => {
   const f = await fixture(() => prose("The check page came back and the search never ran."), {
