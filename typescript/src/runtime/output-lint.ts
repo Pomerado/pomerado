@@ -138,7 +138,11 @@ export const fieldFill = (output: unknown): FieldFill => {
   return Object.fromEntries(fill);
 };
 
-/** The paging fields every list tool returns (`listOutputFields`), null by design on a last page. */
+/**
+ * The paging fields every list tool returns (`listOutputFields`), null by design on a last page,
+ * and `missing`, what a read could not return (the core skill's Partial results), empty by design
+ * when it read everything.
+ */
 const listPagingFields = new Set([
   "next_cursor",
   "next_cursor_expires_at",
@@ -146,6 +150,7 @@ const listPagingFields = new Set([
   "total_results",
   "list_changed",
   "next_cursor_unavailable",
+  "missing",
 ]);
 
 /**

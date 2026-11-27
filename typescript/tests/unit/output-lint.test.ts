@@ -432,6 +432,12 @@ describe("empty fields across a detail record and the tool's tested runs", () =>
     expect(checksOf(page, { alsoTested: [fieldFill(page)] })).toEqual([]);
   });
 
+  // A read lists what it could not return in `missing`, which stays empty when it read everything.
+  it("leaves a read's missing list alone", () => {
+    const page = { results: [{ title: "Mug" }], missing: [] };
+    expect(checksOf(page, { alsoTested: [fieldFill(page)] })).toEqual([]);
+  });
+
   it("keeps a field fill to paths and counts, never values", () => {
     expect(fieldFill({ ...detail(null, 4.5), results: [{ title: "Mug" }, { title: "" }] })).toEqual({
       name: { records: 1, filled: 1 },
