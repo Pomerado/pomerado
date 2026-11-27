@@ -1002,7 +1002,7 @@ it("has a search rank its results against the query the site applied as well as 
  */
 it("has a search step wait for the site's results or its own no-match state", async () => {
   const line =
-    "- For a search step, wait for either the site's results or its own no-match state, and return the site's no-match answer with its message rather than waiting on results that may never appear. Prefer refusing a typed value on that no-match state, quoting it, over an empty suggestion list read before the site answered, which is still loading. Prefer refusing a requested date only on what the site's own calendar shows for that day once its month has loaded, such as a greyed-out, disabled or missing day, quoting it, over a calendar read before it filled.";
+    "- For a search step, wait for either the site's results or its own no-match state, and return the site's no-match answer with its message rather than waiting on results that may never appear. When the search looks up something in the signed-in account, check the account's own list before returning a no-match. Prefer refusing a typed value on that no-match state, quoting it, over an empty suggestion list read before the site answered, which is still loading. Prefer refusing a requested date only on what the site's own calendar shows for that day once its month has loaded, such as a greyed-out, disabled or missing day, quoting it, over a calendar read before it filled.";
   const root = await authoringCopy((_path, text) => text.replace(sectionMarker, ""));
   try {
     const hosts = [
@@ -1748,7 +1748,7 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["5decdc18624e7a807b6de442e886ee977d6e872f3db93703a0603c8abf49080a", "core"],
+    ["d3a14deba73960df038119c17c789aa256ac1092a708dc5fe000a0fadeee04fb", "core"],
     ["97e3b5ebdbe8d5fca43790729084de4eef4fbcf5fdf71ad645e679fd72f4e804", "search"],
     ["e6a78355e22e9989ffdccbc5a5f53eef0ec74217c3ae31b68c1ca0421f36ce44", "auth"],
     ["3355021c2daea519d533551d9b6f08f071c792328d39ec5020d6e8b0ca7def52", "testing"],
