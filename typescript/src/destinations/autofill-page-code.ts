@@ -1645,7 +1645,9 @@ const recordedChallengeVisible = async (fields) => {
  * after `popups` and default to none, so a caller that passes no challenge fields gets no
  * challenge check. A page the primary page opened that is still open on one of `popups`' origins
  * answers `signInPopupOpen` while it shows one of `popupFields` (by selector), or any password
- * field when they are none; otherwise its frames on the site count for the indicator too.
+ * field when they are none; otherwise its frames on the site count for the indicator too. Once
+ * the indicator shows, on the marker's `urlPath` when it names one, the password field counts only
+ * in the page's own document, and no frame is read for it.
  */
 export const autofillSignedInCode = (
   targetId: string,
@@ -1659,6 +1661,7 @@ export const autofillSignedInCode = (
   }[] = [],
   authenticationOrigins: readonly string[] = [],
   popupFields: readonly string[] = [],
+  urlPath?: string,
 ) =>
   `${primaryPageCode(targetId)}
 const popupOrigins = ${JSON.stringify(popups.map((popup) => popup.origin))};
@@ -1703,8 +1706,8 @@ const passwordInForm = (element, matched) => {
     );
   });
 };
-const signInPasswordVisible = async (selectors) => {
-  for (const frame of primary.frames())
+const signInPasswordVisible = async (selectors, frames) => {
+  for (const frame of frames)
     for (const fieldSelector of selectors) {
       const located = frame.locator(fieldSelector);
       const count = Math.min(await located.count(), 100);
@@ -1720,6 +1723,7 @@ const selector = ${JSON.stringify(selector ?? null)};
 const signInFields = ${JSON.stringify(signInFields)};
 const challengeFields = ${JSON.stringify(challengeFields)};
 const popupFields = ${JSON.stringify(popupFields)};
+const urlPath = ${JSON.stringify(urlPath ?? null)};
 // A sign-in pop-up still open that still asks is a sign-in under way; otherwise its frames on the
 // site show the indicator as the primary page's do. One that closes as the host reads it shows
 // nothing.
@@ -1735,13 +1739,19 @@ for (const popup of openPopups) {
   }
 }
 const siteFrames = primary.frames().filter(onSite);
+const url = primary.url();
+const indicator = selector === null ? null : popupIndicator || await visibleIn(selector, siteFrames);
+// Once the marker shows on its path, only the page's own document can still show the sign-in's
+// form: no frame is read for it, so the check waits for none still loading.
+const markerShown = indicator === true && (urlPath === null || new URL(url).pathname === urlPath);
+const formFrames = markerShown ? [primary.mainFrame()] : primary.frames();
 return {
-  url: primary.url(),
-  indicator: selector === null ? null : popupIndicator || await visibleIn(selector, siteFrames),
+  url,
+  indicator,
   challengeFormVisible: await recordedChallengeVisible(challengeFields),
   // With no field of the sign-in's own to go by, any password field on the page still counts.
   passwordVisible:
     signInFields.length === 0
-      ? popupOrigins.length === 0 && await visibleIn(password, primary.frames())
-      : await signInPasswordVisible(signInFields),
+      ? popupOrigins.length === 0 && await visibleIn(password, formFrames)
+      : await signInPasswordVisible(signInFields, formFrames),
 };`;
