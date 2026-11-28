@@ -120,8 +120,8 @@ answers `{ success, result, error, stderr }`. Throw
   one item shown more than once, such as a sponsored copy beside the regular result, is one
   match. When the site's own results leave the tool unable to go on, that is the caller's to
   settle: ask the caller or refuse with `InvalidInput` (the input schema, below), not
-  `OperationFailure`, which reads as a broken tool and starts a repair (a control the tool could
-  not find or read stays `OperationFailure`, caller-input skill).
+  `OperationFailure`, which reads as a broken tool and starts a repair (a control or element the
+  tool could not find, open or read stays `OperationFailure`, caller-input skill).
 - Start a response wait in the same call as the click that causes it: name the response as a
   `{ response }` answer of `waitForOutcomeResult`, beside the page's other answers, with the click
   as its `action`. Listeners do not outlive a call.
