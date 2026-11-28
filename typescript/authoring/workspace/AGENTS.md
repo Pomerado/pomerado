@@ -561,7 +561,8 @@ signed-in check included, so check once per sign-in: a check after the host conf
 starts a new sign-in. That source must run the flow from the input, including
 entering search terms, options and dates, not read results an exploration left on screen.
 A live test stays read-only. A write session's later act steps continue on the page the
-previous step left.
+previous step left. A read may clear a site chat or assistant widget's own browser data at the
+start of its run, keeping the sign-in's, so the widget starts a new conversation.
 
 The host execute receipt and `review_rejected` feedback carry `repeatableRead`. Only explicit
 host `repeatableRead:true` permits another fresh Guardian-reviewed example read after
