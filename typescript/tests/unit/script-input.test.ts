@@ -468,6 +468,7 @@ describe("a site-field question's label", () => {
         extra: {
           label,
           options: [
+            { value: "blank", label: " " },
             { value: "short", label: "Short choice" },
             { value: "long", label: long },
             // Its label shows only on the protected page, so the prompt never repeats it.
