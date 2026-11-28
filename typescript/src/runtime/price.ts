@@ -67,7 +67,9 @@ const perOf = (text: string) => {
   if (["each", "ea", "item", "unit"].includes(unit)) return { quantity: 1, unit: "each" };
   const read = unitAmount(unit) ?? unitAmount(`1 ${unit}`);
   if (read === undefined) return undefined;
-  const quantity = Number(read.slice(0, read.indexOf(" ")).replace(/,(?!\d{3}$)/u, "."));
+  const number = read.slice(0, read.indexOf(" "));
+  // A mark before three digits after a nonzero whole may group thousands, as in 1,000 g.
+  const quantity = /[1-9]\d*[.,]\d{3}$/u.test(number) ? Number.NaN : Number(number.replace(",", "."));
   const short = read.slice(read.indexOf(" ") + 1);
   return Number.isFinite(quantity)
     ? { quantity, unit: short === "ct" || short === "pc" ? "each" : short }
@@ -82,9 +84,9 @@ const perOf = (text: string) => {
  * currency, when that currency writes the sign; otherwise it is null, never assumed. `per` is the
  * quantity and unit after `/` or `per`, or `each`, with units as `unitAmount` writes them and
  * each, item and count as `each`. It is null when the text names no unit, which a caller reads as
- * one of what the site sells. A period or comma before the number's last three digits groups
- * thousands when it is the only mark, unless the currency has three decimals, so `$3.459` reads
- * as 3459 dollars. Any other text is null, such as a range, a multi-buy, words around the price,
+ * one of what the site sells. A period or comma before the number's last three digits, after a
+ * nonzero whole, groups thousands when it is the only mark, unless the currency has three
+ * decimals, so `$3.459` reads as 3459 dollars. Any other text is null, such as a range, a multi-buy, words around the price,
  * a negative amount, a code and sign that disagree, or an amount finer than the currency's minor
  * unit.
  */
@@ -92,7 +94,7 @@ export const readPrice = (
   text: unknown,
   options: { readonly currency?: string } = {},
 ): PriceRead | null => {
-  const price = normalizeText(String(text ?? "").normalize("NFKC")).replace(/^\((.*)\)$/u, "$1");
+  const price = normalizeText(String(text ?? "")).replace(/^\((.*)\)$/u, "$1");
   const [, head = "", basis, each] =
     /^(.*?)(?: ?(?:\/|\bper ) ?(.+)| (each|ea)\.?)?$/iu.exec(price.replace(startingAt, "")) ?? [];
   const per = basis === undefined && each === undefined ? null : perOf(basis ?? each ?? "");
