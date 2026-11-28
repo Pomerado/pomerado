@@ -332,7 +332,9 @@ const unreachedMarks = (remaining: readonly string[], steps: readonly WriteSessi
  * in its output schema and name every commit step after the last one the session entered (all of
  * them when it entered none) in `commitsUnproven`. The result carries the refusal as `refusal`. A
  * step that threw the tool's own refusal of the input instead (`thrownRefusal`) stands the same
- * way, with no reason for the output schema to declare, and the result says so as `thrownRefusal`.
+ * way, only while no step of the session entered or streamed a mark or may have sent a write, so
+ * every commit step is unproven; there is no reason for the output schema to declare, and the
+ * result says so as `thrownRefusal`. A returned refusal wins over a thrown one.
  *
  * A host that publishes on a read-back sets `publishOnReadBack`. Then, when the step named for
  * publication recorded a `readback` confirmation, two outcomes that stand without a save may
@@ -454,7 +456,15 @@ export const checkWriteSession = <
         noSaveRun,
       );
     const siteRefusal = refusable ? step.refused : undefined;
-    const thrown = refusable && step.thrownRefusal === true;
+    // The step named for publication threw the tool's own refusal of the session's input, by the
+    // host's word, in a session that entered no mark and may have sent nothing. A returned refusal
+    // wins over it.
+    const thrown =
+      siteRefusal === undefined &&
+      refusable &&
+      step.thrownRefusal === true &&
+      markless &&
+      !sessionSentWrite(session);
     const refused = siteRefusal !== undefined || thrown;
     // Each ends the session saving nothing.
     const standsWithoutSave = refused || noSaveRun;

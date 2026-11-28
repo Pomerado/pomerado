@@ -530,6 +530,45 @@ describe("a write session's publication check", () => {
       );
     });
 
+    // A thrown refusal stands only for a session that saved nothing: an earlier step that entered a
+    // mark, or may have sent the write, keeps the session's path to finish.
+    it.each([
+      {
+        earlier: "entered a mark",
+        step: { enteredMarks: ["save_property"] },
+        reason: "write_not_submitted",
+      },
+      {
+        earlier: "may have sent the write",
+        step: { enteredMarks: [], possiblySent: true },
+        reason: "write_path_unfinished",
+      },
+    ])("refuses a thrown refusal after an earlier step that $earlier", (row) => {
+      const earlier: WriteSessionMarks = { action: "write", ...row.step };
+      const thrown: WriteSessionMarks = {
+        enteredMarks: [],
+        action: "write",
+        possiblySent: false,
+        thrownRefusal: true,
+      };
+      const published = Effect.runSyncExit(
+        checkWriteSession({
+          session: { steps: [earlier, thrown] },
+          step: thrown,
+          extract: Effect.succeed(
+            contract({
+              confirmation: "message",
+              commits: ["save_property", "get_price"],
+              commitsUnproven: ["save_property", "get_price"],
+            }),
+          ),
+          writePath: path,
+          publishOnRefusal: true,
+        }),
+      );
+      expect(published).toEqual(Exit.fail(expect.objectContaining({ reason: row.reason })));
+    });
+
     it("publishes on the refusal when the output holds a recursive type in another branch", () => {
       const detailed = Schema.Struct({ ...quoted.fields, details: JsonData });
       const published = Effect.runSyncExit(
