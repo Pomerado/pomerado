@@ -8,6 +8,7 @@ import { Usage } from "@openai/agents";
 import type { ModelRequest, ModelResponse } from "@openai/agents";
 import { Deferred, Effect, Fiber, Schema } from "effect";
 import { afterEach, expect, it } from "vitest";
+import { writeOutOfAuthority } from "../../src/guardian/review.js";
 import { cardReadbackRefusal } from "../../src/mint/card-readback.js";
 import { MintFailure, MintHarnessSnapshot } from "../../src/mint/contracts.js";
 import { fileHandleRefusal } from "../../src/mint/file-handles.js";
@@ -583,6 +584,58 @@ it("still ends a site gap as site_lacks_capability", async () => {
     blocked: { reason: "site_lacks_capability", explanation },
     stopReason: "site_lacks_capability",
   });
+});
+
+// A stop our own rule made is no site gap: while Guardian's final refusal of a step, the read-only
+// rule's included, or a host check's refusal of one stands, the first site_lacks_capability report
+// goes back once, and the next stands.
+it.each([
+  {
+    by: "the read-only rule",
+    overrides: {
+      reviewAndExecute: () =>
+        Effect.fail(
+          new MintFailure({
+            code: "ReviewDenied",
+            review: { outcome: "deny", reviewId: "review_denied", rationale: writeOutOfAuthority },
+          }),
+        ),
+    },
+  },
+  {
+    by: "a host check",
+    overrides: {
+      preflight: () =>
+        Effect.succeed({
+          supported: false as const,
+          reason: "This host does not run this kind of step for this account.",
+          hostRefusal: true as const,
+        }),
+    },
+  },
+])("refuses a site gap once after $by refused a step", async ({ overrides }) => {
+  const explanation = "The site needs a profile form before it shows the search.";
+  const report = (id: string) =>
+    call(
+      "report_blocked",
+      { reason: "site_lacks_capability", explanation, intent: "The search stays covered." },
+      id,
+    );
+  const f = await fixture(
+    (_request, index) =>
+      [
+        call("execute", { ...pureExample, target: "liveBrowser" }, "refused"),
+        report("first"),
+        report("second"),
+      ][index] ?? prose("Stopping."),
+    overrides,
+  );
+  expect(await f.run()).toMatchObject({
+    build: "incomplete",
+    blocked: { reason: "site_lacks_capability", explanation },
+  });
+  expect(f.requests).toHaveLength(3);
+  expect(lastResult(f.requests[2])).toContain("own_rule_refused");
 });
 
 // A write build that asked its owner nothing has its first site gap sent back once, and the next

@@ -474,6 +474,10 @@ const reviewedPublicationRefusals = 8;
  * a refusal it cannot get past ends with its reviewed explanation instead of an unexplained stop.
  */
 const actRefusalsForPolicy = 5;
+/** The host refusals of a step itself, before or as it ran, rather than of a sign-in or a change. */
+const stepRefusalSources: ReadonlySet<string> = new Set(["source_rule", "preflight", "file_cap"]);
+/** The steps that only read, whose final refusal by Guardian rests on our own rule. */
+const readStepPurposes: ReadonlySet<string> = new Set(["explore", "test", "example"]);
 /**
  * How many of the latest live test batches an execution review reads (`LiveTestHost.bindBatches`),
  * beside older ones whose failures still stand.
@@ -1795,6 +1799,18 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        * memory only: a takeover may send one report back once more.
        */
       const namedStepsOffered = new Set<string>();
+      /**
+       * A site gap reported while our own refusal of a step stood was already sent back
+       * (`own_rule_refused`), so the next is taken. Kept in memory only, as `namedStepsOffered`.
+       */
+      let ownRuleOffered = false;
+      /**
+       * Guardian made a final refusal of a read step (explore, test or example) in this attempt,
+       * the read-only rule's out-of-authority denial included: it rests on our own rule, while an
+       * act step's may rest on the site's own path, such as one no single session reaches. Kept
+       * in memory only, as `ownRuleOffered`.
+       */
+      let readStepRefused = false;
       /**
        * A write build's report that asked its owner nothing was already sent back to ask
        * (`owner_not_asked`), so the next is taken. Kept in memory only, as `namedStepsOffered`.
@@ -4620,6 +4636,27 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             "caller_input_not_cited",
             "caller_input needs the caller's own request, or a task update the owner confirmed, as its basis, so the build has not ended. In intent, name the request field or the update's revision that stops the build, or quote the words of the caller's instruction or of that update, then call report_blocked again. Prefer another reason when the site or a host check stopped it.",
           );
+        // A site gap while our own refusal of a step stands, Guardian's final one of a read step
+        // (the read-only rule's included) or a host check's, goes back once to name that refusal,
+        // and the next is taken. An act step's refusal, a sign-in's and a host refusal of a
+        // publication or task update may themselves point to a site gap, and a sign-in that never
+        // confirmed keeps its own ending.
+        if (
+          reason === "site_lacks_capability" &&
+          !ownRuleOffered &&
+          !signInUnconfirmed &&
+          (readStepRefused ||
+            (hostRefused &&
+              standingHostRefusals.some(({ refusal }) =>
+                stepRefusalSources.has(refusal?.source ?? ""),
+              )))
+        ) {
+          ownRuleOffered = true;
+          return refused(
+            "own_rule_refused",
+            "Our own rule refused a step in this attempt, so site_lacks_capability may not fit, and the build has not ended. Prefer policy when Guardian or the read-only rule refused a step the task needs, or host_refused when a host check did, and say in the explanation what the caller can do. If the site itself lacks what the task needs, call report_blocked again.",
+          );
+        }
         // A new write build that asked its owner nothing (no answer, no question left unanswered,
         // no no) has its first site gap or caller stop sent back once to ask, and the next is
         // taken. A question Guardian turned away reached nobody. A sign-in that never confirmed
@@ -6714,6 +6751,14 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   Effect.suspend(() => {
                     // An act step Guardian allowed starts the run of refusals again; one it
                     // refused adds to it.
+                    if (
+                      readStepPurposes.has(submitted.purpose) &&
+                      Exit.isFailure(result) &&
+                      Cause.isFailType(result.cause) &&
+                      result.cause.error.code === "ReviewDenied" &&
+                      result.cause.error.review?.refusal !== "correctable"
+                    )
+                      readStepRefused = true;
                     if (submitted.purpose === "act") {
                       if (crossedDispatchBoundary) actRefusalsInRow = 0;
                       else if (
