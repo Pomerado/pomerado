@@ -1235,4 +1235,19 @@ describe("OpenAI reviewer policy and trusted authority", () => {
     expect(modelInput(requests)).toHaveProperty("trusted_authority.paymentLimit", paymentLimit);
     expect(modelInput(requests)).toHaveProperty("trusted_authority.checkoutOrigins", checkoutOrigins);
   });
+
+  it("gives a review the host's unanswered questions with their recommended answers", async () => {
+    const requests = readThenDecide({ outcome: "allow", rationale: "Reads.", action: "read" });
+    const unansweredQuestions = [{ question: "Which year?", recommended: "2026" }];
+    await Effect.runPromise(
+      makeGuardian(reviewer("Synthetic upstream {{ tenant_policy_config }}")).review(
+        { ...pending, unansweredQuestions },
+        readEntrypoint,
+      ),
+    );
+    expect(modelInput(requests)).toHaveProperty(
+      "trusted_authority.unansweredQuestions",
+      unansweredQuestions,
+    );
+  });
 });

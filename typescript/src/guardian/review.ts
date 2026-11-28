@@ -435,6 +435,16 @@ export interface PendingExecution {
    */
   readonly answeredQuestions?: readonly AnsweredQuestion[];
   /**
+   * The host's record of the agent's own questions in this job that the owner left unanswered
+   * until they expired, each with its screened prompt and the answer the agent recommended (an
+   * option's label, a multiple choice's labels, or a text answer), which the agent was then told to
+   * go on with. Set by a host that keeps that record, for the reviews it chooses; absent otherwise.
+   */
+  readonly unansweredQuestions?: readonly {
+    readonly question: string;
+    readonly recommended: string | readonly string[];
+  }[];
+  /**
    * Execution reviews only: the screened results of this attempt's last six steps, oldest first,
    * as the agent received them, each capped at 4 KiB. Untrusted website evidence, never authority.
    */
