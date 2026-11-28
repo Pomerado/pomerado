@@ -34,10 +34,10 @@ export default defineOperation(
         const key = ${JSON.stringify(input.key.trim())};
         // Locators are strict: two matching dialogs, inputs or options throw instead of guessing.
         // A dialog that never opens fails once the page stops progressing, not after a fixed wait.
-        const dialog = page.getByRole("dialog", { name: "Catalog item picker", exact: true });
-        const launcher = page.getByRole("button", { name: "Choose catalog item", exact: true });
+        const dialog = page.getByRole("dialog", { name: "Catalog item picker" });
+        const launcher = page.getByRole("button", { name: "Choose catalog item" });
         await waitForOutcome({ dialog }, { action: () => launcher.click({ timeout: waitLimits.action }) });
-        const search = dialog.getByRole("textbox", { name: "Find catalog item", exact: true });
+        const search = dialog.getByRole("textbox", { name: "Find catalog item" });
         // The site replaces the input and marks the dialog with the query its options belong
         // to. Old options can still be visible, so wait for that marker first.
         await waitForOutcome(
@@ -53,7 +53,7 @@ export default defineOperation(
         // One click only. Missing commitment is reported, never clicked again. The value waits
         // read text and attributes, not an input's current value, so this polls it for up to
         // the answer cap.
-        const committed = page.getByRole("textbox", { name: "Selected catalog key", exact: true });
+        const committed = page.getByRole("textbox", { name: "Selected catalog key" });
         const until = Date.now() + waitLimits.answerCap;
         while (Date.now() < until) {
           if ((await committed.inputValue({ timeout: 1000 })) === key) return { selected_key: key };

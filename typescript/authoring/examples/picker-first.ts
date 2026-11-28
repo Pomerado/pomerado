@@ -29,7 +29,7 @@ export default defineOperation(
       timeout_sec: 60,
       code: `
         ${pickerCode}
-        return await pickValue(page.getByRole("combobox", { name: "From", exact: true }), ${JSON.stringify(input.origin)}, { tie: "first" });
+        return await pickValue(page.getByRole("combobox", { name: "From" }), ${JSON.stringify(input.origin)}, { tie: "first" });
       `,
     });
     if (!answer.success) throw new errors.OperationFailure(String(answer.error), { stderr: answer.stderr });

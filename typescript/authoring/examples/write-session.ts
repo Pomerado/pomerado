@@ -126,7 +126,7 @@ const askAndFill = async (context: FillContext, form: string, shown: readonly Fi
       timeout_sec: 30,
       code: `
         ${formControlsCode}
-        const form = page.getByRole("form", { name: ${JSON.stringify(form)}, exact: true });
+        const form = page.getByRole("form", { name: ${JSON.stringify(form)} });
         const before = await visibleFieldLabels(form, { enabledOnly: true });
         for (const { label, answer } of ${JSON.stringify(answers)}) await fillRequiredField(form, label, answer);
         // Only a labelled field the answers showed or enabled is new.
@@ -145,9 +145,9 @@ const askAndFill = async (context: FillContext, form: string, shown: readonly Fi
 // input, and the tool never accepts it. Both calls before the commit mark check for it, so an
 // offer that opens late is declined too.
 const declineOffer = `
-  const offer = page.getByRole("dialog", { name: "Membership offer", exact: true });
+  const offer = page.getByRole("dialog", { name: "Membership offer" });
   if (await offer.isVisible()) {
-    await offer.getByRole("button", { name: "No thanks", exact: true }).click({ timeout: 5000 });
+    await offer.getByRole("button", { name: "No thanks" }).click({ timeout: 5000 });
     await offer.waitFor({ state: "hidden", timeout: 30000 });
   }
 `;
@@ -164,11 +164,11 @@ const fillCheckout = async (context: FillContext) => {
       const checkout = ${JSON.stringify(new URL("/checkout", siteOrigin).href)};
       const input = ${JSON.stringify(input)};
       await page.goto(checkout, { waitUntil: "domcontentloaded", timeout: ${timeoutDefaults.navigation} });
-      const form = page.getByRole("form", { name: "Checkout", exact: true });
+      const form = page.getByRole("form", { name: "Checkout" });
       if ((await form.count()) !== 1) return { failure: "checkout_changed" };
-      await form.getByLabel("Item", { exact: true }).fill(input.item, { timeout: 5000 });
-      await form.getByLabel("Quantity", { exact: true }).fill(String(input.quantity), { timeout: 5000 });
-      await form.getByLabel("Gift wrap", { exact: true }).setChecked(input.gift_wrap, { timeout: 5000 });
+      await form.getByLabel("Item").fill(input.item, { timeout: 5000 });
+      await form.getByLabel("Quantity").fill(String(input.quantity), { timeout: 5000 });
+      await form.getByLabel("Gift wrap").setChecked(input.gift_wrap, { timeout: 5000 });
       return { fields: await unfilledRequiredFields(form) };
     `,
   });
@@ -184,11 +184,11 @@ const fillCheckout = async (context: FillContext) => {
   const continued = await kernel.browsers.playwright.execute(sessionId, {
     timeout_sec: 120,
     code: `
-      const form = page.getByRole("form", { name: "Checkout", exact: true });
+      const form = page.getByRole("form", { name: "Checkout" });
       if ((await form.count()) !== 1) return { failure: "checkout_changed" };
-      await form.getByRole("button", { name: "Continue", exact: true }).click({ timeout: 5000 });
-      const place = page.getByRole("button", { name: "Place order", exact: true });
-      await place.or(page.getByRole("dialog", { name: "Membership offer", exact: true })).first().waitFor({ timeout: 30000 });
+      await form.getByRole("button", { name: "Continue" }).click({ timeout: 5000 });
+      const place = page.getByRole("button", { name: "Place order" });
+      await place.or(page.getByRole("dialog", { name: "Membership offer" })).first().waitFor({ timeout: 30000 });
       ${declineOffer}
       await place.waitFor({ timeout: 30000 });
       return { review_shown: true };
@@ -209,7 +209,7 @@ const fillCheckout = async (context: FillContext) => {
 // This site shows a two-decimal total with a "." separator, such as "$37.50"; parse the format
 // your site shows.
 const readTotal = `
-  const totalText = await page.getByLabel("Order total", { exact: true }).innerText({ timeout: 5000 });
+  const totalText = await page.getByLabel("Order total").innerText({ timeout: 5000 });
   const total_minor = Math.round(Number(totalText.replace(/[^0-9.]/g, "")) * 100);
 `;
 
@@ -222,10 +222,10 @@ export const checkReview = async ({ kernel, sessionId, input, errors }: Context)
     timeout_sec: 60,
     code: `
       ${declineOffer}
-      if ((await page.getByRole("button", { name: "Place order", exact: true }).count()) !== 1)
+      if ((await page.getByRole("button", { name: "Place order" }).count()) !== 1)
         return { failure: "review_missing" };
       ${readTotal}
-      const item = await page.getByLabel("Item", { exact: true }).innerText({ timeout: 5000 });
+      const item = await page.getByLabel("Item").innerText({ timeout: 5000 });
       return { item, total_minor };
     `,
   });
@@ -258,15 +258,15 @@ const clickPlace = async ({ kernel, sessionId, errors }: Context, checkedTotal: 
     code: `
       ${waitCode}
       ${formControlsCode}
-      const review = page.getByRole("form", { name: "Review", exact: true });
-      const place = review.getByRole("button", { name: "Place order", exact: true });
+      const review = page.getByRole("form", { name: "Review" });
+      const place = review.getByRole("button", { name: "Place order" });
       if ((await place.count()) !== 1) return { failure: "review_missing" };
       ${readTotal}
       if (total_minor !== ${JSON.stringify(checkedTotal)}) return { failure: "total_changed" };
       // The fields the review shows just before the click: one of them flagged after it proves nothing.
       const before = await visibleFieldLabels(review);
       // The confirmation, or the review again with a field it flagged. Anything else fails the wait.
-      const confirmation = page.getByRole("status", { name: "Order confirmation", exact: true });
+      const confirmation = page.getByRole("status", { name: "Order confirmation" });
       const answer = await waitForOutcomeResult(
         { placed: confirmation, flagged: { invalid: review } },
         { action: () => place.click({ noWaitAfter: true, timeout: 5000 }), deadline: Date.now() + 30000 },

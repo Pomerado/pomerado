@@ -26,7 +26,7 @@ export default defineOperation(
         const current = new URL(page.url());
         if (!onSite(current)) return null;
         // Read the heading once it shows filled in and holding on two looks.
-        const heading = page.getByRole("heading", { name: "Invoices", exact: true });
+        const heading = page.getByRole("heading", { name: "Invoices" });
         const { values } = await waitForValues({ heading });
         return values.heading;
       `,

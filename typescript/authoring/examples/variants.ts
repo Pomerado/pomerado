@@ -35,8 +35,8 @@ export default defineOperation(
     const answer = await kernel.browsers.playwright.execute(sessionId, {
       timeout_sec: 30,
       code: `
-        const table = page.getByRole("table", { name: "Invoices", exact: true });
-        const cards = page.getByRole("list", { name: "Invoices", exact: true });
+        const table = page.getByRole("table", { name: "Invoices" });
+        const cards = page.getByRole("list", { name: "Invoices" });
         const ids = async (container) =>
           (await container.count()) === 1
             ? container.locator("[data-invoice-id]").evaluateAll((nodes) =>

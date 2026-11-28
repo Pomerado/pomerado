@@ -89,11 +89,11 @@ export default defineOperation(
         const onSite = (url) => siteDomain === null ? url.origin === ${JSON.stringify(siteOrigin)}
           : url.protocol === "https:" && (url.hostname === siteDomain || url.hostname.endsWith("." + siteDomain));
         if (!onSite(new URL(page.url()))) return { failure: "unexpected_page" };
-        const form = page.getByRole("form", { name: "Claim", exact: true });
+        const form = page.getByRole("form", { name: "Claim" });
         await form.waitFor({ timeout: ${timeoutDefaults.navigation} });
-        await form.getByLabel("Policy number", { exact: true }).fill(${JSON.stringify(input.policy_number)}, { timeout: ${timeoutDefaults.action} });
-        await form.getByLabel("Amount", { exact: true }).fill(${JSON.stringify(input.amount)}, { timeout: ${timeoutDefaults.action} });
-        await form.getByLabel("Description", { exact: true }).fill(${JSON.stringify(input.description)}, { timeout: ${timeoutDefaults.action} });
+        await form.getByLabel("Policy number").fill(${JSON.stringify(input.policy_number)}, { timeout: ${timeoutDefaults.action} });
+        await form.getByLabel("Amount").fill(${JSON.stringify(input.amount)}, { timeout: ${timeoutDefaults.action} });
+        await form.getByLabel("Description").fill(${JSON.stringify(input.description)}, { timeout: ${timeoutDefaults.action} });
         // The form's own id tells this form from another one the person may open.
         return { formId: (await form.getAttribute("data-form-id")) ?? "" };
       `,
@@ -110,10 +110,10 @@ export default defineOperation(
       const after = await kernel.browsers.playwright.execute(sessionId, {
         timeout_sec: 60,
         code: `
-          const confirmation = page.getByRole("status", { name: "Claim submitted", exact: true });
+          const confirmation = page.getByRole("status", { name: "Claim submitted" });
           if (await confirmation.isVisible())
             return { state: "submitted", reference: (await confirmation.getAttribute("data-reference")) ?? "" };
-          const form = page.getByRole("form", { name: "Claim", exact: true });
+          const form = page.getByRole("form", { name: "Claim" });
           const same = (await form.count()) === 1 &&
             (await form.getAttribute("data-form-id")) === ${JSON.stringify(form.formId)};
           return same ? { state: "waiting" } : { state: "changed" };
@@ -141,8 +141,8 @@ export default defineOperation(
         ${waitCode}
         // The claim is sent once; a page that shows no confirmation is reported unconfirmed. The
         // form keeps any correction the person made, which is what the site receives.
-        const submit = page.getByRole("button", { name: "Submit claim", exact: true });
-        const confirmation = page.getByRole("status", { name: "Claim submitted", exact: true });
+        const submit = page.getByRole("button", { name: "Submit claim" });
+        const confirmation = page.getByRole("status", { name: "Claim submitted" });
         const shown = await waitForOutcome({ confirmation }, { action: () => submit.click({ timeout: waitLimits.action }) }).then(
           () => true,
           (error) => {

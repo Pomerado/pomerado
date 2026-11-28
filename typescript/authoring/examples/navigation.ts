@@ -71,14 +71,14 @@ export const detailNavigation = defineOperation(
         };
         // The entry page holds no caller input. Type the identifier into the site's own search.
         await page.goto(${JSON.stringify(siteOrigin)}, { waitUntil: "domcontentloaded", timeout: waitLimits.navigation });
-        const search = page.getByRole("search").getByRole("searchbox", { name: "Record ID", exact: true });
+        const search = page.getByRole("search").getByRole("searchbox", { name: "Record ID" });
         if ((await search.count()) !== 1) return { failure: "search_unavailable" };
         await search.fill(recordId, { timeout: waitLimits.action });
         // The search has finished only when the site shows its answer to this search, once its
         // results stop being busy: its error, its own word that nothing matches, or one matching
         // link. Pressing Enter is the wait's action, so nothing shown before it is the answer.
         const results = page
-          .getByRole("region", { name: "Search results", exact: true })
+          .getByRole("region", { name: "Search results" })
           .and(page.locator(':not([aria-busy="true"])'));
         const links = results.getByRole("link", { name: recordId, exact: true });
         const searched = await settle({
@@ -97,9 +97,9 @@ export const detailNavigation = defineOperation(
         const target = new URL(await links.getAttribute("href"), resultsUrl);
         if (!onSite(target)) return { failure: "target_mismatch" };
         const targetPath = target.pathname;
-        const detail = page.getByRole("region", { name: "Record details", exact: true });
-        const interstitial = page.getByRole("region", { name: "Continue to record", exact: true });
-        const proceed = interstitial.getByRole("button", { name: "Continue", exact: true });
+        const detail = page.getByRole("region", { name: "Record details" });
+        const interstitial = page.getByRole("region", { name: "Continue to record" });
+        const proceed = interstitial.getByRole("button", { name: "Continue" });
         // Wait for the record's page, then check that the site, path and the page's own record
         // id all match the request.
         const offTarget = () => {
@@ -181,11 +181,11 @@ export const detailFromUrl = defineOperation(
         const expected = ${JSON.stringify(expected)};
         // The caller's URL exactly as given.
         await page.goto(${JSON.stringify(input.record_url)}, { waitUntil: "domcontentloaded", timeout: waitLimits.navigation });
-        const detail = page.getByRole("region", { name: "Record details", exact: true });
-        const interstitial = page.getByRole("region", { name: "Continue to record", exact: true });
-        const proceed = interstitial.getByRole("button", { name: "Continue", exact: true });
+        const detail = page.getByRole("region", { name: "Record details" });
+        const interstitial = page.getByRole("region", { name: "Continue to record" });
+        const proceed = interstitial.getByRole("button", { name: "Continue" });
         // The site's own page for an unknown record.
-        const missing = page.getByRole("heading", { name: "Record not found", exact: true });
+        const missing = page.getByRole("heading", { name: "Record not found" });
         // The site may serve the record under another of its routes; its own record id decides.
         // A page that shows none of these answers and stops progressing throws outcome_unknown,
         // which the host retries once, in seconds rather than after a fixed wait.
@@ -286,14 +286,14 @@ export const searchThenRead = defineOperation(
         const query = ${JSON.stringify(input.query.trim())};
         // The site's own requests, on every host of its domain, count as progress.
         const site = siteDomain === null ? {} : { siteDomain };
-        const results = page.getByRole("list", { name: "Rooms", exact: true });
+        const results = page.getByRole("list", { name: "Rooms" });
         // Every answer the site gives a search, highest priority first.
         const answers = {
           failed: page.getByRole("alert"),
           empty: page.getByRole("status").filter({ hasText: /^No matching rooms$/ }),
           results,
         };
-        const searchBox = page.getByRole("search").getByRole("searchbox", { name: "Search rooms", exact: true });
+        const searchBox = page.getByRole("search").getByRole("searchbox", { name: "Search rooms" });
         // The answer the template's page showed, or undefined when it showed none: then the
         // controls run instead.
         const answered = async (options) => {
@@ -362,7 +362,7 @@ export default defineOperation(
       const current = new URL(page.url());
       if (!onSite(current)) return { failure: "unsupported_page" };
       if (current.pathname !== "/catalog") return { failure: "unsupported_page" };
-      const text = (await page.getByRole("heading", { name: "Catalog", exact: true }).innerText()).trim();
+      const text = (await page.getByRole("heading", { name: "Catalog" }).innerText()).trim();
       return text === "Catalog" ? { heading: text } : { failure: "unsupported_page" };
     `;
     const first = await kernel.browsers.playwright.execute(sessionId, {
@@ -373,8 +373,8 @@ export default defineOperation(
         // This site's observed verification page says "Verifying your browser". It wins over the
         // heading when both show.
         const shown = await waitForOutcome({
-          challenge: page.getByText("Verifying your browser", { exact: true }),
-          heading: page.getByRole("heading", { name: "Catalog", exact: true }),
+          challenge: page.getByText("Verifying your browser"),
+          heading: page.getByRole("heading", { name: "Catalog" }),
         });
         if (shown === "challenge") return { challenge: true };
         ${readHeading}
@@ -388,7 +388,7 @@ export default defineOperation(
       // blocked; the host then moves to a new browser mode on an empty profile. Never
       // click or reload it.
       await waitPastChallenge({
-        ready: `return await page.getByRole("heading", { name: "Catalog", exact: true }).isVisible();`,
+        ready: `return await page.getByRole("heading", { name: "Catalog" }).isVisible();`,
       });
       const next = await kernel.browsers.playwright.execute(sessionId, {
         timeout_sec: 30,

@@ -78,6 +78,10 @@ answers `{ success, result, error, stderr }`. Throw
   snapshot shows a link with no name, prefer its `href`. On a sign-in screen, prefer reading each
   field's label, type, placeholder, id and name over an `ariaSnapshot()`, which can include typed
   values.
+- Name a site's control by the steady words of its name, with `getByRole`'s default name match,
+  which takes part of the name in any case, or a case-insensitive pattern, rather than
+  `exact: true` or a `role=…[name="…"]` string, which need the whole name: a site may add words to
+  it. Use the whole name only to tell two controls apart.
 - After a step whose answer can vary or that redraws part of the page, such as a click that may
   navigate, a search, a filter, a pick from a list, a date pick, adding a table row or a submit,
   prefer `waitForOutcome`, the step passed as its `action`, naming every result it can lead to: the
@@ -85,7 +89,9 @@ answers `{ success, result, error, stderr }`. Throw
   choice (`getByRole(role, { name, disabled: true })` or the site's own disabled marker), the site's
   error or validation message, a pick-one list, or the element the next step uses. Prefer it over
   `waitForURL` or `waitForLoadState`: a dialog keeps the URL, and a page that changes route without
-  loading a document passes `waitForLoadState` at once. Opening a record by its identifier or URL
+  loading a document passes `waitForLoadState` at once. A list of the account's own records can be
+  empty for another caller: name the site's empty message as an answer even when the list had rows
+  while you built the tool. Opening a record by its identifier or URL
   can also answer with a removed or not-found page, or an exact lookup of its key with an empty
   result: name it, and throw `InvalidInput` with `field` and what the page shows, before any
   commit mark, never a readiness timeout; in a read over several identifiers, list it as missing
@@ -1041,7 +1047,7 @@ If the deadline expires, report the named readiness failure and use current
 screened evidence to distinguish a remaining challenge, loading and changed
 layout.<!-- pomerado:section core.challenge-reference --> Do not invent a CAPTCHA bypass or replace the target with an arbitrary
 first element. Resolve role and computed accessible name from observed evidence;
-`searchbox` and `textbox`, and their exact names, are not interchangeable.
+`searchbox` and `textbox` are not interchangeable.
 When a locator is missing or a Playwright timeout names one, first check that the page's URL and
 heading are the page you meant: a wrong or error page needs the site's own route to the right
 page, never a new selector. Otherwise repair that wait and keep the checks that already

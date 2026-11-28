@@ -43,8 +43,8 @@ export default defineOperation(
         // Never .first() of a broad text match: scope to the evidenced container and to
         // visible links (collapsed menus hold hidden duplicates), then require exactly one.
         const entry = page
-          .getByRole("navigation", { name: "Members", exact: true })
-          .getByRole("link", { name: "Log in", exact: true })
+          .getByRole("navigation", { name: "Members" })
+          .getByRole("link", { name: "Log in" })
           .filter({ visible: true });
         if ((await entry.count()) !== 1) return null;
         const href = await entry.getAttribute("href");
@@ -57,9 +57,9 @@ export default defineOperation(
         await page.waitForURL((url) => url.protocol === "https:" && url.pathname === "/member/login", { waitUntil: "domcontentloaded", timeout: remaining() });
         const readEntry = async () => {
           // A signInStep names a control with a selector string instead of a locator call, such as
-          // role=textbox[name="Username" s] for this field: exact is a locator option, not an attribute.
-          const form = page.getByRole("form", { name: "Member login", exact: true });
-          await form.getByLabel("Username", { exact: true }).waitFor({ state: "visible", timeout: remaining() });
+          // role=textbox[name=/username/i] for this field.
+          const form = page.getByRole("form", { name: "Member login" });
+          await form.getByLabel("Username").waitFor({ state: "visible", timeout: remaining() });
           const final = new URL(page.url());
           if (final.protocol !== "https:" || final.username || final.password || final.pathname !== "/member/login") return null;
           // Report control kinds only, never field values.

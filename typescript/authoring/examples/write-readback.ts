@@ -72,11 +72,11 @@ export default defineOperation(
         if (!onSite(current)) return { failure: "form_changed" };
         // The form posts to its own page's origin, which may be any host of the site.
         if (page.url() !== current.origin + "/tasks/new") return { failure: "form_changed" };
-        const form = page.getByRole("form", { name: "New task", exact: true });
+        const form = page.getByRole("form", { name: "New task" });
         if ((await form.getAttribute("action")) !== "/tasks" || (await form.getAttribute("method")) !== "post")
           return { failure: "form_changed" };
-        await form.getByLabel("Title", { exact: true }).fill(title, { timeout: actionTimeout(${timeoutDefaults.action}) });
-        await form.getByLabel("Assignee", { exact: true }).fill(assignee, { timeout: actionTimeout(${timeoutDefaults.action}) });
+        await form.getByLabel("Title").fill(title, { timeout: actionTimeout(${timeoutDefaults.action}) });
+        await form.getByLabel("Assignee").fill(assignee, { timeout: actionTimeout(${timeoutDefaults.action}) });
         // Notes the page's messages and flagged fields once the form is filled, just before the
         // click, so confirmCommit below counts only what the save adds.
         ${confirmCommitCode}
@@ -98,7 +98,7 @@ export default defineOperation(
             },
           },
         }, {
-          action: () => form.getByRole("button", { name: "Create task", exact: true }).click({ noWaitAfter: true, timeout: Math.min(${timeoutDefaults.answerCap}, available - 1000) }),
+          action: () => form.getByRole("button", { name: "Create task" }).click({ noWaitAfter: true, timeout: Math.min(${timeoutDefaults.answerCap}, available - 1000) }),
           siteDomain: siteDomain ?? undefined,
           deadline: callDeadline,
         });
