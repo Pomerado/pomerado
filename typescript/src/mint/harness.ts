@@ -474,6 +474,8 @@ const reviewedPublicationRefusals = 8;
  * a refusal it cannot get past ends with its reviewed explanation instead of an unexplained stop.
  */
 const actRefusalsForPolicy = 5;
+/** The host refusals of a step itself, before or as it ran, rather than of a sign-in or a change. */
+const stepRefusalSources: ReadonlySet<string> = new Set(["source_rule", "preflight", "file_cap"]);
 /**
  * How many of the latest live test batches an execution review reads (`LiveTestHost.bindBatches`),
  * beside older ones whose failures still stand.
@@ -1795,6 +1797,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        * memory only: a takeover may send one report back once more.
        */
       const namedStepsOffered = new Set<string>();
+      /**
+       * A site gap reported while our own refusal of a step stood was already sent back
+       * (`own_rule_refused`), so the next is taken. Kept in memory only, as `namedStepsOffered`.
+       */
+      let ownRuleOffered = false;
       /**
        * The latest screened instruction each refusal in `namedStepReasons`, or each registry refusal
        * the minter may fix, gave the minter, which a `host_refused` report sent back to its step
@@ -4615,6 +4622,25 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             "caller_input_not_cited",
             "caller_input needs the caller's own request, or a task update the owner confirmed, as its basis, so the build has not ended. In intent, name the request field or the update's revision that stops the build, or quote the words of the caller's instruction or of that update, then call report_blocked again. Prefer another reason when the site or a host check stopped it.",
           );
+        // A site gap while our own refusal of a step stands, Guardian's final one (the read-only
+        // rule's included) or a host check's, goes back once to name that refusal, and the next is
+        // taken. A refusal of a sign-in alone keeps the sign-in's ending, and a host refusal of a
+        // publication or task update may itself point to a site gap.
+        if (
+          reason === "site_lacks_capability" &&
+          !ownRuleOffered &&
+          ((guardianRefused && !signInRefusalOnly) ||
+            (hostRefused &&
+              standingHostRefusals.some(({ refusal }) =>
+                stepRefusalSources.has(refusal?.source ?? ""),
+              )))
+        ) {
+          ownRuleOffered = true;
+          return refused(
+            "own_rule_refused",
+            "Our own rule refused a step in this attempt, so site_lacks_capability may not fit, and the build has not ended. Prefer policy when Guardian or the read-only rule refused a step the task needs, or host_refused when a host check did, and say in the explanation what the caller can do. If the site itself lacks what the task needs, call report_blocked again.",
+          );
+        }
         if (reason === "host_refused" && !hostRefusing && hostRefusalPassed && hostRefusalRepeated)
           return refused(
             "host_refusal_repeated",

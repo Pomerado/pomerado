@@ -119,3 +119,63 @@ it("allows a write label on a write build's write step", async () => {
     action: "write",
   });
 });
+
+// A read build's step the site requires before the task, which an applied update the owner
+// confirmed names, may run as the build's one write once Guardian allows it as a write. Without
+// that confirmation, or once a write is on record, the label stays out of authority.
+const siteRequiredUpdate = {
+  revision: 1,
+  summary: "Finish the profile form the site requires before the search.",
+  changes: [
+    {
+      setting: "requirement" as const,
+      change: "add" as const,
+      text: "Submit the site's required profile form with the name the owner gave.",
+    },
+  ],
+  confirmation: [
+    {
+      id: "profile",
+      question: "May the build submit the profile form the site requires?",
+      answer: { confirmed: true },
+    },
+  ],
+};
+const siteRequiredContext = {
+  repeatableRead: true,
+  operationSources: ["operation/save.mjs"],
+  currentExecution: { purpose: "explore" as const, target: "liveBrowser" as const },
+  browser: "active" as const,
+  executions: [],
+};
+const siteRequired: PendingExecution = {
+  ...pending,
+  taskUpdates: [siteRequiredUpdate],
+  mintContext: siteRequiredContext,
+};
+it.each([
+  { case: "an applied update the owner confirmed", step: siteRequired, allowed: true },
+  {
+    case: "an update nobody confirmed",
+    step: { ...siteRequired, taskUpdates: [{ ...siteRequiredUpdate, confirmation: [] }] },
+    allowed: false,
+  },
+  {
+    case: "a write already on record",
+    step: {
+      ...siteRequired,
+      mintContext: {
+        ...siteRequiredContext,
+        writes: [{ executionId: "exec_profile", purpose: "explore", outcome: "done" as const }],
+      },
+    },
+    allowed: false,
+  },
+])("lets a read build's site-required step write only with $case", async ({ step, allowed }) => {
+  scripted([decision({ outcome: "allow", rationale: "Submits the profile.", action: "write" })]);
+  const reviewed = await Effect.runPromise(guardian().review(step, reader));
+  expect(reviewed.decision).toMatchObject({
+    outcome: allowed ? "allow" : "deny",
+    action: "write",
+  });
+});
