@@ -477,8 +477,9 @@ exception: it is optional unless the task can't run without it (below).
   plural; and the unit in the field name or its description (`duration_minutes`). Convert
   between these and the site's own formats in code. The output check flags a date or timestamp
   not in the form its field declares, a value in another notation than its description names,
-  a currency that is not an ISO 4217 code and a bare clock time in a record that names no
-  `time_zone`, unless its field says it is local time (`format_mismatch`), a field whose description
+  a currency that is not an ISO 4217 code and a clock time in a record that names no
+  `time_zone`, alone or within the text of a field about a time, such as "Arrives 8:11-8:26 PM"
+  in an `eta` (`format_mismatch`), a field whose description
   promises such a notation that no `pattern` holds (`unheld_format`), and one value in two
   letter cases across a list (`case_variant`). Return a site label the tool doesn't recognise as
   the site shows it, not under a catch-all value.
@@ -688,8 +689,9 @@ Then, for every field:
   since the browser's clock can be in another zone than the caller's. Use the zone the page
   names instead when it names one, such as a store's hours or a flight's local times, and a
   timestamp in the page's own data, such as its embedded JSON, over its text. When the zone is
-  unknown, return the site's local time in a field whose name or description says it is local
-  time; a missing zone never stops a build, repair or change.
+  unknown, return the site's local time in a field whose description says it is local time,
+  with an output override giving the reason; a missing zone never stops a build, repair or
+  change.
 
 **Configure, then read.** Many pages show values that depend on choices made on the page: a
 record's options or variants, a plan or tier, dates, a party size or quantity, units, a
