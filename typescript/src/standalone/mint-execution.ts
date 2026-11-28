@@ -545,14 +545,16 @@ const completedReceipt = (receipt: ReceiptInput, result: LocalOperationOutput) =
     const { runs } = state;
     const { projection } = state.session;
     // A live example on the caller's own input that completed with no results, the site's own
-    // empty answer for it, lets a substitute example run in its place.
+    // empty answer for it, lets a substitute example run in its place, until one has results.
     if (
       execution.purpose === "example" &&
       execution.target === "liveBrowser" &&
-      intentDerivedInput === undefined &&
-      holdsNoResults(result.output, primaryListOf(result.schemas.input, result.schemas.output))
+      intentDerivedInput === undefined
     )
-      state.emptyCallerExamples.push(input);
+      state.noteCallerExample(
+        input,
+        holdsNoResults(result.output, primaryListOf(result.schemas.input, result.schemas.output)),
+      );
 
     // A live step's output is checked against the page it left: a value holding one of its
     // controls' labels was read collapsed.

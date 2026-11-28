@@ -110,7 +110,8 @@ interface ExampleInputScope {
    * Host fact: this read build already ran its live example on the caller's own input as it is
    * now, and it completed with no results (`holdsNoResults`), the site's own empty answer for that
    * record. A read's example may then run a substitute `exampleInput` as after a refusal, which the
-   * caller's input stays the tool's case for that answer beside.
+   * caller's input stays the tool's case for that answer beside. A host that never sets it keeps
+   * the caller's input after such an answer, and its refusal names only `InvalidInput`.
    */
   readonly callerExampleEmpty?: boolean;
   /**
@@ -149,7 +150,7 @@ const exampleInputPlaceRefusal = (
       ? undefined
       : "The caller supplied input, and the session runs it as it is.";
   if (scope.callerExampleRefused !== true && scope.callerExampleEmpty !== true)
-    return "The caller supplied input, and the example runs it as it is. Run the example on it first: only once the tool refuses it with InvalidInput, or returns no results on it, may an example run another input in its place.";
+    return `The caller supplied input, and the example runs it as it is. Run the example on it first: only once the tool refuses it with InvalidInput${scope.callerExampleEmpty === undefined ? "" : ", or returns no results on it,"} may an example run another input in its place.`;
   return target === "liveBrowser"
     ? undefined
     : "An example in place of the caller's refused input runs live, with target liveBrowser.";

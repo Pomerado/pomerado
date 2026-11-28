@@ -209,6 +209,12 @@ describe("exampleInputRefusal", () => {
     expect(
       exampleInputRefusal(act(), { ...scope("write", { item: "desk" }), callerExampleEmpty: true }),
     ).toMatchObject({ supported: false });
+    // The refusal names the empty answer only on a host that records it.
+    const caller = scope("read", { venue: "Venue Y" });
+    expect(exampleInputRefusal(live, { ...caller, callerExampleEmpty: false })?.reason).toContain(
+      "or returns no results on it",
+    );
+    expect(exampleInputRefusal(live, caller)?.reason).not.toContain("no results");
   });
 
   it("says why a session's step cannot change its input", () => {

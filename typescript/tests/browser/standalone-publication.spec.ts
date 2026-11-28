@@ -273,6 +273,51 @@ test("a read whose caller's example comes back with no results publishes on a su
   }
 });
 
+test("a caller's example that comes back with results again lets no substitute run", async () => {
+  test.setTimeout(60_000);
+  const site = await startSite((request, response) => {
+    if (request.url === "/route/busy")
+      return html(response, "<title>Busy</title><ul><li>Flight 1</li><li>Flight 2</li></ul>");
+    html(response, "<h1>Routes</h1><a href='/route/busy'>Busy route</a>");
+  });
+  const guardian = recordingGuardian();
+  try {
+    const { last } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      intent: "Read a route's flights",
+      input: { route: "busy" },
+      turns: [
+        // A first draft that reads no rows, then the fixed tool.
+        () =>
+          patch({
+            "src/draft.mjs": routeTool.replace("page.locator('li')", "page.locator('tr')"),
+            "src/tool.mjs": routeTool,
+          }),
+        () => [call("execute", execution("example", "src/draft.mjs"), "empty_draft")],
+        () => [call("execute", execution("example", "src/tool.mjs"), "fixed")],
+        () => [
+          call(
+            "execute",
+            execution("example", "src/tool.mjs", { exampleInput: '{"route":"other"}' }),
+            "substitute",
+          ),
+        ],
+      ],
+    });
+    expect(toolResult(last, "empty_draft")).toMatchObject({ status: "completed" });
+    expect(toolResult(last, "fixed")).toMatchObject({ status: "completed" });
+    expect(toolResult(last, "substitute")).toMatchObject({ status: "unsupported" });
+    const fixed = executions(guardian.reviews).findLast(
+      (review) => currentOf(review)?.["purpose"] === "example",
+    );
+    expect(contextOf(fixed!)).toMatchObject({ callerExampleEmpty: true });
+  } finally {
+    await site.close();
+  }
+});
+
 test("a publication review that finds personal data in the source stops the build with its findings", async () => {
   test.setTimeout(60_000);
   const site = await headingSite();
