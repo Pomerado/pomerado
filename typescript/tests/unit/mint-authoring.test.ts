@@ -1784,17 +1784,13 @@ it("has a checkout take whether to use credits as an optional input and ask when
   );
 });
 
-// A read left out which options a group preselects, a cart tool refused an item that the store's
-// menu at other hours listed under another ID without saying so, and a read of an item's choice
-// groups spent a request on every choice's nested options.
-it("has a read return a group's preselected default, a cart handle menus by hours and nested options read only where named", async () => {
+// A read left out which options a group preselects, and a read of an item's choice groups spent a
+// request on every choice's nested options.
+it("has a read return a group's preselected default and read nested options only where named", async () => {
   const texts = await renderedTexts("typescript/authoring");
   const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
   expect(text("core")).toContain(
     "exactly as shown, including which are unavailable and which the page preselects, which a read returns as that group's default, opening collapsed groups and menus as above.",
-  );
-  expect(text("cart")).toContain(
-    "Never wait out a timeout for a control the page replaced. A store can serve a different menu at different hours and give the same item another ID on each, or on its search and its store page: accept each ID the site's read tools return, find the item on the menu shown now, and when only a menu served at other hours lists it, refuse naming that menu and its hours, before any commit mark.",
   );
   expect(text("core")).toContain(
     "In a read that lists an item's choice groups, when each choice's nested options cost their own request, return the groups and their choices, and read a choice's nested options only for the choices an input names.",
@@ -1821,14 +1817,14 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["9fb58530d8bd044ab29821196d5234e5ee30546d9c8d00806efe4e5d46392da8", "core"],
+    ["f99d4e62635c1fca2c245aa3e1a3fe25fa99e94036f1ccd706cb77bff11340f0", "core"],
     ["97e3b5ebdbe8d5fca43790729084de4eef4fbcf5fdf71ad645e679fd72f4e804", "search"],
     ["e6a78355e22e9989ffdccbc5a5f53eef0ec74217c3ae31b68c1ca0421f36ce44", "auth"],
     ["3355021c2daea519d533551d9b6f08f071c792328d39ec5020d6e8b0ca7def52", "testing"],
     ["ca80679c4488dec4ee85052fb39f1493b6d5f8ca4a5df9b56d10a2e96078e848", "pagination"],
     ["b0220727e7f21e1c5d10101e74996ddb3d2d4e18061ac85c807203ed4ab0f695", "forms"],
     ["b23c3918c2990e1743a2ad84983346f114b590424efb8a61d1dd2e240093c20c", "writes"],
-    ["a6ed3f8c56a674f97a62fcce5049272dd9e0367afed82f183d0a52bc26329e9d", "cart"],
+    ["64aaa6422a9d86f27f87b178a74251a4c8ae8c8a4f1841a427d528ad538ef149", "cart"],
     ["5e81a6bb20243badd2f5d781fc302e0fe83b12ad616d5cc66fd664f2a0e28870", "caller-input"],
     ["07b61ae415889706192db263c00be4635dddb6c7ea0e97017b9b7e53ff1c95a3", "publication"],
     ["68624ce51e88e97ab72ff393ac8ecc7b9fc87d5d5518fd4d67a34e45da8be1fc", "workspace/AGENTS.md"],

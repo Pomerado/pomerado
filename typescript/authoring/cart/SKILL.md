@@ -219,10 +219,7 @@ scheduled orders, or an item marked unavailable, often hides or relabels the add
 than showing an error. Read the store's and the item's state before waiting for the add control,
 and return the state the site shows, in its own words, as the refusal for the item, as for one
 out of stock, before any commit mark, setting the address included. Never wait out a timeout for
-a control the page replaced. A store can serve a different menu at different hours and give the
-same item another ID on each, or on its search and its store page: accept each ID the site's read
-tools return, find the item on the menu shown now, and when only a menu served at other hours
-lists it, refuse naming that menu and its hours, before any commit mark.
+a control the page replaced.
 
 When the order must take one of a service's tiers of speed, class or service level, take the
 caller's choice from an optional input and keep it as given. A delivery speed left unset, or

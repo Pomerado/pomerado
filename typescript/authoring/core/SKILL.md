@@ -692,9 +692,9 @@ that depends on them:
 
 1. Discover. While building, read every choice group the page offers and each group's options
    exactly as shown, including which are unavailable and which the page preselects, which a read
-   returns as that group's default, opening collapsed groups and menus as above. On a run, open and read only the groups the caller's inputs use. A group
-   with one option, or a disabled control showing one value, is a
-   fixed value: read it, never click it.
+   returns as that group's default, opening collapsed groups and menus as above. On a run, open
+   and read only the groups the caller's inputs use. A group with one option, or a disabled
+   control showing one value, is a fixed value: read it, never click it.
 2. Set. Apply each input's value through the page's own control, in the order the page
    presents the groups, since one choice can change the options of the next. An input whose
    options depend on another goes after it, such as times after their date, slots after the
