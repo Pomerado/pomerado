@@ -372,8 +372,9 @@ const comparedChunks = 32;
 export interface ChangedSource {
   readonly path: string;
   /**
-   * Absent when the earlier read was not of the whole file, the change is too large to diff, or
-   * the diff is past the request's bounds.
+   * Absent when the earlier read was not of the whole file or only a private review's, the file
+   * is past the chunks the host compares, the change is too large to diff, or the diff is past
+   * the request's bounds.
    */
   readonly diff?: string;
 }
@@ -396,12 +397,14 @@ const wholeText = (chunks: ReadonlyMap<number, string> | undefined): string | un
 
 /**
  * Each path Guardian already read, compared with its current content: unchanged when it is
- * byte-identical, chunk for chunk, to what the ledger holds, and changed when its text differs,
- * with a diff from the ledger's text. A read that fails, or a file too large to compare, is in
- * neither list.
+ * byte-identical, chunk for chunk, to what the ledger holds, and changed when a chunk Guardian
+ * read differs, with a diff from the ledger's text when `readable`, the reads outside private
+ * reviews, holds that same whole text. A read that fails is in neither list, and so is a file
+ * past the chunks the host compares unless a chunk Guardian read differs.
  */
 export const sourceChanges = (
   ledger: SourceLedger,
+  readable: SourceLedger,
   paths: readonly string[],
   read: (path: string, offset: number) => Effect.Effect<string, ReviewFailure>,
 ): Effect.Effect<{
@@ -414,6 +417,11 @@ export const sourceChanges = (
       Effect.gen(function* () {
         const seen = ledger.get(sourcePath(path));
         const before = wholeText(seen);
+        // A diff shows only text a readable record may hold: never a private review's read alone.
+        const shown =
+          before !== undefined && wholeText(readable.get(sourcePath(path))) === before
+            ? before
+            : undefined;
         const lastSeen = Math.max(...(seen?.keys() ?? []));
         const current = new Map<number, string>();
         // Identical in every chunk to the end, or different in a chunk Guardian read; a chunk it
@@ -445,9 +453,7 @@ export const sourceChanges = (
         const after = before === undefined || !complete ? undefined : wholeText(current);
         if (after !== undefined && after === before) return {};
         const diff =
-          before === undefined || after === undefined
-            ? undefined
-            : unifiedDiff(path, before, after);
+          shown === undefined || after === undefined ? undefined : unifiedDiff(path, shown, after);
         return { changed: diff === undefined ? { path } : { path, diff } };
       }).pipe(
         // error-reporting-allow: typed-recovery a source the host cannot compare is read again

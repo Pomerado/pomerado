@@ -72,6 +72,7 @@ import {
   sourceLedger,
   sourceChanges,
   sourcePath,
+  withholdPrivateReviews,
 } from "./review-layout.js";
 import type { ChangedSource, GuardianOutcome, ReviewKind } from "./review-layout.js";
 export type { PublicationFileBlock } from "./review-contracts.js";
@@ -1588,6 +1589,10 @@ export const makeGuardian = (
               ? { unchanged: [], changed: [] }
               : yield* sourceChanges(
                   sourceLedger(session.history()),
+                  sourceLedger(
+                    withholdPrivateReviews(session.history(), () => ({}), session.leadingPrivate())
+                      .items,
+                  ),
                   (pending.mintContext?.executedSources ?? []).filter(
                     (path) => sourcePath(path) !== entrypoint,
                   ),
