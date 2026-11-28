@@ -149,15 +149,19 @@ const reactFormActionStrings = reactFormActionMessages
  * submitted.')`, as its server rendering writes it, and the longer message its client rendering
  * writes; and `javascript:throw new Error('React has blocked a javascript: URL as a security
  * precaution.')`, which it writes in place of a form action that is a script of the app's own.
- * A link's address never counts them. The scheme may be in any case, and whitespace may stand only
- * between the body's words and signs, where script reads it as whitespace: one inside `void` could
- * split it into two statements, the second a call of the page's own function, and a line break
- * after `throw` is no script at all. The words are in the case script reads them; `Void(0)` calls a
- * function of the page's. Any other body runs what it says, so it is judged as any action off the
- * site; so is any other message, and a body that does not decode. The step call and the submission
- * guard both judge by it.
+ * A link's address never counts them. As the address of a link in a form (`formLink`), the ASP.NET
+ * Web Forms postback of a control counts too, exactly `javascript:__doPostBack('<name>','')`: one
+ * name in a plain identifier's characters, as Web Forms writes a control's name, and an empty
+ * argument, with no whitespace, other quotes or closing semicolon. It only submits the page's form,
+ * whose own action is still judged, and the submission guard judges that submission as it fires.
+ * The scheme may be in any case, and whitespace may stand only between the body's words and signs,
+ * where script reads it as whitespace: one inside `void` could split it into two statements, the
+ * second a call of the page's own function, and a line break after `throw` is no script at all.
+ * The words are in the case script reads them; `Void(0)` calls a function of the page's. Any other
+ * body runs what it says, so it is judged as any action off the site; so is any other message, and
+ * a body that does not decode. The step call and the submission guard both judge by it.
  */
-export const noOpScriptCode = String.raw`(address, formAction = false) => {
+export const noOpScriptCode = String.raw`(address, formAction = false, formLink = false) => {
   let url;
   try {
     url = new URL(address);
@@ -174,7 +178,8 @@ export const noOpScriptCode = String.raw`(address, formAction = false) => {
   return (
     /^\s*(?:void\s*\(\s*0\s*\)|void\s+0)?\s*;?\s*$/.test(body) ||
     (formAction === true &&
-      /^\s*throw[^\S\n\r\u2028\u2029]+new\s+Error\s*\(\s*(?:${reactFormActionStrings})\s*\)\s*;?\s*$/.test(body))
+      /^\s*throw[^\S\n\r\u2028\u2029]+new\s+Error\s*\(\s*(?:${reactFormActionStrings})\s*\)\s*;?\s*$/.test(body)) ||
+    (formLink === true && /^__doPostBack\('[A-Za-z_$][A-Za-z0-9_$]*',''\)$/.test(body))
   );
 }`;
 
@@ -182,9 +187,9 @@ export const noOpScriptCode = String.raw`(address, formAction = false) => {
  * Page code: what a step call reads of one control it found (`readControls`): every form action
  * and method it could submit with, its form's own action first, whether that action is a script
  * that does nothing (`scriptAction`, `noOpScriptCode`), its link destination and whether that is a
- * script that does nothing (`scriptHref`), the code of its first script destination other than
- * those (`scriptCode`), whether it is disabled, inert or editable, whether it is empty, its shape
- * and the words that label it, never its value.
+ * script that does nothing or, in a form, a postback (`scriptHref`), the code of its first script
+ * destination other than those (`scriptCode`), whether it is disabled, inert or editable, whether
+ * it is empty, its shape and the words that label it, never its value.
  */
 const controlReadCode = `(element) => {
   const associated =
@@ -204,8 +209,9 @@ const controlReadCode = `(element) => {
   // A link-style sign-in action may navigate instead of submitting its containing form.
   const href = element instanceof HTMLAnchorElement ? element.getAttribute("href") : null;
   if (href !== null) actions.push(new URL(href, document.baseURI).href);
-  // Whether the link's own address is a script that does nothing, which sends nothing by itself.
-  const scriptHref = href !== null && (${noOpScriptCode})(actions[actions.length - 1]);
+  // Whether the link's own address is a script that does nothing, which sends nothing by itself,
+  // or in a form, a postback of a control, which only submits the page's form.
+  const scriptHref = href !== null && (${noOpScriptCode})(actions[actions.length - 1], false, associated !== null);
   // A form's elements leave out its image submits, so they are read beside them.
   const images = associated
     ? Array.from(associated.getRootNode().querySelectorAll("input[type=image]")).filter(

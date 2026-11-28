@@ -1,7 +1,11 @@
 import { expect, it } from "vitest";
 import { noOpScriptCode } from "../../src/destinations/autofill-locate-code.js";
 
-const noOpScript = (0, eval)(noOpScriptCode) as (address: unknown, formAction?: boolean) => boolean;
+const noOpScript = (0, eval)(noOpScriptCode) as (
+  address: unknown,
+  formAction?: boolean,
+  formLink?: boolean,
+) => boolean;
 
 // Only a script action that does nothing is the page's own script submit. Any other script runs
 // what its address says, so its form is judged as any form whose action is off the site.
@@ -53,6 +57,50 @@ it.each([
   "javascript:throw new Error('React has blocked a javascript: URL as a security precaution.\")",
 ])("does not count %j as a form's own script submit", (address) => {
   expect(noOpScript(address, true)).toBe(false);
+});
+
+// The ASP.NET Web Forms postback of a control, as the address of a link in a form, counts too: it
+// only submits the page's form, whose own action is still judged.
+const postBack = "javascript:__doPostBack('ctl00$Login1$LoginButton','')";
+it.each([postBack, "javascript:__doPostBack('LoginButton','')", "javascript:__doPostBack('_ctl0$Login$Submit','')"])(
+  "counts %j as the postback of a link in a form",
+  (address) => {
+    expect(noOpScript(address, false, true)).toBe(true);
+  },
+);
+
+// Only the exact call with one control name and an empty argument: another argument, a second
+// statement, a call, other quotes or a name with other characters runs what it says.
+it.each([
+  "javascript:__doPostBack('ctl00$Login1$LoginButton','','x')",
+  "javascript:__doPostBack('ctl00$Login1$LoginButton','x')",
+  "javascript:__doPostBack('ctl00$Login1$LoginButton')",
+  "javascript:__doPostBack('ctl00$Login1$LoginButton',send())",
+  "javascript:__doPostBack(send(),'')",
+  "javascript:__doPostBack('ctl00$Login1$LoginButton','');send()",
+  "javascript:__doPostBack('ctl00$Login1$LoginButton','');",
+  "javascript:__doPostBack('ctl00$Login1$LoginButton', '')",
+  "javascript: __doPostBack('ctl00$Login1$LoginButton','')",
+  'javascript:__doPostBack("ctl00$Login1$LoginButton","")',
+  "javascript:__doPostBack('a'+send()+'b','')",
+  "javascript:__doPostBack('a\\'+send()+\\'b','')",
+  "javascript:__doPostBack('','')",
+  "javascript:__doPostBack('1ctl','')",
+  "javascript:__doPostBack('ctl00.Login1','')",
+  "javascript:__doPostBack('ctl00:Login1','')",
+  "javascript:__doPostBack('ctl00%27);send(%27','')",
+  "javascript:__DoPostBack('ctl00$Login1$LoginButton','')",
+  "javascript:void(__doPostBack('ctl00$Login1$LoginButton',''))",
+  "javascript:__doPostBack('ctl00$Login1$LoginButton','')//",
+])("does not count %j as the postback of a link in a form", (address) => {
+  expect(noOpScript(address, false, true)).toBe(false);
+});
+
+// A postback counts only as the address of a link in a form, never outside one or as a form's own
+// action or a formaction.
+it("does not count a postback as a link's address outside a form or as a form's own action", () => {
+  expect(noOpScript(postBack)).toBe(false);
+  expect(noOpScript(postBack, true)).toBe(false);
 });
 
 it.each([

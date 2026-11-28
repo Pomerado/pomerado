@@ -254,8 +254,10 @@ const Target = Schema.Struct({
   scriptAction: Schema.optional(Schema.Boolean),
   /**
    * Its own link destination, one of `actions`, is a script that does nothing: following it sends
-   * nothing, and the page's own code does whatever the link does. A step call that finds it changed
-   * judges the controls again.
+   * nothing, and the page's own code does whatever the link does. For a link in a form, the ASP.NET
+   * Web Forms postback of a control counts too (`noOpScriptCode`): it only submits the page's form,
+   * whose own action is judged as before. A step call that finds it changed judges the controls
+   * again.
    */
   scriptHref: Schema.optional(Schema.Boolean),
   /**
@@ -834,7 +836,8 @@ export const typesNothing = (
  * destinations: navigating to such an action sends nothing, and the page's code, which can read the
  * field anyway, does the sending. A sign-in step's link whose own address is such a script
  * (`scriptHref`) is likewise judged by its frame, document and other destinations: following it
- * sends nothing. A sign-in step that types nothing, such as a sign-in provider chooser, on a
+ * sends nothing. So is one in a form whose address is a Web Forms postback: it submits the page's
+ * form, whose own action is judged as before. A sign-in step that types nothing, such as a sign-in provider chooser, on a
  * browser the host has typed nothing into yet (`judgedBeforeTyping` unset) judges its submit by its
  * frame, document and destinations other than scripts, whatever a script runs: no script can send
  * a typed value, and the next screen is inspected before anything is typed there.
@@ -880,8 +883,9 @@ export const untrustedTarget = (
     // destinations still count.
     const script = signIn && target.scriptAction === true && target.actions[0] === "javascript:";
     const destinations = script ? target.actions.slice(1) : target.actions;
-    // So does a sign-in link's own address that is such a script. Every script address reads as
-    // `javascript:` here, so dropping one leaves exactly the others, and each of them still counts.
+    // So does a sign-in link's own address that is such a script, or in a form a postback, which
+    // submits that form. Every script address reads as `javascript:` here, so dropping one leaves
+    // exactly the others, and each of them still counts.
     const link = signIn && target.scriptHref === true ? destinations.indexOf("javascript:") : -1;
     const sent = link === -1 ? destinations : destinations.filter((_, index) => index !== link);
     return sent.every((url) => trusted(url, card)) ? undefined : action;
