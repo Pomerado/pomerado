@@ -150,9 +150,10 @@ preview or a store page that takes the address in its link, and refuse before th
 Otherwise set the address with the site's control that picks one for this order, then check, and
 when one refuses, say in the refusal that the account's address changed. Prefer that control
 over editing a saved address. When saving the address-book entry is the only way to apply a
-detail such as the unit, ask any question about it only on a run that needs the save. A check
-that the delivery place stayed the same during the run compares only its address, ZIP or store,
-never delivery-time text.
+detail such as the unit, ask any question about it only on a run that needs the save.
+
+A check that the delivery or pickup place stayed the same during the run compares only its
+address, ZIP or store, never text that moves with the clock.
 
 ## Values the account lacks
 
