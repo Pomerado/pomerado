@@ -578,7 +578,8 @@ the request names. Leave out what is unrelated to the tool's purpose or of no us
   each read as the site shows it. When the site shows only one, keep both fields anyway, an
   exception to the rules here on unread, always-null and never-filled fields: the other is null,
   never computed, and its description says when it is null.
-- A price the page shows as a starting amount is a minimum price, not zero.
+- A price the page shows as a starting amount, "from $X" or "$X+", is that minimum, not zero:
+  prefer returning it marked as a minimum.
 - Expand collapsed text (a "more", "show all" or similar control) before reading it, and read it
   back: a value that ends in an ellipsis or holds the control's own label was read collapsed or
   cut short.
