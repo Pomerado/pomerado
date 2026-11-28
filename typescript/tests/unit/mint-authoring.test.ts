@@ -1098,8 +1098,9 @@ it("has a cart tool add through the line's own quantity control when the product
 
 /*
  * Write tools proven only at a quantity of one broke at two: one found its quantity control by one
- * layout, and one read a checkout total by a label whose text carried the item count. The writes
- * skill finds the control by its role and label, and the core skill finds such a total by its role.
+ * layout, and one read a checkout total by a label whose text carried the item count. Another read
+ * a checkout's amounts by parsing each summary row's whole text. The writes skill finds the control
+ * by its role and label, and the core skill reads each amount from its own element, by its role.
  */
 it("has a write find its quantity control by role and a count-labelled total by role", async () => {
   const texts = await renderedTexts("typescript/authoring");
@@ -1108,7 +1109,7 @@ it("has a write find its quantity control by role and a count-labelled total by 
     "each unit committed on its own is one. - Find a quantity control by its role and label, not by one layout.",
   );
   expect(text("core")).toContain(
-    "and its description says when it is null. - A total's label can change with the item count, so find the total by its role, not its label's exact text.",
+    "and its description says when it is null. - A total's label can change with the item count, so read each amount from its own element, found by its role, not from its label's exact text or the whole row's text.",
   );
 });
 
@@ -1905,7 +1906,7 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["0370155b91f9e6ed219c75d84b030966962109f00246c3c3540611daf7e53465", "core"],
+    ["62565440ef7e57482aaf63a08a66599ce700aafc4a23c6065538b1cc20e47bef", "core"],
     ["97e3b5ebdbe8d5fca43790729084de4eef4fbcf5fdf71ad645e679fd72f4e804", "search"],
     ["e6a78355e22e9989ffdccbc5a5f53eef0ec74217c3ae31b68c1ca0421f36ce44", "auth"],
     ["3355021c2daea519d533551d9b6f08f071c792328d39ec5020d6e8b0ca7def52", "testing"],
