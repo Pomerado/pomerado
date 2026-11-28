@@ -904,16 +904,65 @@ describe("output notation checks", () => {
     ).toEqual([]);
   });
 
-  // A zone is best effort: when the tool cannot tell it, the site's local time in a field that
-  // says it is local time is right as it is. A zone-less time is advisory and never blocks.
-  it("leaves a zone-less time in a field that says it is local time alone, and never blocks on one", () => {
+  // A clock time within the text of a field about a time names no moment either, such as an ETA
+  // the site writes as a sentence. Prose fields, such as a review's or a policy's, are left.
+  it("flags a clock time within the text of a field about a time, and leaves prose fields", () => {
+    expect(
+      checksOf({
+        eta: "Arrives 8:11-8:26 PM",
+        pickupWindow: "Ready between 7 and 7:15 pm",
+        store_hours: "Mon-Fri 9 AM - 9 PM",
+        review_text: "Came at 7 pm and the food was great",
+        return_policy: "Order by 2 PM for same-day dispatch",
+        description: "Open until 9 PM daily",
+        status_label: "Arriving at 7:45 PM",
+        cook_time: "Ready in 1:30",
+        delivery_policy: "Orders placed by 2 PM ship the same day",
+        delivery_instructions: "Leave at the door after 6 pm",
+      }),
+    ).toEqual(["eta format_mismatch", "pickupWindow format_mismatch", "store_hours format_mismatch"]);
+    const delivery = contractJsonSchema(
+      Schema.Struct({
+        eta: Schema.String.annotations({
+          description: "Delivery arrival range exactly as displayed in local time",
+        }),
+        status: Schema.String.annotations({ description: "Delivery status as shown" }),
+        comment: Schema.String.annotations({ description: "The customer's comment about the delivery" }),
+        body: Schema.String.annotations({ description: "Review text as shown at the time of reading" }),
+      }),
+    );
+    expect(
+      checksOf(
+        { eta: "Arrives 8:11-8:26 PM", status: "Arriving at 7:45 PM", comment: "Came at 7 pm", body: "Came at 7 pm" },
+        { outputSchema: delivery },
+      ),
+    ).toEqual(["eta format_mismatch", "status format_mismatch"]);
+    // A label beside a timestamp is the site's wording of that time.
+    const event = {
+      starts_at: "2026-11-16T19:00:00-05:00",
+      start_label: "Starts at 7 PM",
+      review_text: "Came at 7 pm",
+    };
+    expect(checksOf({ event })).toEqual(["event.start_label format_mismatch"]);
+    expect(checksOf({ event: { ...event, time_zone: "America/New_York" } })).toEqual([]);
+    expect(checksOf({ order: { eta: "Arrives 8:11-8:26 PM", time_zone: "America/New_York" } })).toEqual([]);
+    expect(lintOutput({ eta: "Arrives 8:11-8:26 PM" }).map(({ blocking }) => blocking)).toEqual([false]);
+  });
+
+  // A zone is best effort, yet a time that names none is flagged even in a field that says it is
+  // local time: the tool gives its reason in an override. A zone-less time never blocks.
+  it("flags a zone-less time in a field that says it is local time too, and never blocks on one", () => {
     expect(
       checksOf({
         departure_local: "2026-12-15T07:15:00",
         departureLocal: "7:45 PM",
         arrival_local_time: "19:45",
       }),
-    ).toEqual([]);
+    ).toEqual([
+      "departure_local format_mismatch",
+      "departureLocal format_mismatch",
+      "arrival_local_time format_mismatch",
+    ]);
     const local = contractJsonSchema(
       Schema.Struct({
         arrives: Schema.String.annotations({
@@ -931,14 +980,18 @@ describe("output notation checks", () => {
         { arrives: "2026-12-15T13:40", departs_at: "2026-12-15T07:15:00-08:00", departure_date: "2026-12-15" },
         { outputSchema: local },
       ),
-    ).toEqual([]);
-    // A field that says it is local time is checked against every other notation it names.
+    ).toEqual(["arrives format_mismatch"]);
     expect(
       checksOf(
         { arrives: "13:40", departs_at: "2026-12-15T07:15:00", departure_date: "2026-12-15T07:15", pickup: "7:45 PM" },
         { outputSchema: local },
       ),
-    ).toEqual(["departs_at format_mismatch", "departure_date format_mismatch", "pickup format_mismatch"]);
+    ).toEqual([
+      "arrives format_mismatch",
+      "departs_at format_mismatch",
+      "departure_date format_mismatch",
+      "pickup format_mismatch",
+    ]);
     expect(
       lintOutput({ departs: "2026-12-15T07:15:00", delivered: "7:45 PM" }).map(({ check, blocking }) => [check, blocking]),
     ).toEqual([
