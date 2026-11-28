@@ -400,6 +400,65 @@ for (const [name, control] of [
     expect(posts).toEqual([]);
   });
 
+// A link the page changes between the host's look and its click, as a header its own script is
+// still drawing may, is judged again by the same rule: on a sign-in step that types nothing, on a
+// browser typed into nothing yet, only by where it sits and its destinations other than scripts.
+// Any other step is still refused the change.
+const accountLink = '<a id="provider" href="/account">Account</a>';
+const turnLink = (page: Page, href: string) =>
+  page.locator("#provider").evaluate((link, next) => link.setAttribute("href", next), href);
+
+for (const [name, href, path] of [
+  ["a script that does nothing", "javascript:void(0)", "/login"],
+  ["a script", "javascript:chooseProvider('corp')", "/login"],
+  ["another path on the site", "/account/menu", "/account/menu"],
+] as const)
+  test(`a sign-in step that types nothing clicks a link the page turned to ${name} after inspection`, async ({
+    page,
+  }) => {
+    const { posts } = await serve(page, { [site]: chooserPage(accountLink) });
+    const inspection = passed(await inspect(page, chooserStep));
+    await turnLink(page, href);
+    const report = await fill(page, inspection, chooserStep, []);
+    expect(report).toMatchObject({ outcome: "filled", fields: [], submit: "clicked" });
+    expect(new URL(page.url()).pathname).toBe(path);
+    expect(posts).toEqual([]);
+  });
+
+const usernameStep: AutofillStep = {
+  fields: [{ selector: "#username", slot: "username", accepts: ["username"] }],
+  submit: "#provider",
+};
+for (const [name, step, judgedBeforeTyping, href, check] of [
+  ["a sign-in step that types a username", usernameStep, undefined, "/account/menu", "change"],
+  [
+    "a sign-in step that types nothing, once something was typed on the browser,",
+    chooserStep,
+    [site],
+    "/account/menu",
+    "change",
+  ],
+  ["a sign-in step that types nothing", chooserStep, undefined, `${otherSite}/menu`, "destination"],
+] as const)
+  test(`${name} is refused a link the page turned to ${href} after inspection`, async ({ page }) => {
+    const { posts } = await serve(page, {
+      [site]: `<label>Email<input id="username" name="username" autocomplete="username"></label>${accountLink}`,
+    });
+    const inspection = passed(await inspect(page, step, judgedBeforeTyping));
+    await turnLink(page, href);
+    const report = await fill(page, inspection, step, step.fields.length === 0 ? [] : [username]);
+    expect(report).toMatchObject({
+      outcome: "refused",
+      reason: "credential_target_refused",
+      target: "submit",
+      failureDetail: { context: { check, changed: "submit.actions" } },
+    });
+    expectOriginsOnly(report);
+    expect(await page.locator("#username").inputValue()).toBe("");
+    expect(new URL(page.url()).pathname).toBe("/login");
+    expect(posts).toEqual([]);
+  });
+
 test("a sign-in step that types nothing is refused a link whose address runs a script once something was typed on the browser", async ({
   page,
 }) => {
