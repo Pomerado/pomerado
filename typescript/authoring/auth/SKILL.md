@@ -177,6 +177,8 @@ writes its options as attributes:
 - `role=button[name="sign in" i]` matches the whole name ignoring case.
 - `role=button[name=/sign in/i]` matches a pattern.
 
+Prefer a pattern of the name's steady words, as for any control (core skill).
+
 `exact` is an option of `getByRole` and `getByLabel`, never a selector attribute: `[exact]` or
 `[exact=true]` fails as an unknown attribute, and `[name="Sign in" exact]` fails to parse.
 `getByLabel` and `getByText` have no string form the host runs, since their `internal:` forms are
