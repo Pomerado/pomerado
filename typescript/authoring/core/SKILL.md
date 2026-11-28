@@ -260,7 +260,8 @@ exception: it is optional unless the task can't run without it (below).
   suggestion's full display text or an internal id the caller cannot know (an id the site
   shows on its own pages, such as a product number, is not internal). Prefer a unique input,
   such as an ID: a tool that acts on one record takes the ID the site's other tools use for it,
-  and finds the record another way, such as by name, only when the caller gives none. A closed
+  and finds the record another way, such as by name, only when the caller gives none. When
+  look-alike records can share a name, the tool also takes the record's time as an input. A closed
   list of options stays an enum of the site's options, as above. When the options come from a
   query, as in a search box, autocomplete, typeahead or searchable combobox, look the value
   up the way a person would, with `pickValue` from `pickerCode` (forms skill), or with
