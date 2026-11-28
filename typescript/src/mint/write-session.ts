@@ -107,6 +107,12 @@ export interface WriteSessionMarks {
    * without entering a mark, since the check reads it on the step named for publication alone.
    */
   readonly refused?: DeclaredRefusal;
+  /**
+   * The step threw the tool's own refusal of the session's input, in a shape its host publishes on,
+   * while its runner showed it entered no commit mark and recorded no confirmation. A host sets it
+   * only as it sets `refused`: on the session's last act step, when no step may have sent a write.
+   */
+  readonly thrownRefusal?: true;
 }
 
 /**
@@ -324,7 +330,11 @@ const unreachedMarks = (remaining: readonly string[], steps: readonly WriteSessi
  * returned a declared refusal (`refused`), the refusal is the session's proven outcome: the check
  * skips the sent and write path checks, and the composed script must declare that refusal's reason
  * in its output schema and name every commit step after the last one the session entered (all of
- * them when it entered none) in `commitsUnproven`. The result carries the refusal as `refusal`.
+ * them when it entered none) in `commitsUnproven`. The result carries the refusal as `refusal`. A
+ * step that threw the tool's own refusal of the input instead (`thrownRefusal`) stands the same
+ * way, only while no step of the session entered or streamed a mark or may have sent a write, so
+ * every commit step is unproven; there is no reason for the output schema to declare, and the
+ * result says so as `thrownRefusal`. A returned refusal wins over a thrown one.
  *
  * A host that publishes on a read-back sets `publishOnReadBack`. Then, when the step named for
  * publication recorded a `readback` confirmation, two outcomes that stand without a save may
@@ -364,7 +374,7 @@ export const checkWriteSession = <
 >(check: {
   readonly session: { readonly steps: readonly WriteSessionMarks[] };
   /** The act step named for publication. */
-  readonly step: Pick<WriteSessionMarks, "confirmation" | "refused"> & {
+  readonly step: Pick<WriteSessionMarks, "confirmation" | "refused" | "thrownRefusal"> & {
     readonly enteredMarks?: readonly string[];
   };
   readonly extract: Effect.Effect<Extracted, E, R>;
@@ -446,13 +456,23 @@ export const checkWriteSession = <
         noSaveRun,
       );
     const siteRefusal = refusable ? step.refused : undefined;
-    // Either ends the session saving nothing.
-    const standsWithoutSave = siteRefusal !== undefined || noSaveRun;
+    // The step named for publication threw the tool's own refusal of the session's input, by the
+    // host's word, in a session that entered no mark and may have sent nothing. A returned refusal
+    // wins over it.
+    const thrown =
+      siteRefusal === undefined &&
+      refusable &&
+      step.thrownRefusal === true &&
+      markless &&
+      !sessionSentWrite(session);
+    const refused = siteRefusal !== undefined || thrown;
+    // Each ends the session saving nothing.
+    const standsWithoutSave = refused || noSaveRun;
     if (!standsWithoutSave && !sessionSentWrite(session))
       return yield* refuse("write_not_submitted");
     const enteredMarks = sessionEnteredMarks(session.steps);
-    // The refusal ends the session (the host sets `refused` only on its last act step), so the
-    // path's later marks stay unentered, and so does a run that saves nothing.
+    // The refusal ends the session (the host sets `refused` and `thrownRefusal` only on its last
+    // act step), so the path's later marks stay unentered, and so does a run that saves nothing.
     const unrun = standsWithoutSave ? [] : writePathRemaining(check.writePath, enteredMarks);
     // No read-back settles a mark no step entered or streamed. On a read-back, the contract may
     // declare such marks unproven when each comes after the last mark of the path the session
@@ -479,7 +499,7 @@ export const checkWriteSession = <
     const refusal = writeContractRefusal(extracted.contract.write, extracted.inputDecodes, step, {
       confirmed: sessionConfirmed(session.steps),
       enteredMarks,
-      ...(siteRefusal === undefined ? {} : { refused: true }),
+      ...(refused ? { refused: true } : {}),
       ...(noSaveRun ? { noSaveRun: true } : {}),
       // With a recorded path, a read-back leaves unproven from the start only steps of that path,
       // which Guardian reviewed before anything was sent.
@@ -525,6 +545,8 @@ export const checkWriteSession = <
       readonly declared: NonNullable<typeof declared>;
       readonly commitsUnproven?: readonly string[];
       readonly refusal?: DeclaredRefusal;
+      /** The session's proven outcome is the tool's own thrown refusal of its input. */
+      readonly thrownRefusal?: true;
       /** The tool stops before any save: its path names no step and it declares no commit step. */
       readonly stopsBeforeSave?: true;
     } = {
@@ -532,6 +554,7 @@ export const checkWriteSession = <
       declared,
       ...(unproven.length === 0 ? {} : { commitsUnproven: unproven }),
       ...(siteRefusal === undefined ? {} : { refusal: siteRefusal }),
+      ...(thrown ? { thrownRefusal: true as const } : {}),
       ...(stopsBeforeSave && commits.length === 0 ? { stopsBeforeSave: true as const } : {}),
     };
     return checked;
