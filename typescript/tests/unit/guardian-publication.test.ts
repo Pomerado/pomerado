@@ -1337,7 +1337,7 @@ describe("the publication policy", () => {
       publicationOutputPolicy.indexOf("Strict name check:"),
     );
     expect(wrongFailure).toContain(
-      "A missing optional value is one that a record lacks or the code cannot read, in a field the output schema lets be null or omitted, other than a needed value the page shows.",
+      "a missing optional value (one a record lacks, in a field the output schema lets be null or omitted, other than a needed value the page shows), or a placeholder",
     );
   });
 

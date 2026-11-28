@@ -572,8 +572,7 @@ the request names. Leave out what is unrelated to the tool's purpose or of no us
 - Prefer a separate typed field for each fact over folding it into another field's text. Never
   derive a value the page does not show.
 - A field that is not a needed value is nullable, and it is null exactly when this record does
-  not show it. Never throw or fail the read when one record lacks it or its read fails: a failed
-  read returns it null and lists that part in `missing` (Partial results).
+  not show it.
 - Never declare a field the code does not read. A field that is always null, empty or fixed is
   not a disclosed limit: read it from the page, or leave the field out.
 - Prefer returning both a unit price and a line total for each line with a quantity, such as a
