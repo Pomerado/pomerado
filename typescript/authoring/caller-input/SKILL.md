@@ -259,9 +259,10 @@ already asked for, or to solve a CAPTCHA.
      address.
 2. For a choice, read the options in the execute call that reaches it and return them as
    plain JSON. Each option has a `value` the script acts on and a `label` the caller
-   reads. Values are unique within a question. Offer only options the page will accept:
-   skip taken seats, disabled slots and sold-out items. The value never leaves the run;
-   the caller sees only the label. Mark an option that stops the write with
+   reads. Values are unique within a question. Take each option from the items the page
+   lists for that choice, never from other text on the page. Offer only options the page
+   will accept: skip taken seats, disabled slots and sold-out items. The value never leaves
+   the run; the caller sees only the label. Mark an option that stops the write with
    `declines: true`. Picking it is the caller's no, as a confirm's no is.
 3. Mark an option taken from the caller's own account (a saved traveler, address, card
    or account) with `accountSpecific: true`, a `label` that reads in full as the site
