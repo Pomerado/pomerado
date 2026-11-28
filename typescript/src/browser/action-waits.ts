@@ -491,6 +491,13 @@ const outcomeWaitEvidence = async (candidate, observation, state, events, now) =
 `;
 
 /**
+ * Page code: where an element opens another page, its address and `target`, else null. Links that
+ * answer the same are one control, to `waitForReady` and to a sign-in step that types nothing.
+ */
+export const opensCode = String.raw`(element) => typeof element.href === "string" && /^https?:$/.test(element.protocol) &&
+    element.href.split("#")[0] !== location.href.split("#")[0] ? element.href + " " + element.target : null`;
+
+/**
  * Page code for `waitForReady`. Uses `page`, and the limits, progress tracker and records of the
  * progress code before it.
  */
@@ -509,8 +516,7 @@ const readyWaitInPage = (elements, spec) => {
   if (visible.length === 0) return { blockers: ["hidden"] };
   // Links that open the same other page the same way are one control, such as one record a page
   // lists twice. A link to the page itself, such as "#" or a script's, says nothing of where it goes.
-  const opens = (element) => typeof element.href === "string" && /^https?:$/.test(element.protocol) &&
-    element.href.split("#")[0] !== location.href.split("#")[0] ? element.href + " " + element.target : null;
+  const opens = ${opensCode};
   if (visible.length > 1 && (opens(visible[0]) === null || visible.some((element) => opens(element) !== opens(visible[0]))))
     return { blockers: ["ambiguous"], visible: visible.length };
   const element = visible[0];
@@ -607,20 +613,20 @@ const waitForReady = async (target, options = {}) => {
       summary: "waitForReady: " + summary + "; " + progress.describe(),
     });
   // A panel that opens on its own, such as a tour or a what's-new dialog, may open after the wait
-  // returns: from then on Playwright closes it before each action on the page, up to dismissLimit
-  // times, until release(). During the wait the wait closes it itself.
+  // returns: from then on Playwright closes it before each action on its own page, such as a
+  // second tab, up to dismissLimit times, until release(). During the wait the wait closes it itself.
   const handlers = [];
   const watch = async () => {
     if (options.watch === false || typeof page.addLocatorHandler !== "function") return;
     for (const close of dismiss) {
-      await page.addLocatorHandler(close, async () => {
+      await close.page().addLocatorHandler(close, async () => {
         await close.filter({ visible: true }).first().click({ timeout: waitLimits.action }).catch(() => undefined);
       }, { times: dismissLimit, noWaitAfter: true });
       handlers.push(close);
     }
   };
   const release = async () => {
-    for (const close of handlers.splice(0)) await page.removeLocatorHandler(close).catch(() => undefined);
+    for (const close of handlers.splice(0)) await close.page().removeLocatorHandler(close).catch(() => undefined);
   };
   try {
     progress.begin();

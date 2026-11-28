@@ -1005,6 +1005,27 @@ test.describe("readiness before acting", () => {
     expect(answer).toMatchObject({ dismissed: 0, extra: { clicks: "1", tour: 0 } });
   });
 
+  test("a panel that opens later in a second tab is closed in that tab before the next click", async ({ page }) => {
+    const tab = await page.context().newPage();
+    await tab.setContent(`
+      <button id="target" onclick="this.textContent = 'Saved'">Save</button>
+      <script>window.openPanel = () => document.body.insertAdjacentHTML("beforeend",
+        '<div style="position:fixed;inset:0;background:#fff"><button id="close" onclick="this.parentElement.remove()">Close</button></div>');</script>`);
+    const answer = await ready(
+      page,
+      `context.pages()[1].locator("#target")`,
+      `dismiss: context.pages()[1].locator("#close")`,
+      `(async () => {
+        const tab = context.pages()[1];
+        await tab.evaluate(() => window.openPanel());
+        await tab.locator("#target").click({ timeout: 2000 });
+        await result.release();
+        return tab.locator("#target").textContent();
+      })()`,
+    );
+    expect(answer.extra).toBe("Saved");
+  });
+
   test("a cookie banner over the control is accepted, then the control is ready", async ({ page }) => {
     await page.setContent(`
       <button id="target" style="position:fixed;bottom:10px;left:10px">Continue</button>

@@ -1057,7 +1057,7 @@ it("has a purchase confirm's order and a checkout's output give lines, fees and 
     "its `items` (each `name`, `quantity`, `unit` for an item sold by weight or measure, and `price` each, `lineTotal` or both), `fees` (each `name` and `amount`), `discount`, `shipping`, `tax`, `tip` and `total`",
   );
   expect(text("cart")).toContain(
-    "Prefer returning each line bought with its quantity, its unit when the site sells it by weight or measure, its price each and its line total (the core skill's output fields), and each fee as its own entry, by its name on the site and its amount, with the tip and any discount in their own fields. Return each credit, gift card balance or promotion applied as its own entry the same way, with the total before them and the amount charged after them. This output is a suggestion, separate from the `order` a purchase's final confirm passes (the caller-input skill), which has its own fixed fields.",
+    "Prefer returning each line bought with its quantity, its unit when the site sells it by weight or measure, its unit price, with the unit it is per when the page shows one, and its line total, read with `readPrice` in the currency the page shows (the core skill's output fields), and each fee as its own entry, by its name on the site and its amount, with the tip and any discount in their own fields. Return each credit, gift card balance or promotion applied as its own entry the same way, with the total before them and the amount charged after them. This output is a suggestion, separate from the `order` a purchase's final confirm passes (the caller-input skill), which has its own fixed fields.",
   );
 });
 
@@ -1922,14 +1922,14 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["6cab1a36398399be57ca89055aa5fed82b549b24ceedd0facabdf64ec54d1326", "core"],
-    ["97e3b5ebdbe8d5fca43790729084de4eef4fbcf5fdf71ad645e679fd72f4e804", "search"],
+    ["47fbccd7bd6160df4195b778096c52cb54c29e07f978b3aef93d62290f3def3f", "core"],
+    ["e4421248f1f5646e1975488b246105f176e7af25d19bc12ef9017f50b3d01c4b", "search"],
     ["e6a78355e22e9989ffdccbc5a5f53eef0ec74217c3ae31b68c1ca0421f36ce44", "auth"],
-    ["3355021c2daea519d533551d9b6f08f071c792328d39ec5020d6e8b0ca7def52", "testing"],
+    ["ae06194a7bf041df8f18636d3bfe3a30749cd9d5a26df271866ee3547f7403ed", "testing"],
     ["ca80679c4488dec4ee85052fb39f1493b6d5f8ca4a5df9b56d10a2e96078e848", "pagination"],
     ["10dca2bd299747247e28de596d36225bb5bd1acfd56673457deaac10e4f6102b", "forms"],
     ["69588ca18a7612ad946dd5135ebafd604ebf231a13ad60c9fbb8a9124b9a7ce6", "writes"],
-    ["b24152b92127c37de587e67416f764cc7e14ccd407c1bc250efe07dd38e18c0a", "cart"],
+    ["46b0b900af7f5ffe9f5631e2234deae484657f6112bbe30af4c6e5b49168b5ff", "cart"],
     ["cb2cbc2e18bbc072ccd281276407a1568a896b7321c1f1434c13bde5e3e8fa8f", "caller-input"],
     ["13cbc5f1af5db6b9082e34a40229d4a4bfc939334729b7b7cc40f5bbadf8fa7f", "publication"],
     ["6f9cf55ddcd940b69cd8362821fbe95868bdc306751ad553d9b26805167e2699", "workspace/AGENTS.md"],
@@ -2052,7 +2052,7 @@ it("renders the search URL fast path only when a host turns it on", async () => 
     ...on.digests.filter(([, name]) => name === "search"),
     [sha256(on.agents), "workspace/AGENTS.md"],
   ]).toStrictEqual([
-    ["de172ebf03d92a8782f5abbdd8444d90104634da28f4e21ad444dcbde0734e1f", "search"],
+    ["2c7e7ad64151ea7c65b6f5f2695d010afafdd30f7c02aae6fb90a20da32330f6", "search"],
     ["ede1d3986f3538e7b5b6db351be474021fa11d614afe3a78ebfb31f32623f66e", "workspace/AGENTS.md"],
   ]);
   expect(on.digests.filter(([, name]) => name !== "search")).toStrictEqual(
