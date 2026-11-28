@@ -1755,7 +1755,7 @@ it("has a write ask or refuse with equal matches, never take the first or throw 
   const texts = await renderedTexts("typescript/authoring");
   const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
   expect(text("core")).toContain(
-    "Make sure the tool handles a lookup or filter that matches nothing or more than one. Count matches by the site's own item ID where the page shows one: one item shown more than once, such as a sponsored copy beside the regular result, is one match. When the site's own results leave the tool unable to go on, that is the caller's to settle: ask the caller or refuse with `InvalidInput` (the input schema, below), not `OperationFailure`, which reads as a broken tool and starts a repair (a control or element the tool could not find, open or read stays `OperationFailure`, caller-input skill).",
+    "Make sure the tool handles a lookup or filter that matches nothing or more than one. Count matches by the site's own item ID where the page shows one: one item shown more than once, such as a sponsored copy beside the regular result, is one match. When the site's own results leave the tool unable to go on, that is the caller's to settle: ask the caller or refuse with `InvalidInput` (the input schema, below), not `OperationFailure`, which reads as a broken tool and starts a repair (a control or element the site has but the tool could not find, open or read stays `OperationFailure`, caller-input skill).",
   );
   expect(text("writes")).toContain(
     "When no entry matches, throw `InvalidInput` with `field` and `available`; when several match equally, ask the caller to choose one of them with a declared choice question, or refuse the same way, listing each match in `available` (core skill, the input schema).",
@@ -1857,7 +1857,7 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["93c9262b40c5160fed99feafd2054f44454b4d95e38d339d270cf6cac5858ded", "core"],
+    ["fa8d8f32886172aed9ae395c294b568dca76bcfe93ba677a413ffa2b00f71bd1", "core"],
     ["97e3b5ebdbe8d5fca43790729084de4eef4fbcf5fdf71ad645e679fd72f4e804", "search"],
     ["e6a78355e22e9989ffdccbc5a5f53eef0ec74217c3ae31b68c1ca0421f36ce44", "auth"],
     ["3355021c2daea519d533551d9b6f08f071c792328d39ec5020d6e8b0ca7def52", "testing"],
