@@ -1902,7 +1902,7 @@ it("has a URL input accept the site's link forms and a record found by name take
   );
 });
 
-const sha256 =(text: string) => createHash("sha256").update(text).digest("hex");
+const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 
 /*
  * Pins everything the package gives a standalone minting model: each skill's name, description,
