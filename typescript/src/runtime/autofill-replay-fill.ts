@@ -377,7 +377,12 @@ export const runReplayStep = <E extends YieldableError, V extends string, L exte
         if (isExtraSecret(field.slot) && filled[index] !== undefined)
           retryState.lastFilled[field.slot] = filled[index];
     }
-    yield* input.emit(stepDiagnostic(step, stepReport));
+    yield* input.emit({
+      ...stepDiagnostic(step, stepReport),
+      ...(inspection.sameDestinationMatches === undefined
+        ? {}
+        : { sameDestinationMatches: inspection.sameDestinationMatches }),
+    });
     progress.ran.push(step);
     progress.ranMaySend = maySend(stepReport);
     // A step run after a screen's wait ended in place, such as a code retried, leaves that page.

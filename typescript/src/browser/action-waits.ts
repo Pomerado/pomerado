@@ -491,6 +491,13 @@ const outcomeWaitEvidence = async (candidate, observation, state, events, now) =
 `;
 
 /**
+ * Page code: where an element opens another page, its address and `target`, else null. Links that
+ * answer the same are one control, to `waitForReady` and to a sign-in step that types nothing.
+ */
+export const opensCode = String.raw`(element) => typeof element.href === "string" && /^https?:$/.test(element.protocol) &&
+    element.href.split("#")[0] !== location.href.split("#")[0] ? element.href + " " + element.target : null`;
+
+/**
  * Page code for `waitForReady`. Uses `page`, and the limits, progress tracker and records of the
  * progress code before it.
  */
@@ -509,8 +516,7 @@ const readyWaitInPage = (elements, spec) => {
   if (visible.length === 0) return { blockers: ["hidden"] };
   // Links that open the same other page the same way are one control, such as one record a page
   // lists twice. A link to the page itself, such as "#" or a script's, says nothing of where it goes.
-  const opens = (element) => typeof element.href === "string" && /^https?:$/.test(element.protocol) &&
-    element.href.split("#")[0] !== location.href.split("#")[0] ? element.href + " " + element.target : null;
+  const opens = ${opensCode};
   if (visible.length > 1 && (opens(visible[0]) === null || visible.some((element) => opens(element) !== opens(visible[0]))))
     return { blockers: ["ambiguous"], visible: visible.length };
   const element = visible[0];

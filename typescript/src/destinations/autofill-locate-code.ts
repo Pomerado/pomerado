@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { opensCode } from "../browser/action-waits.js";
 import { opaqueOrigins } from "./autofill-refusal.js";
 import { clipCode, controlNamingCode } from "./control-naming-code.js";
 
@@ -310,7 +311,11 @@ const ownFormCode = `(element) =>
  * visible matches, the one in the form every field sits in (`ownFormCode`) is its match, so a page
  * that adds a second submit in another form, such as a sign-in with an app, still has one. With
  * fields in no form or in more than one, or with none or several matches in their form, it has
- * none, and the search says each frame that matched as before.
+ * none, and the search says each frame that matched as before. A step with no fields, which types
+ * nothing, takes visible matches in one frame that are all links opening the same other page the
+ * same way (`opensCode`) as one, the first, and its `located` counts them (`sameDestinationMatches`),
+ * as a page that shows its sign-in link twice needs. A field's or a notice's search passes no
+ * `within`, so neither takes them.
  */
 const findCode = `${clipCode}
 // Questions are explicit observed locators, never inferred from names or routes.
@@ -359,7 +364,7 @@ const inFieldsForm = async (visible, within) => {
     return null;
   }
 };
-const locate = async (selector, questionSelector, within = []) => {
+const locate = async (selector, questionSelector, within) => {
   const visible = [];
   const frames = primary.frames();
   const matches = [];
@@ -382,9 +387,19 @@ const locate = async (selector, questionSelector, within = []) => {
     if (count > 100) return { error: "ambiguous_match", searched: { frames: frames.length, matches } };
     for (const locator of shown) visible.push({ frame, locator });
   }
-  if (visible.length > 1 && within.length > 0) {
+  if (visible.length > 1 && within?.length > 0) {
     const inForm = await inFieldsForm(visible, within);
     if (inForm !== null) visible.splice(0, visible.length, inForm);
+  }
+  let sameDestinationMatches;
+  if (visible.length > 1 && within?.length === 0 && visible.every((found) => found.frame === visible[0].frame)) {
+    const opens = [];
+    for (const found of visible)
+      opens.push(await found.locator.evaluate(${opensCode}, undefined, { timeout: ${elementReadMs} }).catch(() => null));
+    if (opens[0] !== null && opens.every((one) => one === opens[0])) {
+      sameDestinationMatches = visible.length;
+      visible.splice(1);
+    }
   }
   if (visible.length !== 1)
     return { error: visible.length === 0 ? "not_found" : "ambiguous_match", searched: { frames: frames.length, matches } };
@@ -397,7 +412,7 @@ const locate = async (selector, questionSelector, within = []) => {
   const ancestors = [];
   for (let up = owner ? owner.parentFrame() : null; up && up.parentFrame(); up = up.parentFrame())
     if (!["about:blank", "about:srcdoc"].includes(up.url())) ancestors.push(where(up.url(), false));
-  return { frame, locator, handle, owner, ancestors, questionSelector, frames: frames.length };
+  return { frame, locator, handle, owner, ancestors, questionSelector, frames: frames.length, sameDestinationMatches };
 };
 // The controls found in each frame, in the order found.
 const frameGroups = (founds) => {
@@ -436,7 +451,7 @@ const readControls = async (founds) => {
   }
   const controls = [];
   for (const found of founds) {
-    const { frame, locator, owner, ancestors, questionSelector, frames } = found;
+    const { frame, locator, owner, ancestors, questionSelector, frames, sameDestinationMatches } = found;
     const read = reads.get(found);
     const described = Object.fromEntries(Object.entries(read.described).map(([key, value]) => [key, key === "tag" ? value : clip(value)]));
     const question = await readQuestion(frame, questionSelector);
@@ -458,7 +473,7 @@ const readControls = async (founds) => {
       },
       destinations: read.target.actions,
       described,
-      located: { frameUrl: where(frame.url(), false), frames },
+      located: { frameUrl: where(frame.url(), false), frames, ...(sameDestinationMatches === undefined ? {} : { sameDestinationMatches }) },
     });
   }
   return controls;
