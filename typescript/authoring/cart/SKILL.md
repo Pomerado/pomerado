@@ -152,6 +152,9 @@ when one refuses, say in the refusal that the account's address changed. Prefer 
 over editing a saved address. When saving the address-book entry is the only way to apply a
 detail such as the unit, ask any question about it only on a run that needs the save.
 
+A check that the delivery or pickup place stayed the same during the run compares only its
+address, ZIP or store, never text that moves with the clock.
+
 ## Values the account lacks
 
 A value the flow needs that the account lacks, such as a delivery address, is a question for
