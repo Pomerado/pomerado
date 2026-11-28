@@ -220,7 +220,7 @@ During the session:
   form definitions or option data an earlier page loads, prefer reading them too and checking
   every caller value for those fields against them. Match each value by the site's option value as
   well as its label (forms skill), and count matching items by the site's own item id where the
-  page shows one, so an item listed in more than one place is one match, not an ambiguous one.
+  page shows one (core skill).
   Refuse with `InvalidInput` and `available` before anything is saved when a value matches
   nothing. A refusal after an earlier save leaves a half-made record and an outcome the caller
   can't know.
@@ -609,9 +609,9 @@ note.
   did not run, prove it in an `act` step that only reads, while the session is open (below),
   never by committing again.
   When no entry matches, throw `InvalidInput` with `field` and `available`; when several match
-  equally, take the first in the site's order and return the one it used, as the site labels
-  it, or list them for the caller to choose one, as the tool decides (core skill, the input
-  schema). Write that ID or pick that entry, and
+  equally, ask the caller to choose one of them with a declared choice question, or refuse the
+  same way, listing each match in `available` (core skill, the input schema). Write that ID or
+  pick that entry, and
   compare the read-back by ID, never a label against an ID. Return the reference as
   `{ id, label }` (records skill). Do not drop a reference field only because the site saves an
   ID: the lookup is the fix. When the site shows no ID and offers no list to resolve one, compare

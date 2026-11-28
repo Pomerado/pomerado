@@ -223,7 +223,7 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   ["core", "- The code works for every value the schema accepts."],
   [
     "core",
-    "- Match the caller's proper nouns, such as places, venues and company names, with a fuzzy match that accepts the usual forms of the same name, such as a name with or without its accents (Abaca for Abacá), or a city alone or with its state and country after a comma. Never require an exact match. A name with words added or dropped is a looser match, which a read picks and a write asks about, as above. `sameText` from `pomerado/runtime` matches a name that differs only in case, accents, spacing, apostrophes, periods, commas or hyphens, or in a word the site writes short, such as St-Jean for Saint-Jean, but not one with a word added or dropped. Prefer it for confirming the pick, so the read-back agrees with the choice, but not for choosing from a list, where a short label can match a longer name it isn't, such as UK for Ukraine. When more than one option matches equally, decide per tool, except for an address, pickup or drop-off value (above): take the first in the site's order and return the one it used, as the site labels it, or list them for the caller to choose one, each selecting exactly one.",
+    "- Match the caller's proper nouns, such as places, venues and company names, with a fuzzy match that accepts the usual forms of the same name, such as a name with or without its accents (Abaca for Abacá), or a city alone or with its state and country after a comma. Never require an exact match. A name with words added or dropped is a looser match, which a read picks and a write asks about, as above. `sameText` from `pomerado/runtime` matches a name that differs only in case, accents, spacing, apostrophes, periods, commas or hyphens, or in a word the site writes short, such as St-Jean for Saint-Jean, but not one with a word added or dropped. Prefer it for confirming the pick, so the read-back agrees with the choice, but not for choosing from a list, where a short label can match a longer name it isn't, such as UK for Ukraine. When more than one option matches equally, a read may take the first in the site's order and return the one it used, as the site labels it; a write asks the caller to choose among them with a declared choice question, or refuses with `InvalidInput`, `field` that input and `available` listing each match, each selecting exactly one, before any commit mark. An address, pickup or drop-off value follows the rule above.",
   ],
   // A value the caller names goes through the site's own search, not only a menu the page shows.
   [
@@ -958,13 +958,13 @@ it("never takes the first or a looser match for an address, pickup or drop-off v
     "Resolve a typed address, pickup or drop-off value through the site's suggestions in two calls",
   );
   expect(text("core")).toContain(
-    "With several, decide per tool, except for an address, pickup or drop-off value, which only the address helpers below choose: take the first in the site's own order",
+    "With several, except for an address, pickup or drop-off value, which only the address helpers below choose, list those matches as the site labels them for the caller to choose one, each selecting exactly one, with a declared choice question (.agents/caller-input/SKILL.md) or `pickRefusal`, which lists them as `available`; a read may instead take the first in the site's own order",
   );
   expect(text("caller-input")).toContain(
     "or a read's looser match, returning the option it used, but never for an address, pickup or drop-off value (core skill)",
   );
   expect(text("caller-input")).toContain(
-    "each tool decides which, but never takes the first for an address, pickup or drop-off value (core skill).",
+    "when the tool asks rather than refusing with them or, in a read, rather than taking the first in the site's order; a read never takes the first for an address, pickup or drop-off value (core skill).",
   );
   expect(text("publication")).toContain(
     "a free-text place, name or venue, other than an address, pickup or drop-off value, that matches several of the site's options equally",
@@ -973,7 +973,7 @@ it("never takes the first or a looser match for an address, pickup or drop-off v
     "goes through `pickValue` or `pickValues`, an address, pickup or drop-off value through the core skill's address helpers (\"Own address match\"),",
   );
   expect(text("forms")).toContain(
-    "In a tool that takes the first of options that tie instead (each tool decides, but never for an address, pickup or drop-off value, core skill), pass `tie: \"first\"`",
+    "In a read that takes the first of options that tie instead (never for an address, pickup or drop-off value, core skill), pass `tie: \"first\"`",
   );
   expect(text("writes")).toContain(
     "with `pickValue`, or the core skill's address helpers for an address, pickup or drop-off value, and the site's own confirm control in one step.",
@@ -1128,7 +1128,7 @@ it("has cart tools carry over sibling handling, refuse the caller's input first 
     "Run each refusal of the caller's own input as soon as the page shows what it needs, before any check of the page's state that fails the run.",
     "Check only the options the tool sets or the caller asked for; read any other preselected option, except a membership, subscription, trial or safety default the tool turns off, as page state and name it in the confirm, rather than failing.",
     "Check the caller's limit against the amount the order charges after credits, as the page shows it, before the purchase click. When tax, fees or shipping aren't shown until after it, check the limit against what is shown, name in the confirm what isn't included yet, and don't refuse for it.",
-    "Where the build runs test cases (testing skill), prefer including an item already in the cart, an item the site shows as unavailable, and an item shown at a discounted price, and, for a checkout, a cart under the store's minimum and a limit below the total. These are suggestions: a build that can't find such a case on the site goes on without it.",
+    "Where the build runs test cases (testing skill), prefer including an item already in the cart, an item the site shows as unavailable, an item shown at a discounted price and an item the site's search shows twice, and, for a checkout, a cart under the store's minimum and a limit below the total. These are suggestions: a build that can't find such a case on the site goes on without it.",
     "and return the state the site shows, in its own words, as the refusal for the item,",
     'A delivery speed left unset, or asked for as "standard", takes the free option the page offers that arrives soonest, for each shipment, in place of the tier the site presents as standard; with no free option, ask the caller which to use, showing each fee.',
   ]) {
@@ -1248,7 +1248,7 @@ it("has a write check caller values against the site's own option lists before i
   const texts = await renderedTexts("typescript/authoring");
   const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
   expect(text("writes")).toContain(
-    "- Before the first commit mark, prefer looking up every existing entry the caller names, each item and option included, with read-only steps, in the session and on every run of the composed script. On a write saved across several pages, when the site's own option lists for a later page can be read before the first save and do not depend on what an earlier page saves, such as the form definitions or option data an earlier page loads, prefer reading them too and checking every caller value for those fields against them. Match each value by the site's option value as well as its label (forms skill), and count matching items by the site's own item id where the page shows one, so an item listed in more than one place is one match, not an ambiguous one. Refuse with `InvalidInput` and `available` before anything is saved when a value matches nothing. A refusal after an earlier save leaves a half-made record and an outcome the caller can't know.",
+    "- Before the first commit mark, prefer looking up every existing entry the caller names, each item and option included, with read-only steps, in the session and on every run of the composed script. On a write saved across several pages, when the site's own option lists for a later page can be read before the first save and do not depend on what an earlier page saves, such as the form definitions or option data an earlier page loads, prefer reading them too and checking every caller value for those fields against them. Match each value by the site's option value as well as its label (forms skill), and count matching items by the site's own item id where the page shows one (core skill). Refuse with `InvalidInput` and `available` before anything is saved when a value matches nothing. A refusal after an earlier save leaves a half-made record and an outcome the caller can't know.",
   );
   // A check that can only run after an earlier save keeps its honest possible change.
   expect(text("writes")).toContain(
@@ -1747,6 +1747,33 @@ it("has a tool read each group's required picks, refuse with the page's reason a
   );
 });
 
+// A write's lookup that matched more than one copy of one product, as a search can show it twice,
+// threw `OperationFailure` without them, which read as a broken tool and started a repair. Copies of
+// one item are one match by the site's own item id. Equal matches are the caller's to settle: a write asks
+// the caller to choose among them or refuses with them, and only a read may take the first.
+it("has a write ask or refuse with equal matches, never take the first or throw OperationFailure", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
+  expect(text("core")).toContain(
+    "Make sure the tool handles a lookup or filter that matches nothing or more than one. Count matches by the site's own item id where the page shows one: one item shown more than once, such as a sponsored copy beside the regular result, is one match. When the matches leave the tool unable to go on, that is the caller's to settle: ask the caller or refuse with `InvalidInput` (the input schema, below), not `OperationFailure`, which reads as a broken tool and starts a repair.",
+  );
+  expect(text("writes")).toContain(
+    "When no entry matches, throw `InvalidInput` with `field` and `available`; when several match equally, ask the caller to choose one of them with a declared choice question, or refuse the same way, listing each match in `available` (core skill, the input schema).",
+  );
+  expect(text("caller-input")).toContain(
+    "except a value that matches several site entries equally, where a read may take the first and return the one it used,",
+  );
+  expect(text("publication")).toContain(
+    "that matches several of the site's options equally lists them for the caller to choose one, or, in a read, takes the first in the site's order and returns the one it used, as the site labels it (core skill, the input schema); - a lookup counts matches by the site's own item id where the page shows one, so one item shown more than once is one match, not a failure or a refusal (core skill);",
+  );
+  expect(text("cart")).toContain(
+    "and ask the caller or refuse when more than one entry still matches, never take the first.",
+  );
+  expect(text("forms")).toContain(
+    "`references/picker-first.ts`, a read, takes the first of several equal matches and returns it,",
+  );
+});
+
 // Checkouts refused a buy control the page had replaced with an add to an open order, counted an
 // offered upgrade as a fee, filed a site label they did not know under a catch-all value, read a
 // starting price as zero, checked a limit against the total before credits, went on with a limit
@@ -1830,16 +1857,16 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["d79a983ebc937187928a9f624837b3b6bea3a0e7de362d4f5b7ae3b8e350d34b", "core"],
+    ["1a2b1efc806d05ca9597da4f6ee7c5b0180895aed8732aaeac7758f019047299", "core"],
     ["97e3b5ebdbe8d5fca43790729084de4eef4fbcf5fdf71ad645e679fd72f4e804", "search"],
     ["e6a78355e22e9989ffdccbc5a5f53eef0ec74217c3ae31b68c1ca0421f36ce44", "auth"],
     ["3355021c2daea519d533551d9b6f08f071c792328d39ec5020d6e8b0ca7def52", "testing"],
     ["ca80679c4488dec4ee85052fb39f1493b6d5f8ca4a5df9b56d10a2e96078e848", "pagination"],
-    ["b0220727e7f21e1c5d10101e74996ddb3d2d4e18061ac85c807203ed4ab0f695", "forms"],
-    ["b23c3918c2990e1743a2ad84983346f114b590424efb8a61d1dd2e240093c20c", "writes"],
-    ["fc668fc8ab0943003eae1239a3cbe15356292153b0e706680eb167ba64308d5d", "cart"],
-    ["5e81a6bb20243badd2f5d781fc302e0fe83b12ad616d5cc66fd664f2a0e28870", "caller-input"],
-    ["07b61ae415889706192db263c00be4635dddb6c7ea0e97017b9b7e53ff1c95a3", "publication"],
+    ["4034ea6ababd8cea92f028384110c1930934a5fc9ad2cc7f5b127cd45d42130c", "forms"],
+    ["c6986102a0744fb503703ad4609adf682dffdb62a2e7badfa84a5438bfce4c84", "writes"],
+    ["f792e3fd078506d379df4305678bf552d09c964c7266e0dda9427adbf79d514e", "cart"],
+    ["63587da1613604414bd815d843f5fc02a26fa829df4447ecd867c08c8fd58dad", "caller-input"],
+    ["f9d113d25914957863f73ceb30f79f85c8218d63c82de4208091db2afab5e238", "publication"],
     ["68624ce51e88e97ab72ff393ac8ecc7b9fc87d5d5518fd4d67a34e45da8be1fc", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);

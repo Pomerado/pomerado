@@ -118,8 +118,8 @@ caller's word also matches an option word it begins or that begins it. A value t
 lacks, one a write matches only loosely (`option_unclear`), or several options that tie,
 comes back as `{ picked: false, reason, available, matches }`: decode it with `PickOutcome` and
 throw `pickRefusal(outcome, field)`, which lists options that tie as `available`, or ask the
-caller to choose among `matches`, as the core skill says for `option_unclear`. In a tool that takes the first of options that tie instead (each tool decides,
-but never for an address, pickup or drop-off value, core skill), pass `tie: "first"`, so the
+caller to choose among `matches`, as the core skill says for `option_unclear`. In a read that takes the first of options that tie instead (never
+for an address, pickup or drop-off value, core skill), pass `tie: "first"`, so the
 picker takes the first of them in the site's order and
 returns the one it used, and return that option's label in the tool's output. In a read whose
 typed field is the site's own search, when `pickValue` returns `option_missing` with an empty
@@ -136,7 +136,7 @@ When a picker's options depend on another field, such as times on a date or a pa
 on a make or regions on a country, set that field first, whatever order the page shows them in,
 then pick once its options have loaded for that value.
 `references/picker.ts` picks a typeahead value and refuses a missing one,
-`references/picker-first.ts` takes the first of several equal matches and returns it,
+`references/picker-first.ts`, a read, takes the first of several equal matches and returns it,
 `references/dates-and-dropdowns.ts` fills a split date and `references/selection.ts` a native
 select. `references/custom-selection.ts` and
 `references/dialog-picker.ts` write out a combobox and a dialog picker step by step, for a

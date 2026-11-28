@@ -1014,7 +1014,7 @@ describe("the publication policy", () => {
   // tool: only the address matcher chooses an address, pickup or drop-off value.
   it("gives the execution and publication reviews the same fuzzy proper-noun rule", () => {
     const rule =
-      "A tool matches the caller's proper nouns, such as places, venues and company names, with a fuzzy match that accepts the usual forms of the same name. Never ask a tool to require an exact match. When more than one option matches a caller's value equally, the tool either takes the first in the site's order and returns the one it used, as the site labels it, or lists them for the caller to choose one, in a question or a refusal whose options each select exactly one of them. Which of the two is the tool's own choice, never a finding or a reason to deny, except for an address, pickup or drop-off value, which only the address matcher chooses. A tool that takes the first and does not return the one it used is a schema_mismatch finding with reason source_correction.";
+      "A tool matches the caller's proper nouns, such as places, venues and company names, with a fuzzy match that accepts the usual forms of the same name. Never ask a tool to require an exact match. When more than one option matches a caller's value equally, the tool lists them for the caller to choose one, in a question or a refusal whose options each select exactly one of them, or, in a read, takes the first in the site's order and returns the one it used, as the site labels it. Which of the two a read does is the tool's own choice, never a finding or a reason to deny, except for an address, pickup or drop-off value, which only the address matcher chooses. A write that takes the first, or a read that takes the first and does not return the one it used, is a schema_mismatch finding with reason source_correction. So is a lookup that fails or refuses on several copies of one item rather than counting them as one match by the site's own item id where the page shows one.";
     expect(guardianPublicationPolicy.split(rule)).toHaveLength(2);
     expect(guardianExecutionPolicy(nativeExecutionEnvironment)).toContain(`\n${rule}\n`);
   });
@@ -1061,14 +1061,14 @@ describe("the publication policy", () => {
     expect(publicationOutputPolicy.split(rule)).toHaveLength(2);
   });
 
-  // Of several equal matches, taking the first or letting the caller choose is the tool's own
-  // choice. Only taking the first without returning the match it used is a finding, and one the
-  // publication review can return.
-  it("finds a tool that takes the first of equal matches without returning it, never the choice", () => {
+  // Of several equal matches, a read may take the first or let the caller choose, as the tool
+  // chooses; a write lets the caller choose. Taking the first in a write, or in a read without
+  // returning the match it used, is a finding, and one the publication review can return.
+  it("finds a write that takes the first of equal matches, or a read that doesn't return it, never a read's choice", () => {
     const choice =
-      "Which of the two is the tool's own choice, never a finding or a reason to deny, except for an address, pickup or drop-off value, which only the address matcher chooses.";
+      "Which of the two a read does is the tool's own choice, never a finding or a reason to deny, except for an address, pickup or drop-off value, which only the address matcher chooses.";
     const missing =
-      "A tool that takes the first and does not return the one it used is a schema_mismatch finding with reason source_correction.";
+      "A write that takes the first, or a read that takes the first and does not return the one it used, is a schema_mismatch finding with reason source_correction.";
     expect(guardianPublicationPolicy.split(`${choice} ${missing}`)).toHaveLength(2);
     expect(publicationFindingCategories).toContain("schema_mismatch");
     expect(publicationReasons).toContain("source_correction");
