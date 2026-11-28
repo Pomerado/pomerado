@@ -1923,9 +1923,9 @@ it("renders the pinned standalone authoring", async () => {
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
     ["47fbccd7bd6160df4195b778096c52cb54c29e07f978b3aef93d62290f3def3f", "core"],
-    ["97e3b5ebdbe8d5fca43790729084de4eef4fbcf5fdf71ad645e679fd72f4e804", "search"],
+    ["e4421248f1f5646e1975488b246105f176e7af25d19bc12ef9017f50b3d01c4b", "search"],
     ["e6a78355e22e9989ffdccbc5a5f53eef0ec74217c3ae31b68c1ca0421f36ce44", "auth"],
-    ["3355021c2daea519d533551d9b6f08f071c792328d39ec5020d6e8b0ca7def52", "testing"],
+    ["ae06194a7bf041df8f18636d3bfe3a30749cd9d5a26df271866ee3547f7403ed", "testing"],
     ["ca80679c4488dec4ee85052fb39f1493b6d5f8ca4a5df9b56d10a2e96078e848", "pagination"],
     ["10dca2bd299747247e28de596d36225bb5bd1acfd56673457deaac10e4f6102b", "forms"],
     ["69588ca18a7612ad946dd5135ebafd604ebf231a13ad60c9fbb8a9124b9a7ce6", "writes"],
@@ -2052,7 +2052,7 @@ it("renders the search URL fast path only when a host turns it on", async () => 
     ...on.digests.filter(([, name]) => name === "search"),
     [sha256(on.agents), "workspace/AGENTS.md"],
   ]).toStrictEqual([
-    ["de172ebf03d92a8782f5abbdd8444d90104634da28f4e21ad444dcbde0734e1f", "search"],
+    ["2c7e7ad64151ea7c65b6f5f2695d010afafdd30f7c02aae6fb90a20da32330f6", "search"],
     ["ede1d3986f3538e7b5b6db351be474021fa11d614afe3a78ebfb31f32623f66e", "workspace/AGENTS.md"],
   ]);
   expect(on.digests.filter(([, name]) => name !== "search")).toStrictEqual(

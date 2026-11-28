@@ -157,7 +157,8 @@ little time. Root some cases in the inputs and some in your own code, as below. 
   "no exact matches" view rather than an empty list. When the tool takes a free-text input, one
   the caller types rather than picks, use a made-up value the site has no match for here, so
   this case also shows that value ends as the caller-input skill says: `empty` for a search
-  query, `invalid_input` naming the field, or a labeled `result` for a location the site won't
+  query (`result` with `query_corrected` true when the site corrects it, search skill),
+  `invalid_input` naming the field, or a labeled `result` for a location the site won't
   apply, never another throw. Skip it for an input that takes a person's or account's name,
   number or code. For one that takes a record's own key, such as an order or ticket number, use
   one made-up key in the site's own format, with a serial past any the site lists, and expect
