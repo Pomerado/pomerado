@@ -492,6 +492,44 @@ describe("a write session's publication check", () => {
       );
     });
 
+    // The tool's own thrown refusal of the session's input, before any save, publishes the same
+    // way; its output schema declares nothing for it, since the run ends refused.
+    it.each([
+      { host: "publishes on refusals", publishOnRefusal: true, published: true },
+      { host: "leaves them unset", publishOnRefusal: false, published: false },
+    ])("publishes on the tool's own thrown refusal when its host $host: $published", (row) => {
+      const thrown: WriteSessionMarks = {
+        enteredMarks: [],
+        action: "write",
+        possiblySent: false,
+        thrownRefusal: true,
+      };
+      const extracted = contract({
+        confirmation: "message",
+        commits: ["save_property", "get_price"],
+        commitsUnproven: ["save_property", "get_price"],
+      });
+      const published = Effect.runSyncExit(
+        checkWriteSession({
+          session: { steps: [thrown] },
+          step: thrown,
+          extract: Effect.succeed(extracted),
+          writePath: path,
+          publishOnRefusal: row.publishOnRefusal,
+        }),
+      );
+      expect(published).toEqual(
+        row.published
+          ? Exit.succeed({
+              extracted,
+              declared: "message",
+              commitsUnproven: ["save_property", "get_price"],
+              thrownRefusal: true,
+            })
+          : Exit.fail(expect.objectContaining({ reason: "write_not_submitted" })),
+      );
+    });
+
     it("publishes on the refusal when the output holds a recursive type in another branch", () => {
       const detailed = Schema.Struct({ ...quoted.fields, details: JsonData });
       const published = Effect.runSyncExit(
