@@ -1097,6 +1097,23 @@ it("has a cart tool add through the line's own quantity control when the product
 });
 
 /*
+ * Write tools proven only at a quantity of one broke at two: one found its quantity control by one
+ * layout, and one read a checkout total by a label whose text carried the item count. Another read
+ * a checkout's amounts by parsing each summary row's whole text. The writes skill finds the control
+ * by its role and label, and the core skill reads each amount from its own element, by its role.
+ */
+it("has a write find its quantity control by role and a count-labelled total by role", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
+  expect(text("writes")).toContain(
+    "each unit committed on its own is one. - Find a quantity control by its role and label, not by one layout.",
+  );
+  expect(text("core")).toContain(
+    "and its description says when it is null. - A total's label can change with the item count, so read each amount from its own element, found by its role, not from its label's exact text or the whole row's text.",
+  );
+});
+
+/*
  * Cart tools given a product the site had no page for waited on the product page for an add
  * control, and timed out on the site's not-found page. The cart skill has every wait on the
  * product page name that page and refuse with the site's words.
@@ -1273,7 +1290,7 @@ it("has a write confirm from its own commit request, and read back only when tha
   const texts = await renderedTexts("typescript/authoring");
   const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
   expect(text("writes")).toContain(
-    '- Prefer confirming the write from its commit request. Keep the click on the final commit control, such as Save, Send, Submit, Book or Pay, in its own step, except a pay press after the host\'s card fill, which goes in the fill\'s step (caller-input skill). In the same call as that click, wait for the site\'s response to the request it sends, matched by the method and path the session saw carry the commit on the site, and by its body where the body shows the caller\'s values, as `references/write-readback.ts` does: a `{ response }` answer of `waitForOutcomeResult`, beside every way the page can answer, listing the site\'s error or validation message (`{ invalid: form }`) first. The write went through when that response is 2xx or 3xx, a body the call can read shows no error, and the page shows no error or validation message after it. A 201 whose Location names the new record went through as soon as it arrives, with no wait for the page. A 200 whose body reports an error, as GraphQL can, did not go through. A 202, or a 2xx whose body says the work is queued, went through too; return that in the output as a status in the core notation, such as `queued`, with the site\'s own word in a `status_label` field. Then read what the output promises from that response or from the page the commit left, match it to the caller\'s values, and call `verified()` with no argument just before returning, also when the page shows no confirmation, since that response already confirms the write. Declare `write: { confirmation: "readback" }`. Prefer not opening another page, such as a list, a history or an account screen, only to prove the write: a commit that went through, with the new record\'s id, already proves it. Return the tool\'s whole output from the step that confirms the write, read from the commit\'s response or the page it left: the caller or the site may cancel, refund or delete the record soon after, and a later read-back then shows less. In the same call as the click, read a success message that disappears on its own. When a commit step returned without calling `verified()` and its `stateChangingRequests` list the commit request with a 2xx or 3xx status, prefer confirming it in the next step from that response, with no error in its body or on the page as it stands, over waiting for a message that may be gone. Make no execute call after `verified()`: a later call reopens the effect. After the confirming step, further `act` steps are refused.',
+    '- Prefer confirming the write from its commit request. Keep the click on the final commit control, such as Save, Send, Submit, Book or Pay, in its own step, except a pay press after the host\'s card fill, which goes in the fill\'s step (caller-input skill). In the same call as that click, wait for the site\'s response to the request it sends, matched by the method and path the session saw carry the commit on the site, and by its body where the body shows the caller\'s values, as `references/write-readback.ts` does: a `{ response }` answer of `waitForOutcomeResult`, beside every way the page can answer, listing the site\'s error or validation message tied to that commit (`{ invalid: form }`) first; a notice not tied to it isn\'t an error and doesn\'t decide the outcome. The write went through when that response is 2xx or 3xx, a body the call can read shows no error, and the page shows no such error or validation message after it. A 201 whose Location names the new record went through as soon as it arrives, with no wait for the page. A 200 whose body reports an error, as GraphQL can, did not go through. A 202, or a 2xx whose body says the work is queued, went through too; return that in the output as a status in the core notation, such as `queued`, with the site\'s own word in a `status_label` field. Then read what the output promises from that response or from the page the commit left, match it to the caller\'s values, and call `verified()` with no argument just before returning, also when the page shows no confirmation, since that response already confirms the write. Declare `write: { confirmation: "readback" }`. Prefer not opening another page, such as a list, a history or an account screen, only to prove the write: a commit that went through, with the new record\'s id, already proves it. Return the tool\'s whole output from the step that confirms the write, read from the commit\'s response or the page it left: the caller or the site may cancel, refund or delete the record soon after, and a later read-back then shows less. In the same call as the click, read a success message that disappears on its own. When a commit step returned without calling `verified()` and its `stateChangingRequests` list the commit request with a 2xx or 3xx status, prefer confirming it in the next step from that response, with no error in its body or on the page as it stands, over waiting for a message that may be gone. Make no execute call after `verified()`: a later call reopens the effect. After the confirming step, further `act` steps are refused.',
   );
   // Every case the request cannot settle keeps a read-back.
   expect(text("writes")).toContain(
@@ -1839,10 +1856,13 @@ it("has a cart tool refuse an item listed only on a menu served at other hours",
 
 // A read of an item's options left out the choices the page preselects, reported a required
 // group with no minimum and no default, counted a group's controls for its picks, passed on a
-// site's generic refusal for missing choices, and listed a refusal's choices as bare ids. The cart
-// skill reads each group's preselected choices as its default and its picks from what the page
-// states, and names each short group in a refusal; the caller-input skill names a refusal's ids in
-// its message and pairs each choice's name with its id in a result.
+// site's generic refusal for missing choices, and listed a refusal's choices as bare ids. A tool
+// also missed choices picked through their own quantity controls and groups a pick opened, and
+// read a cart line's nested options as not applied. The cart skill reads each group's preselected
+// choices as its default and its picks from what the page states, sets such picks through their
+// controls, reads the dialog again after each pick, compares a line's nested options too, and
+// names each short group in a refusal; the caller-input skill names a refusal's ids in its message
+// and pairs each choice's name with its id in a result.
 it("has a cart tool read preselected choices as defaults and a listed choice pair its name with its id", async () => {
   const texts = await renderedTexts("typescript/authoring");
   const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
@@ -1855,8 +1875,30 @@ it("has a cart tool read preselected choices as defaults and a listed choice pai
   expect(text("cart")).toContain(
     'When the tool refuses for missing required choices rather than asking for them (the core skill, "Configure, then read"), prefer naming in the message each group that is short, with the picks it has and the picks it needs, over passing on the site\'s generic words.',
   );
+  expect(text("cart")).toContain(
+    "count every pick of a choice taken more than once toward them. Prefer reading choices that each carry a quantity control as their group's options, and setting each pick through that control. A pick can open groups nested under it, so prefer reading the dialog again after each pick.",
+  );
+  expect(text("cart")).toContain(
+    'can\'t fail the read before `verified()` (writes skill, "Check the read-back"). Prefer comparing each requested option with the line\'s options and the options nested under them.',
+  );
   expect(text("caller-input")).toContain(
     "When those choices are ids, prefer giving each one's name in the message, plus whatever tells near-duplicates apart. In any list of choices a result returns, prefer pairing each choice's name with its id, plus whatever tells near-duplicates apart.",
+  );
+});
+
+// A tool refused a store link in another path form that the same site's own pages return for
+// that kind of page, and a tool that found an order by its store's name and day could not tell
+// two such orders apart. The caller-input skill has a URL input accept every link form the site
+// uses for that kind of page, and the core skill has a tool that finds a record by name also take
+// its time when look-alike records can share a name.
+it("has a URL input accept the site's link forms and a record found by name take its time", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
+  expect(text("caller-input")).toContain(
+    "and which fields are required. A URL input accepts every link form the site itself uses for the same kind of page. 2. Check every rule",
+  );
+  expect(text("core")).toContain(
+    "and finds the record another way, such as by name, only when the caller gives none. When look-alike records can share a name, the tool also takes the record's time as an input. A closed list of options",
   );
 });
 
@@ -1880,17 +1922,17 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["deca80d578c90ce45780a3a19d6cb99d6de40d2e339bd52305c49eb06b88e8e0", "core"],
+    ["622f2f04de212c0bdc7520e831d90713ffc6d4bf06405ede0deee00ca76fea65", "core"],
     ["97e3b5ebdbe8d5fca43790729084de4eef4fbcf5fdf71ad645e679fd72f4e804", "search"],
     ["e6a78355e22e9989ffdccbc5a5f53eef0ec74217c3ae31b68c1ca0421f36ce44", "auth"],
     ["3355021c2daea519d533551d9b6f08f071c792328d39ec5020d6e8b0ca7def52", "testing"],
     ["ca80679c4488dec4ee85052fb39f1493b6d5f8ca4a5df9b56d10a2e96078e848", "pagination"],
     ["10dca2bd299747247e28de596d36225bb5bd1acfd56673457deaac10e4f6102b", "forms"],
-    ["684c2aa03cfb70f4882ac50aac8cf26c871d3e29a1805475e975b66ddf25b759", "writes"],
-    ["141409fcef42c00f528fe6d64b7aee576af8966fa30858aa4aceba00bcaa4e26", "cart"],
-    ["d3ef10f01ad24f3aec5e97d52edd251f16e2c14acdba6792f913f35115a689f8", "caller-input"],
+    ["69588ca18a7612ad946dd5135ebafd604ebf231a13ad60c9fbb8a9124b9a7ce6", "writes"],
+    ["ec7a2c59b29115dd450c813494d6797608265f655967a9df19afdfb1b05a648a", "cart"],
+    ["58eba217d05ab7bbde936e195270ee665bc755bbd3d1d15cc0a51a486fc56d71", "caller-input"],
     ["324900e9f56a1256dc4f6d8aa0182fca4b0038e67c669378747c4d4d1ac37a42", "publication"],
-    ["68624ce51e88e97ab72ff393ac8ecc7b9fc87d5d5518fd4d67a34e45da8be1fc", "workspace/AGENTS.md"],
+    ["6f9cf55ddcd940b69cd8362821fbe95868bdc306751ad553d9b26805167e2699", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);
 });
@@ -2011,7 +2053,7 @@ it("renders the search URL fast path only when a host turns it on", async () => 
     [sha256(on.agents), "workspace/AGENTS.md"],
   ]).toStrictEqual([
     ["de172ebf03d92a8782f5abbdd8444d90104634da28f4e21ad444dcbde0734e1f", "search"],
-    ["314beb6c4e94c6b74381c9e3622307cbee2c8fd9b32b0a4fa4fa11748c0e895e", "workspace/AGENTS.md"],
+    ["ede1d3986f3538e7b5b6db351be474021fa11d614afe3a78ebfb31f32623f66e", "workspace/AGENTS.md"],
   ]);
   expect(on.digests.filter(([, name]) => name !== "search")).toStrictEqual(
     off.digests.filter(([, name]) => name !== "search"),

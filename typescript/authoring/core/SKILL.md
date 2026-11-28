@@ -260,7 +260,8 @@ exception: it is optional unless the task can't run without it (below).
   suggestion's full display text or an internal id the caller cannot know (an id the site
   shows on its own pages, such as a product number, is not internal). Prefer a unique input,
   such as an ID: a tool that acts on one record takes the ID the site's other tools use for it,
-  and finds the record another way, such as by name, only when the caller gives none. A closed
+  and finds the record another way, such as by name, only when the caller gives none. When
+  look-alike records can share a name, the tool also takes the record's time as an input. A closed
   list of options stays an enum of the site's options, as above. When the options come from a
   query, as in a search box, autocomplete, typeahead or searchable combobox, look the value
   up the way a person would, with `pickValue` from `pickerCode` (forms skill), or with
@@ -578,6 +579,8 @@ the request names. Leave out what is unrelated to the tool's purpose or of no us
   each read as the site shows it. When the site shows only one, keep both fields anyway, an
   exception to the rules here on unread, always-null and never-filled fields: the other is null,
   never computed, and its description says when it is null.
+- A total's label can change with the item count, so read each amount from its own element, found
+  by its role, not from its label's exact text or the whole row's text.
 - A price the page shows as a starting amount, "from $X" or "$X+", is that minimum, not zero:
   prefer returning it marked as a minimum.
 - Expand collapsed text (a "more", "show all" or similar control) before reading it, and read it

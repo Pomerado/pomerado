@@ -435,6 +435,16 @@ export interface PendingExecution {
    */
   readonly answeredQuestions?: readonly AnsweredQuestion[];
   /**
+   * The host's record of the agent's own questions in this job that the owner left unanswered
+   * until they expired, each with its screened prompt and the answer the agent recommended (an
+   * option's label, a multiple choice's labels, or a text answer), which the agent was then told to
+   * go on with. Set by a host that keeps that record, for the reviews it chooses; absent otherwise.
+   */
+  readonly unansweredQuestions?: readonly {
+    readonly question: string;
+    readonly recommended: string | readonly string[];
+  }[];
+  /**
    * Execution reviews only: the screened results of this attempt's last six steps, oldest first,
    * as the agent received them, each capped at 4 KiB. Untrusted website evidence, never authority.
    */
@@ -453,7 +463,11 @@ export interface PendingExecution {
   readonly findingResponses?: readonly FindingResponse[];
   /** Host-selected mechanics and recorded chronology, not website claims or added authority. */
   readonly mintContext?: {
-    /** Host authorization mechanics only; does not establish the source's read semantics. */
+    /**
+     * Host authorization mechanics only; does not establish the source's read semantics. For an
+     * explore step a host sets it true only in a read build before its example claims, which lets
+     * the review keep the write of a step the site requires before the task (`siteRequiredStep`).
+     */
     readonly repeatableRead: boolean;
     /** Exact host-bound operation namespace available through readSource. */
     readonly operationSources: readonly string[];
@@ -491,7 +505,8 @@ export interface PendingExecution {
        * submitted input, or a write's act step runs the caller's input with values the request
        * states added (`callerKeys`). substitute: a read's example that runs another record of the
        * same kind, which the agent found on the site or an answer gave, in place of the caller's
-       * own input, after the host recorded the tool refusing that input with InvalidInput.
+       * own input, after the host recorded the tool refusing that input with InvalidInput or
+       * returning no results on it (`callerExampleEmpty`).
        * agent_chosen_batch: a batch of a read's live tests on inputs the minting agent chose, whose
        * submitted input lists each case's input under `cases`. recent_inputs_batch: such a batch on
        * inputs this tool's recent runs in the caller's own account sent, which a host runs again
@@ -520,6 +535,12 @@ export interface PendingExecution {
       };
     };
     readonly browser: "not_opened" | "active" | "closed" | "unavailable";
+    /**
+     * Host fact, execution reviews only: true once this read build's live example on the caller's
+     * own input, as it is now, completed with no results, judged as a live test that expects
+     * empty is. Absent otherwise, and from a host that does not record it.
+     */
+    readonly callerExampleEmpty?: true;
     /**
      * Host fact, for execution and publication reviews: `signed_out` when the job holds no saved
      * login and no host sign-in step ran in this attempt, so the session is established signed out;
@@ -1069,9 +1090,45 @@ const afterGroundPushback = (
 };
 
 /**
+ * Whether a step without write authority may still write once: a read build's explore step on the
+ * live browser before its example claimed (`repeatableRead`, which a host sets only then), while
+ * an applied update the owner confirmed adds or revises a requirement, such as a step the site
+ * requires before the task, and no write that may have reached the site is on record in the
+ * build. Guardian's policy keeps it to the step that update names, with only the owner's values;
+ * the harness records it as a write.
+ */
+const siteRequiredStep = (pending: PendingExecution): boolean => {
+  const context = pending.mintContext;
+  const step = context?.currentExecution;
+  if (
+    context?.repeatableRead !== true ||
+    step?.purpose !== "explore" ||
+    step.target !== "liveBrowser"
+  )
+    return false;
+  const unsent = new Set(
+    context.executions
+      .filter((execution) => execution.effect === "not_sent")
+      .map((execution) => execution.executionId),
+  );
+  return (
+    (pending.taskUpdates ?? []).some(
+      (update) =>
+        update.confirmation.length > 0 &&
+        update.changes.some(
+          (change) => change.setting === "requirement" && change.change !== "drop",
+        ),
+    ) &&
+    !(context.writes ?? []).some(
+      (write) => write.outcome !== "not_done" && !unsent.has(write.executionId),
+    )
+  );
+};
+
+/**
  * An execution review's decision. An allow without an action label is malformed, so the review
  * runs again under the outage retry; a `write` allow on a step without write authority becomes a
- * denial.
+ * denial, except for a step the site requires before the task (`siteRequiredStep`).
  */
 const decodeExecution = (pending: PendingExecution) => (raw: unknown) =>
   decodeDecision(knownRefusal(raw)).pipe(
@@ -1080,7 +1137,9 @@ const decodeExecution = (pending: PendingExecution) => (raw: unknown) =>
         ? Effect.succeed(decision)
         : decision.action === undefined
           ? Effect.fail(decisionFailure(new Error("An execution allow has no action label")))
-          : decision.action === "write" && pending.writeAuthority !== true
+          : decision.action === "write" &&
+              pending.writeAuthority !== true &&
+              !siteRequiredStep(pending)
             ? Effect.succeed({
                 outcome: "deny" as const,
                 rationale: writeOutOfAuthority,

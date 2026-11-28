@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { Effect, Scope } from "effect";
 import { createLocalWorkspace } from "../execution/local-workspace.js";
 import { seedLocalRuntime } from "../execution/local-runtime-assets.js";
@@ -12,6 +13,7 @@ import {
   type AutofillStepRequest,
 } from "../destinations/autofill-step.js";
 import { MintFailure, type ExecutionRequest, type WritePath } from "../mint/contracts.js";
+import { emptyCallerInput } from "../mint/step-checks.js";
 import { makeSecretHandles } from "../mint/secret-handles.js";
 import type { FileHandles } from "../mint/file-handles.js";
 import { makeSignInRecorder } from "../mint/sign-in-recorder.js";
@@ -232,6 +234,25 @@ export const mintState = (
      * read whose caller's input is one of them may run a substitute example in its place.
      */
     const refusedCallerExamples: unknown[] = [];
+    /**
+     * The caller's own inputs a read's live example ran whose latest run completed with no
+     * results: a read whose caller's input is one of them may run a substitute example in its
+     * place, and its execution reviews say so (`callerExampleEmpty`).
+     */
+    const emptyCallerExamples: unknown[] = [];
+    /** Notes a live example's run of the caller's own input: a run with results takes it back. */
+    const noteCallerExample = (input: unknown, empty: boolean) => {
+      const at = emptyCallerExamples.findIndex((noted) => isDeepStrictEqual(noted, input));
+      if (empty && at < 0) emptyCallerExamples.push(input);
+      if (!empty && at >= 0) emptyCallerExamples.splice(at, 1);
+    };
+    const callerExampleRefused = () =>
+      refusedCallerExamples.some((refused) => isDeepStrictEqual(refused, context.input));
+    // Only a read whose caller gave a record: a caller who gave none has no record of its own.
+    const callerExampleEmpty = () =>
+      context.buildEffect === "read" &&
+      !emptyCallerInput(context.input) &&
+      emptyCallerExamples.some((empty) => isDeepStrictEqual(empty, context.input));
     /** Each one-time login URL publication already asked about, so finishing again publishes it. */
     const oneTimeLoginUrlsAsked = new Set<string>();
     /**
@@ -356,6 +377,7 @@ export const mintState = (
         return { recorder, markers, start, sessionSignIn, signInOrigins };
       });
     context.bindWritePath(() => writeSession.path);
+    context.bindCallerExampleEmpty(callerExampleEmpty);
     let bound = yield* bindSite(context.siteOrigin, context.authenticationOrigins);
     // A later binding lives as long as the first: until the request's scope closes.
     const scope = yield* Effect.scope;
@@ -374,6 +396,9 @@ export const mintState = (
       writeSession,
       scriptAnswers,
       refusedCallerExamples,
+      noteCallerExample,
+      callerExampleRefused,
+      callerExampleEmpty,
       oneTimeLoginUrlsAsked,
       cardTyped,
       afterSubmit,

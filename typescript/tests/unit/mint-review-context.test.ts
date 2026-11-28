@@ -1,5 +1,9 @@
 import { DateTime, Effect } from "effect";
 import { describe, expect, it } from "vitest";
+import {
+  guardianExecutionPolicy,
+  nativeExecutionEnvironment,
+} from "../../src/guardian/execution-policy.js";
 import { ReviewFailure, type ReviewedLiveTestBatch } from "../../src/guardian/review.js";
 import { failureDetail } from "../../src/runtime/failure-detail.js";
 import {
@@ -358,6 +362,22 @@ describe("mintReviewContext", () => {
     // Bound with none on record, as after a takeover: the review is told so.
     const noneYet: MintReviewHost = { ...host, liveTests: () => Effect.succeed([]) };
     expect((await context(noneYet, live("example"))).liveTests).toStrictEqual([]);
+  });
+
+  // A caller's record that shows the site's own empty answer left a build no record to learn the
+  // results from: another record the site lists is a substitute once the host says so.
+  it("tells an execution review that the caller's own example came back with no results", async () => {
+    const { host } = fakeHost();
+    const empty: MintReviewHost = { ...host, callerExampleEmpty: () => true };
+    expect(await context(empty, live("explore"))).toMatchObject({ callerExampleEmpty: true });
+    expect(await context(empty)).not.toHaveProperty("callerExampleEmpty");
+    expect(await context(host, live("explore"))).not.toHaveProperty("callerExampleEmpty");
+    expect(
+      await context({ ...host, callerExampleEmpty: () => false }, live("explore")),
+    ).not.toHaveProperty("callerExampleEmpty");
+    expect(guardianExecutionPolicy(nativeExecutionEnvironment)).toContain(
+      "When trusted_execution_context.callerExampleEmpty shows the caller's own record returned the site's own no-result or can't-offer answer, an explore or example on another record of the same kind that the site itself lists, for the same task on the same site, is a substitute as above: prefer allow. The caller's record stays the tool's case for that answer.",
+    );
   });
 });
 

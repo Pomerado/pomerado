@@ -315,10 +315,13 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
     let liveTests: Effect.Effect<readonly ReviewedLiveTestBatch[]> | undefined;
     /** The build's recorded write path, once the mint state binds it. */
     let writePath: (() => WritePath | undefined) | undefined;
+    /** Whether the caller's own example came back with no results, once the mint state binds it. */
+    let callerExampleEmpty: (() => boolean) | undefined;
     const host: MintReviewHost = {
       writes: () => writes?.() ?? [],
       liveTests: () => liveTests,
       writePath: () => writePath?.(),
+      callerExampleEmpty: () => callerExampleEmpty?.() === true,
       repeatableRead: () => repeatableReadFor(buildEffect, claimed),
       browser: () => (navigated ? "active" : "not_opened"),
       // The page's place is redacted again on each read, as its capture is.
@@ -774,6 +777,10 @@ export const requestContext = (session: StandaloneSession, request: PomeradoRequ
       /** Gives every review the write session's recorded write path. */
       bindWritePath: (read: () => WritePath | undefined) => {
         writePath = read;
+      },
+      /** Gives execution reviews whether the caller's own example came back with no results. */
+      bindCallerExampleEmpty: (read: () => boolean) => {
+        callerExampleEmpty = read;
       },
     };
   });
