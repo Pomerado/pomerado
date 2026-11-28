@@ -144,6 +144,22 @@ describe("a script question's options", () => {
     expect(result).toEqual(Either.right({ pick: "stop" }));
   });
 
+  it("leaves out an option with no text, so the caller sees only the named ones", () => {
+    const { result, offered } = ask(
+      [
+        { value: "first", label: "First" },
+        { value: "blank", label: " \n " },
+        { value: "second", label: "Second" },
+      ],
+      picked("o2"),
+    );
+    expect(offered).toEqual([
+      { id: "o1", label: "First" },
+      { id: "o2", label: "Second" },
+    ]);
+    expect(result).toEqual(Either.right({ pick: "second" }));
+  });
+
   it("still refuses an empty value or label, a repeated value, and a field options don't take", () => {
     const refused = Either.left(expect.objectContaining({ code: "InvalidOptions" }));
     const long = "z".repeat(300);
@@ -452,6 +468,7 @@ describe("a site-field question's label", () => {
         extra: {
           label,
           options: [
+            { value: "blank", label: " " },
             { value: "short", label: "Short choice" },
             { value: "long", label: long },
             // Its label shows only on the protected page, so the prompt never repeats it.

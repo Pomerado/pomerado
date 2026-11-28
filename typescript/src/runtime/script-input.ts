@@ -479,9 +479,12 @@ const offeredOptions = (id: string, given: ReadonlyArray<ScriptOption> | undefin
     return false;
   });
   if (repeated >= 0) return Either.left(invalidOption(id, repeated, optionProblem.repeatedValue));
+  // An entry with no text names nothing to pick, so the caller never sees it.
+  const kept = options.filter((option) => option.label.trim() !== "");
   return Either.right({
-    values: new Map(options.map((option, index) => [`o${index + 1}`, option.value])),
-    offered: options.map((option, index) => ({
+    kept,
+    values: new Map(kept.map((option, index) => [`o${index + 1}`, option.value])),
+    offered: kept.map((option, index) => ({
       id: `o${index + 1}`,
       label: cutTo(option.label, longestLabel),
       ...(option.accountSpecific === undefined ? {} : { accountSpecific: option.accountSpecific }),
@@ -591,11 +594,11 @@ const askedQuestion = (
           question: { id, type: "text" as const, prompt: siteFieldPrompt(pageLabel) },
           values: new Map<string, string>(),
         });
-      return Either.map(offeredOptions(id, given), ({ values, offered }) => ({
+      return Either.map(offeredOptions(id, given), ({ kept, values, offered }) => ({
         question: {
           id,
           type: "choice" as const,
-          prompt: siteFieldPrompt(pageLabel, given),
+          prompt: siteFieldPrompt(pageLabel, kept),
           options: offered,
         },
         values,
