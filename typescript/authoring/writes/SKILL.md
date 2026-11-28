@@ -504,8 +504,9 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   one as unknown, so the run reports a possible change ("What runs do with it").
 - When the caller wants several of the same item, prefer setting the quantity in one commit,
   through the site's quantity field or option, over committing the item once per unit, which
-  suits a site with no quantity control. Each commit is one item in the outcomes above: a
-  quantity set in one commit is one item, and each unit committed on its own is one.
+  suits a site with no quantity control. Find the quantity control by its role and label, not by
+  one layout. Each commit is one item in the outcomes above: a quantity set in one commit is one
+  item, and each unit committed on its own is one.
 - When a read-back is needed, the first one that matches confirms the write; stop there. It
   matches when it shows the written record after the write, found by something the write
   produced or entered (its number, its own reference or the values entered). Compare every
