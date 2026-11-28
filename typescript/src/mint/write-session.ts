@@ -282,6 +282,7 @@ const sessionRefusal = (
   publishesOnRefusal = false,
   publishesOnReadBack = false,
   writePathUnreached?: readonly string[],
+  publishesOnNoSaveRun = false,
 ) =>
   new MintFailure({
     code: "PublicationUnavailable",
@@ -299,6 +300,10 @@ const sessionRefusal = (
     ...(publishesOnReadBack &&
     (reason === "write_path_unfinished" || reason === "commit_marks_unentered")
       ? { publishesOnReadBack: true as const }
+      : {}),
+    // And the one it meets when it has not yet declared the save steps a no-save run stopped before.
+    ...(publishesOnNoSaveRun && reason === "commit_marks_unentered"
+      ? { publishesOnNoSaveRun: true as const }
       : {}),
   });
 
@@ -341,6 +346,13 @@ const unreachedMarks = (remaining: readonly string[], steps: readonly WriteSessi
  * the path it entered, which the write path check then leaves to the contract. With a recorded
  * path, a session that entered none may leave unproven only marks of that path. A host that leaves
  * it unset refuses both as before.
+ *
+ * A host that publishes on a step that ran the tool's own path that saves nothing, as a mode that
+ * only checks, sets `publishOnNoSaveRun` when it judged the step named for publication such a run.
+ * Then, when that step recorded no confirmation and no step of the session entered or streamed a
+ * commit mark, its outcome stands without a save, as a refusal's does: the check skips the sent and
+ * write path checks, matches no confirmation, and the composed script must name every commit step
+ * in `commitsUnproven`.
  */
 export const checkWriteSession = <
   Extracted extends {
@@ -393,6 +405,11 @@ export const checkWriteSession = <
    */
   readonly publishOnReadBack?: boolean;
   /**
+   * Set by a host that judged the step named for publication a run of the tool's own path that
+   * saves nothing. A host that leaves it unset refuses such a session as before.
+   */
+  readonly publishOnNoSaveRun?: boolean;
+  /**
    * For a publication that replaces a published revision, such as a repair or a change: given the
    * read contract, the commit steps that `commitsUnproven` may name wherever they sit in `commits`,
    * not only after the last one the session entered, as conditional steps the session's input
@@ -411,21 +428,42 @@ export const checkWriteSession = <
     // The step named for publication read back the page, so an outcome that stands without a save
     // may publish on it.
     const readBack = check.publishOnReadBack === true && step.confirmation === "readback";
+    // No step of the session entered or streamed a mark.
+    const markless = session.steps.every(
+      (entry) => entry.enteredMarks.length === 0 && (entry.streamedMarks ?? []).length === 0,
+    );
+    // The step named for publication ran the tool's own path that saves nothing, by the host's word,
+    // in a session that entered no mark.
+    const noSaveRun =
+      check.publishOnNoSaveRun === true &&
+      step.confirmation === undefined &&
+      step.enteredMarks?.length === 0 &&
+      markless;
     const refuse = (
       reason: NonNullable<MintFailure["reason"]>,
       writePathMarks?: readonly string[],
       writePathUnreached?: readonly string[],
       publishesOnReadBack = check.publishOnReadBack === true,
     ) =>
-      sessionRefusal(reason, writePathMarks, refusable, publishesOnReadBack, writePathUnreached);
+      sessionRefusal(
+        reason,
+        writePathMarks,
+        refusable,
+        publishesOnReadBack,
+        writePathUnreached,
+        noSaveRun,
+      );
     const siteRefusal = refusable ? step.refused : undefined;
     const thrown = refusable && step.thrownRefusal === true;
     const refused = siteRefusal !== undefined || thrown;
-    if (!refused && !sessionSentWrite(session)) return yield* refuse("write_not_submitted");
+    // Each ends the session saving nothing.
+    const standsWithoutSave = refused || noSaveRun;
+    if (!standsWithoutSave && !sessionSentWrite(session))
+      return yield* refuse("write_not_submitted");
     const enteredMarks = sessionEnteredMarks(session.steps);
     // The refusal ends the session (the host sets `refused` and `thrownRefusal` only on its last
-    // act step), so the path's later marks stay unentered.
-    const unrun = refused ? [] : writePathRemaining(check.writePath, enteredMarks);
+    // act step), so the path's later marks stay unentered, and so does a run that saves nothing.
+    const unrun = standsWithoutSave ? [] : writePathRemaining(check.writePath, enteredMarks);
     // No read-back settles a mark no step entered or streamed. On a read-back, the contract may
     // declare such marks unproven when each comes after the last mark of the path the session
     // entered, all of them when it entered none, as `writeContractRefusal` takes them; an earlier
@@ -447,16 +485,12 @@ export const checkWriteSession = <
     const commits = extracted.contract.write?.commits ?? [];
     // A path with no step, for a request that ends before any save, publishes saving nothing, and
     // only while no step entered or streamed a mark.
-    const stopsBeforeSave =
-      readBack &&
-      check.writePath?.steps.length === 0 &&
-      session.steps.every(
-        (entry) => entry.enteredMarks.length === 0 && (entry.streamedMarks ?? []).length === 0,
-      );
+    const stopsBeforeSave = readBack && check.writePath?.steps.length === 0 && markless;
     const refusal = writeContractRefusal(extracted.contract.write, extracted.inputDecodes, step, {
       confirmed: sessionConfirmed(session.steps),
       enteredMarks,
       ...(refused ? { refused: true } : {}),
+      ...(noSaveRun ? { noSaveRun: true } : {}),
       // With a recorded path, a read-back leaves unproven from the start only steps of that path,
       // which Guardian reviewed before anything was sent.
       ...(readBack &&

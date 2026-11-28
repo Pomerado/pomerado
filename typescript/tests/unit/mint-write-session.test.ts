@@ -549,6 +549,40 @@ describe("a write session's publication check", () => {
       });
     });
   });
+
+  it("publishes a step that ran the tool's own path that saves nothing, every save step unproven, for a host that publishes on it", () => {
+    // A booking tool's mode that only checks whether a slot is free ran to its end and saved nothing.
+    const checked: WriteSessionMarks = { enteredMarks: [], action: "read", possiblySent: false };
+    const allUnproven = contract({
+      confirmation: "message",
+      commits: ["hold-slot", "confirm-booking"],
+      commitsUnproven: ["hold-slot", "confirm-booking"],
+    });
+    const publish = (publishOnNoSaveRun: boolean) =>
+      Effect.runSyncExit(
+        checkWriteSession({
+          session: { steps: [checked] },
+          step: checked,
+          extract: Effect.succeed(allUnproven),
+          writePath: {
+            steps: [
+              { commit: "hold-slot", does: "Holds the slot" },
+              { commit: "confirm-booking", does: "Confirms the booking" },
+            ],
+            ends: "The booking's confirmation",
+          },
+          publishOnNoSaveRun,
+        }),
+      );
+    expect(reason(publish(false))).toBe("write_not_submitted");
+    expect(publish(true)).toEqual(
+      Exit.succeed({
+        extracted: allUnproven,
+        declared: "message",
+        commitsUnproven: ["hold-slot", "confirm-booking"],
+      }),
+    );
+  });
 });
 
 describe("a write build's write path", () => {
