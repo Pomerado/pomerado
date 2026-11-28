@@ -4102,10 +4102,15 @@ for (const alone of [false, true])
           ? { ...report, submit: "page" as const }
           : report,
       );
+    // Its Continue sits in a form that reads as GET from when it shows, as one with no method does.
     const inspect: typeof site.hooks.inspect = (step) =>
       site.site.typed.has("#d5") && step.fields.some((field) => digits.includes(field.selector))
         ? Effect.succeed({ outcome: "refused", reason: "credential_target_refused" })
-        : site.hooks.inspect(step);
+        : Effect.map(site.hooks.inspect(step), (read) =>
+            "outcome" in read || read.targets.submit === null || step.submit !== "#continue"
+              ? read
+              : { ...read, targets: { ...read.targets, submit: { ...read.targets.submit, submitMethod: "get" } } },
+          );
     expect(await replay({ ...site, hooks: { ...site.hooks, fill, inspect } }, library)).toMatchObject({ outcome: "signed_in" });
     expect(site.fills).toEqual([...Array<string>(6).fill("code"), "email"]);
   });

@@ -2961,10 +2961,12 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
         // The fuller state as if reached now, with what this replay typed still to count as new.
         if (run.visited.length >= maximumStateVisits) return stopped(run, "state_limit");
         yield* input.emit({ stage: "state", state: fuller.state.key, reason: "fuller_state" });
-        // Its press judges its submit and its own recorded boxes, as a recipe screen's does: a box
-        // typed before that its step doesn't hold was judged at its own fill.
+        // Its press judges its own recorded boxes, and a submit it shares with this state, as a
+        // recipe screen's does: a box typed before that its step doesn't hold, and a submit of its
+        // own, are judged at its own fill.
         for (const selector of readBefore.boxes.keys())
           if (!fuller.state.step.fields.some((field) => field.selector === selector)) readBefore.boxes.delete(selector);
+        if (fuller.state.step.submit !== state.step.submit) delete readBefore.submit;
         state = fuller.state;
         reached = {
           ...reached,
