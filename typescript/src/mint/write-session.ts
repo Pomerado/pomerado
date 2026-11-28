@@ -341,9 +341,10 @@ const unreachedMarks = (remaining: readonly string[], steps: readonly WriteSessi
  *
  * A host that publishes on a step that ran the tool's own path that saves nothing, as a mode that
  * only checks, sets `publishOnNoSaveRun` when it judged the step named for publication such a run.
- * Then, when that step entered no commit mark and recorded no confirmation, its outcome stands
- * without a save, as a refusal's does: the check skips the sent and write path checks, matches no
- * confirmation, and the composed script must name every commit step in `commitsUnproven`.
+ * Then, when that step recorded no confirmation and no step of the session entered or streamed a
+ * commit mark, its outcome stands without a save, as a refusal's does: the check skips the sent and
+ * write path checks, matches no confirmation, and the composed script must name every commit step
+ * in `commitsUnproven`.
  */
 export const checkWriteSession = <
   Extracted extends {
@@ -419,11 +420,17 @@ export const checkWriteSession = <
     // The step named for publication read back the page, so an outcome that stands without a save
     // may publish on it.
     const readBack = check.publishOnReadBack === true && step.confirmation === "readback";
-    // The step named for publication ran the tool's own path that saves nothing, by the host's word.
+    // No step of the session entered or streamed a mark.
+    const markless = session.steps.every(
+      (entry) => entry.enteredMarks.length === 0 && (entry.streamedMarks ?? []).length === 0,
+    );
+    // The step named for publication ran the tool's own path that saves nothing, by the host's word,
+    // in a session that entered no mark.
     const noSaveRun =
       check.publishOnNoSaveRun === true &&
       step.confirmation === undefined &&
-      step.enteredMarks?.length === 0;
+      step.enteredMarks?.length === 0 &&
+      markless;
     const refuse = (
       reason: NonNullable<MintFailure["reason"]>,
       writePathMarks?: readonly string[],
@@ -468,12 +475,7 @@ export const checkWriteSession = <
     const commits = extracted.contract.write?.commits ?? [];
     // A path with no step, for a request that ends before any save, publishes saving nothing, and
     // only while no step entered or streamed a mark.
-    const stopsBeforeSave =
-      readBack &&
-      check.writePath?.steps.length === 0 &&
-      session.steps.every(
-        (entry) => entry.enteredMarks.length === 0 && (entry.streamedMarks ?? []).length === 0,
-      );
+    const stopsBeforeSave = readBack && check.writePath?.steps.length === 0 && markless;
     const refusal = writeContractRefusal(extracted.contract.write, extracted.inputDecodes, step, {
       confirmed: sessionConfirmed(session.steps),
       enteredMarks,
