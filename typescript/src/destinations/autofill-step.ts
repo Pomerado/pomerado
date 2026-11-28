@@ -572,6 +572,11 @@ export interface AutofillInspection {
    * has none. Read at run time, never a recipe value.
    */
   readonly keptCodeBoxes?: readonly string[] | undefined;
+  /**
+   * Host-only: on a step that types nothing, how many visible matches its submit had, all links
+   * that open the same other page the same way, of which the host takes the first.
+   */
+  readonly sameDestinationMatches?: number | undefined;
   readonly screen: {
     /**
      * The origin of the frame the host found the step's controls in, its submit's or, when it
@@ -1198,6 +1203,9 @@ export const inspectAutofillStep = (input: {
       ...(carried === undefined ? {} : { carriedSignInOrigin: carried }),
       ...(found.codeBoxRow === undefined ? {} : { codeBoxRow: found.codeBoxRow }),
       ...(found.keptCodeBoxes === undefined ? {} : { keptCodeBoxes: found.keptCodeBoxes }),
+      ...(found.located?.submit?.sameDestinationMatches === undefined
+        ? {}
+        : { sameDestinationMatches: found.located.submit.sameDestinationMatches }),
       ...(input.paymentFrameOrigins === undefined
         ? {}
         : { paymentFrameOrigins: input.paymentFrameOrigins }),

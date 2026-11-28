@@ -14,8 +14,16 @@ import type {
 } from "./autofill-step.js";
 import { InsertionRefusal } from "./credential-keyboard.js";
 
-/** Where a step call found a control's one visible match: that frame's URL, and how many it searched. */
-export const FoundIn = Schema.Struct({ frameUrl: Schema.String, frames: Schema.Number });
+/**
+ * Where a step call found a control's one visible match: that frame's URL, and how many it
+ * searched. A step that types nothing may take several links that open the same other page the
+ * same way as its submit, the first: how many (`sameDestinationMatches`).
+ */
+export const FoundIn = Schema.Struct({
+  frameUrl: Schema.String,
+  frames: Schema.Number,
+  sameDestinationMatches: Schema.optional(Schema.Number),
+});
 /** Where a step call found each control of the step. */
 export const FoundAt = Schema.Struct({
   fields: Schema.Array(FoundIn),

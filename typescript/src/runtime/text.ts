@@ -119,12 +119,21 @@ export const unitAmount = (text: unknown): string | undefined => {
  * with the clock, since two times of day, or two lengths of time, the caller chose between match
  * too.
  *
+ * With `{ query: true }`, `shown` is a site's echo of a search query, `wanted`, such as its results
+ * heading or search box: double quotation marks leave both texts and & reads as and, so a query
+ * the site echoes only in its own format matches. Use it only for a query's echo, since a name
+ * or value a tool checks before acting stays exact on these marks.
+ *
  * It is pure and self-contained, so page code can embed it.
  */
 export const sameText = (
   shown: string,
   wanted: string,
-  options: { readonly rewrite?: boolean; readonly ignoreClockTimes?: boolean } = {},
+  options: {
+    readonly rewrite?: boolean;
+    readonly ignoreClockTimes?: boolean;
+    readonly query?: boolean;
+  } = {},
 ): boolean => {
   if (options?.ignoreClockTimes === true) {
     // The same times readBackMatches leaves out: a time of day, an hour before am or pm, the
@@ -145,7 +154,14 @@ export const sameText = (
   };
   const fold = (text: string) => {
     const raw = String(text ?? "").replace(/[\u00AD\u200B\u2060\uFEFF]/gu, "");
-    const folded = raw
+    const read =
+      options?.query === true
+        ? raw
+            .normalize("NFKD")
+            .replace(/["\u00AB\u00BB\u2039\u203A\u201C-\u201F\u301D-\u301F]/gu, " ")
+            .replace(/&/gu, " and ")
+        : raw;
+    const folded = read
       .normalize("NFKD")
       .replace(/[\u0300-\u036f]/gu, "")
       .normalize("NFC")
