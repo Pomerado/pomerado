@@ -156,7 +156,10 @@ export const sameText = (
     const raw = String(text ?? "").replace(/[\u00AD\u200B\u2060\uFEFF]/gu, "");
     const read =
       options?.query === true
-        ? raw.replace(/["\u201C\u201D\u201E]/gu, " ").replace(/&/gu, " and ")
+        ? raw
+            .normalize("NFKD")
+            .replace(/["\u00AB\u00BB\u2039\u203A\u201C-\u201F\u301D-\u301F]/gu, " ")
+            .replace(/&/gu, " and ")
         : raw;
     const folded = read
       .normalize("NFKD")

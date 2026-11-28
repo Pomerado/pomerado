@@ -136,7 +136,8 @@ and never as `InputNotApplied`, with that query as `applied_query` and a `query_
 boolean; when the site only fixed its spelling,
 a tool that ranks the results ranks them against that query as well as the caller's. The same
 holds for the query an HTTP version's answer echoes. An echo that passes the `sameText` check
-above is the caller's query, with `query_corrected` false.
+above, with nothing on the page saying the site searched another query, is the caller's query,
+with `query_corrected` false.
 
 ## Answer quickly
 
