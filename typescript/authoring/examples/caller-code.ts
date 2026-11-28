@@ -37,9 +37,9 @@ export default defineOperation(
         if (!onSite(current)) return false;
         // The code field shows once the site sent the code; a page that stops progressing without
         // it fails in seconds.
-        const send = page.getByRole("button", { name: "Send code", exact: true });
+        const send = page.getByRole("button", { name: "Send code" });
         await waitForOutcome(
-          { field: page.getByLabel("Verification code", { exact: true }) },
+          { field: page.getByLabel("Verification code") },
           { action: () => send.click({ timeout: waitLimits.action }) },
         );
         return true;
@@ -55,10 +55,10 @@ export default defineOperation(
       timeout_sec: 60,
       code: `
         ${waitCode}
-        await page.getByLabel("Verification code", { exact: true }).fill(${JSON.stringify(code)}, { timeout: waitLimits.action });
+        await page.getByLabel("Verification code").fill(${JSON.stringify(code)}, { timeout: waitLimits.action });
         // The confirm is sent once; a page that shows no confirmation is reported unconfirmed.
-        const confirm = page.getByRole("button", { name: "Confirm", exact: true });
-        const done = page.getByRole("status", { name: "Address change confirmed", exact: true });
+        const confirm = page.getByRole("button", { name: "Confirm" });
+        const done = page.getByRole("status", { name: "Address change confirmed" });
         return await waitForOutcome({ done }, { action: () => confirm.click({ timeout: waitLimits.action }) }).then(
           () => true,
           (error) => {

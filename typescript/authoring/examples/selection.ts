@@ -21,7 +21,7 @@ export default defineOperation(
       timeout_sec: 30,
       code: `
         ${formControlsCode}
-        const select = page.getByLabel("Invoice status", { exact: true });
+        const select = page.getByLabel("Invoice status");
         return (await chooseOption(select, ${JSON.stringify(input.status)})).value;
       `,
     });

@@ -30,7 +30,7 @@ export default defineOperation(
         }));
         // The click's own timeout ends inside the absence window, so no late click can
         // continue after the operation has reported no dialog.
-        void row.getByRole("button", { name: "Delete", exact: true }).click({ timeout: 5000 }).catch(() => {});
+        void row.getByRole("button", { name: "Delete" }).click({ timeout: 5000 }).catch(() => {});
         return await Promise.race([
           shown,
           new Promise((resolve) => setTimeout(() => resolve({ failure: "no_dialog" }), 30000)),

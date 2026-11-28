@@ -28,9 +28,9 @@ export const pickTravelDate = defineOperation(
       code: `
         ${waitCode}
         const date = ${JSON.stringify(input.date)};
-        const field = page.getByRole("textbox", { name: "Travel date", exact: true });
+        const field = page.getByRole("textbox", { name: "Travel date" });
         // A popup that never opens fails once the page stops progressing.
-        const popup = page.getByRole("dialog", { name: "Choose date", exact: true });
+        const popup = page.getByRole("dialog", { name: "Choose date" });
         await waitForOutcome({ popup }, { action: () => field.click({ timeout: waitLimits.action }) });
         // The months the popup shows, as its panels name them.
         const shownMonths = { months: { locator: popup.locator("[data-month]"), attribute: "data-month", all: true } };
@@ -42,7 +42,7 @@ export const pickTravelDate = defineOperation(
         for (let step = 0; !months.includes(date.slice(0, 7)); step++) {
           if (step === 24 || months.length === 0) return { failure: "month_unavailable" };
           const back = date.slice(0, 7) < months[0];
-          const control = popup.getByRole("button", { name: back ? "Previous month" : "Next month", exact: true });
+          const control = popup.getByRole("button", { name: back ? "Previous month" : "Next month" });
           const moved = await waitForChange(shownMonths, { before: { months }, action: () => control.click({ timeout: waitLimits.action }) });
           if (!moved.changed) return { failure: "month_unavailable" };
           months = moved.values.months;
@@ -96,7 +96,7 @@ export default defineOperation(
   async ({ kernel, sessionId, input, files, errors }) => {
     const chosen = await kernel.browsers.playwright.execute(sessionId, {
       timeout_sec: 30,
-      code: `return await page.getByLabel("Documents", { exact: true }).evaluate((node) => node.files.length);`,
+      code: `return await page.getByLabel("Documents").evaluate((node) => node.files.length);`,
     });
     if (!chosen.success)
       throw new errors.OperationFailure(String(chosen.error), { stderr: chosen.stderr });
@@ -123,7 +123,7 @@ export const downloadStatement = defineOperation(
     const statement = await files.collect(async () => {
       const answer = await kernel.browsers.playwright.execute(sessionId, {
         timeout_sec: 30,
-        code: `await page.getByRole("link", { name: "Download statement", exact: true }).click({ timeout: ${timeoutDefaults.action} });`,
+        code: `await page.getByRole("link", { name: "Download statement" }).click({ timeout: ${timeoutDefaults.action} });`,
       });
       if (!answer.success)
         throw new errors.OperationFailure(String(answer.error), { stderr: answer.stderr });

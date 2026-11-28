@@ -67,7 +67,7 @@ export default defineOperation(
         const current = new URL(page.url());
         if (!onSite(current)) return { failure: "unexpected_page" };
         await page.getByRole("button", { name: "Choose " + flight, exact: true }).click({ timeout: ${timeoutDefaults.action} });
-        const seatMap = page.getByRole("radiogroup", { name: "Seats", exact: true });
+        const seatMap = page.getByRole("radiogroup", { name: "Seats" });
         // The seat map names its flight once that flight's seats are shown.
         await seatMap
           .and(page.locator("[data-flight=" + JSON.stringify(flight) + "]"))
@@ -77,7 +77,7 @@ export default defineOperation(
             input.disabled ? [] : [{ value: input.value, label: input.labels[0]?.textContent.trim() || input.value }],
           ),
         );
-        const travelers = await page.getByLabel("Traveler", { exact: true }).locator("option").evaluateAll((options) =>
+        const travelers = await page.getByLabel("Traveler").locator("option").evaluateAll((options) =>
           options.flatMap((option) =>
             option.value
               ? [{ value: option.value, label: option.textContent.trim(), maskedLabel: option.dataset.masked || "Saved traveler" }]
@@ -111,15 +111,15 @@ export default defineOperation(
         ${waitCode}
         const chosenSeat = ${JSON.stringify(answer.seat)};
         const chosenTraveler = ${JSON.stringify(answer.traveler)};
-        const seatMap = page.getByRole("radiogroup", { name: "Seats", exact: true });
+        const seatMap = page.getByRole("radiogroup", { name: "Seats" });
         // The wait can be long, so confirm the page still offers the chosen seat first.
         const seat = seatMap.locator("input[value=" + JSON.stringify(chosenSeat) + "]");
         if ((await seat.count()) !== 1 || (await seat.isDisabled())) return { failure: "choice_gone" };
         await seat.check({ timeout: ${timeoutDefaults.action} });
-        await page.getByLabel("Traveler", { exact: true }).selectOption(chosenTraveler, { timeout: ${timeoutDefaults.action} });
+        await page.getByLabel("Traveler").selectOption(chosenTraveler, { timeout: ${timeoutDefaults.action} });
         // The booking is sent once; a page that shows no confirmation is reported unconfirmed.
-        const book = page.getByRole("button", { name: "Book", exact: true });
-        const confirmation = page.getByRole("status", { name: "Booking confirmation", exact: true });
+        const book = page.getByRole("button", { name: "Book" });
+        const confirmation = page.getByRole("status", { name: "Booking confirmation" });
         const shown = await waitForOutcome({ confirmation }, { action: () => book.click({ timeout: waitLimits.action }) }).then(
           () => true,
           (error) => {
