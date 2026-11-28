@@ -1812,6 +1812,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        */
       let readStepRefused = false;
       /**
+       * A write build's report that asked its owner nothing was already sent back to ask
+       * (`owner_not_asked`), so the next is taken. Kept in memory only, as `namedStepsOffered`.
+       */
+      let ownerAskOffered = false;
+      /**
        * The latest screened instruction each refusal in `namedStepReasons`, or each registry refusal
        * the minter may fix, gave the minter, which a `host_refused` report sent back to its step
        * repeats.
@@ -4650,6 +4655,27 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           return refused(
             "own_rule_refused",
             "Our own rule refused a step in this attempt, so site_lacks_capability may not fit, and the build has not ended. Prefer policy when Guardian or the read-only rule refused a step the task needs, or host_refused when a host check did, and say in the explanation what the caller can do. If the site itself lacks what the task needs, call report_blocked again.",
+          );
+        }
+        // A new write build that asked its owner nothing (no answer, no question left unanswered,
+        // no no) has its first site gap or caller stop sent back once to ask, and the next is
+        // taken. A question Guardian turned away reached nobody. A sign-in that never confirmed
+        // keeps its own ending: the site never judged the task.
+        if (
+          (reason === "site_lacks_capability" || reason === "caller_input") &&
+          request.mode === "mint" &&
+          buildEffect === "write" &&
+          !signInUnconfirmed &&
+          !signInRefusalOnly &&
+          !ownerAskOffered &&
+          answeredQuestions.size === 0 &&
+          !unanswered &&
+          !ownerRefused
+        ) {
+          ownerAskOffered = true;
+          return refused(
+            "owner_not_asked",
+            "This write build asked its owner nothing, so the build has not ended. When a condition in the request is what stops it, prefer one confirm question to the owner that says what the site shows and how it differs from the request. If the request rules out asking, or a question can't help, call report_blocked again.",
           );
         }
         if (reason === "host_refused" && !hostRefusing && hostRefusalPassed && hostRefusalRepeated)

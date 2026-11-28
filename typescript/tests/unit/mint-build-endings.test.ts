@@ -638,6 +638,49 @@ it.each([
   expect(lastResult(f.requests[2])).toContain("own_rule_refused");
 });
 
+// A write build that asked its owner nothing has its first site gap sent back once, and the next
+// report ends it. A write build that asked, and a read build, end at once.
+it.each([
+  { effect: "write", asked: false, refused: true },
+  { effect: "write", asked: true, refused: false },
+  { effect: "read", asked: false, refused: false },
+] as const)(
+  "refuses a $effect build's first site gap once only when it asked nobody (asked: $asked)",
+  async ({ effect, asked, refused }) => {
+    const explanation = "The offer adds items the request rules out.";
+    const report = (id: string) =>
+      call(
+        "report_blocked",
+        {
+          reason: "site_lacks_capability",
+          explanation,
+          intent: "The offer bundles items the request rules out.",
+        },
+        id,
+      );
+    const calls = [
+      ...(asked ? [call("request_input", ask("Which offer should the tool pick?"))] : []),
+      report("first"),
+      report("second"),
+    ];
+    const f = await fixture(
+      (_request, index) => calls[index] ?? prose("Stopping."),
+      asked
+        ? { askInput: () => Effect.succeed({ report: { type: "text", value: "The first." } }) }
+        : {},
+      { effect, siteOrigin: "https://shop.example.test" },
+    );
+    expect(await f.run()).toMatchObject({
+      build: "incomplete",
+      blocked: { reason: "site_lacks_capability", explanation },
+    });
+    expect(f.requests).toHaveLength(calls.length - (refused ? 0 : 1));
+    expect(f.requests.some((request) => lastResult(request).includes("owner_not_asked"))).toBe(
+      refused,
+    );
+  },
+);
+
 // Guardian's refusal stays a policy block, even when a question also went unanswered.
 it("keeps a policy block that stands on a Guardian refusal", async () => {
   const explanation = "Guardian refused the only way to reach the requested page.";
@@ -2538,6 +2581,7 @@ const signInThenDecline = (
   steps: readonly (object | MintFailure | (() => object))[],
   overrides: Parameters<typeof fixture>[1] = {},
   report: BlockedReportInput | readonly (BlockedReportInput | ModelResponse)[] = declinedExample,
+  request?: Parameters<typeof fixture>[2],
 ) => {
   let executions = 0;
   return fixture(
@@ -2570,6 +2614,7 @@ const signInThenDecline = (
       },
       ...overrides,
     },
+    request,
   );
 };
 
@@ -2630,15 +2675,18 @@ const refusedLabel = new MintFailure({
 });
 const refusedForm = autofillRefused("destination");
 it.each([
-  { reason: "site_lacks_capability", first: [] },
-  { reason: "policy", first: [refusedLabel] },
+  { reason: "site_lacks_capability", first: [], effect: "read" },
+  { reason: "site_lacks_capability", first: [], effect: "write" },
+  { reason: "policy", first: [refusedLabel], effect: "read" },
 ] as const)(
-  "ends a $reason report as sign-in unavailable while the sign-in never confirmed",
-  async ({ reason, first }) => {
-    const f = await signInThenDecline([...first, submittedScreen, rejectionUnconfirmed], {}, {
-      reason,
-      explanation: "The site's sign-in kept refusing, so this build cannot go on.",
-    });
+  "ends a $reason report as sign-in unavailable while the $effect build's sign-in never confirmed",
+  async ({ reason, first, effect }) => {
+    const f = await signInThenDecline(
+      [...first, submittedScreen, rejectionUnconfirmed],
+      {},
+      { reason, explanation: "The site's sign-in kept refusing, so this build cannot go on." },
+      { effect },
+    );
     const outcome = await f.run();
     expect(outcome).not.toHaveProperty("blocked");
     expect(outcome).toMatchObject({
