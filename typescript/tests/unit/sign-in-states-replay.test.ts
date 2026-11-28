@@ -4071,6 +4071,96 @@ it("still stops when a fuller state whose password box drew late shows again aft
   expect(site.fills).toEqual(["email", "password"]);
 });
 
+for (const alone of [false, true])
+  it(`presses ${alone ? "alone after its box " : ""}in a fuller state after a code its page sent, though the site changed the code's boxes since`, async () => {
+    const digits = Array.from({ length: 6 }, (_, at) => `#d${at}`);
+    const row: Screen = { path: "/sign-in", boxes: digits.map((selector) => ({ selector, kind: "code" as const })), buttons: ["#verify"] };
+    // Once the site took the code, the same dialog grows an email box and its Continue.
+    const grown: Screen = { ...row, boxes: [...row.boxes, ...emailBox.boxes], buttons: ["#continue"] };
+    // With a known state that holds the grown one, its press goes alone after its box, by the
+    // host's click again.
+    const holder: Recorded = {
+      fingerprint: arrival({ ...grown, boxes: [...grown.boxes, ...passwordScreen.boxes] }),
+      step: stepAt("/sign-in", [email, password], "#continue"),
+    };
+    const library = libraryOf(
+      [
+        {
+          fingerprint: arrival(row),
+          step: stepAt("/sign-in", digits.map((selector) => ({ selector, slot: "code" as const })), "#verify", { pageSends: true }),
+        },
+        { fingerprint: arrival(grown), step: stepAt("/sign-in", [email], "#continue") },
+      ],
+      ...(alone ? [[holder]] : []),
+    );
+    const site = scriptedSite({ start: () => (site.site.typed.has("#d5") ? grown : row) }, () => "home", { resubmit: alone });
+    // The page sends the code on its last digit, and the site then changes its boxes, so a reading
+    // of one refuses.
+    const fill: typeof site.hooks.fill = (call) =>
+      Effect.map(site.hooks.fill(call), (report) =>
+        report.outcome === "filled" && call.step.fields.every((field) => field.slot === "code")
+          ? { ...report, submit: "page" as const }
+          : report,
+      );
+    const inspect: typeof site.hooks.inspect = (step) =>
+      site.site.typed.has("#d5") && step.fields.some((field) => digits.includes(field.selector))
+        ? Effect.succeed({ outcome: "refused", reason: "credential_target_refused" })
+        : site.hooks.inspect(step);
+    expect(await replay({ ...site, hooks: { ...site.hooks, fill, inspect } }, library)).toMatchObject({ outcome: "signed_in" });
+    expect(site.fills).toEqual([...Array<string>(6).fill("code"), "email"]);
+  });
+
+/** The site, where the form of the box `selector` reads as GET once that box is typed. */
+const getOnceTyped = (site: ReturnType<typeof scriptedSite>, selector: string) => {
+  const inspect: typeof site.hooks.inspect = (step) =>
+    Effect.map(site.hooks.inspect(step), (read) =>
+      "outcome" in read || !site.site.typed.has(selector)
+        ? read
+        : {
+            ...read,
+            targets: {
+              ...read.targets,
+              fields: read.targets.fields.map((target, at) =>
+                step.fields[at]?.selector === selector ? { ...target, submitMethod: "get" } : target,
+              ),
+            },
+          },
+    );
+  return { ...site, hooks: { ...site.hooks, inspect } };
+};
+
+it("still refuses a press in a fuller state when a box typed before it and not sent now posts by GET", async () => {
+  const library = libraryOf(
+    [{ fingerprint: arrival(combined), step: stepAt("/", [email, password], "#continue") }],
+    [{ fingerprint: arrival(emailOnly), step: stepAt("/", [email], "#continue") }],
+  );
+  // The password box draws late, and the email's form turns to GET once the email is typed.
+  const site = scriptedSite({ start: (looks) => (looks < 4 ? emailOnly : combined) }, () => "home");
+  const events: Readonly<Record<string, unknown>>[] = [];
+  const ended = await replay(getOnceTyped(site, "#email"), library, { events });
+  expect(ended).toMatchObject({ reason: "credential_target_refused" });
+  expect(events).toContainEqual(expect.objectContaining({ reason: "fuller_state" }));
+  expect(site.fills).toEqual(["email"]);
+  expect(site.clicks).toEqual([]);
+});
+
+it("still refuses a press in a fuller state when the first of two boxes typed alone before it, neither sent, now posts by GET", async () => {
+  // The email and the password are typed alone, as in a state another holds, and a code box then
+  // draws; the email's form turns to GET once the email is typed.
+  const withCode: Screen = { ...combined, boxes: [...combined.boxes, { selector: "#code", kind: "code" }] };
+  const library = libraryOf(
+    [{ fingerprint: arrival(withCode), step: stepAt("/", [email, password, code], "#continue") }],
+    [{ fingerprint: arrival(combined), step: stepAt("/", [email, password], "#continue") }],
+  );
+  const site = scriptedSite({ start: () => (site.site.typed.has("#password") ? withCode : combined) }, () => "home");
+  const events: Readonly<Record<string, unknown>>[] = [];
+  const ended = await replay(getOnceTyped(site, "#email"), library, { events });
+  expect(ended).toMatchObject({ reason: "credential_target_refused" });
+  expect(events).toContainEqual(expect.objectContaining({ reason: "fuller_state" }));
+  expect(site.fills).toEqual(["email", "password"]);
+  expect(site.clicks).toEqual([]);
+});
+
 it("still takes an old notice state recorded where a box that said nothing turned into an email box", async () => {
   const at = (takes: BoxTakes, texts: readonly string[] = []): Screen => ({
     path: "/sign-in",
