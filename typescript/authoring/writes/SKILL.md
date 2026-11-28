@@ -437,8 +437,9 @@ too. Run each step with `execute` purpose `act`, target `liveBrowser`.
   and path the session saw carry the commit on the site, and by its body where the body
   shows the caller's values, as `references/write-readback.ts` does: a `{ response }` answer of
   `waitForOutcomeResult`, beside every way the page can answer, listing the site's error or
-  validation message (`{ invalid: form }`) first. The write went through when that response is 2xx or 3xx, a body the call can read
-  shows no error, and the page shows no error or validation message after it. A 201 whose
+  validation message tied to that commit (`{ invalid: form }`) first; a notice not tied to it
+  isn't an error and doesn't decide the outcome. The write went through when that response is 2xx or 3xx, a body the call can read
+  shows no error, and the page shows no such error or validation message after it. A 201 whose
   Location names the new record went through as soon as it arrives, with no wait for the
   page. A 200 whose
   body reports an error, as GraphQL can, did not go through. A 202, or a 2xx whose body says
