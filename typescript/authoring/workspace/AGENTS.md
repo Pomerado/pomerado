@@ -554,16 +554,15 @@ filter or search, itself, never rely on what the site remembers; a live test cas
 cold, first on a new browser with an empty profile, is the proof. A published run can start on
 such a browser too, so the source also sets up its own start state from a cold page, such as a
 guest session, a chosen location or a consent banner, never relying on cookies or state only the
-build's browser holds. A read may clear a site chat or assistant widget's own local or session
-storage, cookies or token at the start of its run, keeping the sign-in's, so the widget starts a
-new conversation; that is part of the read, not a write. A build whose sign-in
+build's browser holds. A build whose sign-in
 started and was never confirmed is the exception: its resets clear cookies and site storage,
 so a half-finished sign-in never reaches a step. Every sign-in step starts a new sign-in, a
 signed-in check included, so check once per sign-in: a check after the host confirmed one
 starts a new sign-in. That source must run the flow from the input, including
 entering search terms, options and dates, not read results an exploration left on screen.
 A live test stays read-only. A write session's later act steps continue on the page the
-previous step left.
+previous step left. A read may clear a site chat or assistant widget's own browser data at the
+start of its run, keeping the sign-in's, so the widget starts a new conversation.
 
 The host execute receipt and `review_rejected` feedback carry `repeatableRead`. Only explicit
 host `repeatableRead:true` permits another fresh Guardian-reviewed example read after
