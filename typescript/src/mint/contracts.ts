@@ -371,9 +371,9 @@ export class MintFailure extends Data.TaggedError("MintFailure")<{
   readonly publishesOnReadBack?: true;
   /**
    * Set on a `commit_marks_unentered` refusal when the host passed `checkWriteSession` its
-   * `publishOnNoSaveRun` and the step named for publication entered no commit mark and recorded no
-   * confirmation, so the minter hears to list every commit step in `commitsUnproven`. Absent
-   * otherwise.
+   * `publishOnNoSaveRun`, the step named for publication recorded no confirmation and no step of the
+   * session entered or streamed a commit mark, so the minter hears to prefer listing every commit
+   * step in `commitsUnproven`. Absent otherwise.
    */
   readonly publishesOnNoSaveRun?: true;
   /**
