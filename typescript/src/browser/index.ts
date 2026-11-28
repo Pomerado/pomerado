@@ -80,6 +80,8 @@ export { pageDataCode } from "./page-data.js";
 export { selectJson } from "../runtime/select-json.js";
 export type { JsonPath, JsonSelection, SelectJsonOptions } from "../runtime/select-json.js";
 export { normalizeText, rankByWords, readBackMatches, sameText, spellingsOf, unitAmount } from "../runtime/text.js";
+export { readPrice } from "../runtime/price.js";
+export type { PriceRead } from "../runtime/price.js";
 export { saveAndReadBack } from "../runtime/save-read-back.js";
 export { browserTimeZoneCode, todayIn, zonedClock, zonedTime, zonedWindow } from "../runtime/time-zone.js";
 export type { ClockDay } from "../runtime/time-zone.js";
