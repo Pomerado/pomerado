@@ -138,6 +138,8 @@ Publication refuses a tool for any of these:
   - a search or filter with no results returns the empty result, never a throw, unless other
     evidence on the same page contradicts it for the same inputs: then it throws `OperationFailure`
     naming what that evidence shows ("Wrong failure");
+  - a value one record lacks, or the code cannot read, returns null where its field may be null,
+    never a throw, unless it is a needed value the page shows ("Wrong failure");
   - every applied filter or option is read back from the page as the value the site applied,
     such as the chosen option's label, never `true` ("Applied without readback");
   - a value chosen in a typeahead, combobox, dropdown, chip input or lookup dialog goes through
