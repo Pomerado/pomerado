@@ -229,8 +229,10 @@ exception: it is optional unless the task can't run without it (below).
   refuses unless the caller chose it. A tool's check guards what the caller asked for or what the
   tool itself changes: it proves the caller's request before the step it guards and the tool's
   own change after it, stops on anything else only for a problem the page shows, not for
-  something it can't find, and passes on every page where the task went right. A repair narrows
-  a check that stopped a run where the task went right, or removes it when it guards neither.
+  something it can't find, and passes on every page where the task went right. Compare a value
+  with the caller's input only where the page shows it in full; a summary that shows only part of
+  it is unknown, not a mismatch. A repair narrows a check that stopped a run where the task went
+  right, or removes it when it guards neither.
 - Read results for every option the schema lists. When an option leads to a page with a
   different structure (other fields or sections), handle that layout too, and on a read signed
   out run it live as a test case (testing skill); an option that only reorders or filters the
