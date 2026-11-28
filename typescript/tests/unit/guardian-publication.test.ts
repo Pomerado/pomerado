@@ -1329,6 +1329,18 @@ describe("the publication policy", () => {
     );
   });
 
+  // One result lacking a detail its schema lets be null, such as a delivery line, must not fail
+  // the whole read.
+  it("finds a throw over one record's missing optional value", () => {
+    const wrongFailure = publicationOutputPolicy.slice(
+      publicationOutputPolicy.indexOf("Wrong failure:"),
+      publicationOutputPolicy.indexOf("Strict name check:"),
+    );
+    expect(wrongFailure).toContain(
+      "a missing optional value (one a record lacks, in a field the output schema lets be null or omitted, other than a needed value the page shows), or a placeholder",
+    );
+  });
+
   // A search tool's own matching of the site's result rows drops the site's real matches, a
   // refusal listing choices its field refuses offers nothing a caller could send back, and a money
   // field the site shows meaning something else misleads a caller who acts on it.

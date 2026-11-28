@@ -550,14 +550,14 @@ description says, except as below and for a write's record later cancelled, refu
   the code failed to read, or anything personal or account-specific.
 - Type each output field as strictly as its value: required text is non-empty and trimmed
   (`Schema.NonEmptyTrimmedString`), a date or time keeps its `pattern`, and a field that reports
-  an input's value reuses that input's enum or pattern. Make one optional or nullable only where
-  the page may genuinely not show the value. Trim every string you return from the site before
+  an input's value reuses that input's enum or pattern. Make a needed value optional or nullable
+  only where the page may genuinely not show it. Trim every string you return from the site before
   returning it.
 - The one exception is a record whose own page genuinely does not show the value, such as an
   item that is sold out and shows no amount, or a listing that shows no date yet. Then the value may be null only together with a
   field that says why, such as its availability, and both descriptions say so.
-- Null never covers a value the page shows that the code failed to read: that throws
-  `OperationFailure` naming it. Never turn a read that found nothing into null
+- Null never covers a needed value the page shows that the code failed to read: that throws
+  `OperationFailure` naming it. Never turn a read of one that found nothing into null
   (`?.innerText ?? null`); a missing element is a failure, not an absence.
 - Before your first example, list the needed values. If the page may not show one, settle it
   then: find where the site shows it, on every layout its records use, or ask the owner.
@@ -571,8 +571,8 @@ the request names. Leave out what is unrelated to the tool's purpose or of no us
   line above a linked name or an author line above a title, return each part in its own field. Never drop either part.
 - Prefer a separate typed field for each fact over folding it into another field's text. Never
   derive a value the page does not show.
-- A field that is not a needed value is nullable when records on this site can lack it, and it
-  is null exactly when this record does not show it.
+- A field that is not a needed value is nullable, and it is null exactly when this record does
+  not show it.
 - Never declare a field the code does not read. A field that is always null, empty or fixed is
   not a disclosed limit: read it from the page, or leave the field out.
 - Prefer returning both a unit price and a line total for each line with a quantity, such as a
