@@ -22,6 +22,13 @@ export default defineOperation({ input: Schema.Struct({ zip: Schema.String }), o
   async ({ input, errors }) => {
     throw new errors.LocationNotApplied("The page kept its own store after ZIP " + input.zip, ${detail});
   });`;
+/** A synthetic list read that throws with a message alone, the deprecated form. */
+const unnamedSort = `import { Schema } from "effect";
+import { defineOperation } from "../../runtime/index.js";
+export default defineOperation({ input: Schema.Struct({ sort: Schema.Literal("price_low", "rating") }), output: Schema.Struct({ items: Schema.Array(Schema.String) }) },
+  async ({ errors }) => {
+    throw new errors.InputNotApplied("The page reset the sort to its own default");
+  });`;
 const browser = {
   sessionId: "local",
   executeResponse: () => Effect.succeed({ success: true, result: null }),
@@ -112,4 +119,19 @@ it("keeps a write whose browser step may have changed the site from a same-reque
 it("keeps a numeric value the script passed as its text", async () => {
   const failure = await locationOutcome(`{ field: "zip", requested: 1, applied: 2, step: "store_save" }`);
   expect(failure.outcome.details).toMatchObject({ requested: "1", applied: "2" });
+});
+
+// A throw with a message alone is deprecated, since the detail names the value the page did not
+// apply, but a tool published with one still runs and fails the same way.
+it("still ends a published tool's InputNotApplied thrown with a message alone", async () => {
+  const failure = await outcomeOf(unnamedSort, { sort: "price_low" });
+  expect(failure.outcome).toMatchObject({
+    code: "input_not_applied",
+    retry: "same_key",
+    possibleCommit: false,
+  });
+  expect(failure.outcome.details).toEqual({
+    possible_commit: false,
+    reason: "The page reset the sort to its own default",
+  });
 });
