@@ -263,7 +263,7 @@ class InputUnapplied extends Error {
   readonly unapplied?: InputNotAppliedDetail;
   constructor(message: string, detail: InputNotAppliedDetail);
   /** @deprecated Pass the detail, so the run names the value the page did not apply. */
-  constructor(message: string);
+  constructor(message: string, detail?: InputNotAppliedDetail);
   constructor(message: string, detail?: InputNotAppliedDetail) {
     super(message.slice(0, 4096));
     const bounded = boundedInputDetail(detail);

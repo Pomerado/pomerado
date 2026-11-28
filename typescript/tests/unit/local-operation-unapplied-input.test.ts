@@ -127,6 +127,11 @@ it("still ends a published tool's InputNotApplied thrown with a message alone", 
   const failure = await outcomeOf(unnamedSort, { sort: "price_low" });
   expect(failure.outcome).toMatchObject({
     code: "input_not_applied",
-    details: { reason: "The page reset the sort to its own default" },
+    retry: "same_key",
+    possibleCommit: false,
+  });
+  expect(failure.outcome.details).toEqual({
+    possible_commit: false,
+    reason: "The page reset the sort to its own default",
   });
 });
