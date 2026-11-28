@@ -493,6 +493,91 @@ it("marks an executed source unchanged since Guardian read it, and not once it c
   expect(unchanged(requests[0])).toBeUndefined();
   expect(unchanged(requests[2])).toEqual(["operation/src/helper.mjs"]);
   expect(unchanged(requests[3])).toBeUndefined();
+  // Nothing changed since the read, so nothing is listed as changed.
+  expect(reviewRequest(requests[2]).trusted_review).not.toHaveProperty("changedSources");
+});
+
+// A review after a file Guardian read had changed got only the entrypoint and the unchanged list,
+// so a refusal could rest on the earlier read of the changed file, and it counted like any other
+// refusal against the few tries a host gives a step.
+const helperPath = "operation/src/helper.mjs";
+const deny = decision({ outcome: "deny", rationale: "The helper ignores the day.", action: "read" });
+const changedNote = `These files changed since you last read them: ${helperPath}. Read them and rule again on the current source.`;
+/** The host's last message in a request: a follow-up after the review's first output. */
+const lastUserText = (request: ModelRequest | undefined) => {
+  const input = request?.input;
+  const items = typeof input === "string" ? [{ role: "user", content: input }] : (input ?? []);
+  const texts = items.flatMap((item) =>
+    "role" in item && item.role === "user" && typeof item.content === "string"
+      ? [item.content]
+      : [],
+  );
+  return texts.at(-1) ?? "";
+};
+/** A review that reads the helper, then the helper changes, then a review scripted by `second`. */
+const afterHelperChange = async (second: readonly ModelResponse["output"][]) => {
+  const requests = scripted([[read("helper_1", helperPath)], [allow], ...second]);
+  const workspace = files();
+  const executed: PendingExecution = {
+    ...pending,
+    mintContext: {
+      repeatableRead: false,
+      operationSources: [...workspace.keys()],
+      executedSources: ["operation/operation.mjs", helperPath],
+      browser: "active",
+      executions: [],
+    },
+  };
+  const guardian = makeGuardian(
+    makeOpenAIReviewer("{{ tenant_policy_config }}", false, native),
+    undefined,
+    {},
+  );
+  const reader = sourcesOf(workspace);
+  await Effect.runPromise(guardian.review(executed, reader));
+  workspace.set(helperPath, "export const hours = (day) => `changed-hours-${day}`;");
+  const reviewed = await Effect.runPromise(
+    guardian.review({ ...executed, screenedInput: '{"day":2}' }, reader),
+  );
+  return { requests, reviewed };
+};
+
+it("lists an executed source that changed since Guardian read it, with its diff from that read", async () => {
+  const { requests } = await afterHelperChange([[read("helper_2", helperPath)], [allow]]);
+  const review = reviewRequest(requests[2]).trusted_review as Record<string, unknown>;
+  expect(review.changedSources).toEqual([{ path: helperPath, diff: expect.any(String) }]);
+  const diff = (review.changedSources as { diff: string }[])[0]?.diff;
+  expect(diff).toContain("-export const hours = () => 'synthetic-hours';");
+  expect(diff).toContain("+export const hours = (day) => `changed-hours-${day}`;");
+  expect(review).not.toHaveProperty("unchangedSources");
+});
+
+it.each(["deny", "escalate"] as const)(
+  "asks again, once, when a %s read none of the changed sources, and only the second answer leaves the review",
+  async (outcome) => {
+    const refusal = decision({ outcome, rationale: "The helper ignores the day.", action: "read" });
+    const { requests, reviewed } = await afterHelperChange([
+      [refusal],
+      [read("helper_2", helperPath)],
+      [allow],
+    ]);
+    expect(lastUserText(requests[3])).toBe(changedNote);
+    expect(reviewed.decision.outcome).toBe("allow");
+    expect(requests).toHaveLength(5);
+  },
+);
+
+it("keeps a refusal that read the changed source, with no second ask", async () => {
+  const { requests, reviewed } = await afterHelperChange([[read("helper_2", helperPath)], [deny]]);
+  expect(reviewed.decision.outcome).toBe("deny");
+  expect(requests).toHaveLength(4);
+});
+
+it("asks a refusal that read none of the changed sources only once, and keeps the second refusal", async () => {
+  const { requests, reviewed } = await afterHelperChange([[deny], [deny]]);
+  expect(lastUserText(requests[3])).toBe(changedNote);
+  expect(reviewed.decision.outcome).toBe("deny");
+  expect(requests).toHaveLength(4);
 });
 
 /** One read_source call that names several files. */

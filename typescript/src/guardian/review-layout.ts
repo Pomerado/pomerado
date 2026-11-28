@@ -10,6 +10,7 @@ import {
   routePointerParts,
 } from "./review-contracts.js";
 import type { PendingExecution, ReviewFailure } from "./review.js";
+import { unifiedDiff } from "./unified-diff.js";
 
 /**
  * Every Guardian review kind shares one request layout: the same instructions, tool and output
@@ -367,35 +368,89 @@ const sourceChunkRequest = (content: string | undefined): SourceChunk | undefine
 /** A file larger than this many chunks is read again rather than compared. */
 const comparedChunks = 32;
 
+/** An executed source whose text changed since Guardian read it, with the diff from that read. */
+export interface ChangedSource {
+  readonly path: string;
+  /**
+   * Absent when the earlier read was not of the whole file, the change is too large to diff, or
+   * the diff is past the request's bounds.
+   */
+  readonly diff?: string;
+}
+
+/** A file's whole text from its chunks, by byte offset, when they cover it from the start. */
+const wholeText = (chunks: ReadonlyMap<number, string> | undefined): string | undefined => {
+  let text = "";
+  let offset = 0;
+  for (let index = 0; index < comparedChunks; index++) {
+    const chunk = sourceChunkOf(chunks?.get(offset));
+    const source = chunk?.value.source;
+    if (chunk === undefined || typeof source !== "string") return undefined;
+    text += source;
+    if (!chunk.hasMore) return text;
+    if (chunk.nextOffset <= offset) return undefined;
+    offset = chunk.nextOffset;
+  }
+  return undefined;
+};
+
 /**
- * The paths whose current content is byte-identical, chunk for chunk, to what the ledger holds.
- * Only paths Guardian already read are compared; a read that fails leaves its path out.
+ * Each path Guardian already read, compared with its current content: unchanged when it is
+ * byte-identical, chunk for chunk, to what the ledger holds, and changed when its text differs,
+ * with a diff from the ledger's text. A read that fails, or a file too large to compare, is in
+ * neither list.
  */
-export const unchangedSources = (
+export const sourceChanges = (
   ledger: SourceLedger,
   paths: readonly string[],
   read: (path: string, offset: number) => Effect.Effect<string, ReviewFailure>,
-): Effect.Effect<readonly string[]> =>
+): Effect.Effect<{
+  readonly unchanged: readonly string[];
+  readonly changed: readonly ChangedSource[];
+}> =>
   Effect.forEach(
     [...new Set(paths)].filter((path) => ledger.has(sourcePath(path))),
     (path) =>
       Effect.gen(function* () {
         const seen = ledger.get(sourcePath(path));
+        const current = new Map<number, string>();
+        // Identical in every chunk, or different in a chunk Guardian read; a chunk it never read
+        // makes neither.
+        let same = true;
+        let differs = false;
         let offset = 0;
         for (let index = 0; index < comparedChunks; index++) {
-          const current = sourceChunkOf(yield* read(path, offset));
-          if (current === undefined || seen?.get(offset) !== current.canonical) return [];
-          if (!current.hasMore) return [path];
-          if (current.nextOffset <= offset) return [];
-          offset = current.nextOffset;
+          const chunk = sourceChunkOf(yield* read(path, offset));
+          if (chunk === undefined) return {};
+          current.set(offset, chunk.canonical);
+          const earlier = seen?.get(offset);
+          if (earlier !== chunk.canonical) {
+            same = false;
+            if (earlier !== undefined) differs = true;
+          }
+          if (!chunk.hasMore) break;
+          if (chunk.nextOffset <= offset) return {};
+          offset = chunk.nextOffset;
         }
-        return [];
+        const after = wholeText(current);
+        if (after === undefined) return {};
+        if (same) return { unchanged: path };
+        if (!differs) return {};
+        const before = wholeText(seen);
+        if (before === after) return {};
+        const diff = before === undefined ? undefined : unifiedDiff(path, before, after);
+        return { changed: diff === undefined ? { path } : { path, diff } };
       }).pipe(
         // error-reporting-allow: typed-recovery a source the host cannot compare is read again
-        Effect.catchAll(() => Effect.succeed([])),
+        Effect.catchAll(() => Effect.succeed({})),
       ),
     { concurrency: 4 },
-  ).pipe(Effect.map((found) => found.flat()));
+  ).pipe(
+    Effect.map((found: readonly { unchanged?: string; changed?: ChangedSource }[]) => ({
+      unchanged: found.flatMap(({ unchanged }) => (unchanged === undefined ? [] : [unchanged])),
+      changed: found.flatMap(({ changed }) => (changed === undefined ? [] : [changed])),
+    })),
+  );
 
 const privateReviewRequest = (item: unknown): boolean => {
   if (typeof item !== "object" || item === null || Reflect.get(item, "role") !== "user")

@@ -41,6 +41,9 @@ export const guardianReviewInput = (
       ...(turn.sources?.unchangedSources === undefined
         ? {}
         : { unchangedSources: turn.sources.unchangedSources }),
+      ...(turn.sources?.changedSources === undefined
+        ? {}
+        : { changedSources: turn.sources.changedSources }),
     },
     // The intent is in the build's own instructions (trusted_request), the same for every review.
     trusted_authority: {

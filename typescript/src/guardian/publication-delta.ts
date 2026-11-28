@@ -5,6 +5,7 @@ import type { FindingResponse } from "./review-contracts.js";
 import { publicationFindingId } from "./publication.js";
 import { ownerNamedOrigins } from "./owner-named-origins.js";
 import type { PendingExecution } from "./review.js";
+import type { ChangedSource } from "./review-layout.js";
 import { unifiedDiff } from "./unified-diff.js";
 
 /**
@@ -222,6 +223,28 @@ export interface PublicationDelta {
 
 const binary = (text: string) => text.includes("\u0000");
 
+/** A request's budget for inlined text: each piece within a file's bound, all within the round's. */
+const inlineBudget = () => {
+  let inlined = 0;
+  return (text: string): boolean => {
+    const bytes = byteLength(text);
+    if (bytes > inlineFileBytes || inlined + bytes > inlineRoundBytes) return false;
+    inlined += bytes;
+    return true;
+  };
+};
+
+/**
+ * Changed sources with each diff within the bounds a later publication round's request keeps, in
+ * order; past them a source is only named, for Guardian to read.
+ */
+export const boundedDiffs = (changed: readonly ChangedSource[]): readonly ChangedSource[] => {
+  const fits = inlineBudget();
+  return changed.map(({ path, diff }) =>
+    diff === undefined || !fits(diff) ? { path } : { path, diff },
+  );
+};
+
 /** The text a finding's range covers in the file it was found in, when the round kept it. */
 const quoted = (files: ReadonlyMap<string, RoundFile>, finding: PublicationFinding) => {
   const text = files.get(finding.path)?.text;
@@ -253,14 +276,9 @@ export const publicationDelta = (
   context: Readonly<Record<string, string>>,
 ): PublicationDelta => {
   const before = new Map(prior.files.map((file) => [file.path, file]));
-  let inlined = 0;
+  const fits = inlineBudget();
   /** A diff or content within the bounds, counted against the request's budget. */
-  const inline = (field: "diff" | "content", text: string) => {
-    const bytes = byteLength(text);
-    if (bytes > inlineFileBytes || inlined + bytes > inlineRoundBytes) return {};
-    inlined += bytes;
-    return { [field]: text };
-  };
+  const inline = (field: "diff" | "content", text: string) => (fits(text) ? { [field]: text } : {});
   const entries = files.map((file): PublicationDeltaFile => {
     const previous = before.get(file.path);
     const { path, text } = file;
