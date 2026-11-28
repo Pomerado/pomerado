@@ -79,6 +79,7 @@ export const guardianReviewInput = (
           ...(note === undefined ? {} : { note }),
         })),
       ),
+      unansweredQuestions: absentWhenEmpty(turn.pending.unansweredQuestions ?? []),
       ownerNamedOrigins: absentWhenEmpty(ownerNamedOrigins(turn.pending)),
       taskUpdates: absentWhenEmpty(turn.pending.taskUpdates ?? []),
       // Guardian's own finding that the owner confirmed exactly this step.
