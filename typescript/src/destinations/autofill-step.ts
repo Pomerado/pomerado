@@ -813,6 +813,16 @@ export const notingHostTrust = (
 const isScriptAddress = (url: string) => URL.parse(url)?.protocol === "javascript:";
 
 /**
+ * Whether `step` is a sign-in step that types nothing, such as a sign-in provider chooser, on a
+ * browser the host has typed nothing into yet (`judgedBeforeTyping` unset): no script can send a
+ * typed value, and the next screen is inspected before anything is typed there.
+ */
+export const typesNothing = (
+  step: AutofillStep<FillSlot>,
+  trust: { readonly judgedBeforeTyping?: readonly string[] | undefined },
+) => step.fields.length === 0 && trust.judgedBeforeTyping === undefined;
+
+/**
  * The first control that sits or submits off the site and its configured sign-in origins, or a
  * field still to be typed (from index `from`) that takes no typing: where its own frame, document,
  * form actions and link destination are, naming only `named` origins once anything was typed. A
@@ -851,9 +861,7 @@ export const untrustedTarget = (
   const predicate = signInUrlTrust(trust, step);
   const signIn = !step.fields.some((field) => isCardSlot(field.slot));
   const splitCode = step.fields.every((field) => field.slot === "code");
-  // Nothing typed on this browser yet either, so no script can carry a typed value anywhere.
-  const typesNothing =
-    signIn && step.fields.length === 0 && trust.judgedBeforeTyping === undefined;
+  const sendsNothing = typesNothing(step, trust);
   const trusted = (url: string, card: boolean) =>
     trustedUrl(trust.siteOrigin, trust.authenticationOrigins, url) ||
     (card && onPaymentFrameOrigin(url, trust.paymentFrameOrigins ?? [])) ||
@@ -864,7 +872,7 @@ export const untrustedTarget = (
     // A sign-in step that types nothing sends nothing of the login: any script address among its
     // control's destinations is the page's own code, not where a value goes, and the screen its
     // click leads to is judged again before anything is typed there.
-    if (typesNothing)
+    if (sendsNothing)
       return target.actions.every((url) => isScriptAddress(url) || trusted(url, card))
         ? undefined
         : action;
