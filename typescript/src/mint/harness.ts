@@ -4638,7 +4638,7 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           ownerAskOffered = true;
           return refused(
             "owner_not_asked",
-            "This write build asked its owner nothing, and the site still offers the change, so the build has not ended. When a condition in the request is what stops it, prefer one confirm question to the owner that says what the site shows and how it differs from the request. If the request rules out asking, or a question can't help, call report_blocked again.",
+            "This write build asked its owner nothing, so the build has not ended. When a condition in the request is what stops it, prefer one confirm question to the owner that says what the site shows and how it differs from the request. If the request rules out asking, or a question can't help, call report_blocked again.",
           );
         }
         if (reason === "host_refused" && !hostRefusing && hostRefusalPassed && hostRefusalRepeated)
