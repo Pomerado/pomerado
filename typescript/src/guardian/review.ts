@@ -1069,16 +1069,21 @@ const afterGroundPushback = (
 };
 
 /**
- * Whether a step without write authority may still write once: an explore step on the live
- * browser while an applied update the owner confirmed adds or revises a requirement, such as a
- * step the site requires before the task, and no write that may have reached the site is on
- * record in the build. Guardian's policy keeps it to a read build's step that update names, with
- * only the owner's values; the harness records it as a write.
+ * Whether a step without write authority may still write once: a read build's explore step on the
+ * live browser before its example claimed (`repeatableRead`, which a host sets only then), while
+ * an applied update the owner confirmed adds or revises a requirement, such as a step the site
+ * requires before the task, and no write that may have reached the site is on record in the
+ * build. Guardian's policy keeps it to the step that update names, with only the owner's values;
+ * the harness records it as a write.
  */
 const siteRequiredStep = (pending: PendingExecution): boolean => {
   const context = pending.mintContext;
   const step = context?.currentExecution;
-  if (context === undefined || step?.purpose !== "explore" || step.target !== "liveBrowser")
+  if (
+    context?.repeatableRead !== true ||
+    step?.purpose !== "explore" ||
+    step.target !== "liveBrowser"
+  )
     return false;
   const unsent = new Set(
     context.executions

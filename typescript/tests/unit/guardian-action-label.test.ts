@@ -122,7 +122,8 @@ it("allows a write label on a write build's write step", async () => {
 
 // A read build's step the site requires before the task, which an applied update the owner
 // confirmed names, may run as the build's one write once Guardian allows it as a write. Without
-// that confirmation, or once a write is on record, the label stays out of authority.
+// that confirmation, once a write is on record, or in a write build outside its write session
+// (no repeatable read), the label stays out of authority.
 const siteRequiredUpdate = {
   revision: 1,
   summary: "Finish the profile form the site requires before the search.",
@@ -161,6 +162,11 @@ it.each([
     allowed: false,
   },
   {
+    case: "a write build's explore step",
+    step: { ...siteRequired, mintContext: { ...siteRequiredContext, repeatableRead: false } },
+    allowed: false,
+  },
+  {
     case: "a write already on record",
     step: {
       ...siteRequired,
@@ -171,7 +177,7 @@ it.each([
     },
     allowed: false,
   },
-])("lets a read build's site-required step write only with $case", async ({ step, allowed }) => {
+])("decides a site-required step's write allow with $case: allowed $allowed", async ({ step, allowed }) => {
   scripted([decision({ outcome: "allow", rationale: "Submits the profile.", action: "write" })]);
   const reviewed = await Effect.runPromise(guardian().review(step, reader));
   expect(reviewed.decision).toMatchObject({
