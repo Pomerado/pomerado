@@ -67,7 +67,9 @@ site's words, `field` that input, before any commit mark (the core skill).
 
 An item's options often come in groups whose option labels repeat, such as "None" or "Less"
 under both a sweetness group and an ice group. Find each option inside its own group, by the
-group's heading or fieldset, never by its label across the whole item dialog. A list of saved
+group's heading or fieldset, never by its label across the whole item dialog. Prefer reading
+each group's minimum and maximum picks from the group's own text, not by counting its controls,
+and count every pick of a choice taken more than once toward them. A list of saved
 addresses or stores can show the same name twice: choose by every part the input gives, such as
 the unit, and ask the caller or refuse when more than one entry still matches (a checkout asks,
 below), never take the first. Choose a saved address with the core skill's address helpers, such
@@ -178,7 +180,10 @@ and handle its pop-up as conditional (the forms skill), since it shows only to s
 When the site refuses the order as asked, such as an order under its minimum or an empty cart
 at checkout, the tool throws `new errors.InvalidInput(message, { field })` with the site's
 reason, `field` the input the caller would change, before its commit mark whenever the page shows
-the limit first. When the page shows a per-item limit and the cart already holds that many of the
+the limit first. When the site refuses for missing required choices, prefer naming in the
+message each group that is short, with the picks it has and the picks it needs, over passing on
+the site's generic words.
+When the page shows a per-item limit and the cart already holds that many of the
 item, prefer refusing the same way before the add's commit mark.
 A checkout that takes a limit of the caller's, such as
 a maximum total, reads the final total and compares it before the order's commit mark, and
