@@ -2728,8 +2728,9 @@ const submitsChanged = <E extends YieldableError, V extends string, L extends Au
 ) =>
   Effect.gen(function* () {
     const [first] = readBefore.boxes.values();
-    if (first === undefined) return false;
-    if (inspection.targets.submit?.submitMethod === "get" && !(readBefore.submit ?? first.submits).get) return true;
+    const before = readBefore.submit ?? first?.submits;
+    if (before === undefined) return false;
+    if (inspection.targets.submit?.submitMethod === "get" && !before.get) return true;
     const turned = (before: Submits, now: Submits) =>
       (now.get && !before.get) || (now.namesGet && !before.namesGet) || now.origins !== before.origins;
     for (const [selector, typed] of readBefore.boxes) {
@@ -2768,8 +2769,9 @@ const submitGone = <E extends YieldableError, V extends string, L extends Autofi
  * Acts in a shown state, one action at a time, and looks at the page after each: each box typed
  * alone (a code's boxes together, with the state's recorded `refills`), then its press. A fuller
  * known state the page shows after a box or while a press waits (`holdStill`) is taken, keeping
- * what was typed. A fill that failed with nothing yet sent, as when the page redrew its form under
- * it, has the state looked for once more in the replay (`gone`), as a recipe screen gone unsent is.
+ * what was typed; its press reads again only the boxes typed before it that its own step holds.
+ * A fill that failed with nothing yet sent, as when the page redrew its form under it, has the
+ * state looked for once more in the replay (`gone`), as a recipe screen gone unsent is.
  * A press in a state that typed nothing whose button the page kept disabled through the host's
  * wait clicked nothing, so it waits for its button again and presses it, until the step wait from
  * when its press began, as a recipe's fieldless screen does.
@@ -2959,12 +2961,12 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
         // The fuller state as if reached now, with what this replay typed still to count as new.
         if (run.visited.length >= maximumStateVisits) return stopped(run, "state_limit");
         yield* input.emit({ stage: "state", state: fuller.state.key, reason: "fuller_state" });
-        // A code row whose own fill may have sent it, as its page sends it on the last digit, is no
-        // press's to guard any more, as the site may change its boxes once it took the code; every
-        // other box typed stays guarded.
-        if (code === true)
-          for (const [selector, box] of readBefore.boxes)
-            if (box.step.fields.every(({ slot }) => slot === "code")) readBefore.boxes.delete(selector);
+        // Its press judges its own recorded boxes, and a submit it shares with this state, as a
+        // recipe screen's does: a box typed before that its step doesn't hold, and a submit of its
+        // own, are judged at its own fill.
+        for (const selector of readBefore.boxes.keys())
+          if (!fuller.state.step.fields.some((field) => field.selector === selector)) readBefore.boxes.delete(selector);
+        if (fuller.state.step.submit !== state.step.submit) delete readBefore.submit;
         state = fuller.state;
         reached = {
           ...reached,
