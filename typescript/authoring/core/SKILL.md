@@ -116,7 +116,10 @@ answers `{ success, result, error, stderr }`. Throw
   name an outcome only the new page shows, such as a changed URL, and look the next element up
   again before typing. If it only redraws, name the new setting shown outside its dialog.
 - Check the null case if possible. Make sure the tool handles a lookup or filter that matches
-  nothing or more than one.
+  nothing or more than one. Count matches by the site's own item id: one item shown more than
+  once, such as a sponsored copy beside the regular result, is one match. When the tool can't go
+  on, that is the caller's to settle: refuse with `InvalidInput` as the input schema says, not
+  `OperationFailure`, which reads as a broken tool and starts a repair.
 - Start a response wait in the same call as the click that causes it: name the response as a
   `{ response }` answer of `waitForOutcomeResult`, beside the page's other answers, with the click
   as its `action`. Listeners do not outlive a call.
@@ -287,12 +290,12 @@ exception: it is optional unless the task can't run without it (below).
   `pickRefusal`. A value it lacks lists the site's closest options first. With no match, throw
   its `pickRefusal`, an
   `InvalidInput` with `field` and `available`, the entries the site showed, even when the site
-  offered only one. With one, use it. With several, decide per tool, except for an address,
-  pickup or drop-off value, which only the address helpers below choose: take the first in
-  the site's own order and return the one it used, as the site labels it, or list those
-  matches as the site labels them for the caller to choose one, each selecting exactly one,
-  with a declared choice question (.agents/caller-input/SKILL.md) or `pickRefusal`, which lists
-  them as `available`.
+  offered only one. With one, use it. With several, except for an address, pickup or drop-off
+  value, which only the address helpers below choose, list those matches as the site labels
+  them for the caller to choose one, each selecting exactly one, with a declared choice
+  question (.agents/caller-input/SKILL.md) or `pickRefusal`, which lists them as `available`;
+  a read may instead take the first in the site's own order and return the one it used, as the
+  site labels it.
   Resolve a typed address, pickup or drop-off value through the site's suggestions in two calls:
   in one, `pickerTypeAddress`,
   then, once the list shows every suggestion the site offers for it, `pickerAddressRows` from
@@ -329,9 +332,11 @@ exception: it is optional unless the task can't run without it (below).
   with a word added or dropped. Prefer it for confirming the pick, so the read-back agrees with
   the choice, but not for choosing from a list, where a short label can match a longer name it
   isn't, such as UK for Ukraine.
-  When more than one option matches equally, decide per tool, except for an address, pickup or
-  drop-off value (above): take the first in the site's order and return the one it used, as
-  the site labels it, or list them for the caller to choose one, each selecting exactly one.
+  When more than one option matches equally, a read may take the first in the site's order and
+  return the one it used, as the site labels it; a write asks the caller to choose among them
+  with a declared choice question, or refuses with `InvalidInput`, `field` that input and
+  `available` listing each match, each selecting exactly one, before any commit mark. An
+  address, pickup or drop-off value follows the rule above.
 - In a product or catalog search, a result whose name has every word of the caller's value
   among words the value lacks is a looser match, which a read picks and a write asks about, as
   above: with no match, throw

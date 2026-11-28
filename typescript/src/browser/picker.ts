@@ -678,8 +678,8 @@ const pickerPageCode = String.raw`(element, args) => {
  * by its first line, where its text as listed matches as written; that second typing failing
  * leaves the first one's answer. Decode with `PickOutcome` and throw
  * `pickRefusal(outcome, field)` (`InvalidInput` with `field` and `available`, which for options
- * that tie is `matches`), or ask the caller to choose among `matches`. In a tool that takes the
- * first of options that tie instead (each tool decides), pass `tie: "first"`, so the picker takes
+ * that tie is `matches`), or ask the caller to choose among `matches`. In a read that takes the
+ * first of options that tie instead, pass `tie: "first"`, so the picker takes
  * the first of them in the site's order and returns the one it used, which the tool returns in
  * its output. Success is
  * `{ picked: true, kind, label, value, rank, refills }`, plus `tied`, the options that tied, when

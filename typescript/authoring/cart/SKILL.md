@@ -65,8 +65,8 @@ An item's options often come in groups whose option labels repeat, such as "None
 under both a sweetness group and an ice group. Find each option inside its own group, by the
 group's heading or fieldset, never by its label across the whole item dialog. A list of saved
 addresses or stores can show the same name twice: choose by every part the input gives, such as
-the unit, and refuse when more than one entry still matches, never take the first. Choose a
-saved address with the core skill's address helpers, such as `resolveAddress` from
+the unit, and ask the caller or refuse when more than one entry still matches, never take the
+first. Choose a saved address with the core skill's address helpers, such as `resolveAddress` from
 `pomerado/runtime` with the saved entries as its suggestions, and compare a part they leave
 aside, such as the unit, with `sameText`, never with matching of your own.
 
@@ -207,9 +207,10 @@ refuse with `InvalidInput` naming the site's state before the commit mark, as th
 skill says for a page's state that rules the task out.
 
 Where the build runs test cases (testing skill), prefer including an item already in the cart,
-an item the site shows as unavailable, and an item shown at a discounted price, and, for a
-checkout, a cart under the store's minimum and a limit below the total. These are suggestions:
-a build that can't find such a case on the site goes on without it.
+an item the site shows as unavailable, an item shown at a discounted price and an item the
+site's search shows twice, and, for a checkout, a cart under the store's minimum and a limit
+below the total. These are suggestions: a build that can't find such a case on the site goes on
+without it.
 
 An example item that is out of stock doesn't end the build. The tool returns that as the site's
 refusal for the item, and the build publishes on it as the writes skill says.
