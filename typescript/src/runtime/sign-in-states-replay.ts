@@ -2959,13 +2959,12 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
         // The fuller state as if reached now, with what this replay typed still to count as new.
         if (run.visited.length >= maximumStateVisits) return stopped(run, "state_limit");
         yield* input.emit({ stage: "state", state: fuller.state.key, reason: "fuller_state" });
-        // A box whose value went out, as a code its page sent, is no press's to guard any more, as
-        // the site may change it once it took it; a box typed and still held stays guarded. With
-        // none left, the fuller state's own submit is read again before its first box.
-        for (const [selector, box] of readBefore.boxes)
-          if (box.step.fields.every(({ slot }) => replay.sent.seenSent(slot) && !replay.state.filled.has(slot)))
-            readBefore.boxes.delete(selector);
-        if (readBefore.boxes.size === 0) delete readBefore.submit;
+        // A code row whose own fill may have sent it, as its page sends it on the last digit, is no
+        // press's to guard any more, as the site may change its boxes once it took the code; every
+        // other box typed stays guarded.
+        if (code === true)
+          for (const [selector, box] of readBefore.boxes)
+            if (box.step.fields.every(({ slot }) => slot === "code")) readBefore.boxes.delete(selector);
         state = fuller.state;
         reached = {
           ...reached,
@@ -3005,12 +3004,15 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
       if (typeof here === "object" && "ended" in here) return here;
       if (typeof here === "object" && (yield* submitsChanged(run, readBefore, press, here)))
         return stopped(run, "credential_target_refused");
+      // A press without the code's boxes, as a fuller state's after a box of its own, still goes
+      // once the page sent the code.
+      const pressedCode = press.fields.some((field) => field.slot === "code") ? code : undefined;
       let failed =
         typeof here === "string"
           ? here
           : again === undefined
             ? yield* replay.runStep(press, here)
-            : yield* clickAgain(run, again, press, here, readBefore.since, code);
+            : yield* clickAgain(run, again, press, here, readBefore.since, pressedCode);
       // Nothing typed and its button kept disabled: nothing was clicked, so the press waits again.
       while (failed === "submit_stayed_disabled" && typed.size === 0 && (yield* now) < until) {
         here = yield* shownWithin(run, state, press, until);
