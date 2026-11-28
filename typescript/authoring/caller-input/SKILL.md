@@ -59,7 +59,10 @@ separately are both applied as given, even when they're far apart.
      `available` lists only values
      the caller could send back in that field, and a range goes in the message. When a refusal
      lists choices, list the site's standalone named options before entries from a broader list
-     or picker. An option taken from the
+     or picker. When those choices are ids, prefer giving each one's name in the message, plus
+     whatever tells near-duplicates apart. In any list of choices a result returns, prefer
+     pairing each choice's name with its id, plus whatever tells near-duplicates apart. An
+     option taken from the
      caller's own account goes in `available` as `{ label, accountSpecific: true, maskedLabel }`,
      marked as a question's option is ("Declare, read, ask", step 3). When the page refuses the
      value with an error of its own, prefer passing as `field` the input that error belongs to,
@@ -278,7 +281,8 @@ already asked for, or to solve a CAPTCHA.
    checkout's `currency`, its `items` (each `name`, `quantity`, `unit` for an item sold by
    weight or measure, and `price` each, `lineTotal` or both), `fees` (each `name` and
    `amount`), `discount`, `shipping`, `tax`, `tip` and `total`, amounts as decimal text,
-   which everyone sees unmasked, so never the address or card.
+   and `delivery` (`method` and `date`) when the checkout shows them, which everyone sees
+   unmasked, so never the address or card.
 4. Ask once for everything the step needs, between two execute calls:
    - `await ask("code")` returns that question's answer;
    - `await ask(["seat", "note"])` returns one answer per id;

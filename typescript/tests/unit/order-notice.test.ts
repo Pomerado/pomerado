@@ -100,6 +100,50 @@ describe("an order's notice", () => {
   });
 });
 
+describe("an order's delivery", () => {
+  // A changed delivery method or date then reads as another order, so a confirm's earlier yes
+  // never answers it.
+  it("shows how and when the order arrives, as the checkout shows them", () => {
+    const lamp = {
+      currency: "USD",
+      items: [{ name: "Synthetic lamp", quantity: 1, price: "12.00" }],
+    };
+    expect(
+      orderNotice(
+        decoded({
+          ...lamp,
+          shipping: "5.00",
+          delivery: { method: "Standard shipping", date: "Tue, Dec 2" },
+          total: "17.00",
+        }),
+      ),
+    ).toBe(
+      'Order: 1 × "Synthetic lamp" at 12.00 USD each. Shipping: 5.00 USD. Delivery: "Standard shipping", "Tue, Dec 2". Total: 17.00 USD.',
+    );
+    expect(orderNotice(decoded({ ...lamp, delivery: { method: "Pickup" }, total: "12.00" }))).toBe(
+      'Order: 1 × "Synthetic lamp" at 12.00 USD each. Delivery: "Pickup". Total: 12.00 USD.',
+    );
+    expect(orderNotice(decoded({ ...lamp, delivery: { date: "Dec 2-4" }, total: "12.00" }))).toBe(
+      'Order: 1 × "Synthetic lamp" at 12.00 USD each. Delivery: "Dec 2-4". Total: 12.00 USD.',
+    );
+  });
+
+  it("takes a method, a date or both, each one line of up to 200 characters, never neither", () => {
+    const order = (delivery: unknown) => ({
+      currency: "USD",
+      items: [{ name: "Synthetic item", quantity: 1, price: "1.00" }],
+      delivery,
+      total: "1.00",
+    });
+    expect(refused(order({}))).toBe(true);
+    expect(refused(order({ method: " " }))).toBe(true);
+    expect(refused(order({ date: "x".repeat(201) }))).toBe(true);
+    expect(refused(order({ method: "Pickup", window: "9-11" }))).toBe(true);
+    expect(refused(order({ method: "x".repeat(200) }))).toBe(false);
+    expect(refused(order({ method: "Express", date: "Tomorrow" }))).toBe(false);
+  });
+});
+
 describe("an order's facts", () => {
   const order = (item: object, more: object = {}) => ({
     currency: "USD",
@@ -181,6 +225,25 @@ describe("a script's purchase confirm", () => {
     const earlier = `Order: 3 × "Synthetic shake" at 4.99 USD each (14.97 USD). ${fees}`;
     expect(asksAsDeclared({ ...request, notice: earlier }, declared)).toBe(true);
     expect(asksAsDeclared({ ...request, notice: `${earlier} Extra.` }, declared)).toBe(false);
+  });
+
+  it("puts a delivery's method and date on one line and shortens a long one", () => {
+    const { result, request } = asked({
+      currency: "USD",
+      items: [{ name: "Synthetic lamp", quantity: 1, price: "12.00" }],
+      delivery: { method: "  Standard\n shipping ", date: "x".repeat(300) },
+      total: "12.00",
+    });
+    expect(result).toEqual(Either.right({ confirm_order: { confirmed: true } }));
+    if (request === undefined) throw new Error("the order was not asked");
+    expect(request.order?.delivery).toEqual({
+      method: "Standard shipping",
+      date: `${"x".repeat(199)}…`,
+    });
+    expect(request.notice).toBe(
+      `Order: 1 × "Synthetic lamp" at 12.00 USD each. Delivery: "Standard shipping", "${"x".repeat(199)}…". Total: 12.00 USD.`,
+    );
+    expect(asksAsDeclared(request, declared)).toBe(true);
   });
 
   it("refuses a notice that labels one line's total and leaves another's unlabeled", () => {

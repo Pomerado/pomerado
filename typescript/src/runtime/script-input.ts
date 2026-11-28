@@ -131,13 +131,16 @@ export type ScriptOption = typeof ScriptOption.Type;
 
 const NameLine = Schema.String.pipe(Schema.pattern(/\S/u));
 /**
- * A purchase confirm's order as the checkout shows it (`OrderFacts`): an item or fee name reaches
- * the caller on one line, and a long one shortened (`cutTo`).
+ * A purchase confirm's order as the checkout shows it (`OrderFacts`): an item or fee name, and a
+ * delivery's method and date, reach the caller on one line, and a long one shortened (`cutTo`).
  */
 const ScriptOrder = Schema.Struct({
   ...OrderFacts.fields,
   items: Schema.Array(Schema.Struct({ ...OrderItem.fields, name: NameLine })),
   fees: Schema.optional(Schema.Array(Schema.Struct({ ...OrderFee.fields, name: NameLine }))),
+  delivery: Schema.optional(
+    Schema.Struct({ method: Schema.optional(NameLine), date: Schema.optional(NameLine) }),
+  ),
 });
 export type ScriptOrder = typeof ScriptOrder.Encoded;
 
@@ -676,11 +679,12 @@ export const makeScriptInput = (
           const { path, rule } = brokenRule(decoded.left.issue);
           return yield* invalidOptions([id], `${pathText(["order", ...path])} ${rule}`);
         }
+        const oneLine = (text: string) => cutTo(text.replace(/\s+/gu, " ").trim(), longestItemName);
         const named = <Line extends { readonly name: string }>(line: Line) => ({
           ...line,
-          name: cutTo(line.name.replace(/\s+/gu, " ").trim(), longestItemName),
+          name: oneLine(line.name),
         });
-        const { fees, ...facts } = decoded.right;
+        const { fees, delivery, ...facts } = decoded.right;
         orderedBy = id;
         order = {
           ...facts,
@@ -688,6 +692,14 @@ export const makeScriptInput = (
           // An empty list is left out, so an order of the earlier shape still decodes on a host
           // that predates fees.
           ...(fees === undefined || fees.length === 0 ? {} : { fees: fees.map(named) }),
+          ...(delivery === undefined
+            ? {}
+            : {
+                delivery: {
+                  ...(delivery.method === undefined ? {} : { method: oneLine(delivery.method) }),
+                  ...(delivery.date === undefined ? {} : { date: oneLine(delivery.date) }),
+                },
+              }),
         };
       }
       const request = yield* Schema.decodeUnknown(InputRequest)(
