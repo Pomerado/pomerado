@@ -481,6 +481,20 @@ it("leaves out times that move with the clock only when asked", () => {
   expect(sameText("7 amps", "8 amps", { ignoreClockTimes: true })).toBe(false);
 });
 
+it("reads a search query's echo with its quotation marks dropped and & as and, only with { query: true }", () => {
+  const pairs = [
+    ['"Kirkland Signature" Paper Towels & Napkins', "Kirkland Signature paper towels and napkins"],
+    ["“Kirkland Signature” paper towels", '"kirkland signature" paper towels'],
+    ['65" TV', "65 tv"],
+  ] as const;
+  for (const [shown, wanted] of pairs) {
+    expect(sameText(shown, wanted, { query: true }), `${shown} | ${wanted}`).toBe(true);
+    expect(sameText(shown, wanted), `${shown} | ${wanted}`).toBe(false);
+  }
+  expect(sameText("bidet seat", "bidet seet", { query: true })).toBe(false);
+  expect(sameText('"paper towels"', "paper", { query: true })).toBe(false);
+});
+
 it("embeds as self-contained source, so page code can use it", () => {
   const embedded = new Function(`return ${String(sameText)};`)() as typeof sameText;
   expect(embedded("St-Jean", "Saint Jean")).toBe(true);

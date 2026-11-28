@@ -110,9 +110,9 @@ as suggestions rather than matches, such as "no exact matches, showing similar i
 that. Keep the matches apart from related items, recommendations and sponsored carousels, and
 mark a card that stands for a group of variants, such as "6 flavors" or "3 colors", as the core
 skill's "Results, related records and groups" says. Check that the
-page's echo of the query, such as a results heading, matches it as the core skill's Confirm step
-compares, except a query the site says it corrected or
-rewrote (below). A search
+page's echo of the query, such as a results heading, matches it with
+`sameText(echo, query, { query: true })` from `pomerado/runtime`, except a query the site
+corrected or rewrote (below). A search
 that applied every input and got the site's no-results message returns an empty list, never an
 error, unless other evidence on the same page contradicts it. The site's own error page or error
 banner, or an error status or error body from any data
@@ -131,10 +131,12 @@ IDs for a typical query, and check that no ID repeats and that the first rows ma
 Read the query the site applied from the page's embedded state, such as its search data, rather
 than from a selector scoped to one container, which another layout of the results page breaks.
 When the site corrected or rewrote the caller's query, such as fixing its spelling, its echo
-shows the query it searched: return the site's results and say so, never silently, with that
-query as `applied_query` and a `query_corrected` boolean; when the site only fixed its spelling,
+or search box shows the query it searched: return the site's results and say so, never silently
+and never as `InputNotApplied`, with that query as `applied_query` and a `query_corrected`
+boolean; when the site only fixed its spelling,
 a tool that ranks the results ranks them against that query as well as the caller's. The same
-holds for the query an HTTP version's answer echoes.
+holds for the query an HTTP version's answer echoes. An echo that passes the `sameText` check
+above is the caller's query, with `query_corrected` false.
 
 ## Answer quickly
 
