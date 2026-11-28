@@ -585,6 +585,39 @@ it("still ends a site gap as site_lacks_capability", async () => {
   });
 });
 
+// A write build that asked its owner nothing has its first site gap sent back once, and the next
+// report ends it. A read build ends at once.
+it.each([
+  { effect: "write", requests: 2 },
+  { effect: "read", requests: 1 },
+] as const)(
+  "sends a $effect build's first site gap back only when it asked nobody",
+  async ({ effect, requests }) => {
+    const explanation = "The offer adds items the request rules out.";
+    const report = (id: string) =>
+      call(
+        "report_blocked",
+        {
+          reason: "site_lacks_capability",
+          explanation,
+          intent: "The offer bundles items the request rules out.",
+        },
+        id,
+      );
+    const f = await fixture(
+      (_request, index) => [report("first"), report("second")][index] ?? prose("Stopping."),
+      {},
+      { effect, siteOrigin: "https://shop.example.test" },
+    );
+    expect(await f.run()).toMatchObject({
+      build: "incomplete",
+      blocked: { reason: "site_lacks_capability", explanation },
+    });
+    expect(f.requests).toHaveLength(requests);
+    if (effect === "write") expect(lastResult(f.requests[1])).toContain("owner_not_asked");
+  },
+);
+
 // Guardian's refusal stays a policy block, even when a question also went unanswered.
 it("keeps a policy block that stands on a Guardian refusal", async () => {
   const explanation = "Guardian refused the only way to reach the requested page.";

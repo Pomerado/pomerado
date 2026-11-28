@@ -1796,6 +1796,11 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        */
       const namedStepsOffered = new Set<string>();
       /**
+       * A write build's report that asked its owner nothing was already sent back to ask
+       * (`owner_not_asked`), so the next is taken. Kept in memory only, as `namedStepsOffered`.
+       */
+      let ownerAskOffered = false;
+      /**
        * The latest screened instruction each refusal in `namedStepReasons`, or each registry refusal
        * the minter may fix, gave the minter, which a `host_refused` report sent back to its step
        * repeats.
@@ -4615,6 +4620,24 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             "caller_input_not_cited",
             "caller_input needs the caller's own request, or a task update the owner confirmed, as its basis, so the build has not ended. In intent, name the request field or the update's revision that stops the build, or quote the words of the caller's instruction or of that update, then call report_blocked again. Prefer another reason when the site or a host check stopped it.",
           );
+        // A new write build that asked its owner nothing (no answer, no question left unanswered,
+        // no no) has its first site gap or caller stop sent back once to ask, and the next is
+        // taken. A question Guardian turned away reached nobody.
+        if (
+          (reason === "site_lacks_capability" || reason === "caller_input") &&
+          request.mode === "mint" &&
+          buildEffect === "write" &&
+          !ownerAskOffered &&
+          answeredQuestions.size === 0 &&
+          !unanswered &&
+          !ownerRefused
+        ) {
+          ownerAskOffered = true;
+          return refused(
+            "owner_not_asked",
+            "This write build asked its owner nothing, and the site still offers the change, so the build has not ended. When a condition in the request is what stops it, prefer one confirm question to the owner that says what the site shows and how it differs from the request. If the request rules out asking, or a question can't help, call report_blocked again.",
+          );
+        }
         if (reason === "host_refused" && !hostRefusing && hostRefusalPassed && hostRefusalRepeated)
           return refused(
             "host_refusal_repeated",
