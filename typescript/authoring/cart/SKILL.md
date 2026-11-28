@@ -161,8 +161,10 @@ which one the page pre-selects. Take a saved address or payment method the calle
 caller-input skill says, asking rather than refusing when it matches none or several. Choose it
 for this order only, leaving the saved entries and the account's defaults as they are, and when
 the page shows that the choice changed a default, report it in its own output field (writes
-skill). A paid add-on within the tool's purpose, such as a protection plan for the item bought,
-is an input or a question too. A paid membership, subscription or trial the checkout offers is
+skill). A checkout tool takes an optional input for whether to use the credits, gift card balances
+and promotions the checkout applies or offers (the writes skill). A paid add-on within the tool's
+purpose, such as a protection plan for the item bought, is an input or a question too. A paid
+membership, subscription or trial the checkout offers is
 outside its purpose: decline it without asking, never accept it without an input the caller set,
 and handle its pop-up as conditional (the forms skill), since it shows only to some accounts.
 
