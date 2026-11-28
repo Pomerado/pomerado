@@ -41,9 +41,14 @@ export const guardianReviewInput = (
       ...(turn.sources?.unchangedSources === undefined
         ? {}
         : { unchangedSources: turn.sources.unchangedSources }),
+      // A diff is the agent's own source text, so it is marked untrusted as a read_source chunk is.
       ...(turn.sources?.changedSources === undefined
         ? {}
-        : { changedSources: turn.sources.changedSources }),
+        : {
+            changedSources: turn.sources.changedSources.map(({ path, diff }) =>
+              diff === undefined ? { path } : { kind: "untrusted_source_diff", path, diff },
+            ),
+          }),
     },
     // The intent is in the build's own instructions (trusted_request), the same for every review.
     trusted_authority: {

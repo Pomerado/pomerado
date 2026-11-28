@@ -413,11 +413,14 @@ export const sourceChanges = (
     (path) =>
       Effect.gen(function* () {
         const seen = ledger.get(sourcePath(path));
+        const before = wholeText(seen);
+        const lastSeen = Math.max(...(seen?.keys() ?? []));
         const current = new Map<number, string>();
-        // Identical in every chunk, or different in a chunk Guardian read; a chunk it never read
-        // makes neither.
+        // Identical in every chunk to the end, or different in a chunk Guardian read; a chunk it
+        // never read makes neither.
         let same = true;
         let differs = false;
+        let complete = false;
         let offset = 0;
         for (let index = 0; index < comparedChunks; index++) {
           const chunk = sourceChunkOf(yield* read(path, offset));
@@ -428,17 +431,23 @@ export const sourceChanges = (
             same = false;
             if (earlier !== undefined) differs = true;
           }
-          if (!chunk.hasMore) break;
+          if (!chunk.hasMore) {
+            complete = true;
+            break;
+          }
           if (chunk.nextOffset <= offset) return {};
+          // Without Guardian's whole earlier text there is no diff, so nothing past its read counts.
+          if (before === undefined && chunk.nextOffset > lastSeen) break;
           offset = chunk.nextOffset;
         }
-        const after = wholeText(current);
-        if (after === undefined) return {};
-        if (same) return { unchanged: path };
+        if (complete && same) return { unchanged: path };
         if (!differs) return {};
-        const before = wholeText(seen);
-        if (before === after) return {};
-        const diff = before === undefined ? undefined : unifiedDiff(path, before, after);
+        const after = before === undefined || !complete ? undefined : wholeText(current);
+        if (after !== undefined && after === before) return {};
+        const diff =
+          before === undefined || after === undefined
+            ? undefined
+            : unifiedDiff(path, before, after);
         return { changed: diff === undefined ? { path } : { path, diff } };
       }).pipe(
         // error-reporting-allow: typed-recovery a source the host cannot compare is read again

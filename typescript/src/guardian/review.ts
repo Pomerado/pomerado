@@ -75,7 +75,7 @@ import {
 } from "./review-layout.js";
 import type { ChangedSource, GuardianOutcome, ReviewKind } from "./review-layout.js";
 export type { PublicationFileBlock } from "./review-contracts.js";
-export type { GuardianOutcome, ReviewKind } from "./review-layout.js";
+export type { ChangedSource, GuardianOutcome, ReviewKind } from "./review-layout.js";
 
 export interface GuardianDiagnostics {
   readonly emit: (
