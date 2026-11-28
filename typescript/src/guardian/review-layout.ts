@@ -10,6 +10,7 @@ import {
   routePointerParts,
 } from "./review-contracts.js";
 import type { PendingExecution, ReviewFailure } from "./review.js";
+import { unifiedDiff } from "./unified-diff.js";
 
 /**
  * Every Guardian review kind shares one request layout: the same instructions, tool and output
@@ -367,35 +368,104 @@ const sourceChunkRequest = (content: string | undefined): SourceChunk | undefine
 /** A file larger than this many chunks is read again rather than compared. */
 const comparedChunks = 32;
 
+/** An executed source whose text changed since Guardian read it, with the diff from that read. */
+export interface ChangedSource {
+  readonly path: string;
+  /**
+   * Absent when the earlier read was not of the whole file or only a private review's, the file
+   * is past the chunks the host compares, the change is too large to diff, or the diff is past
+   * the request's bounds.
+   */
+  readonly diff?: string;
+}
+
+/** A file's whole text from its chunks, by byte offset, when they cover it from the start. */
+const wholeText = (chunks: ReadonlyMap<number, string> | undefined): string | undefined => {
+  let text = "";
+  let offset = 0;
+  for (let index = 0; index < comparedChunks; index++) {
+    const chunk = sourceChunkOf(chunks?.get(offset));
+    const source = chunk?.value.source;
+    if (chunk === undefined || typeof source !== "string") return undefined;
+    text += source;
+    if (!chunk.hasMore) return text;
+    if (chunk.nextOffset <= offset) return undefined;
+    offset = chunk.nextOffset;
+  }
+  return undefined;
+};
+
 /**
- * The paths whose current content is byte-identical, chunk for chunk, to what the ledger holds.
- * Only paths Guardian already read are compared; a read that fails leaves its path out.
+ * Each path Guardian already read, compared with its current content: unchanged when it is
+ * byte-identical, chunk for chunk, to what the ledger holds, and changed when a chunk Guardian
+ * read differs, with a diff from the ledger's text when `readable`, the reads outside private
+ * reviews, holds that same whole text. A read that fails is in neither list, and so is a file
+ * past the chunks the host compares unless a chunk Guardian read differs.
  */
-export const unchangedSources = (
+export const sourceChanges = (
   ledger: SourceLedger,
+  readable: SourceLedger,
   paths: readonly string[],
   read: (path: string, offset: number) => Effect.Effect<string, ReviewFailure>,
-): Effect.Effect<readonly string[]> =>
+): Effect.Effect<{
+  readonly unchanged: readonly string[];
+  readonly changed: readonly ChangedSource[];
+}> =>
   Effect.forEach(
     [...new Set(paths)].filter((path) => ledger.has(sourcePath(path))),
     (path) =>
       Effect.gen(function* () {
         const seen = ledger.get(sourcePath(path));
+        const before = wholeText(seen);
+        // A diff shows only text a readable record may hold: never a private review's read alone.
+        const shown =
+          before !== undefined && wholeText(readable.get(sourcePath(path))) === before
+            ? before
+            : undefined;
+        const lastSeen = Math.max(...(seen?.keys() ?? []));
+        const current = new Map<number, string>();
+        // Identical in every chunk to the end, or different in a chunk Guardian read; a chunk it
+        // never read makes neither.
+        let same = true;
+        let differs = false;
+        let complete = false;
         let offset = 0;
         for (let index = 0; index < comparedChunks; index++) {
-          const current = sourceChunkOf(yield* read(path, offset));
-          if (current === undefined || seen?.get(offset) !== current.canonical) return [];
-          if (!current.hasMore) return [path];
-          if (current.nextOffset <= offset) return [];
-          offset = current.nextOffset;
+          const chunk = sourceChunkOf(yield* read(path, offset));
+          if (chunk === undefined) return {};
+          current.set(offset, chunk.canonical);
+          const earlier = seen?.get(offset);
+          if (earlier !== chunk.canonical) {
+            same = false;
+            if (earlier !== undefined) differs = true;
+          }
+          if (!chunk.hasMore) {
+            complete = true;
+            break;
+          }
+          if (chunk.nextOffset <= offset) return {};
+          // Without Guardian's whole earlier text there is no diff, so nothing past its read counts.
+          if (before === undefined && chunk.nextOffset > lastSeen) break;
+          offset = chunk.nextOffset;
         }
-        return [];
+        if (complete && same) return { unchanged: path };
+        if (!differs) return {};
+        const after = before === undefined || !complete ? undefined : wholeText(current);
+        if (after !== undefined && after === before) return {};
+        const diff =
+          shown === undefined || after === undefined ? undefined : unifiedDiff(path, shown, after);
+        return { changed: diff === undefined ? { path } : { path, diff } };
       }).pipe(
         // error-reporting-allow: typed-recovery a source the host cannot compare is read again
-        Effect.catchAll(() => Effect.succeed([])),
+        Effect.catchAll(() => Effect.succeed({})),
       ),
     { concurrency: 4 },
-  ).pipe(Effect.map((found) => found.flat()));
+  ).pipe(
+    Effect.map((found: readonly { unchanged?: string; changed?: ChangedSource }[]) => ({
+      unchanged: found.flatMap(({ unchanged }) => (unchanged === undefined ? [] : [unchanged])),
+      changed: found.flatMap(({ changed }) => (changed === undefined ? [] : [changed])),
+    })),
+  );
 
 const privateReviewRequest = (item: unknown): boolean => {
   if (typeof item !== "object" || item === null || Reflect.get(item, "role") !== "user")

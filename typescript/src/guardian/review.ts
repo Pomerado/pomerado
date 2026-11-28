@@ -4,6 +4,7 @@ import { QuestionDecision } from "./question.js";
 import { anchorQuotedFindings, decodePublicationDecision } from "./publication.js";
 import {
   answeredFindings,
+  boundedDiffs,
   publicationContext,
   publicationDelta,
   publicationDeltaCounts,
@@ -69,12 +70,13 @@ import {
   reviewOutcomesOf,
   sourceChunkOf,
   sourceLedger,
+  sourceChanges,
   sourcePath,
-  unchangedSources,
+  withholdPrivateReviews,
 } from "./review-layout.js";
-import type { GuardianOutcome, ReviewKind } from "./review-layout.js";
+import type { ChangedSource, GuardianOutcome, ReviewKind } from "./review-layout.js";
 export type { PublicationFileBlock } from "./review-contracts.js";
-export type { GuardianOutcome, ReviewKind } from "./review-layout.js";
+export type { ChangedSource, GuardianOutcome, ReviewKind } from "./review-layout.js";
 
 export interface GuardianDiagnostics {
   readonly emit: (
@@ -658,6 +660,8 @@ export interface ReviewSources {
   readonly entrypoint?: unknown;
   /** Executed sources byte-identical to a read already in this conversation's view. */
   readonly unchangedSources?: readonly string[];
+  /** Executed sources whose text changed since a read in this conversation's view, with diffs. */
+  readonly changedSources?: readonly ChangedSource[];
   /** A later publication round's change since the mint's prior round, and that round's decision. */
   readonly publicationDelta?: PublicationDelta;
   /**
@@ -690,8 +694,9 @@ export interface ReviewTurn {
   /**
    * The follow-up the reviewer sends, in the same review, when the host cannot take its output
    * yet: once for an outcome the review's kind does not return and once for a decision that does
-   * not decode (neither for a private host kind), and up to twice for a required read it did not
-   * do. Undefined when the output stands; a reviewer sends at most `reviewFollowUpRounds`.
+   * not decode (neither for a private host kind), once for a refusal that read none of the changed
+   * sources, and up to twice for a required read it did not do. Undefined when the output stands;
+   * a reviewer sends at most `reviewFollowUpRounds`.
    */
   readonly followUp?: (raw: unknown) => string | undefined;
   readonly reportUsage?: (usage: GuardianUsage) => Effect.Effect<void>;
@@ -867,9 +872,10 @@ const requiredReadRounds = 2;
 
 /**
  * The most follow-up rounds one review gets: one outcome correction, one decode correction, one
- * settled-ground correction and the required reads.
+ * settled-ground correction, one ask after a refusal that read no changed source, and the required
+ * reads.
  */
-export const reviewFollowUpRounds = requiredReadRounds + 3;
+export const reviewFollowUpRounds = requiredReadRounds + 4;
 
 /** The longest decode error a follow-up quotes. */
 const decodeErrorLimit = 2000;
@@ -1501,6 +1507,8 @@ export const makeGuardian = (
          * which only leaves that file to be judged again.
          */
         let searching = 0;
+        /** The paths Guardian's own reads in this review reached, searches included. */
+        const readPaths = new Set<string>();
         /** Guardian's own reads, through its tool: tracked for required evidence. */
         const read: ReviewTurn["readSource"] = (requested, offset) => {
           const path = sourcePath(requested);
@@ -1547,6 +1555,7 @@ export const makeGuardian = (
                   served.set(chunk.path, chunks);
                 }
                 unavailableSources.delete(JSON.stringify([path, offset]));
+                readPaths.add(path);
                 if (path === entrypoint && offset === 0) entrypointReadAt = epoch();
               }),
             ),
@@ -1575,11 +1584,15 @@ export const makeGuardian = (
             const retained = yield* Effect.either(retain(included.right));
             if (retained._tag === "Left") yield* gap(retained.left);
           }
-          const unchanged =
+          const { unchanged, changed } =
             session === undefined
-              ? []
-              : yield* unchangedSources(
+              ? { unchanged: [], changed: [] }
+              : yield* sourceChanges(
                   sourceLedger(session.history()),
+                  sourceLedger(
+                    withholdPrivateReviews(session.history(), () => ({}), session.leadingPrivate())
+                      .items,
+                  ),
                   (pending.mintContext?.executedSources ?? []).filter(
                     (path) => sourcePath(path) !== entrypoint,
                   ),
@@ -1592,6 +1605,7 @@ export const makeGuardian = (
                 }
               : {}),
             ...(unchanged.length === 0 ? {} : { unchangedSources: unchanged }),
+            ...(changed.length === 0 ? {} : { changedSources: boundedDiffs(changed) }),
           };
         }
         if (delta !== undefined) sources = { ...sources, publicationDelta: delta };
@@ -1628,6 +1642,15 @@ export const makeGuardian = (
           | { readonly ground: GuardianRefusalGround; readonly refused: object }
           | undefined;
         let readRounds = 0;
+        let changedAsked = false;
+        const changedPaths = (sources?.changedSources ?? []).map((source) => source.path);
+        /** A refusal whose review read none of the sources that changed since an earlier read. */
+        const refusedUnread = (raw: unknown) =>
+          changedPaths.length > 0 &&
+          typeof raw === "object" &&
+          raw !== null &&
+          (Reflect.get(raw, "outcome") === "deny" || Reflect.get(raw, "outcome") === "escalate") &&
+          !changedPaths.some((path) => readPaths.has(sourcePath(path)));
         // A publication finding names one of these paths exactly.
         const indexedPaths =
           publication?.files.filter((file) => file.byteLength > 0).map((file) => file.path) ?? [];
@@ -1715,6 +1738,12 @@ export const makeGuardian = (
               return settled === "owner_confirmation" && confirmedStep === undefined
                 ? grantedReadCorrection
                 : settledGroundCorrection[settled];
+            }
+            // A refusal that may rest on an earlier read of a changed source goes back once.
+            if (!changedAsked && refusedUnread(output)) {
+              changedAsked = true;
+              followUpRounds++;
+              return `These files changed since you last read them: ${changedPaths.join(", ")}. Read them and rule again on the current source.`;
             }
             if (!unread(output) || readRounds >= requiredReadRounds) return undefined;
             readRounds++;

@@ -140,6 +140,9 @@ export interface GuardianModelOptions {
 // reads this replacement after the rule it replaces.
 const executionOutcomePolicy = `Return the structured outcome allow, deny or escalate and a concise rationale. A deny or escalate rationale names every problem the submitted source has, each with what to change, so that one revision can fix them all, in at most 4,000 characters; this replaces the general rule of one sentence with the main reason, and you never hold a problem back for a later round.`;
 
+/** An execution refusal names every problem across the files the step runs, in one answer. */
+const executionEveryProblemPolicy = `Prefer naming in this answer every problem you find in any file the step runs, changed or not: a problem you see now and name only in a later round costs the step another try.`;
+
 /**
  * How a publication denial treats an incomplete capability. Only publication review judges a
  * tool's output and capability claims, as the execution policy says, so an execution or recovery
@@ -309,8 +312,9 @@ const hostPolicies = (
 
 /**
  * The kind's policy, sent in the review's user message: for an execution, recovery or
- * publication review the allow, deny or escalate outcome policy, with the capability rule for a
- * publication and what advice is for an execution or recovery, then a question or task update
+ * publication review the allow, deny or escalate outcome policy, with the every-problem line for an
+ * execution, the capability rule for a publication and what advice is for an execution or
+ * recovery, then a question or task update
  * review's policy, which names its own outcomes; then the host's own policies for the kind or, for
  * a publication review without one, the core publication policy, and for a later publication
  * round the delta policy. A host-defined kind's review carries only the host's policies.
@@ -325,6 +329,7 @@ const reviewPolicy = (
   const kind = reviewKindOf(turn.pending);
   return [
     kind === "question" || kind === "update" ? undefined : executionOutcomePolicy,
+    kind === "execution" ? executionEveryProblemPolicy : undefined,
     kind === "publication" ? capabilityCompletionPolicy : undefined,
     kind === "execution" ? executionActionPolicy : undefined,
     kind === "execution" ? executionRefusalPolicy : undefined,

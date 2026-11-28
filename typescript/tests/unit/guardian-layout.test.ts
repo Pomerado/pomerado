@@ -7,12 +7,13 @@
 // a host-defined private kind's exchange reaches later readable records, also through a later
 // review's failed run; a private kind's rejected label, its configured labels or its model error
 // text reach a readable failure record, its retry included; a failed private review drops its
-// final timing.
+// final timing; a refusal rests on an earlier read of a source that changed since, unlisted and
+// unasked, or a changed source's diff carries a private review's read.
 import { createHash } from "node:crypto";
 import { OpenAIProvider, setDefaultModelProvider, Usage } from "@openai/agents";
 import type { ModelRequest, ModelResponse } from "@openai/agents";
 import { Effect } from "effect";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { makeOpenAIReviewer } from "../../src/guardian/openai.js";
 import { nativeExecutionEnvironment } from "../../src/guardian/execution-policy.js";
 import { ReviewFailure, guardianOutageRetry, makeGuardian } from "../../src/guardian/review.js";
@@ -21,7 +22,9 @@ import type {
   HostReview,
   PendingExecution,
 } from "../../src/guardian/review.js";
-import { makeSourceInspector } from "../../src/guardian/source.js";
+import { makeSourceInspector, sourceChunk } from "../../src/guardian/source.js";
+import { sourceChanges, sourceChunkOf } from "../../src/guardian/review-layout.js";
+import { boundedDiffs } from "../../src/guardian/publication-delta.js";
 import type { ModelObserverFactory } from "../../src/models/model-observer.js";
 import type { ModelDiagnosticTiming } from "../../src/models/model-diagnostic-timing.js";
 import { conversationOf, instructionsOf } from "../support/guardian-requests.js";
@@ -493,6 +496,239 @@ it("marks an executed source unchanged since Guardian read it, and not once it c
   expect(unchanged(requests[0])).toBeUndefined();
   expect(unchanged(requests[2])).toEqual(["operation/src/helper.mjs"]);
   expect(unchanged(requests[3])).toBeUndefined();
+  // Nothing changed since the read, so nothing is listed as changed.
+  expect(reviewRequest(requests[2]).trusted_review).not.toHaveProperty("changedSources");
+});
+
+// A review after a file Guardian read had changed got only the entrypoint and the unchanged list,
+// so a refusal could rest on the earlier read of the changed file, and it counted like any other
+// refusal against the few tries a host gives a step.
+const helperPath = "operation/src/helper.mjs";
+const deny = decision({ outcome: "deny", rationale: "The helper ignores the day.", action: "read" });
+const changedNote = `These files changed since you last read them: ${helperPath}. Read them and rule again on the current source.`;
+/** The host's last message in a request: a follow-up after the review's first output. */
+const lastUserText = (request: ModelRequest | undefined) => {
+  const input = request?.input;
+  const items = typeof input === "string" ? [{ role: "user", content: input }] : (input ?? []);
+  const texts = items.flatMap((item) =>
+    "role" in item && item.role === "user" && typeof item.content === "string"
+      ? [item.content]
+      : [],
+  );
+  return texts.at(-1) ?? "";
+};
+/** A review that reads the helper, then the helper changes, then a review scripted by `second`. */
+const afterHelperChange = async (second: readonly ModelResponse["output"][], change = true) => {
+  const requests = scripted([[read("helper_1", helperPath)], [allow], ...second]);
+  const workspace = files();
+  const executed: PendingExecution = {
+    ...pending,
+    mintContext: {
+      repeatableRead: false,
+      operationSources: [...workspace.keys()],
+      executedSources: ["operation/operation.mjs", helperPath],
+      browser: "active",
+      executions: [],
+    },
+  };
+  const guardian = makeGuardian(
+    makeOpenAIReviewer("{{ tenant_policy_config }}", false, native),
+    undefined,
+    {},
+  );
+  const reader = sourcesOf(workspace);
+  await Effect.runPromise(guardian.review(executed, reader));
+  if (change) workspace.set(helperPath, "export const hours = (day) => `changed-hours-${day}`;");
+  const reviewed = await Effect.runPromise(
+    guardian.review({ ...executed, screenedInput: '{"day":2}' }, reader),
+  );
+  return { requests, reviewed };
+};
+
+it("lists an executed source that changed since Guardian read it, with its diff from that read", async () => {
+  const { requests } = await afterHelperChange([[read("helper_2", helperPath)], [allow]]);
+  const review = reviewRequest(requests[2]).trusted_review as Record<string, unknown>;
+  expect(review.changedSources).toEqual([
+    { kind: "untrusted_source_diff", path: helperPath, diff: expect.any(String) },
+  ]);
+  const diff = (review.changedSources as { diff: string }[])[0]?.diff;
+  expect(diff).toContain("-export const hours = () => 'synthetic-hours';");
+  expect(diff).toContain("+export const hours = (day) => `changed-hours-${day}`;");
+  expect(review).not.toHaveProperty("unchangedSources");
+});
+
+it.each(["deny", "escalate"] as const)(
+  "asks again, once, when a %s read none of the changed sources, and only the second answer leaves the review",
+  async (outcome) => {
+    const refusal = decision({ outcome, rationale: "The helper ignores the day.", action: "read" });
+    const { requests, reviewed } = await afterHelperChange([
+      [refusal],
+      [read("helper_2", helperPath)],
+      [allow],
+    ]);
+    expect(lastUserText(requests[3])).toBe(changedNote);
+    expect(reviewed.decision.outcome).toBe("allow");
+    expect(requests).toHaveLength(5);
+  },
+);
+
+it.each([helperPath, `./${helperPath}`])(
+  "keeps a refusal that read the changed source as %s, with no second ask",
+  async (spelled) => {
+    const { requests, reviewed } = await afterHelperChange([[read("helper_2", spelled)], [deny]]);
+    expect(reviewed.decision.outcome).toBe("deny");
+    expect(requests).toHaveLength(4);
+  },
+);
+
+it("names a changed source a private review alone read, with no diff of what it read", async () => {
+  const requests = scripted([
+    [read("private_read", helperPath)],
+    [decision({ outcome: "allow", rationale: "Lists nothing private.", label: "listable" })],
+    [read("helper_2", helperPath)],
+    [allow],
+  ]);
+  const workspace = files();
+  workspace.set(helperPath, "export const hours = () => 'synthetic-private-read-marker';");
+  const guardian = makeGuardian(
+    makeOpenAIReviewer("{{ tenant_policy_config }}", false, native),
+    undefined,
+    {},
+  );
+  const reader = sourcesOf(workspace);
+  await Effect.runPromise(guardian.reviewHostKind(pending, listing({}), reader));
+  workspace.set(helperPath, "export const hours = () => 'changed-hours';");
+  await Effect.runPromise(
+    guardian.review(
+      {
+        ...pending,
+        mintContext: {
+          repeatableRead: false,
+          operationSources: [...workspace.keys()],
+          executedSources: ["operation/operation.mjs", helperPath],
+          browser: "active",
+          executions: [],
+        },
+      },
+      reader,
+    ),
+  );
+  const review = reviewRequest(requests[2]).trusted_review as Record<string, unknown>;
+  expect(review.changedSources).toEqual([{ path: helperPath }]);
+  expect(JSON.stringify(review)).not.toContain("synthetic-private-read-marker");
+});
+
+it("asks a refusal that read none of the changed sources only once, and keeps the second refusal", async () => {
+  const { requests, reviewed } = await afterHelperChange([[deny], [deny]]);
+  expect(lastUserText(requests[3])).toBe(changedNote);
+  expect(reviewed.decision.outcome).toBe("deny");
+  expect(requests).toHaveLength(4);
+});
+
+it("asks nothing more of an allow that read none of the changed sources", async () => {
+  const { requests, reviewed } = await afterHelperChange([[allow]]);
+  expect(reviewed.decision.outcome).toBe("allow");
+  expect(requests).toHaveLength(3);
+});
+
+it("asks nothing more of a refusal when no source changed since Guardian read it", async () => {
+  const { requests, reviewed } = await afterHelperChange([[deny]], false);
+  expect(reviewRequest(requests[2]).trusted_review).not.toHaveProperty("changedSources");
+  expect(reviewed.decision.outcome).toBe("deny");
+  expect(requests).toHaveLength(3);
+});
+
+describe("sourceChanges", () => {
+  const path = "operation/src/large.mjs";
+  /** Two chunks: the first 64 KiB, then the rest. */
+  const large = (tail: string, head = "a") => `${head.repeat(70_000)}\n${tail}\n`;
+  /** The ledger of a Guardian that read `text` at these offsets, through `spelled`. */
+  const ledgerOf = (text: string, offsets: readonly number[], spelled = path) =>
+    Effect.runPromise(
+      Effect.forEach(offsets, (offset) => sourceChunk(spelled, text, offset)).pipe(
+        Effect.map(
+          (chunks) =>
+            new Map([
+              [
+                path,
+                new Map(
+                  chunks.map((chunk, index) => [
+                    offsets[index] ?? 0,
+                    sourceChunkOf(chunk)?.canonical ?? "",
+                  ]),
+                ),
+              ],
+            ]),
+        ),
+      ),
+    );
+  const compare = async (ledger: Awaited<ReturnType<typeof ledgerOf>>, now: string) => {
+    let reads = 0;
+    const found = await Effect.runPromise(
+      sourceChanges(ledger, ledger, [path], (requested, offset) => {
+        reads++;
+        return sourceChunk(requested, now, offset);
+      }),
+    );
+    return { ...found, reads };
+  };
+  const second = 65_536;
+
+  it("lists a file Guardian read only in part neither way unless a part it read changed, with no diff", async () => {
+    const before = large("export const tail = 1;");
+    const partly = await ledgerOf(before, [0]);
+    // Unchanged: nothing past the part Guardian read is read.
+    expect(await compare(partly, before)).toEqual({ unchanged: [], changed: [], reads: 1 });
+    // Changed only past the part it read.
+    expect(await compare(partly, large("export const tail = 2;"))).toEqual({
+      unchanged: [],
+      changed: [],
+      reads: 1,
+    });
+    // Changed in the part it read: listed, with no earlier whole text to diff against.
+    expect(await compare(partly, large("export const tail = 1;", "b"))).toEqual({
+      unchanged: [],
+      changed: [{ path }],
+      reads: 1,
+    });
+    // Read only past the start, and changed only in its first byte.
+    expect(await compare(await ledgerOf(before, [second]), `b${before.slice(1)}`)).toMatchObject({
+      unchanged: [],
+      changed: [],
+    });
+  });
+
+  it("lists a file whose chunks differ only in how the read was spelled neither way", async () => {
+    const before = large("export const tail = 1;");
+    expect(await compare(await ledgerOf(before, [0, second], `./${path}`), before)).toMatchObject({
+      unchanged: [],
+      changed: [],
+    });
+  });
+
+  it("lists a file Guardian read whole as unchanged, or as changed with a diff from that read", async () => {
+    const before = large("export const tail = 1;");
+    const whole = await ledgerOf(before, [0, second]);
+    expect(await compare(whole, before)).toMatchObject({ unchanged: [path], changed: [] });
+    const { changed } = await compare(whole, large("export const tail = 2;"));
+    expect(changed).toEqual([{ path, diff: expect.stringContaining("+export const tail = 2;") }]);
+  });
+
+  it("keeps each diff within the request's bounds, past which a file is only named", () => {
+    expect(
+      boundedDiffs([
+        { path: "operation/src/one.mjs", diff: "x".repeat(33 * 1024) },
+        { path: "operation/src/two.mjs", diff: "small" },
+      ]),
+    ).toEqual([{ path: "operation/src/one.mjs" }, { path: "operation/src/two.mjs", diff: "small" }]);
+    // Three of 31 KiB fit the request's 96 KiB; a fourth does not.
+    const diff = "x".repeat(31 * 1024);
+    const paths = ["a", "b", "c", "d"].map((name) => `operation/src/${name}.mjs`);
+    expect(boundedDiffs(paths.map((path) => ({ path, diff })))).toEqual([
+      ...paths.slice(0, 3).map((path) => ({ path, diff })),
+      { path: paths[3] },
+    ]);
+  });
 });
 
 /** One read_source call that names several files. */
