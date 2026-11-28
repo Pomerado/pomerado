@@ -2959,6 +2959,13 @@ const actIn = <E extends YieldableError, V extends string, L extends AutofillLog
         // The fuller state as if reached now, with what this replay typed still to count as new.
         if (run.visited.length >= maximumStateVisits) return stopped(run, "state_limit");
         yield* input.emit({ stage: "state", state: fuller.state.key, reason: "fuller_state" });
+        // A box whose value went out, as a code its page sent, is no press's to guard any more, as
+        // the site may change it once it took it; a box typed and still held stays guarded. With
+        // none left, the fuller state's own submit is read again before its first box.
+        for (const [selector, box] of readBefore.boxes)
+          if (box.step.fields.every(({ slot }) => replay.sent.seenSent(slot) && !replay.state.filled.has(slot)))
+            readBefore.boxes.delete(selector);
+        if (readBefore.boxes.size === 0) delete readBefore.submit;
         state = fuller.state;
         reached = {
           ...reached,
