@@ -476,6 +476,8 @@ const reviewedPublicationRefusals = 8;
 const actRefusalsForPolicy = 5;
 /** The host refusals of a step itself, before or as it ran, rather than of a sign-in or a change. */
 const stepRefusalSources: ReadonlySet<string> = new Set(["source_rule", "preflight", "file_cap"]);
+/** The steps that only read, whose final refusal by Guardian rests on our own rule. */
+const readStepPurposes: ReadonlySet<string> = new Set(["explore", "test", "example"]);
 /**
  * How many of the latest live test batches an execution review reads (`LiveTestHost.bindBatches`),
  * beside older ones whose failures still stand.
@@ -1802,6 +1804,13 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
        * (`own_rule_refused`), so the next is taken. Kept in memory only, as `namedStepsOffered`.
        */
       let ownRuleOffered = false;
+      /**
+       * Guardian made a final refusal of a read step (explore, test or example) in this attempt,
+       * the read-only rule's out-of-authority denial included: it rests on our own rule, while an
+       * act step's may rest on the site's own path, such as one no single session reaches. Kept
+       * in memory only, as `ownRuleOffered`.
+       */
+      let readStepRefused = false;
       /**
        * The latest screened instruction each refusal in `namedStepReasons`, or each registry refusal
        * the minter may fix, gave the minter, which a `host_refused` report sent back to its step
@@ -4622,14 +4631,16 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
             "caller_input_not_cited",
             "caller_input needs the caller's own request, or a task update the owner confirmed, as its basis, so the build has not ended. In intent, name the request field or the update's revision that stops the build, or quote the words of the caller's instruction or of that update, then call report_blocked again. Prefer another reason when the site or a host check stopped it.",
           );
-        // A site gap while our own refusal of a step stands, Guardian's final one (the read-only
-        // rule's included) or a host check's, goes back once to name that refusal, and the next is
-        // taken. A refusal of a sign-in alone keeps the sign-in's ending, and a host refusal of a
-        // publication or task update may itself point to a site gap.
+        // A site gap while our own refusal of a step stands, Guardian's final one of a read step
+        // (the read-only rule's included) or a host check's, goes back once to name that refusal,
+        // and the next is taken. An act step's refusal, a sign-in's and a host refusal of a
+        // publication or task update may themselves point to a site gap, and a sign-in that never
+        // confirmed keeps its own ending.
         if (
           reason === "site_lacks_capability" &&
           !ownRuleOffered &&
-          ((guardianRefused && !signInRefusalOnly) ||
+          !signInUnconfirmed &&
+          (readStepRefused ||
             (hostRefused &&
               standingHostRefusals.some(({ refusal }) =>
                 stepRefusalSources.has(refusal?.source ?? ""),
@@ -6714,6 +6725,14 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
                   Effect.suspend(() => {
                     // An act step Guardian allowed starts the run of refusals again; one it
                     // refused adds to it.
+                    if (
+                      readStepPurposes.has(submitted.purpose) &&
+                      Exit.isFailure(result) &&
+                      Cause.isFailType(result.cause) &&
+                      result.cause.error.code === "ReviewDenied" &&
+                      result.cause.error.review?.refusal !== "correctable"
+                    )
+                      readStepRefused = true;
                     if (submitted.purpose === "act") {
                       if (crossedDispatchBoundary) actRefusalsInRow = 0;
                       else if (

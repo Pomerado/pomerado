@@ -453,7 +453,11 @@ export interface PendingExecution {
   readonly findingResponses?: readonly FindingResponse[];
   /** Host-selected mechanics and recorded chronology, not website claims or added authority. */
   readonly mintContext?: {
-    /** Host authorization mechanics only; does not establish the source's read semantics. */
+    /**
+     * Host authorization mechanics only; does not establish the source's read semantics. For an
+     * explore step a host sets it true only in a read build before its example claims, which lets
+     * the review keep the write of a step the site requires before the task (`siteRequiredStep`).
+     */
     readonly repeatableRead: boolean;
     /** Exact host-bound operation namespace available through readSource. */
     readonly operationSources: readonly string[];
