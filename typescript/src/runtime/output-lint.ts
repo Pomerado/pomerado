@@ -342,10 +342,14 @@ const bareClock = (text: string, key: string | undefined) =>
   (key !== undefined && clockKey.test(key) && !durationKey.test(key) && twentyFourHourClock.test(text));
 /**
  * A 12-hour clock time within text, such as the `8:26 PM` of "Arrives 8:11-8:26 PM", checked only
- * in a field about a time (`timeWords`, `timeLabel`), so prose such as a review is left.
+ * in a field about a time (`aboutTime`), so prose such as a review is left. A price such as
+ * `7.99` before "pm" is none.
  */
-const clockInText = /(?<![\d:])\d{1,2}(?::\d{2}){0,2}\s*[ap]\.?\s?m\.?(?![a-z])/iu;
-/** Words of a field's name or description that say it is about a time, such as `eta`. */
+const clockInText = /(?<![\d:.,$\u00a3\u20ac])(?:1[0-2]|0?\d)(?:[:.][0-5]\d){0,2}\s*[ap]\.?\s?m\.?(?![a-z])/iu;
+/**
+ * Words of a field's name, or of its description, that say it is about a time, such as `eta`;
+ * `time` itself counts only in a name, since a description says "at the time" or "on time".
+ */
 const timeWords = new Set([
   "eta",
   "arrival",
@@ -361,17 +365,50 @@ const timeWords = new Set([
   "window",
   "windows",
   "hours",
-  "time",
-  "times",
 ]);
-const aboutTime = (text: string) =>
+const timeNameWords = new Set([...timeWords, "time", "times"]);
+/** Words of a field's name that make it prose, whatever else it names, such as `delivery_policy`. */
+const proseWords = new Set([
+  "review",
+  "reviews",
+  "comment",
+  "comments",
+  "description",
+  "descriptions",
+  "policy",
+  "policies",
+  "instruction",
+  "instructions",
+  "note",
+  "notes",
+  "message",
+  "messages",
+  "terms",
+  "feedback",
+  "name",
+  "title",
+  "address",
+]);
+const wordsOf = (text: string) =>
   text
     .replace(/([a-z0-9])([A-Z])/gu, "$1 $2")
     .toLowerCase()
-    .split(/[^a-z0-9]+/u)
-    .some((word) => timeWords.has(word));
+    .split(/[^a-z0-9]+/u);
 /** A label, which beside a timestamp is the site's wording of a time, such as `start_label`. */
 const timeLabel = /(?:_label|Label)$/u;
+/**
+ * Whether a field is about a time: its name has a time word or is a label beside a timestamp, or
+ * its description has one, unless its name is prose's.
+ */
+const aboutTime = (key: string, description: unknown, besideTimestamp: boolean) => {
+  const words = wordsOf(key);
+  return (
+    !words.some((word) => proseWords.has(word)) &&
+    (words.some((word) => timeNameWords.has(word)) ||
+      (besideTimestamp && timeLabel.test(key)) ||
+      (typeof description === "string" && wordsOf(description).some((word) => timeWords.has(word))))
+  );
+};
 /**
  * A field that names the zone of the times beside it, such as `time_zone`: a bare clock time in
  * its record, or in a record within it, keeps its zone.
@@ -706,11 +743,7 @@ export const lintOutput = (output: unknown, options: OutputLintOptions = {}): Ou
     const description = schema.annotation(node, "description");
     const promised =
       key !== undefined && siteWordingKey.test(key) ? [] : promisedNotations(description, key);
-    const timeField = () =>
-      key !== undefined &&
-      (aboutTime(key) ||
-        (typeof description === "string" && aboutTime(description)) ||
-        (besideTimestamp && timeLabel.test(key)));
+    const timeField = () => key !== undefined && aboutTime(key, description, besideTimestamp);
     if (
       (format === "date" && !isoDate.test(text)) ||
       (format === "date-time" && !isoDateTime.test(text)) ||

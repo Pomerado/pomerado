@@ -917,6 +917,8 @@ describe("output notation checks", () => {
         description: "Open until 9 PM daily",
         status_label: "Arriving at 7:45 PM",
         cook_time: "Ready in 1:30",
+        delivery_policy: "Orders placed by 2 PM ship the same day",
+        delivery_instructions: "Leave at the door after 6 pm",
       }),
     ).toEqual(["eta format_mismatch", "pickupWindow format_mismatch", "store_hours format_mismatch"]);
     const delivery = contractJsonSchema(
@@ -925,12 +927,13 @@ describe("output notation checks", () => {
           description: "Delivery arrival range exactly as displayed in local time",
         }),
         status: Schema.String.annotations({ description: "Delivery status as shown" }),
-        comment: Schema.String.annotations({ description: "The reviewer's comment as shown" }),
+        comment: Schema.String.annotations({ description: "The customer's comment about the delivery" }),
+        body: Schema.String.annotations({ description: "Review text as shown at the time of reading" }),
       }),
     );
     expect(
       checksOf(
-        { eta: "Arrives 8:11-8:26 PM", status: "Arriving at 7:45 PM", comment: "Came at 7 pm" },
+        { eta: "Arrives 8:11-8:26 PM", status: "Arriving at 7:45 PM", comment: "Came at 7 pm", body: "Came at 7 pm" },
         { outputSchema: delivery },
       ),
     ).toEqual(["eta format_mismatch", "status format_mismatch"]);
