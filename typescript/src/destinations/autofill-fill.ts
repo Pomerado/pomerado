@@ -38,6 +38,7 @@ import {
   LocatedError,
   notingHostTrust,
   Targets,
+  typesNothing,
   untrustedTarget,
 } from "./autofill-step.js";
 import {
@@ -504,6 +505,9 @@ const pastedSlots: ReadonlySet<FillSlot | undefined> = new Set<FillSlot>([
  * field still to be typed must take typing: a refusal, or undefined to call again. A form that
  * changed how or where it submits, beyond an action's query or hash, and a page that changed them
  * a third time (`changes`, counted across every call the host makes again for it) are refused.
+ * On a sign-in step that types nothing, on a browser typed into nothing yet (`typesNothing`), only
+ * the third change is: inspection's rule judges how and where it now submits, since nothing typed
+ * can travel and the next screen is judged before anything is typed there.
  * Controls judged so are ones the host may act on, so the origins `trustSignInUrl` trusted for
  * them join the fill's (`progress.trusted`).
  */
@@ -532,7 +536,9 @@ const rejudge = (
   };
   const refusal =
     untrustedTarget(changed, input.step, trust, from, named) ??
-    resubmitted(judged, changed, named) ??
+    (typesNothing(input.step, input.inspection)
+      ? undefined
+      : resubmitted(judged, changed, named)) ??
     (changes >= 3
       ? withCheck(
           refused("credential_target_refused", target),

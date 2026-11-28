@@ -70,7 +70,9 @@ const unprovenMarks = (
  * one passes) proved that refusal, not a confirmation: every commit step after the last one it
  * entered, all of them when it entered none, may be unproven, and no confirmation is matched.
  * Given `readBack`, which only a host that publishes on the named step's read-back passes, the
- * same commit steps may be unproven, and its confirmation is matched as usual. Given
+ * same commit steps may be unproven, and its confirmation is matched as usual. Given `noSaveRun`,
+ * which only a host that publishes on a run of the tool's own path that saves nothing passes, the
+ * same commit steps may be unproven, and no confirmation is matched. Given
  * `stopsBeforeSave`, which such a host passes for a recorded write path with no step, the contract
  * may declare no commit steps at all.
  */
@@ -90,6 +92,7 @@ export const writeContractRefusal = (
     readonly enteredMarks: ReadonlySet<string>;
     readonly refused?: boolean;
     readonly readBack?: boolean;
+    readonly noSaveRun?: boolean;
     readonly stopsBeforeSave?: boolean;
     readonly skippable?: ReadonlySet<string>;
   },
@@ -102,12 +105,13 @@ export const writeContractRefusal = (
   )
     return "commit_marks_undeclared" as const;
   if (!settingsFollowed(commits, declared.settings)) return "commit_settings_invalid" as const;
-  const refused = session.refused === true;
+  // Each proved an outcome that stands without a save, not a confirmation.
+  const unconfirmed = session.refused === true || session.noSaveRun === true;
   const excused = unprovenMarks(
     commits,
     declared.commitsUnproven,
     session.enteredMarks,
-    refused || session.readBack === true,
+    unconfirmed || session.readBack === true,
     session.skippable ?? new Set(),
   );
   if (
@@ -120,7 +124,7 @@ export const writeContractRefusal = (
   if (!inputDecodes) return "contract_input_mismatch" as const;
   if (declared.confirmation === "unverifiable")
     return session.confirmed ? ("confirmation_unrecorded" as const) : undefined;
-  if (refused) return undefined;
+  if (unconfirmed) return undefined;
   return step.confirmation !== declared.confirmation
     ? ("confirmation_unrecorded" as const)
     : undefined;
