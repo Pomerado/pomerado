@@ -4160,6 +4160,24 @@ it("reads again at a fuller state's press only the boxes typed before it that it
   }
 });
 
+it("still refuses a press in a fuller state that holds none of the boxes typed before it when its submit turned to GET", async () => {
+  const withCode: Screen = { ...combined, boxes: [...combined.boxes, { selector: "#code", kind: "code" }] };
+  const library = libraryOf(
+    [{ fingerprint: arrival(withCode), step: stepAt("/", [code], "#continue") }],
+    [{ fingerprint: arrival(combined), step: stepAt("/", [email, password], "#continue") }],
+  );
+  const site = scriptedSite({ start: () => (site.site.typed.has("#password") ? withCode : combined) }, () => "home");
+  // Once the email and the password are typed, only the submit reads as GET.
+  const inspect: typeof site.hooks.inspect = (step) =>
+    Effect.map(site.hooks.inspect(step), (read) =>
+      "outcome" in read || read.targets.submit === null || !site.site.typed.has("#password")
+        ? read
+        : { ...read, targets: { ...read.targets, submit: { ...read.targets.submit, submitMethod: "get" } } },
+    );
+  expect(await replay({ ...site, hooks: { ...site.hooks, inspect } }, library)).toMatchObject({ reason: "credential_target_refused" });
+  expect(site.clicks).toEqual([]);
+});
+
 it("still takes an old notice state recorded where a box that said nothing turned into an email box", async () => {
   const at = (takes: BoxTakes, texts: readonly string[] = []): Screen => ({
     path: "/sign-in",
