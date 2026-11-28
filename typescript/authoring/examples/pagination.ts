@@ -221,10 +221,10 @@ export const readRooms = defineOperation(
         ${waitCode}
         // The site's own requests, on every host of its domain, count as progress.
         const site = ${JSON.stringify(siteDomain === undefined ? {} : { siteDomain })};
-        const list = page.getByRole("list", { name: "Rooms", exact: true });
+        const list = page.getByRole("list", { name: "Rooms" });
         const shownList = list.filter({ visible: true }).first();
         const rows = shownList.getByRole("listitem");
-        const more = page.getByRole("button", { name: "Show more", exact: true });
+        const more = page.getByRole("button", { name: "Show more" });
         const offered = async () => (await more.count()) > 0 && (await more.isEnabled());
         const read = (count, action) =>
           waitForRows(rows, { name: ".name" }, {
@@ -353,7 +353,7 @@ ${code}`,
     const readRows = async (steps: string, count: number): Promise<LightRead> => {
       const read = Schema.decodeUnknownSync(LightRows)(
         await run(`${steps}
-const list = page.getByRole("list", { name: "Items", exact: true });
+const list = page.getByRole("list", { name: "Items" });
 const shown = await waitForOutcome({ empty: page.getByRole("status").filter({ hasText: /^No items$/ }), list }, site);
 if (shown === "empty") return { rows: [], more: false };
 const shownList = list.filter({ visible: true }).first();

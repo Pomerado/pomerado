@@ -26,7 +26,7 @@ export default defineOperation(
       timeout_sec: 60,
       code: `
         ${pickerCode}
-        return await pickValue(page.getByRole("combobox", { name: "Owner", exact: true }), ${JSON.stringify(input.owner)});
+        return await pickValue(page.getByRole("combobox", { name: "Owner" }), ${JSON.stringify(input.owner)});
       `,
     });
     if (!answer.success)

@@ -27,7 +27,7 @@ export default defineOperation(
         ${waitCode}
         const code = ${JSON.stringify(input.code)};
         const query = ${JSON.stringify(input.query.trim())};
-        const combobox = page.getByRole("combobox", { name: "Airport", exact: true });
+        const combobox = page.getByRole("combobox", { name: "Airport" });
         await waitForOutcome({ combobox });
         // Search only inside the listbox this control owns, never the whole page.
         const popupId = await combobox.getAttribute("aria-controls", { timeout: waitLimits.action });
@@ -47,7 +47,7 @@ export default defineOperation(
         // The control's name can change after a choice, so read the committed code from the
         // site's status instead of the combobox. The click is the wait's action, so a status
         // that never changes is confirmed unchanged, never waited out.
-        const selected = page.getByRole("status", { name: "Selected airport", exact: true });
+        const selected = page.getByRole("status", { name: "Selected airport" });
         const { values } = await waitForChange(
           { code: selected },
           { action: () => option.click({ timeout: waitLimits.action }) },

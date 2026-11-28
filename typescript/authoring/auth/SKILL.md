@@ -177,7 +177,8 @@ writes its options as attributes:
 - `role=button[name="sign in" i]` matches the whole name ignoring case.
 - `role=button[name=/sign in/i]` matches a pattern.
 
-Prefer a pattern of the name's steady words, as for any control (core skill).
+Prefer a pattern of the name's steady words, as for any control (core skill). Use the whole name
+only to tell two controls apart.
 
 `exact` is an option of `getByRole` and `getByLabel`, never a selector attribute: `[exact]` or
 `[exact=true]` fails as an unknown attribute, and `[name="Sign in" exact]` fails to parse.
@@ -477,7 +478,7 @@ and the host refuses one that names this account. Where the marker must show is 
 - Prefer stable attributes and names (`aria-label`, a role, visible text, a test id) over
   generated class names such as `css-1q2w3e`.
 - Send the marker as a selector string, as every sign-in step's selector is (above), such as
-  `role=link[name="Sign out"]`, never with `exact`. The signed-out check reads CSS (with
+  `role=link[name=/sign out/i]`, never with `exact`. The signed-out check reads CSS (with
   `:has-text()`, `:text-is()` and `:visible`), `text=`, `data-testid=` and `role=` with `name`,
   and `level` for a heading; it cannot read other attributes. A selector that crosses frames
   (`>>`, `internal:`) is refused.

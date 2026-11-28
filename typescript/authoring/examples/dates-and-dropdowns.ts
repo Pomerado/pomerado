@@ -41,14 +41,14 @@ export default defineOperation(
       code: `
         ${formControlsCode}
         const date = ${JSON.stringify(input.date)};
-        const form = page.getByRole("search", { name: "Find departures", exact: true });
+        const form = page.getByRole("search", { name: "Find departures" });
         try {
           // A split date names the one part each control takes.
-          await fillDate(form.getByLabel("Month", { exact: true }), date, "MMMM");
-          await fillDate(form.getByLabel("Day", { exact: true }), date, "D");
-          await fillDate(form.getByLabel("Year", { exact: true }), date, "YYYY");
+          await fillDate(form.getByLabel("Month"), date, "MMMM");
+          await fillDate(form.getByLabel("Day"), date, "D");
+          await fillDate(form.getByLabel("Year"), date, "YYYY");
           await chooseOption(
-            form.getByRole("combobox", { name: "Cabin", exact: true }),
+            form.getByRole("combobox", { name: "Cabin" }),
             ${JSON.stringify(cabinLabels[input.cabin])},
           );
         } catch (error) {
@@ -94,7 +94,7 @@ export const setStartDate = defineOperation(
       code: `
         ${formControlsCode}
         try {
-          await fillDate(page.getByRole("textbox", { name: "Start date", exact: true }), ${JSON.stringify(input.date)}, "MM/DD/YYYY", {
+          await fillDate(page.getByRole("textbox", { name: "Start date" }), ${JSON.stringify(input.date)}, "MM/DD/YYYY", {
             commit: "keyboard",
             blur: "tab",
             committed: page.getByRole("button", { name: /^Choose start date/ }),
