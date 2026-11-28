@@ -626,3 +626,104 @@ test("a sign-in step whose typing turns its submit link's script into one that d
   expect(await page.locator("#password").inputValue()).toBe("");
   expect(posts).toEqual([]);
 });
+
+// An ASP.NET Web Forms sign-in page posts its one form back to its own address. Its submit is a link
+// in that form whose own address is the control's postback, which notes the control that posted and
+// submits the form. On a sign-in step the host judges such a link by where it sits and by its form's
+// own action, and the submission guard judges the post as it fires. Any other postback, the same
+// link outside a form or in a form that posts off the site, and a card-fill step stay refused.
+const postBack = "javascript:__doPostBack('ctl00$Login1$LoginButton','')";
+const signInFields = `<label>Email<input id="username" name="username" autocomplete="username"></label>
+<label>Password<input id="password" name="password" type="password" autocomplete="current-password"></label>`;
+const webFormsPage = (href: string, action = "/login", fields = signInFields) => `<form name="main" method="post" action="${action}" novalidate>
+<input type="hidden" name="__EVENTTARGET" value="">
+<input type="hidden" name="__EVENTARGUMENT" value="">
+${fields}
+<a id="continue" href="${href}">Log in</a>
+</form>
+<script>function __doPostBack(target, argument) {
+  const form = document.forms.main;
+  form.__EVENTTARGET.value = target;
+  form.__EVENTARGUMENT.value = argument;
+  form.submit();
+}</script>`;
+
+test("a sign-in form whose submit link is a Web Forms postback is filled, clicked and posted once to the site", async ({
+  page,
+}) => {
+  const { posts, requested } = await serve(page, { [site]: webFormsPage(postBack) });
+  const inspection = passed(await inspect(page));
+  const report = await fill(page, inspection);
+  expect(report).toMatchObject({
+    outcome: "filled",
+    fields: [
+      { slot: "username", status: "filled" },
+      { slot: "password", status: "filled" },
+    ],
+    submit: "clicked",
+  });
+  expect(report).not.toHaveProperty("clicked");
+  await expect.poll(() => posts.length).toBe(1);
+  expect(
+    posts.map(({ origin, form }) => [origin, form.get("__EVENTTARGET"), form.get("username"), form.get("password")]),
+  ).toEqual([[site, "ctl00$Login1$LoginButton", username, password]]);
+  expect(carrying(requested)).toEqual([]);
+});
+
+for (const [name, body, step, evidence] of [
+  [
+    "a sign-in form whose submit link's postback has another argument",
+    webFormsPage("javascript:__doPostBack('ctl00$Login1$LoginButton','','x')"),
+    signInStep,
+    { target: "submit", part: "submit_destination" },
+  ],
+  [
+    "a sign-in form whose submit link's postback has a second argument",
+    webFormsPage("javascript:__doPostBack('ctl00$Login1$LoginButton','x')"),
+    signInStep,
+    { target: "submit", part: "submit_destination" },
+  ],
+  [
+    "a sign-in form whose submit link runs another script after its postback",
+    webFormsPage("javascript:__doPostBack('ctl00$Login1$LoginButton','');send()"),
+    signInStep,
+    { target: "submit", part: "submit_destination" },
+  ],
+  [
+    "a sign-in step whose submit link is a postback outside any form",
+    `${signInFields}<a id="continue" href="${postBack}">Log in</a>`,
+    signInStep,
+    { target: "submit", part: "submit_destination" },
+  ],
+  [
+    "a sign-in form that posts off the site with a postback submit link",
+    webFormsPage(postBack, "https://other.test/receive"),
+    signInStep,
+    { target: 0, part: "form_action" },
+  ],
+  [
+    "a card form whose submit link is a postback",
+    webFormsPage(
+      postBack,
+      "/pay",
+      '<label>Card number<input id="card" name="card" autocomplete="cc-number" inputmode="numeric"></label>',
+    ),
+    cardStep,
+    { target: "submit", part: "submit_destination" },
+  ],
+] as const)
+  test(`${name} is refused before anything is typed`, async ({ page }) => {
+    const { posts } = await serve(page, { [site]: body });
+    await expect(page.locator(step.fields[0]?.selector ?? "")).toBeVisible();
+    const { target, part } = evidence;
+    const inspection = await inspect(page, step);
+    expect(inspection).toMatchObject({
+      outcome: "refused",
+      reason: "credential_target_refused",
+      target,
+      failureDetail: { phase: "destination", context: { check: "destination", part } },
+    });
+    expectOriginsOnly(inspection);
+    for (const { selector } of step.fields) expect(await page.locator(selector).inputValue()).toBe("");
+    expect(posts).toEqual([]);
+  });
