@@ -433,6 +433,7 @@ export const mintPublication =
                   schemasReadOffline: sourceDigest(baseline) !== sourceDigest(files),
                   substitute:
                     sample.intentDerivedInput !== undefined && !emptyCallerInput(context.input),
+                  callerExampleEmpty: state.callerExampleEmpty() && !state.callerExampleRefused(),
                 }),
                 files: new Map([
                   [exampleOutputPath, output.text],

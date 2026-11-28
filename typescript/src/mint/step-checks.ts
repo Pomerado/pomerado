@@ -107,6 +107,14 @@ interface ExampleInputScope {
    */
   readonly callerExampleRefused?: boolean;
   /**
+   * Host fact: this read build already ran its live example on the caller's own input as it is
+   * now, and it completed with no results (`holdsNoResults`), the site's own empty answer for that
+   * record. A read's example may then run a substitute `exampleInput` as after a refusal, which the
+   * caller's input stays the tool's case for that answer beside. A host that never sets it keeps
+   * the caller's input after such an answer, and its refusal names only `InvalidInput`.
+   */
+  readonly callerExampleEmpty?: boolean;
+  /**
    * Host fact: the host tells Guardian which keys of a write session's input the caller sent
    * (`currentExecution.callerKeys`), so an act step's `exampleInput` may add values the request
    * states to the caller's input, keeping every value the caller sent as sent. A host that never
@@ -141,8 +149,8 @@ const exampleInputPlaceRefusal = (
     return scope.extendsCallerInput === true && inputObject(scope.callerInput)
       ? undefined
       : "The caller supplied input, and the session runs it as it is.";
-  if (scope.callerExampleRefused !== true)
-    return "The caller supplied input, and the example runs it as it is. Run the example on it first: only once the tool refuses it with InvalidInput may an example run another input in its place.";
+  if (scope.callerExampleRefused !== true && scope.callerExampleEmpty !== true)
+    return `The caller supplied input, and the example runs it as it is. Run the example on it first: only once the tool refuses it with InvalidInput${scope.callerExampleEmpty === undefined ? "" : ", or returns no results on it,"} may an example run another input in its place.`;
   return target === "liveBrowser"
     ? undefined
     : "An example in place of the caller's refused input runs live, with target liveBrowser.";
@@ -174,8 +182,9 @@ const sessionInputRefusal = (decoded: InputObject, session: SessionInput) =>
  * one input: the first act step that passes it fixes it, whichever step that is, and a later step
  * repeats it unchanged or omits it. Act steps before it run the caller's own input.
  * A read's example also runs one in place of the caller's own input once the host records the
- * tool refusing that input with `InvalidInput` (`callerExampleRefused`): a substitute example,
- * another record of the same kind on the site, which Guardian reviews as one.
+ * tool refusing that input with `InvalidInput` (`callerExampleRefused`), or returning no results
+ * on it (`callerExampleEmpty`): a substitute example, another record of the same kind on the site,
+ * which Guardian reviews as one.
  */
 export const exampleInputRefusal = (
   submitted: ExecutionRequest,
