@@ -613,20 +613,20 @@ const waitForReady = async (target, options = {}) => {
       summary: "waitForReady: " + summary + "; " + progress.describe(),
     });
   // A panel that opens on its own, such as a tour or a what's-new dialog, may open after the wait
-  // returns: from then on Playwright closes it before each action on the page, up to dismissLimit
-  // times, until release(). During the wait the wait closes it itself.
+  // returns: from then on Playwright closes it before each action on its own page, such as a
+  // second tab, up to dismissLimit times, until release(). During the wait the wait closes it itself.
   const handlers = [];
   const watch = async () => {
     if (options.watch === false || typeof page.addLocatorHandler !== "function") return;
     for (const close of dismiss) {
-      await page.addLocatorHandler(close, async () => {
+      await close.page().addLocatorHandler(close, async () => {
         await close.filter({ visible: true }).first().click({ timeout: waitLimits.action }).catch(() => undefined);
       }, { times: dismissLimit, noWaitAfter: true });
       handlers.push(close);
     }
   };
   const release = async () => {
-    for (const close of handlers.splice(0)) await page.removeLocatorHandler(close).catch(() => undefined);
+    for (const close of handlers.splice(0)) await close.page().removeLocatorHandler(close).catch(() => undefined);
   };
   try {
     progress.begin();
