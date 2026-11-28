@@ -1797,6 +1797,19 @@ it("has a read return a group's preselected default and read nested options only
   );
 });
 
+// A cart tool looked for an item that the store lists only on a menu it serves at other hours and
+// failed without saying why. The cart skill returns that as the item's refusal, naming the menu
+// and its hours.
+it("has a cart tool refuse an item listed only on a menu served at other hours", async () => {
+  const cart = ((await renderedTexts("typescript/authoring")).get("cart") ?? "").replace(
+    /\s+/g,
+    " ",
+  );
+  expect(cart).toContain(
+    "Never wait out a timeout for a control the page replaced. An item the store lists only on a menu it serves at other hours can't be ordered now: return that as the item's refusal, naming that menu and its hours.",
+  );
+});
+
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 
 /*
@@ -1824,7 +1837,7 @@ it("renders the pinned standalone authoring", async () => {
     ["ca80679c4488dec4ee85052fb39f1493b6d5f8ca4a5df9b56d10a2e96078e848", "pagination"],
     ["b0220727e7f21e1c5d10101e74996ddb3d2d4e18061ac85c807203ed4ab0f695", "forms"],
     ["b23c3918c2990e1743a2ad84983346f114b590424efb8a61d1dd2e240093c20c", "writes"],
-    ["64aaa6422a9d86f27f87b178a74251a4c8ae8c8a4f1841a427d528ad538ef149", "cart"],
+    ["fc668fc8ab0943003eae1239a3cbe15356292153b0e706680eb167ba64308d5d", "cart"],
     ["5e81a6bb20243badd2f5d781fc302e0fe83b12ad616d5cc66fd664f2a0e28870", "caller-input"],
     ["07b61ae415889706192db263c00be4635dddb6c7ea0e97017b9b7e53ff1c95a3", "publication"],
     ["68624ce51e88e97ab72ff393ac8ecc7b9fc87d5d5518fd4d67a34e45da8be1fc", "workspace/AGENTS.md"],
