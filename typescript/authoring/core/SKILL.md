@@ -179,7 +179,7 @@ pomerado:section core.execute-calls:end -->
 - Give every error you throw a message that says what failed: the step, the record and field,
   what the code expected and what it found, such as `item 4521: the detail answer has no price`
   rather than `fields did not match`, naming IDs, fields and statuses, never a personal value.
-  A check comparing two values names both as shown, or for a personal value, which part differed.
+  A check comparing two values quotes both, or, for a personal value, only which part differed.
   The caller and a repair see only that message. Check an answer's shape before reading into it,
   so a changed answer fails with your message, not a `TypeError` such as `Cannot read properties
   of undefined`.
