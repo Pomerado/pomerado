@@ -281,7 +281,8 @@ already asked for, or to solve a CAPTCHA.
    checkout's `currency`, its `items` (each `name`, `quantity`, `unit` for an item sold by
    weight or measure, and `price` each, `lineTotal` or both), `fees` (each `name` and
    `amount`), `discount`, `shipping`, `tax`, `tip` and `total`, amounts as decimal text,
-   which everyone sees unmasked, so never the address or card.
+   and `delivery` (`method` and `date`) when the checkout shows them, which everyone sees
+   unmasked, so never the address or card.
 4. Ask once for everything the step needs, between two execute calls:
    - `await ask("code")` returns that question's answer;
    - `await ask(["seat", "note"])` returns one answer per id;

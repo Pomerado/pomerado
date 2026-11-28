@@ -353,6 +353,15 @@ export const OrderItem = Schema.Struct({
 });
 /** A fee the checkout charges, by its name there. */
 export const OrderFee = Schema.Struct({ name: ItemName, amount: Amount });
+/** How and when the order arrives, as the checkout shows them: a method, a date or both. */
+export const OrderDelivery = Schema.Struct({
+  method: Schema.optional(ItemName),
+  date: Schema.optional(ItemName),
+}).pipe(
+  Schema.filter((delivery) => delivery.method !== undefined || delivery.date !== undefined, {
+    message: () => "a delivery has a method, a date or both",
+  }),
+);
 /**
  * The facts of the order a purchase confirm asks about. Everyone who sees the request sees them,
  * so they hold nothing from the caller's own account, such as an address or a card. Fees, a
@@ -376,6 +385,7 @@ export const OrderFacts = Schema.Struct({
   discount: Schema.optional(Amount),
   fees: Schema.optional(Schema.Array(OrderFee).pipe(Schema.maxItems(10))),
   shipping: Schema.optional(Amount),
+  delivery: Schema.optional(OrderDelivery),
   tax: Schema.optional(Amount),
   tip: Schema.optional(Amount),
   total: Amount,
@@ -384,9 +394,10 @@ export type OrderFacts = typeof OrderFacts.Type;
 
 /**
  * An order's facts in the host's own words, as a request's notice shows them. Each item and fee
- * name is quoted, so no name reads as the host's words. A line's total is labeled, as in
- * `(line total 14.97 USD)`, so it never reads as a price each. An order with none of the later
- * fields (`unit`, `lineTotal`, `discount`, `fees`, `tip`) reads exactly as it did before them.
+ * name, and a delivery's method and date, is quoted, so none reads as the host's words. A line's
+ * total is labeled, as in `(line total 14.97 USD)`, so it never reads as a price each. An order
+ * with none of the later fields (`unit`, `lineTotal`, `discount`, `fees`, `tip`, `delivery`) reads
+ * exactly as it did before them.
  * With `unlabeledTotals: true`, a line's total reads as a tool on an earlier core wrote it,
  * `(14.97 USD)`, which a host still accepts (`asksAsDeclared`).
  */
@@ -412,6 +423,13 @@ export const orderNotice = (
     ...(order.discount === undefined ? [] : [`Discount: ${money(order.discount)}.`]),
     ...(fees.length === 0 ? [] : [`Fees: ${fees.join("; ")}.`]),
     ...(order.shipping === undefined ? [] : [`Shipping: ${money(order.shipping)}.`]),
+    ...(order.delivery === undefined
+      ? []
+      : [
+          `Delivery: ${[order.delivery.method, order.delivery.date]
+            .flatMap((part) => (part === undefined ? [] : [JSON.stringify(part)]))
+            .join(", ")}.`,
+        ]),
     ...(order.tax === undefined ? [] : [`Tax: ${money(order.tax)}.`]),
     ...(order.tip === undefined ? [] : [`Tip: ${money(order.tip)}.`]),
     `Total: ${money(order.total)}.`,
