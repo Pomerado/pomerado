@@ -267,7 +267,7 @@ test("a read whose caller's example comes back with no results publishes on a su
       output: { results: ["Flight 1", "Flight 2"] },
     });
     // The review hears the caller's input stays a case the tool answers with no results.
-    expect(observationsOf(publication)).toContain("because the caller's own input returned no results");
+    expect(observationsOf(publication)).toContain("because the caller's own input returned the site's own no-result or can't-offer answer");
   } finally {
     await site.close();
   }
