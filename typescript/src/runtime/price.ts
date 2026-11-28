@@ -46,16 +46,16 @@ const narrowSign = (code: string) =>
     .find((part) => part.type === "currency")?.value;
 
 // The number's whole digits and fraction, or undefined when its marks don't group it one way. The
-// last period or comma is the decimal mark unless it appears earlier too, or it is the number's
-// only mark, three digits follow it, a nonzero whole precedes it and the currency has under three
-// decimals.
+// last period or comma is the decimal mark unless it appears earlier too. In a currency with under
+// three decimals, a comma that is the only mark, before three digits and after a nonzero whole,
+// groups thousands, and such a period is undefined: it may group thousands or end tenths of a cent.
 const amountOf = (number: string, digits: number) => {
   const at = Math.max(number.lastIndexOf("."), number.lastIndexOf(","));
   const head = number.slice(0, at);
   const tail = number.slice(at + 1);
-  const grouping =
-    head.includes(number[at] ?? "") ||
-    (/^\d*[1-9]\d*$/u.test(head) && tail.length === 3 && digits < 3);
+  const lone = /^\d*$/u.test(head) && tail.length === 3 && digits < 3;
+  if (lone && number[at] === ".") return undefined;
+  const grouping = head.includes(number[at] ?? "") || (lone && /[1-9]/u.test(head));
   const [whole, fraction] = at < 0 || grouping ? [number, ""] : [head, tail];
   if (new Set(whole.replace(/\d/gu, "")).size > 1) return undefined;
   if (!/^\d*$|^\d{1,3}(?:,\d{2})*(?:,\d{3})+$/u.test(whole.replace(/\D/gu, ","))) return undefined;
@@ -84,11 +84,11 @@ const perOf = (text: string) => {
  * currency, when that currency writes the sign; otherwise it is null, never assumed. `per` is the
  * quantity and unit after `/` or `per`, or `each`, with units as `unitAmount` writes them and
  * each, item and count as `each`. It is null when the text names no unit, which a caller reads as
- * one of what the site sells. A period or comma before the number's last three digits, after a
- * nonzero whole, groups thousands when it is the only mark, unless the currency has three
- * decimals, so `$3.459` reads as 3459 dollars. Any other text is null, such as a range, a multi-buy, words around the price,
- * a negative amount, a code and sign that disagree, or an amount finer than the currency's minor
- * unit.
+ * one of what the site sells. A comma before the number's last three digits, after a nonzero
+ * whole, groups thousands when it is the only mark, unless the currency has three decimals. Any
+ * other text is null, such as a range, a multi-buy, words around the price, a negative amount, a
+ * code and sign that disagree, an amount finer than the currency's minor unit, or a period before
+ * the last three digits as the only mark, which may group thousands or end tenths of a cent.
  */
 export const readPrice = (
   text: unknown,

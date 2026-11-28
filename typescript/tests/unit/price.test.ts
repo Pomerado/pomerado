@@ -15,6 +15,7 @@ it.each([
   ["$4.29", "USD", { amountMinor: 429, currency: "USD", per: null, minimum: false }],
   ["$4.29 each", "USD", { amountMinor: 429, currency: "USD", per: { quantity: 1, unit: "each" }, minimum: false }],
   ["From 12,50 €", "USD", { amountMinor: 1250, currency: "EUR", per: null, minimum: true }],
+  ["$3.459/gal", "USD", null],
   ["2 for $5", "USD", null],
   ["$5.99 - $7.99", "USD", null],
   ["Sold out", "USD", null],
