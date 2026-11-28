@@ -1840,23 +1840,23 @@ it("has a cart tool refuse an item listed only on a menu served at other hours",
 // A read of an item's options left out the choices the page preselects, reported a required
 // group with no minimum and no default, counted a group's controls for its picks, passed on a
 // site's generic refusal for missing choices, and listed a refusal's choices as bare ids. The cart
-// skill reads each group's preselected choice as its default and its picks from its own text, and
-// names each short group in a refusal; the caller-input skill pairs each listed choice's name with
-// its id.
+// skill reads each group's preselected choices as its default and its picks from what the page
+// states, and names each short group in a refusal; the caller-input skill names a refusal's ids in
+// its message and pairs each choice's name with its id in a result.
 it("has a cart tool read preselected choices as defaults and a listed choice pair its name with its id", async () => {
   const texts = await renderedTexts("typescript/authoring");
   const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
   expect(text("cart")).toContain(
-    "Prefer reading the choice the page preselects in each of an item's option groups as that group's default, so a caller sends only the options it changes and an option the input leaves out keeps it (the writes skill). A read of the item's options reports a required group's minimum as at least one, or the default that meets it.",
+    "Prefer reading the choices the page preselects in each of an item's option groups as that group's default, so a caller sends only the options it changes; the writes skill says when an option the input leaves out keeps them. A read of the item's options prefers reporting a required group with a minimum of at least one, or with the preselected choices that meet it.",
   );
   expect(text("cart")).toContain(
-    "never by its label across the whole item dialog. Prefer reading each group's minimum and maximum picks from the group's own text, not by counting its controls, and count every pick of a choice taken more than once toward them.",
+    "never by its label across the whole item dialog. Prefer reading each group's minimum and maximum picks from what the page states for the group, not by counting its controls, and count every pick of a choice taken more than once toward them.",
   );
   expect(text("cart")).toContain(
-    "When the site refuses for missing required choices, prefer naming in the message each group that is short, with the picks it has and the picks it needs, over passing on the site's generic words.",
+    'When the tool refuses for missing required choices rather than asking for them (the core skill, "Configure, then read"), prefer naming in the message each group that is short, with the picks it has and the picks it needs, over passing on the site\'s generic words.',
   );
   expect(text("caller-input")).toContain(
-    "There and in any list of choices a result returns, prefer pairing each choice's name with its id, plus whatever tells near-duplicates apart.",
+    "When those choices are ids, prefer giving each one's name in the message, plus whatever tells near-duplicates apart. In any list of choices a result returns, prefer pairing each choice's name with its id, plus whatever tells near-duplicates apart.",
   );
 });
 
@@ -1887,8 +1887,8 @@ it("renders the pinned standalone authoring", async () => {
     ["ca80679c4488dec4ee85052fb39f1493b6d5f8ca4a5df9b56d10a2e96078e848", "pagination"],
     ["10dca2bd299747247e28de596d36225bb5bd1acfd56673457deaac10e4f6102b", "forms"],
     ["684c2aa03cfb70f4882ac50aac8cf26c871d3e29a1805475e975b66ddf25b759", "writes"],
-    ["070ee689d9814058ae59f0ff5cc274bee69d61e69387035a768c38ef4f1877e3", "cart"],
-    ["33c8f64debee35b59bd733bc300bd0beb312e73bfd92415103c20e170e70a91c", "caller-input"],
+    ["141409fcef42c00f528fe6d64b7aee576af8966fa30858aa4aceba00bcaa4e26", "cart"],
+    ["038ffcd306007383d879cf49706e45d782bd398c56f3d3ccae297fe3fddfc53f", "caller-input"],
     ["324900e9f56a1256dc4f6d8aa0182fca4b0038e67c669378747c4d4d1ac37a42", "publication"],
     ["68624ce51e88e97ab72ff393ac8ecc7b9fc87d5d5518fd4d67a34e45da8be1fc", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],

@@ -49,11 +49,11 @@ delivery address, an add-to-cart tool takes it as an optional input, one of the 
 addresses, and keeps the address the account has selected when it is left out: an add places no
 order, and a checkout still chooses its address as below. Set the options as "Configure, then
 read" in the core skill says before adding the product: a value the product does not offer
-throws `InvalidInput` with `field` and `available`. Prefer reading the choice the page
+throws `InvalidInput` with `field` and `available`. Prefer reading the choices the page
 preselects in each of an item's option groups as that group's default, so a caller sends only
-the options it changes and an option the input leaves out keeps it (the writes skill). A read of
-the item's options reports a required group's minimum as at least one, or the default that meets
-it. Opening an item's details or options from
+the options it changes; the writes skill says when an option the input leaves out keeps them. A
+read of the item's options prefers reporting a required group with a minimum of at least one, or
+with the preselected choices that meet it. Opening an item's details or options from
 its own card, name or picture, not a control labelled add or plus, is a read. Prefer finding
 the item's row or card by the site's own item ID where the page carries one, over its picture or
 position, since a site's pages can differ in layout. Where the page carries no item ID, open each
@@ -68,8 +68,8 @@ site's words, `field` that input, before any commit mark (the core skill).
 An item's options often come in groups whose option labels repeat, such as "None" or "Less"
 under both a sweetness group and an ice group. Find each option inside its own group, by the
 group's heading or fieldset, never by its label across the whole item dialog. Prefer reading
-each group's minimum and maximum picks from the group's own text, not by counting its controls,
-and count every pick of a choice taken more than once toward them. A list of saved
+each group's minimum and maximum picks from what the page states for the group, not by counting
+its controls, and count every pick of a choice taken more than once toward them. A list of saved
 addresses or stores can show the same name twice: choose by every part the input gives, such as
 the unit, and ask the caller or refuse when more than one entry still matches (a checkout asks,
 below), never take the first. Choose a saved address with the core skill's address helpers, such
@@ -180,9 +180,9 @@ and handle its pop-up as conditional (the forms skill), since it shows only to s
 When the site refuses the order as asked, such as an order under its minimum or an empty cart
 at checkout, the tool throws `new errors.InvalidInput(message, { field })` with the site's
 reason, `field` the input the caller would change, before its commit mark whenever the page shows
-the limit first. When the site refuses for missing required choices, prefer naming in the
-message each group that is short, with the picks it has and the picks it needs, over passing on
-the site's generic words.
+the limit first. When the tool refuses for missing required choices rather than asking for
+them (the core skill, "Configure, then read"), prefer naming in the message each group that is
+short, with the picks it has and the picks it needs, over passing on the site's generic words.
 When the page shows a per-item limit and the cart already holds that many of the
 item, prefer refusing the same way before the add's commit mark.
 A checkout that takes a limit of the caller's, such as
