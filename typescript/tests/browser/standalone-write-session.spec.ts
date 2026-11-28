@@ -492,6 +492,12 @@ test("a path no single session can reach is denied before the first save, and th
           }
         : "allow",
   });
+  const unreachable = {
+    intent: "End before writing: the quote cannot be reached in one session",
+    reason: "site_lacks_capability",
+    explanation:
+      "The quote waits for an underwriter's approval the next business day, so no single write session can reach it. Nothing was saved.",
+  };
   try {
     const { built, last } = await mint({
       effect: "write",
@@ -502,21 +508,13 @@ test("a path no single session can reach is denied before the first save, and th
       turns: [
         () => patch({ "src/draft.mjs": saveDraftStep }),
         () => [call("execute", act("src/draft.mjs", undefined, waits), "draft")],
-        () => [
-          call(
-            "report_blocked",
-            {
-              intent: "End before writing: the quote cannot be reached in one session",
-              reason: "site_lacks_capability",
-              explanation:
-                "The quote waits for an underwriter's approval the next business day, so no single write session can reach it. Nothing was saved.",
-            },
-            "blocked",
-          ),
-        ],
+        () => [call("report_blocked", unreachable, "blocked")],
+        // A write build that asked its owner nothing is sent back once; no question helps here.
+        () => [call("report_blocked", unreachable, "blocked_again")],
       ],
     });
     expect(JSON.stringify(toolResult(last, "draft"))).toContain("ReviewDenied");
+    expect(JSON.stringify(toolResult(last, "blocked"))).toContain("owner_not_asked");
     expect(submittedPathOf(executions(guardian.reviews)[0])).toEqual(waits);
     expect(built.blocked).toMatchObject({ reason: "site_lacks_capability" });
     expect(built.build).not.toBe("published");
