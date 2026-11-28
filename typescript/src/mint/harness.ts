@@ -4622,11 +4622,14 @@ export const runMint = (input: unknown): Effect.Effect<MintOutcome, MintFailure,
           );
         // A new write build that asked its owner nothing (no answer, no question left unanswered,
         // no no) has its first site gap or caller stop sent back once to ask, and the next is
-        // taken. A question Guardian turned away reached nobody.
+        // taken. A question Guardian turned away reached nobody. A sign-in that never confirmed
+        // keeps its own ending: the site never judged the task.
         if (
           (reason === "site_lacks_capability" || reason === "caller_input") &&
           request.mode === "mint" &&
           buildEffect === "write" &&
+          !signInUnconfirmed &&
+          !signInRefusalOnly &&
           !ownerAskOffered &&
           answeredQuestions.size === 0 &&
           !unanswered &&
