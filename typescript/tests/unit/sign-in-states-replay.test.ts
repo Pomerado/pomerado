@@ -4144,21 +4144,20 @@ it("still refuses a press in a fuller state when a box typed before it and not s
   expect(site.clicks).toEqual([]);
 });
 
-it("still refuses a press in a fuller state when the first of two boxes typed alone before it, neither sent, now posts by GET", async () => {
+it("reads again at a fuller state's press only the boxes typed before it that its own step holds", async () => {
   // The email and the password are typed alone, as in a state another holds, and a code box then
-  // draws; the email's form turns to GET once the email is typed.
+  // draws, whose state types the password and the code.
   const withCode: Screen = { ...combined, boxes: [...combined.boxes, { selector: "#code", kind: "code" }] };
   const library = libraryOf(
-    [{ fingerprint: arrival(withCode), step: stepAt("/", [email, password, code], "#continue") }],
+    [{ fingerprint: arrival(withCode), step: stepAt("/", [password, code], "#continue") }],
     [{ fingerprint: arrival(combined), step: stepAt("/", [email, password], "#continue") }],
   );
-  const site = scriptedSite({ start: () => (site.site.typed.has("#password") ? withCode : combined) }, () => "home");
-  const events: Readonly<Record<string, unknown>>[] = [];
-  const ended = await replay(getOnceTyped(site, "#email"), library, { events });
-  expect(ended).toMatchObject({ reason: "credential_target_refused" });
-  expect(events).toContainEqual(expect.objectContaining({ reason: "fuller_state" }));
-  expect(site.fills).toEqual(["email", "password"]);
-  expect(site.clicks).toEqual([]);
+  // The email's form turning to GET is the earlier screen's, judged at its fill; the password's is
+  // the fuller state's own.
+  for (const [turned, ended] of [["#email", { outcome: "signed_in" }], ["#password", { reason: "credential_target_refused" }]] as const) {
+    const site = scriptedSite({ start: () => (site.site.typed.has("#password") ? withCode : combined) }, () => "home");
+    expect(await replay(getOnceTyped(site, turned), library)).toMatchObject(ended);
+  }
 });
 
 it("still takes an old notice state recorded where a box that said nothing turned into an email box", async () => {
