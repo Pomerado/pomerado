@@ -1097,6 +1097,23 @@ it("has a cart tool add through the line's own quantity control when the product
 });
 
 /*
+ * Write tools proven only at a quantity of one broke at two: one found its quantity control by one
+ * layout, and one read a checkout total by a label whose text carried the item count. Another read
+ * a checkout's amounts by parsing each summary row's whole text. The writes skill finds the control
+ * by its role and label, and the core skill reads each amount from its own element, by its role.
+ */
+it("has a write find its quantity control by role and a count-labelled total by role", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
+  expect(text("writes")).toContain(
+    "each unit committed on its own is one. - Find a quantity control by its role and label, not by one layout.",
+  );
+  expect(text("core")).toContain(
+    "and its description says when it is null. - A total's label can change with the item count, so read each amount from its own element, found by its role, not from its label's exact text or the whole row's text.",
+  );
+});
+
+/*
  * Cart tools given a product the site had no page for waited on the product page for an add
  * control, and timed out on the site's not-found page. The cart skill has every wait on the
  * product page name that page and refuse with the site's words.
@@ -1889,13 +1906,13 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["deca80d578c90ce45780a3a19d6cb99d6de40d2e339bd52305c49eb06b88e8e0", "core"],
+    ["62565440ef7e57482aaf63a08a66599ce700aafc4a23c6065538b1cc20e47bef", "core"],
     ["97e3b5ebdbe8d5fca43790729084de4eef4fbcf5fdf71ad645e679fd72f4e804", "search"],
     ["e6a78355e22e9989ffdccbc5a5f53eef0ec74217c3ae31b68c1ca0421f36ce44", "auth"],
     ["3355021c2daea519d533551d9b6f08f071c792328d39ec5020d6e8b0ca7def52", "testing"],
     ["ca80679c4488dec4ee85052fb39f1493b6d5f8ca4a5df9b56d10a2e96078e848", "pagination"],
     ["10dca2bd299747247e28de596d36225bb5bd1acfd56673457deaac10e4f6102b", "forms"],
-    ["5ea65432e19a3a38633f351029769fa8f7b06a777f4fdd09d23751c00cf36af9", "writes"],
+    ["69588ca18a7612ad946dd5135ebafd604ebf231a13ad60c9fbb8a9124b9a7ce6", "writes"],
     ["ec7a2c59b29115dd450c813494d6797608265f655967a9df19afdfb1b05a648a", "cart"],
     ["d3ef10f01ad24f3aec5e97d52edd251f16e2c14acdba6792f913f35115a689f8", "caller-input"],
     ["324900e9f56a1256dc4f6d8aa0182fca4b0038e67c669378747c4d4d1ac37a42", "publication"],

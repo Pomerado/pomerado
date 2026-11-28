@@ -453,7 +453,11 @@ export interface PendingExecution {
   readonly findingResponses?: readonly FindingResponse[];
   /** Host-selected mechanics and recorded chronology, not website claims or added authority. */
   readonly mintContext?: {
-    /** Host authorization mechanics only; does not establish the source's read semantics. */
+    /**
+     * Host authorization mechanics only; does not establish the source's read semantics. For an
+     * explore step a host sets it true only in a read build before its example claims, which lets
+     * the review keep the write of a step the site requires before the task (`siteRequiredStep`).
+     */
     readonly repeatableRead: boolean;
     /** Exact host-bound operation namespace available through readSource. */
     readonly operationSources: readonly string[];
@@ -1076,9 +1080,45 @@ const afterGroundPushback = (
 };
 
 /**
+ * Whether a step without write authority may still write once: a read build's explore step on the
+ * live browser before its example claimed (`repeatableRead`, which a host sets only then), while
+ * an applied update the owner confirmed adds or revises a requirement, such as a step the site
+ * requires before the task, and no write that may have reached the site is on record in the
+ * build. Guardian's policy keeps it to the step that update names, with only the owner's values;
+ * the harness records it as a write.
+ */
+const siteRequiredStep = (pending: PendingExecution): boolean => {
+  const context = pending.mintContext;
+  const step = context?.currentExecution;
+  if (
+    context?.repeatableRead !== true ||
+    step?.purpose !== "explore" ||
+    step.target !== "liveBrowser"
+  )
+    return false;
+  const unsent = new Set(
+    context.executions
+      .filter((execution) => execution.effect === "not_sent")
+      .map((execution) => execution.executionId),
+  );
+  return (
+    (pending.taskUpdates ?? []).some(
+      (update) =>
+        update.confirmation.length > 0 &&
+        update.changes.some(
+          (change) => change.setting === "requirement" && change.change !== "drop",
+        ),
+    ) &&
+    !(context.writes ?? []).some(
+      (write) => write.outcome !== "not_done" && !unsent.has(write.executionId),
+    )
+  );
+};
+
+/**
  * An execution review's decision. An allow without an action label is malformed, so the review
  * runs again under the outage retry; a `write` allow on a step without write authority becomes a
- * denial.
+ * denial, except for a step the site requires before the task (`siteRequiredStep`).
  */
 const decodeExecution = (pending: PendingExecution) => (raw: unknown) =>
   decodeDecision(knownRefusal(raw)).pipe(
@@ -1087,7 +1127,9 @@ const decodeExecution = (pending: PendingExecution) => (raw: unknown) =>
         ? Effect.succeed(decision)
         : decision.action === undefined
           ? Effect.fail(decisionFailure(new Error("An execution allow has no action label")))
-          : decision.action === "write" && pending.writeAuthority !== true
+          : decision.action === "write" &&
+              pending.writeAuthority !== true &&
+              !siteRequiredStep(pending)
             ? Effect.succeed({
                 outcome: "deny" as const,
                 rationale: writeOutOfAuthority,
