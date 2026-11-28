@@ -691,17 +691,18 @@ location or store. A search's filters and sort are such choices too. Before read
 that depends on them:
 
 1. Discover. While building, read every choice group the page offers and each group's options
-   exactly as shown, including which are unavailable, opening collapsed groups and menus as
-   above. On a run, open and read only the groups the caller's inputs use. A group
-   with one option, or a disabled control showing one value, is a
-   fixed value: read it, never click it.
+   exactly as shown, including which are unavailable and which the page preselects, which a read
+   returns as that group's default, opening collapsed groups and menus as above. On a run, open
+   and read only the groups the caller's inputs use. A group with one option, or a disabled
+   control showing one value, is a fixed value: read it, never click it.
 2. Set. Apply each input's value through the page's own control, in the order the page
    presents the groups, since one choice can change the options of the next. An input whose
    options depend on another goes after it, such as times after their date, slots after the
    party size, models after the make or regions after the country, even when the page shows it
    first. Read each group's required number of picks as the page states it, and confirm the page
-   shows every required group complete before adding. When the value is not among the options
-   the page lists at all, throw
+   shows every required group complete before adding; when one isn't, ask for the missing picks as
+   a declared question with the group's live options, naming each short group with the picks it has
+   and the picks it needs. When the value is not among the options the page lists at all, throw
    `new errors.InvalidInput(message, { field, available })` before any commit mark, with
    `field` the input's name and `available` every option the page currently offers as
    selectable, exactly as shown. Leave disabled, sold-out and other unselectable options out of
@@ -834,7 +835,9 @@ the site's `Retry-After` asks, so add no retry loop, throttle or pacing of your 
 sent through them. Send no
 more at once than the build showed the site handling without
 refusing or challenging (their `max`), and fewer where it refused or challenged; a
-block at run time still fails the call, as the 429 rule above says.
+block at run time still fails the call, as the 429 rule above says. In a read that lists an item's
+choice groups, when each choice's nested options cost their own request, return the groups and
+their choices, and read a choice's nested options only for the choices an input names.
 Prefer the page's own structured data, its embedded JSON or the data response it renders from,
 to its rendered cards when it holds the same fields for the same records, and check on the
 example that it matches what the page shows. Embedded JSON holds the page as first rendered:

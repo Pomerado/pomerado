@@ -1737,7 +1737,7 @@ it("has a tool read each group's required picks, refuse with the page's reason a
     " ",
   );
   expect(core).toContain(
-    "even when the page shows it first. Read each group's required number of picks as the page states it, and confirm the page shows every required group complete before adding. When the value is not among",
+    "even when the page shows it first. Read each group's required number of picks as the page states it, and confirm the page shows every required group complete before adding; when one isn't, ask for the missing picks as a declared question with the group's live options, naming each short group with the picks it has and the picks it needs. When the value is not among",
   );
   expect(core).toContain(
     "- When the page shows why an item isn't available now, refuse with that reason as the page states it.",
@@ -1784,6 +1784,19 @@ it("has a checkout take whether to use credits as an optional input and ask when
   );
 });
 
+// A read left out which options a group preselects, and a read of an item's choice groups spent a
+// request on every choice's nested options.
+it("has a read return a group's preselected default and read nested options only where named", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
+  expect(text("core")).toContain(
+    "exactly as shown, including which are unavailable and which the page preselects, which a read returns as that group's default, opening collapsed groups and menus as above.",
+  );
+  expect(text("core")).toContain(
+    "In a read that lists an item's choice groups, when each choice's nested options cost their own request, return the groups and their choices, and read a choice's nested options only for the choices an input names.",
+  );
+});
+
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 
 /*
@@ -1804,7 +1817,7 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["36467550b0c2bc4ea7239e6a022de394c4abde4d6ee0094e43fca9daf88a7b0b", "core"],
+    ["f99d4e62635c1fca2c245aa3e1a3fe25fa99e94036f1ccd706cb77bff11340f0", "core"],
     ["97e3b5ebdbe8d5fca43790729084de4eef4fbcf5fdf71ad645e679fd72f4e804", "search"],
     ["e6a78355e22e9989ffdccbc5a5f53eef0ec74217c3ae31b68c1ca0421f36ce44", "auth"],
     ["3355021c2daea519d533551d9b6f08f071c792328d39ec5020d6e8b0ca7def52", "testing"],
