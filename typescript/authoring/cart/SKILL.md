@@ -278,7 +278,8 @@ order's status: only fields the session's confirming step read filled for its ow
 typed as the core skill says.
 
 Prefer returning each line bought with its quantity, its unit when the site sells it by weight or
-measure, its price each and its line total (the core skill's output fields), and each fee as its
+measure, its price with the unit it is per when the page shows one and its line total, read with
+`readPrice` in the page's currency (the core skill's output fields), and each fee as its
 own entry, by its name on the site and its amount, with the tip and any discount in their own
 fields. Return each credit, gift card balance or promotion applied as its own entry the same way,
 with the total before them and the amount charged after them. This output is a suggestion, separate from the `order` a

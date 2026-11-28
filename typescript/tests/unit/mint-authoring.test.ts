@@ -1057,7 +1057,7 @@ it("has a purchase confirm's order and a checkout's output give lines, fees and 
     "its `items` (each `name`, `quantity`, `unit` for an item sold by weight or measure, and `price` each, `lineTotal` or both), `fees` (each `name` and `amount`), `discount`, `shipping`, `tax`, `tip` and `total`",
   );
   expect(text("cart")).toContain(
-    "Prefer returning each line bought with its quantity, its unit when the site sells it by weight or measure, its price each and its line total (the core skill's output fields), and each fee as its own entry, by its name on the site and its amount, with the tip and any discount in their own fields. Return each credit, gift card balance or promotion applied as its own entry the same way, with the total before them and the amount charged after them. This output is a suggestion, separate from the `order` a purchase's final confirm passes (the caller-input skill), which has its own fixed fields.",
+    "Prefer returning each line bought with its quantity, its unit when the site sells it by weight or measure, its price with the unit it is per when the page shows one and its line total, read with `readPrice` in the page's currency (the core skill's output fields), and each fee as its own entry, by its name on the site and its amount, with the tip and any discount in their own fields. Return each credit, gift card balance or promotion applied as its own entry the same way, with the total before them and the amount charged after them. This output is a suggestion, separate from the `order` a purchase's final confirm passes (the caller-input skill), which has its own fixed fields.",
   );
 });
 
@@ -1922,14 +1922,14 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["6cab1a36398399be57ca89055aa5fed82b549b24ceedd0facabdf64ec54d1326", "core"],
+    ["548957fb3eb1561a0107a077e7785fb2a29981f05aded0b261fe4dfec4162973", "core"],
     ["97e3b5ebdbe8d5fca43790729084de4eef4fbcf5fdf71ad645e679fd72f4e804", "search"],
     ["e6a78355e22e9989ffdccbc5a5f53eef0ec74217c3ae31b68c1ca0421f36ce44", "auth"],
     ["3355021c2daea519d533551d9b6f08f071c792328d39ec5020d6e8b0ca7def52", "testing"],
     ["ca80679c4488dec4ee85052fb39f1493b6d5f8ca4a5df9b56d10a2e96078e848", "pagination"],
     ["10dca2bd299747247e28de596d36225bb5bd1acfd56673457deaac10e4f6102b", "forms"],
     ["69588ca18a7612ad946dd5135ebafd604ebf231a13ad60c9fbb8a9124b9a7ce6", "writes"],
-    ["b24152b92127c37de587e67416f764cc7e14ccd407c1bc250efe07dd38e18c0a", "cart"],
+    ["7a67bd747daf92d91aa180580150183d24ddee237104828c7da95f30ff9cc017", "cart"],
     ["58eba217d05ab7bbde936e195270ee665bc755bbd3d1d15cc0a51a486fc56d71", "caller-input"],
     ["13cbc5f1af5db6b9082e34a40229d4a4bfc939334729b7b7cc40f5bbadf8fa7f", "publication"],
     ["6f9cf55ddcd940b69cd8362821fbe95868bdc306751ad553d9b26805167e2699", "workspace/AGENTS.md"],
