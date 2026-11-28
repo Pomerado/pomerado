@@ -1511,6 +1511,44 @@ it("tells the minter how to publish on the site's own no only when the host publ
   );
 });
 
+// A host that publishes on a run of the tool's own path that saves nothing (`publishOnNoSaveRun`)
+// marks that session's `commit_marks_unentered` refusal, and the minter hears to list every commit
+// step unproven; an unmarked refusal keeps today's instruction.
+it("tells the minter to list every save step unproven after a run that saves nothing only when the host publishes on one", async () => {
+  const answers: unknown[] = [];
+  let publications = 0;
+  const f = await fixture(
+    (turn) =>
+      Effect.gen(function* () {
+        yield* turn.actions.execute(execution);
+        answers.push(JSON.parse(yield* turn.actions.finish(publication)));
+        answers.push(JSON.parse(yield* turn.actions.finish(publication)));
+        yield* turn.actions.finish(publication);
+      }),
+    {
+      publish: () =>
+        Effect.suspend(() =>
+          publications++ < 2
+            ? Effect.fail(
+                new MintFailure({
+                  code: "PublicationUnavailable",
+                  reason: "commit_marks_unentered",
+                  ...(publications === 1 ? { publishesOnNoSaveRun: true as const } : {}),
+                }),
+              )
+            : Effect.succeed({ publicationRef: "published-revision", diagnostics: [] }),
+        ),
+    },
+  );
+  expect(await f.run()).toMatchObject({ build: "published" });
+  const [marked = "", unmarked = ""] = answers.map((answer) =>
+    String(Reflect.get(Object(answer), "instruction")),
+  );
+  const listed = "prefer listing every commit step in commitsUnproven";
+  expect(marked).toContain(listed);
+  expect(unmarked).not.toContain(listed);
+});
+
 // A host that lets the step named for publication run once more, stopping it before its first save
 // step (`rerunBeforeSave`), has the minter hear that step as repeatable, with no rule against
 // repeating it; a refusal without it keeps today's reply.
