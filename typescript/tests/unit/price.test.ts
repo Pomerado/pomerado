@@ -6,8 +6,10 @@ import { readPrice } from "../../src/browser/index.js";
 it.each([
   ["USD 1,234.50", undefined, { amountMinor: 123450, currency: "USD", per: null, minimum: false }],
   ["1,500円", undefined, { amountMinor: 1500, currency: "JPY", per: null, minimum: false }],
+  ["KWD 1.250", undefined, { amountMinor: 1250, currency: "KWD", per: null, minimum: false }],
   ["$0.99/lb", undefined, { amountMinor: null, currency: null, per: { quantity: 1, unit: "lb" }, minimum: false }],
   ["$0.99/lb", "CAD", { amountMinor: 99, currency: "CAD", per: { quantity: 1, unit: "lb" }, minimum: false }],
+  ["¥1,500", "USD", { amountMinor: null, currency: null, per: null, minimum: false }],
   ["$3.49/12 oz", "USD", { amountMinor: 349, currency: "USD", per: { quantity: 12, unit: "oz" }, minimum: false }],
   ["($0.29 / ounce)", "USD", { amountMinor: 29, currency: "USD", per: { quantity: 1, unit: "oz" }, minimum: false }],
   ["$4.29", "USD", { amountMinor: 429, currency: "USD", per: null, minimum: false }],

@@ -473,8 +473,8 @@ exception: it is optional unless the task can't run without it (below).
   units, whatever decimals the page shows, with the ISO 4217 `currency` the page shows beside it,
   such as `total_minor` 12999 and
   `currency` `"EUR"` read from "€129.99", and the unit a price is per beside it whenever the page
-  shows one, each read with `readPrice` from `pomerado/runtime`, given the site's currency when
-  the page's sign could be several, and an amount that can go either way, such as a
+  shows one, each read with `readPrice` from `pomerado/runtime`, given the site's currency for a
+  sign several currencies share, and an amount that can go either way, such as a
   ledger entry, unsigned with a field that says its direction, such as `direction` `"debit"`
   or `"credit"`; enum values, statuses included, in lowercase
   snake_case (`"premium_economy"`, `"partially_paid"`), with the site's own wording, where a
