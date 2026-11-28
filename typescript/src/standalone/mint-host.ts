@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { isDeepStrictEqual } from "node:util";
 import { Effect } from "effect";
 import { questionForReview } from "../guardian/question.js";
 import {
@@ -169,9 +168,8 @@ const mintDependencies = (state: MintState, publicationDecisions: PublicationDec
             buildEffect,
             callerInput: context.input,
             writeSession: state.writeSession,
-            callerExampleRefused: state.refusedCallerExamples.some((refused) =>
-              isDeepStrictEqual(refused, context.input),
-            ),
+            callerExampleRefused: state.callerExampleRefused(),
+            callerExampleEmpty: state.callerExampleEmpty(),
             // Each act step's review names the keys the caller sent (`callerKeys`).
             extendsCallerInput: true,
           });

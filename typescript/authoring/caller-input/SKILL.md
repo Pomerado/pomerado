@@ -21,7 +21,8 @@ separately are both applied as given, even when they're far apart.
 1. Express in the input schema everything it can hold, so the host refuses a bad value before
    the script runs: each field's type, an enum of the site's full set of options when the
    options are fixed, a minimum and maximum for numbers, counts and lengths, a format such as a
-   date-only `CalendarDate` or a pattern for a code, and which fields are required.
+   date-only `CalendarDate` or a pattern for a code, and which fields are required. A URL input
+   accepts every link form the site itself uses for the same kind of page.
 2. Check every rule the schema cannot hold before any site action, and throw
    `new errors.InvalidInput(message, { field })` at once, starting "Caller input error:" and
    naming the field and the rule. Such rules include:

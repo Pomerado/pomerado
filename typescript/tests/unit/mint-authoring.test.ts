@@ -1886,6 +1886,22 @@ it("has a cart tool read preselected choices as defaults and a listed choice pai
   );
 });
 
+// A tool refused a store link in another path form that the same site's own pages return for
+// that kind of page, and a tool that found an order by its store's name and day could not tell
+// two such orders apart. The caller-input skill has a URL input accept every link form the site
+// uses for that kind of page, and the core skill has a tool that finds a record by name also take
+// its time when look-alike records can share a name.
+it("has a URL input accept the site's link forms and a record found by name take its time", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
+  expect(text("caller-input")).toContain(
+    "and which fields are required. A URL input accepts every link form the site itself uses for the same kind of page. 2. Check every rule",
+  );
+  expect(text("core")).toContain(
+    "and finds the record another way, such as by name, only when the caller gives none. When look-alike records can share a name, the tool also takes the record's time as an input. A closed list of options",
+  );
+});
+
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 
 /*
@@ -1906,7 +1922,7 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["62565440ef7e57482aaf63a08a66599ce700aafc4a23c6065538b1cc20e47bef", "core"],
+    ["622f2f04de212c0bdc7520e831d90713ffc6d4bf06405ede0deee00ca76fea65", "core"],
     ["97e3b5ebdbe8d5fca43790729084de4eef4fbcf5fdf71ad645e679fd72f4e804", "search"],
     ["e6a78355e22e9989ffdccbc5a5f53eef0ec74217c3ae31b68c1ca0421f36ce44", "auth"],
     ["3355021c2daea519d533551d9b6f08f071c792328d39ec5020d6e8b0ca7def52", "testing"],
@@ -1914,7 +1930,7 @@ it("renders the pinned standalone authoring", async () => {
     ["10dca2bd299747247e28de596d36225bb5bd1acfd56673457deaac10e4f6102b", "forms"],
     ["69588ca18a7612ad946dd5135ebafd604ebf231a13ad60c9fbb8a9124b9a7ce6", "writes"],
     ["ec7a2c59b29115dd450c813494d6797608265f655967a9df19afdfb1b05a648a", "cart"],
-    ["d3ef10f01ad24f3aec5e97d52edd251f16e2c14acdba6792f913f35115a689f8", "caller-input"],
+    ["58eba217d05ab7bbde936e195270ee665bc755bbd3d1d15cc0a51a486fc56d71", "caller-input"],
     ["324900e9f56a1256dc4f6d8aa0182fca4b0038e67c669378747c4d4d1ac37a42", "publication"],
     ["6f9cf55ddcd940b69cd8362821fbe95868bdc306751ad553d9b26805167e2699", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
