@@ -253,13 +253,17 @@ export const boundedInputDetail = (detail: unknown): InputNotAppliedDetail | und
  * `new errors.InputNotApplied(message, { field: "sort", requested: input.sort, applied, step:
  * "apply_sort", siteMessage })`. `applied` is what the page kept, when it shows one;
  * `siteMessage` is the page's own error, when it showed one. A value the site does not offer is
- * the caller's to correct: that is `InvalidInput` with the values it offers.
+ * the caller's to correct: that is `InvalidInput` with the values it offers. Pass the detail, so
+ * the run names the value; a throw with a message alone is deprecated and leaves `unapplied` unset.
  * `errors.LocationNotApplied` is a deprecated alias of this class, kept for published tools.
  */
 class InputUnapplied extends Error {
   override readonly name = "InputNotApplied";
   readonly _tag = "InputNotApplied";
   readonly unapplied?: InputNotAppliedDetail;
+  constructor(message: string, detail: InputNotAppliedDetail);
+  /** @deprecated Pass the detail, so the run names the value the page did not apply. */
+  constructor(message: string, detail?: InputNotAppliedDetail);
   constructor(message: string, detail?: InputNotAppliedDetail) {
     super(message.slice(0, 4096));
     const bounded = boundedInputDetail(detail);

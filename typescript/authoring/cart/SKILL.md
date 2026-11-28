@@ -69,7 +69,10 @@ An item's options often come in groups whose option labels repeat, such as "None
 under both a sweetness group and an ice group. Find each option inside its own group, by the
 group's heading or fieldset, never by its label across the whole item dialog. Prefer reading
 each group's minimum and maximum picks from what the page states for the group, not by counting
-its controls, and count every pick of a choice taken more than once toward them. A list of saved
+its controls, and count every pick of a choice taken more than once toward them. Prefer reading
+choices that each carry a quantity control as their group's options, and setting each pick
+through that control. A pick can open groups nested under it, so prefer reading the dialog again
+after each pick. A list of saved
 addresses or stores can show the same name twice: choose by every part the input gives, such as
 the unit, and ask the caller or refuse when more than one entry still matches (a checkout asks,
 below), never take the first. Choose a saved address with the core skill's address helpers, such
@@ -98,7 +101,8 @@ the expected quantity (the earlier quantity plus the input, or the input), then 
 `verified()`, compare every other line with the before read and return the lines as read.
 Prefer needing only each line's identity, chosen options and quantity in that read, with every
 other value optional, so a price the page doesn't show clearly can't fail the read before
-`verified()` (writes skill, "Check the read-back"). When comparing lines
+`verified()` (writes skill, "Check the read-back"). Prefer comparing each requested option with
+the line's options and the options nested under them. When comparing lines
 before and after, such as to list other lines that changed, prefer comparing
 `unit_price_minor` with `unit_price_minor` and `line_total_minor` with `line_total_minor` (core
 skill, output fields), so a line's quantity, new or above one, doesn't read as a price change.

@@ -1839,10 +1839,13 @@ it("has a cart tool refuse an item listed only on a menu served at other hours",
 
 // A read of an item's options left out the choices the page preselects, reported a required
 // group with no minimum and no default, counted a group's controls for its picks, passed on a
-// site's generic refusal for missing choices, and listed a refusal's choices as bare ids. The cart
-// skill reads each group's preselected choices as its default and its picks from what the page
-// states, and names each short group in a refusal; the caller-input skill names a refusal's ids in
-// its message and pairs each choice's name with its id in a result.
+// site's generic refusal for missing choices, and listed a refusal's choices as bare ids. A tool
+// also missed choices picked through their own quantity controls and groups a pick opened, and
+// read a cart line's nested options as not applied. The cart skill reads each group's preselected
+// choices as its default and its picks from what the page states, sets such picks through their
+// controls, reads the dialog again after each pick, compares a line's nested options too, and
+// names each short group in a refusal; the caller-input skill names a refusal's ids in its message
+// and pairs each choice's name with its id in a result.
 it("has a cart tool read preselected choices as defaults and a listed choice pair its name with its id", async () => {
   const texts = await renderedTexts("typescript/authoring");
   const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
@@ -1854,6 +1857,12 @@ it("has a cart tool read preselected choices as defaults and a listed choice pai
   );
   expect(text("cart")).toContain(
     'When the tool refuses for missing required choices rather than asking for them (the core skill, "Configure, then read"), prefer naming in the message each group that is short, with the picks it has and the picks it needs, over passing on the site\'s generic words.',
+  );
+  expect(text("cart")).toContain(
+    "count every pick of a choice taken more than once toward them. Prefer reading choices that each carry a quantity control as their group's options, and setting each pick through that control. A pick can open groups nested under it, so prefer reading the dialog again after each pick.",
+  );
+  expect(text("cart")).toContain(
+    'can\'t fail the read before `verified()` (writes skill, "Check the read-back"). Prefer comparing each requested option with the line\'s options and the options nested under them.',
   );
   expect(text("caller-input")).toContain(
     "When those choices are ids, prefer giving each one's name in the message, plus whatever tells near-duplicates apart. In any list of choices a result returns, prefer pairing each choice's name with its id, plus whatever tells near-duplicates apart.",
@@ -1887,10 +1896,10 @@ it("renders the pinned standalone authoring", async () => {
     ["ca80679c4488dec4ee85052fb39f1493b6d5f8ca4a5df9b56d10a2e96078e848", "pagination"],
     ["10dca2bd299747247e28de596d36225bb5bd1acfd56673457deaac10e4f6102b", "forms"],
     ["5ea65432e19a3a38633f351029769fa8f7b06a777f4fdd09d23751c00cf36af9", "writes"],
-    ["141409fcef42c00f528fe6d64b7aee576af8966fa30858aa4aceba00bcaa4e26", "cart"],
+    ["ec7a2c59b29115dd450c813494d6797608265f655967a9df19afdfb1b05a648a", "cart"],
     ["d3ef10f01ad24f3aec5e97d52edd251f16e2c14acdba6792f913f35115a689f8", "caller-input"],
     ["324900e9f56a1256dc4f6d8aa0182fca4b0038e67c669378747c4d4d1ac37a42", "publication"],
-    ["68624ce51e88e97ab72ff393ac8ecc7b9fc87d5d5518fd4d67a34e45da8be1fc", "workspace/AGENTS.md"],
+    ["6f9cf55ddcd940b69cd8362821fbe95868bdc306751ad553d9b26805167e2699", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);
 });
@@ -2011,7 +2020,7 @@ it("renders the search URL fast path only when a host turns it on", async () => 
     [sha256(on.agents), "workspace/AGENTS.md"],
   ]).toStrictEqual([
     ["de172ebf03d92a8782f5abbdd8444d90104634da28f4e21ad444dcbde0734e1f", "search"],
-    ["314beb6c4e94c6b74381c9e3622307cbee2c8fd9b32b0a4fa4fa11748c0e895e", "workspace/AGENTS.md"],
+    ["ede1d3986f3538e7b5b6db351be474021fa11d614afe3a78ebfb31f32623f66e", "workspace/AGENTS.md"],
   ]);
   expect(on.digests.filter(([, name]) => name !== "search")).toStrictEqual(
     off.digests.filter(([, name]) => name !== "search"),
