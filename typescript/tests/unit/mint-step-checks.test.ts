@@ -199,6 +199,18 @@ describe("exampleInputRefusal", () => {
     });
   });
 
+  it("lets a read's example run a substitute once the caller's own input came back with no results", () => {
+    const empty = { ...scope("read", { venue: "Venue Y" }), callerExampleEmpty: true };
+    const live = request({ exampleInput, target: "liveBrowser" });
+    expect(exampleInputRefusal(live, empty)).toBeUndefined();
+    expect(exampleInputRefusal(request({ exampleInput }), empty)).toMatchObject({
+      supported: false,
+    });
+    expect(
+      exampleInputRefusal(act(), { ...scope("write", { item: "desk" }), callerExampleEmpty: true }),
+    ).toMatchObject({ supported: false });
+  });
+
   it("says why a session's step cannot change its input", () => {
     expect(
       exampleInputRefusal(

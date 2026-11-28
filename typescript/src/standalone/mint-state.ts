@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import { Effect, Scope } from "effect";
 import { createLocalWorkspace } from "../execution/local-workspace.js";
 import { seedLocalRuntime } from "../execution/local-runtime-assets.js";
@@ -232,6 +233,16 @@ export const mintState = (
      * read whose caller's input is one of them may run a substitute example in its place.
      */
     const refusedCallerExamples: unknown[] = [];
+    /**
+     * The caller's own inputs a read's live example ran that completed with no results: a read
+     * whose caller's input is one of them may run a substitute example in its place, and its
+     * execution reviews say so (`callerExampleEmpty`).
+     */
+    const emptyCallerExamples: unknown[] = [];
+    const callerExampleRefused = () =>
+      refusedCallerExamples.some((refused) => isDeepStrictEqual(refused, context.input));
+    const callerExampleEmpty = () =>
+      emptyCallerExamples.some((empty) => isDeepStrictEqual(empty, context.input));
     /** Each one-time login URL publication already asked about, so finishing again publishes it. */
     const oneTimeLoginUrlsAsked = new Set<string>();
     /**
@@ -356,6 +367,7 @@ export const mintState = (
         return { recorder, markers, start, sessionSignIn, signInOrigins };
       });
     context.bindWritePath(() => writeSession.path);
+    context.bindCallerExampleEmpty(callerExampleEmpty);
     let bound = yield* bindSite(context.siteOrigin, context.authenticationOrigins);
     // A later binding lives as long as the first: until the request's scope closes.
     const scope = yield* Effect.scope;
@@ -374,6 +386,9 @@ export const mintState = (
       writeSession,
       scriptAnswers,
       refusedCallerExamples,
+      emptyCallerExamples,
+      callerExampleRefused,
+      callerExampleEmpty,
       oneTimeLoginUrlsAsked,
       cardTyped,
       afterSubmit,

@@ -52,6 +52,11 @@ export interface MintReviewHost {
   readonly liveTests?: () => Effect.Effect<readonly ReviewedLiveTestBatch[]> | undefined;
   /** A write build's recorded write path, once an allowed act step that carried one dispatched. */
   readonly writePath?: () => WritePath | undefined;
+  /**
+   * Whether this read build's live example on the caller's own input, as it is now, completed
+   * with no results (`holdsNoResults`); only execution reviews carry it.
+   */
+  readonly callerExampleEmpty?: () => boolean;
 }
 
 /** A write path as a review reads it: each step's and the ending's text screened, marks as is. */
@@ -161,6 +166,9 @@ export const mintReviewContext = (
         : { inputSchema: yield* screenMintText({ projection }, schema) }),
       ...(currentExecution === undefined ? {} : { currentExecution }),
       browser,
+      ...(currentExecution !== undefined && host.callerExampleEmpty?.() === true
+        ? { callerExampleEmpty: true as const }
+        : {}),
       ...(signInCodes.length === 0 ? {} : { signInCodes: [...signInCodes] }),
       ...(writePath === undefined ? {} : { writePath }),
       ...(page === undefined || browser !== "active" || step.startsOnFreshPage === true

@@ -525,6 +525,15 @@ const resultShape = (output: unknown, list: PrimaryList | undefined): Shape => {
   return { empty: false, got: "a result" };
 };
 
+/**
+ * Whether an output holds no results, as a case that expects empty judges it: an empty list, or a
+ * record whose nullable list is null. `list` is as `judgeCase` takes it.
+ */
+export const holdsNoResults = (output: unknown, list: PrimaryList | undefined) => {
+  const shape = resultShape(output, list);
+  return shape.empty || shape.nullList === true;
+};
+
 /** A list read's rows in an output, or undefined when it holds no such list. */
 const rowsOf = (output: unknown, list: PrimaryList): readonly unknown[] | undefined => {
   const items = list.field === undefined ? output : isRecord(output) ? output[list.field] : undefined;
@@ -612,7 +621,7 @@ export const judgeCase = (
               }
             : { ...base, verdict: "pass" };
       if (testCase.expect === "empty")
-        return shape.empty || shape.nullList === true
+        return holdsNoResults(outcome.output, list)
           ? { ...base, verdict: "pass" }
           : { ...base, verdict: "fail", detail: `${page}Expected no results, but the tool returned ${shape.got}.${guess}` };
       return {

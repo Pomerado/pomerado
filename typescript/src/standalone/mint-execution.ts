@@ -46,6 +46,7 @@ import { makeLocalFileHook } from "../execution/local-files.js";
 import { makeRunFiles } from "../runtime/file-transfer.js";
 import { downloadCapFailures } from "../runtime/kernel-operation.js";
 import { stepInput } from "../mint/step-checks.js";
+import { holdsNoResults, primaryListOf } from "../mint/live-tests.js";
 import { admitListCursor, sealListOutput } from "../runtime/list-cursor.js";
 import { mintListScope, refusedCursor } from "./list-cursors.js";
 import {
@@ -543,6 +544,15 @@ const completedReceipt = (receipt: ReceiptInput, result: LocalOperationOutput) =
     const { afterUnverifiedSignIn } = receipt;
     const { runs } = state;
     const { projection } = state.session;
+    // A live example on the caller's own input that completed with no results, the site's own
+    // empty answer for it, lets a substitute example run in its place.
+    if (
+      execution.purpose === "example" &&
+      execution.target === "liveBrowser" &&
+      intentDerivedInput === undefined &&
+      holdsNoResults(result.output, primaryListOf(result.schemas.input, result.schemas.output))
+    )
+      state.emptyCallerExamples.push(input);
 
     // A live step's output is checked against the page it left: a value holding one of its
     // controls' labels was read collapsed.

@@ -7,11 +7,13 @@ import { pathToFileURL } from "node:url";
 import { test, expect } from "@playwright/test";
 import {
   call,
+  contextOf,
   currentOf,
   execution,
   executionIdOf,
   html,
   patch,
+  probe,
   publicationOf,
   readOf,
   recordingGuardian,
@@ -185,6 +187,87 @@ test("a caller's example the tool's own schema rejects lets no substitute run", 
     expect(toolResult(last, "caller_example")).toMatchObject({ status: "failed" });
     // A schema that refuses the caller's input is the tool's bug, never the site's answer.
     expect(toolResult(last, "substitute")).toMatchObject({ status: "unsupported" });
+  } finally {
+    await site.close();
+  }
+});
+
+/** A read of one route's flights, which returns the site's own notice and no rows for a route with none. */
+const routeTool = `import { Schema } from "effect";
+import { defineOperation } from "../runtime/index.js";
+export default defineOperation({name:"read_route",input:Schema.Struct({route:Schema.String}),output:Schema.Struct({notice:Schema.String,results:Schema.Array(Schema.String)})},
+async ({kernel,sessionId,input}) => {
+  const code = "await page.goto(new URL('/route/' + encodeURIComponent(" + JSON.stringify(input.route) + "), page.url()).href); return {notice:(await page.locator('p').allTextContents()).join(' '),results:await page.locator('li').allTextContents()};";
+  const response = await kernel.browsers.playwright.execute(sessionId,{code,timeout_sec:5});
+  if(!response.success) throw new Error(String(response.error));
+  return response.result;
+});`;
+
+test("a read whose caller's example comes back with no results publishes on a substitute example from the same site", async () => {
+  test.setTimeout(60_000);
+  const site = await startSite((request, response) => {
+    if (request.url === "/route/busy")
+      return html(response, "<title>Busy</title><ul><li>Flight 1</li><li>Flight 2</li></ul>");
+    if (request.url?.startsWith("/route/") === true)
+      return html(response, "<title>Quiet</title><p>No flights on the selected dates</p><ul></ul>");
+    html(response, "<h1>Routes</h1><a href='/route/busy'>Busy route</a>");
+  });
+  const guardian = recordingGuardian();
+  try {
+    const { built, last } = await mint({
+      effect: "read",
+      url: site.url,
+      guardian,
+      intent: "Read a route's flights",
+      input: { route: "quiet" },
+      turns: [
+        () =>
+          patch({
+            "src/tool.mjs": routeTool,
+            "explore/busy.mjs": probe("await page.goto(new URL('/route/busy', page.url()).href); return await page.title();"),
+          }),
+        () => [call("execute", execution("example", "src/tool.mjs"), "caller_example")],
+        () => [call("execute", execution("explore", "explore/busy.mjs"), "other_route")],
+        () => [
+          call(
+            "execute",
+            execution("example", "src/tool.mjs", { exampleInput: '{"route":"busy"}' }),
+            "substitute",
+          ),
+        ],
+        (request) => [
+          call(
+            "finish_build",
+            {
+              intent: "Read a route's flights",
+              entrypoint: "src/tool.mjs",
+              executionId: executionIdOf(request, "substitute"),
+              metadata: { name: "read_route", description: "Read a route's flights" },
+              coverage: "The caller's route, which has no flights, and a route the site lists",
+            },
+            "finish",
+          ),
+        ],
+      ],
+    });
+    expect(toolResult(last, "caller_example")).toMatchObject({ status: "completed" });
+    expect(toolResult(last, "substitute")).toMatchObject({ status: "completed" });
+    expect(built.build, JSON.stringify(built)).toBe("published");
+    // Before the caller's example ran, no review heard of an empty answer; every one after did.
+    const reviews = executions(guardian.reviews);
+    const caller = reviews.find((review) => currentOf(review)?.["purpose"] === "example");
+    const other = reviews.find((review) => currentOf(review)?.["purpose"] === "explore");
+    const replaced = reviews.findLast((review) => currentOf(review)?.["purpose"] === "example");
+    expect(contextOf(caller!)).not.toHaveProperty("callerExampleEmpty");
+    expect(contextOf(other!)).toMatchObject({ callerExampleEmpty: true });
+    expect(contextOf(replaced!)).toMatchObject({ callerExampleEmpty: true });
+    expect(currentOf(replaced!)?.["input"]).toBe("substitute");
+    const [publication] = publications(guardian.reviews);
+    expect(JSON.parse(readOf(publication, "publication/example-output.json") ?? "{}")).toMatchObject({
+      output: { results: ["Flight 1", "Flight 2"] },
+    });
+    // The review hears the caller's input stays a case the tool answers with no results.
+    expect(observationsOf(publication)).toContain("because the caller's own input returned no results");
   } finally {
     await site.close();
   }
