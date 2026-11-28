@@ -964,7 +964,7 @@ it("never takes the first or a looser match for an address, pickup or drop-off v
     "or a read's looser match, returning the option it used, but never for an address, pickup or drop-off value (core skill)",
   );
   expect(text("caller-input")).toContain(
-    "when the tool asks instead of refusing with them or, in a read, taking the first in the site's order; a read never takes the first for an address, pickup or drop-off value (core skill).",
+    "when the tool asks rather than refusing with them or, in a read, rather than taking the first in the site's order; a read never takes the first for an address, pickup or drop-off value (core skill).",
   );
   expect(text("publication")).toContain(
     "a free-text place, name or venue, other than an address, pickup or drop-off value, that matches several of the site's options equally",
@@ -1755,7 +1755,7 @@ it("has a write ask or refuse with equal matches, never take the first or throw 
   const texts = await renderedTexts("typescript/authoring");
   const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
   expect(text("core")).toContain(
-    "Make sure the tool handles a lookup or filter that matches nothing or more than one. Count matches by the site's own item id: one item shown more than once, such as a sponsored copy beside the regular result, is one match. When the tool can't go on, that is the caller's to settle: refuse with `InvalidInput` as the input schema says, not `OperationFailure`, which reads as a broken tool and starts a repair.",
+    "Make sure the tool handles a lookup or filter that matches nothing or more than one. Count matches by the site's own item id where the page shows one: one item shown more than once, such as a sponsored copy beside the regular result, is one match. When the matches leave the tool unable to go on, that is the caller's to settle: ask the caller or refuse with `InvalidInput` (the input schema, below), not `OperationFailure`, which reads as a broken tool and starts a repair.",
   );
   expect(text("writes")).toContain(
     "When no entry matches, throw `InvalidInput` with `field` and `available`; when several match equally, ask the caller to choose one of them with a declared choice question, or refuse the same way, listing each match in `available` (core skill, the input schema).",
@@ -1764,10 +1764,13 @@ it("has a write ask or refuse with equal matches, never take the first or throw 
     "except a value that matches several site entries equally, where a read may take the first and return the one it used,",
   );
   expect(text("publication")).toContain(
-    "that matches several of the site's options equally lists them for the caller to choose one, or in a read takes the first in the site's order and returns the one it used, as the site labels it (core skill, the input schema); - a lookup counts matches by the site's own item id, so one item shown more than once is one match, not a failure or a refusal (core skill);",
+    "that matches several of the site's options equally lists them for the caller to choose one, or, in a read, takes the first in the site's order and returns the one it used, as the site labels it (core skill, the input schema); - a lookup counts matches by the site's own item id where the page shows one, so one item shown more than once is one match, not a failure or a refusal (core skill);",
   );
   expect(text("cart")).toContain(
     "and ask the caller or refuse when more than one entry still matches, never take the first.",
+  );
+  expect(text("forms")).toContain(
+    "`references/picker-first.ts`, a read, takes the first of several equal matches and returns it,",
   );
 });
 
@@ -1854,16 +1857,16 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["ea3193593f3c3d670610eea705cfcbd65768560ca11ac8f5f73e49968648bd7b", "core"],
+    ["4a5b5f64396be2fc9e24a16ad97619b7ada059991bba50231f196ec3f6ba64d9", "core"],
     ["97e3b5ebdbe8d5fca43790729084de4eef4fbcf5fdf71ad645e679fd72f4e804", "search"],
     ["e6a78355e22e9989ffdccbc5a5f53eef0ec74217c3ae31b68c1ca0421f36ce44", "auth"],
     ["3355021c2daea519d533551d9b6f08f071c792328d39ec5020d6e8b0ca7def52", "testing"],
     ["ca80679c4488dec4ee85052fb39f1493b6d5f8ca4a5df9b56d10a2e96078e848", "pagination"],
-    ["a0c1cb47c06b26c2dd50b8386b61c740186456b050bb399260970f76811876f4", "forms"],
+    ["4034ea6ababd8cea92f028384110c1930934a5fc9ad2cc7f5b127cd45d42130c", "forms"],
     ["c6986102a0744fb503703ad4609adf682dffdb62a2e7badfa84a5438bfce4c84", "writes"],
     ["f792e3fd078506d379df4305678bf552d09c964c7266e0dda9427adbf79d514e", "cart"],
-    ["333203ee33d2bd293ee9c4ac443070c2cd7786158c3316bcc039b162032d3cf3", "caller-input"],
-    ["fbd027a48907196151c4cac5149daf87a62c967745d016d1df616415b439f133", "publication"],
+    ["63587da1613604414bd815d843f5fc02a26fa829df4447ecd867c08c8fd58dad", "caller-input"],
+    ["f9d113d25914957863f73ceb30f79f85c8218d63c82de4208091db2afab5e238", "publication"],
     ["68624ce51e88e97ab72ff393ac8ecc7b9fc87d5d5518fd4d67a34e45da8be1fc", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);

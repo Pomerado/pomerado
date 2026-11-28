@@ -116,10 +116,11 @@ answers `{ success, result, error, stderr }`. Throw
   name an outcome only the new page shows, such as a changed URL, and look the next element up
   again before typing. If it only redraws, name the new setting shown outside its dialog.
 - Check the null case if possible. Make sure the tool handles a lookup or filter that matches
-  nothing or more than one. Count matches by the site's own item id: one item shown more than
-  once, such as a sponsored copy beside the regular result, is one match. When the tool can't go
-  on, that is the caller's to settle: refuse with `InvalidInput` as the input schema says, not
-  `OperationFailure`, which reads as a broken tool and starts a repair.
+  nothing or more than one. Count matches by the site's own item id where the page shows one:
+  one item shown more than once, such as a sponsored copy beside the regular result, is one
+  match. When the matches leave the tool unable to go on, that is the caller's to settle: ask the
+  caller or refuse with `InvalidInput` (the input schema, below), not `OperationFailure`, which
+  reads as a broken tool and starts a repair.
 - Start a response wait in the same call as the click that causes it: name the response as a
   `{ response }` answer of `waitForOutcomeResult`, beside the page's other answers, with the click
   as its `action`. Listeners do not outlive a call.

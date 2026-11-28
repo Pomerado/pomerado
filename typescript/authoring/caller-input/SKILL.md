@@ -153,9 +153,9 @@ Try first. Ask only for what the page or the caller uniquely knows at that point
   tool's purpose is declined, never asked (writes skill);
 - which of several site entries the caller's value matches equally, such as a restaurant with
   several locations or a city with several airports, with those entries as the options, each
-  selecting exactly one, when the tool asks instead of refusing with them or, in a read, taking
-  the first in the site's order; a read never takes the first for an address, pickup or drop-off
-  value (core skill). That is ambiguous, as is a near-miss name the site
+  selecting exactly one, when the tool asks rather than refusing with them or, in a read, rather
+  than taking the first in the site's order; a read never takes the first for an address, pickup
+  or drop-off value (core skill). That is ambiguous, as is a near-miss name the site
   offers alternatives for: prefer not starting a refusal of either with "Caller input error:"
   (above). A day or option the page greys out, with or without a reason, is not ambiguous and
   never a question (core skill, "Configure, then read");

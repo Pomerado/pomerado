@@ -136,7 +136,7 @@ When a picker's options depend on another field, such as times on a date or a pa
 on a make or regions on a country, set that field first, whatever order the page shows them in,
 then pick once its options have loaded for that value.
 `references/picker.ts` picks a typeahead value and refuses a missing one,
-`references/picker-first.ts` takes the first of several equal matches and returns it,
+`references/picker-first.ts`, a read, takes the first of several equal matches and returns it,
 `references/dates-and-dropdowns.ts` fills a split date and `references/selection.ts` a native
 select. `references/custom-selection.ts` and
 `references/dialog-picker.ts` write out a combobox and a dialog picker step by step, for a
