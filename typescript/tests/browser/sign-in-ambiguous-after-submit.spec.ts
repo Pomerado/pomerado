@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { Effect, Either } from "effect";
+import type { AutofillRecipe } from "../../src/destinations/autofill-recipe.js";
 import type {
   AutofillInspection,
   AutofillRefusal,
@@ -124,15 +125,23 @@ const recipe = {
   signedIn: { selector: "#account" },
 } as const;
 
-/** What one inspection of a step answered: the step's first field, and found or why not. */
-type Inspected = { readonly field: string | undefined; readonly answer: string; readonly at: number };
+/**
+ * What one inspection of a step answered: the step's first field, found or why not, and how many
+ * links that open the same page it took as one.
+ */
+type Inspected = {
+  readonly field: string | undefined;
+  readonly answer: string;
+  readonly at: number;
+  readonly sameDestinationMatches?: number | undefined;
+};
 
 /**
  * One run's sign-in, answering the login ask and each code ask, with every fill and inspection.
  * With `swapMs`, the password screen is hidden that long after the code screen's first look found
  * both buttons.
  */
-const run = async (page: Page, swapMs?: number) => {
+const run = async (page: Page, swapMs?: number, steps: AutofillRecipe = recipe) => {
   const browser = await hostPage(page);
   const { keyboard } = await hostKeyboard(page);
   const secrets = makeRunSecrets();
@@ -173,13 +182,14 @@ const run = async (page: Page, swapMs?: number) => {
       field,
       answer: "outcome" in answer ? answer.reason : "found",
       at: Date.now(),
+      sameDestinationMatches: "outcome" in answer ? undefined : answer.sameDestinationMatches,
     });
   };
   const started = Date.now();
   const result = await Effect.runPromise(
     Effect.either(
       signInForRun({
-        recipe,
+        recipe: steps,
         entryUrl: `${site}/login`,
         browser: {
           ...signIn,
@@ -266,3 +276,82 @@ test("a sign-in whose first screen matches two buttons before anything was sent 
   expect(inspected.map((one) => one.answer)).toEqual(["ambiguous_match", "ambiguous_match"]);
   expect(ended - started).toBeLessThan(stepWaitMs);
 });
+
+// A home page that shows its Log in link twice, as a header and a returning member's prompt may.
+// A step that types nothing clicks the first when every one opens the same other page the same
+// way, and the sign-in goes on there. Links to different pages, and a step that types anything,
+// still refuse the step as ambiguous before anything is sent.
+
+/** The home page at /login: an email box with `withEmail`, and two Log in links, to /signin and `second`. */
+const home = (second: string, withEmail = false) =>
+  `<header>${withEmail ? '<label>Email<input id="email" name="email" autocomplete="username"></label>' : ""}<a href="/signin">Log in</a></header>
+<aside><p>Welcome back</p><a href="${second}">Log in</a></aside>`;
+
+/** The site: the home page, a sign-in form at /signin that posts to /signin, and the account it answers. */
+const serveHome = async (page: Page, body: string) => {
+  const posts: string[] = [];
+  await page.route(`${site}/**`, async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "POST") {
+      posts.push(path);
+      await route.fulfill({ contentType: "text/html", body: '<p id="account">Signed in</p>' });
+    } else if (path === "/signin")
+      await route.fulfill({
+        contentType: "text/html",
+        body: `<form method="post" action="/signin">
+<label>Email<input id="email" name="email" autocomplete="username"></label>
+<label>Password<input id="password" name="password" type="password" autocomplete="current-password"></label>
+<button id="sign-in" type="submit">Sign in</button>
+</form>`,
+      });
+    else await route.fulfill({ contentType: "text/html", body: path === "/login" ? body : "<p>Other</p>" });
+  });
+  return posts;
+};
+
+const logIn = { page: `${site}/login`, fields: [], submit: 'role=link[name="Log in" s]', submittedBy: "host" } as const;
+const signInForm = {
+  page: `${site}/signin`,
+  fields: [
+    { selector: "#email", accepts: ["email"] },
+    { selector: "#password", slot: "password" },
+  ],
+  submit: "#sign-in",
+  submittedBy: "host",
+} as const;
+const linkRecipe = (first: AutofillRecipe["steps"][number]): AutofillRecipe => ({
+  version: 2,
+  steps: [first, signInForm],
+  signedIn: { selector: "#account" },
+});
+
+test("a step that types nothing clicks the first of two Log in links that open the same page, and the sign-in goes on", async ({
+  page,
+}) => {
+  const posts = await serveHome(page, home("/signin"));
+  const { outcome, reports, inspected } = await run(page, undefined, linkRecipe(logIn));
+  expect(outcome).toEqual({ signedIn: true, alreadySignedIn: false });
+  expect(inspected[0]).toMatchObject({ answer: "found", sameDestinationMatches: 2 });
+  expect(reports[0]).toMatchObject({ outcome: "filled", fields: [], submit: "clicked" });
+  expect(reports.at(-1)).toMatchObject({ outcome: "filled", submit: "clicked" });
+  expect(posts).toEqual(["/signin"]);
+  await expect(page.locator("#account")).toBeVisible();
+});
+
+for (const [name, body, first] of [
+  ["Log in links that open different pages", home("/register"), logIn],
+  [
+    "a step that types an email, whose submit matches two Log in links to the same page,",
+    home("/signin", true),
+    { ...logIn, fields: [{ selector: "#email", accepts: ["email"] }] },
+  ],
+] as const)
+  test(`${name} still refuses the step as ambiguous, with nothing sent`, async ({ page }) => {
+    const posts = await serveHome(page, body);
+    const { outcome, reports, inspected } = await run(page, undefined, linkRecipe(first));
+    expect(outcome).toEqual({ code: "RecipeFailed", reason: "ambiguous_match" });
+    expect(inspected.map((one) => one.answer)).toEqual(["ambiguous_match", "ambiguous_match"]);
+    expect(reports).toEqual([]);
+    expect(posts).toEqual([]);
+  });
