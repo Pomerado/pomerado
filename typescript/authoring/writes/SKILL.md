@@ -219,7 +219,7 @@ During the session:
   can be read before the first save and do not depend on what an earlier page saves, such as the
   form definitions or option data an earlier page loads, prefer reading them too and checking
   every caller value for those fields against them. Match each value by the site's option value as
-  well as its label (forms skill), and count matching items by the site's own item id where the
+  well as its label (forms skill), and count matching items by the site's own item ID where the
   page shows one (core skill).
   Refuse with `InvalidInput` and `available` before anything is saved when a value matches
   nothing. A refusal after an earlier save leaves a half-made record and an outcome the caller
