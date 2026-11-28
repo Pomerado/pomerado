@@ -1794,7 +1794,7 @@ it("has a cart or checkout buy into an open order, count only charged fees and c
     "(`case_variant`). Return a site label the tool doesn't recognise as the site shows it, not under a catch-all value.",
   );
   expect(text("core")).toContain(
-    "- A price the page shows as a starting amount is a minimum price, not zero.",
+    '- A price the page shows as a starting amount, "from $X" or "$X+", is that minimum, not zero: prefer returning it marked as a minimum.',
   );
 });
 
@@ -1837,6 +1837,21 @@ it("has a cart tool refuse an item listed only on a menu served at other hours",
   );
 });
 
+// A read of an item's options left out the choices the page preselects, reported a required
+// group with no minimum and no default, and listed a refusal's choices as bare ids. The cart skill
+// reads each group's preselected choice as its default, so a caller sends only what it changes,
+// and the caller-input skill pairs each listed choice's name with its id.
+it("has a cart tool read preselected choices as defaults and a listed choice pair its name with its id", async () => {
+  const texts = await renderedTexts("typescript/authoring");
+  const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
+  expect(text("cart")).toContain(
+    "Prefer reading the choice the page preselects in each of an item's option groups as that group's default, so a caller sends only the options it changes and an option the input leaves out keeps it (the writes skill). A read of the item's options reports a required group's minimum as at least one, or the default that meets it.",
+  );
+  expect(text("caller-input")).toContain(
+    "There and in any list of choices a result returns, prefer pairing each choice's name with its id, plus whatever tells near-duplicates apart.",
+  );
+});
+
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
 
 /*
@@ -1857,15 +1872,15 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["fa8d8f32886172aed9ae395c294b568dca76bcfe93ba677a413ffa2b00f71bd1", "core"],
+    ["deca80d578c90ce45780a3a19d6cb99d6de40d2e339bd52305c49eb06b88e8e0", "core"],
     ["97e3b5ebdbe8d5fca43790729084de4eef4fbcf5fdf71ad645e679fd72f4e804", "search"],
     ["e6a78355e22e9989ffdccbc5a5f53eef0ec74217c3ae31b68c1ca0421f36ce44", "auth"],
     ["3355021c2daea519d533551d9b6f08f071c792328d39ec5020d6e8b0ca7def52", "testing"],
     ["ca80679c4488dec4ee85052fb39f1493b6d5f8ca4a5df9b56d10a2e96078e848", "pagination"],
     ["10dca2bd299747247e28de596d36225bb5bd1acfd56673457deaac10e4f6102b", "forms"],
     ["684c2aa03cfb70f4882ac50aac8cf26c871d3e29a1805475e975b66ddf25b759", "writes"],
-    ["a1ab9d995a11205f3e866508f9b2540d36d6478bfe051ad199114d59787d30b4", "cart"],
-    ["b7873060dc68752d6512f28f61d909c93ea35ed1a32eb5d2b57883a11bd562c8", "caller-input"],
+    ["2cc87628764f2a9c85977076f48ad3eb0acd5e83aa22881d3a2cf6ead54f0e33", "cart"],
+    ["33c8f64debee35b59bd733bc300bd0beb312e73bfd92415103c20e170e70a91c", "caller-input"],
     ["324900e9f56a1256dc4f6d8aa0182fca4b0038e67c669378747c4d4d1ac37a42", "publication"],
     ["68624ce51e88e97ab72ff393ac8ecc7b9fc87d5d5518fd4d67a34e45da8be1fc", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],

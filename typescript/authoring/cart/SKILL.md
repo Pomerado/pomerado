@@ -49,7 +49,11 @@ delivery address, an add-to-cart tool takes it as an optional input, one of the 
 addresses, and keeps the address the account has selected when it is left out: an add places no
 order, and a checkout still chooses its address as below. Set the options as "Configure, then
 read" in the core skill says before adding the product: a value the product does not offer
-throws `InvalidInput` with `field` and `available`. Opening an item's details or options from
+throws `InvalidInput` with `field` and `available`. Prefer reading the choice the page
+preselects in each of an item's option groups as that group's default, so a caller sends only
+the options it changes and an option the input leaves out keeps it (the writes skill). A read of
+the item's options reports a required group's minimum as at least one, or the default that meets
+it. Opening an item's details or options from
 its own card, name or picture, not a control labelled add or plus, is a read. Prefer finding
 the item's row or card by the site's own item ID where the page carries one, over its picture or
 position, since a site's pages can differ in layout. Where the page carries no item ID, open each
