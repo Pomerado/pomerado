@@ -1772,15 +1772,15 @@ it("has a cart or checkout buy into an open order, count only charged fees and c
 });
 
 // A checkout used or dropped the account's credits with no way for the caller to choose. The cart
-// skill has a checkout take whether to use them as an optional input, asked as the writes skill
-// says for any choice that changes what the caller pays.
-it("has a checkout take whether to use credits as an optional input", async () => {
+// skill has a checkout take whether to use them as an optional input, and ask before the commit
+// mark when the caller leaves it unset, as for the payment method.
+it("has a checkout take whether to use credits as an optional input and ask when it is unset", async () => {
   const cart = ((await renderedTexts("typescript/authoring")).get("cart") ?? "").replace(
     /\s+/g,
     " ",
   );
   expect(cart).toContain(
-    "report it in its own output field (writes skill). A checkout tool takes an optional input for whether to use the credits, gift card balances and promotions the checkout applies or offers (the writes skill). A paid add-on within the tool's purpose,",
+    "report it in its own output field (writes skill). A checkout tool takes an optional input for whether to use the credits, gift card balances and promotions the checkout applies or offers (the writes skill). When the caller leaves it unset, ask before the commit mark, as for the payment method. A paid add-on within the tool's purpose,",
   );
 });
 
@@ -1811,7 +1811,7 @@ it("renders the pinned standalone authoring", async () => {
     ["ca80679c4488dec4ee85052fb39f1493b6d5f8ca4a5df9b56d10a2e96078e848", "pagination"],
     ["b0220727e7f21e1c5d10101e74996ddb3d2d4e18061ac85c807203ed4ab0f695", "forms"],
     ["b23c3918c2990e1743a2ad84983346f114b590424efb8a61d1dd2e240093c20c", "writes"],
-    ["7dabb63e64d4f12c62ed5b1fec797db7bec98ae2392f5d701700eb5fc76f2fbb", "cart"],
+    ["64aaa6422a9d86f27f87b178a74251a4c8ae8c8a4f1841a427d528ad538ef149", "cart"],
     ["5e81a6bb20243badd2f5d781fc302e0fe83b12ad616d5cc66fd664f2a0e28870", "caller-input"],
     ["07b61ae415889706192db263c00be4635dddb6c7ea0e97017b9b7e53ff1c95a3", "publication"],
     ["68624ce51e88e97ab72ff393ac8ecc7b9fc87d5d5518fd4d67a34e45da8be1fc", "workspace/AGENTS.md"],
