@@ -116,11 +116,12 @@ answers `{ success, result, error, stderr }`. Throw
   name an outcome only the new page shows, such as a changed URL, and look the next element up
   again before typing. If it only redraws, name the new setting shown outside its dialog.
 - Check the null case if possible. Make sure the tool handles a lookup or filter that matches
-  nothing or more than one. Count matches by the site's own item id where the page shows one:
+  nothing or more than one. Count matches by the site's own item ID where the page shows one:
   one item shown more than once, such as a sponsored copy beside the regular result, is one
-  match. When the matches leave the tool unable to go on, that is the caller's to settle: ask the
-  caller or refuse with `InvalidInput` (the input schema, below), not `OperationFailure`, which
-  reads as a broken tool and starts a repair.
+  match. When the site's own results leave the tool unable to go on, that is the caller's to
+  settle: ask the caller or refuse with `InvalidInput` (the input schema, below), not
+  `OperationFailure`, which reads as a broken tool and starts a repair (a control the tool could
+  not find or read stays `OperationFailure`, caller-input skill).
 - Start a response wait in the same call as the click that causes it: name the response as a
   `{ response }` answer of `waitForOutcomeResult`, beside the page's other answers, with the click
   as its `action`. Listeners do not outlive a call.
@@ -337,7 +338,7 @@ exception: it is optional unless the task can't run without it (below).
   return the one it used, as the site labels it; a write asks the caller to choose among them
   with a declared choice question, or refuses with `InvalidInput`, `field` that input and
   `available` listing each match, each selecting exactly one, before any commit mark. An
-  address, pickup or drop-off value follows the rule above.
+  address, pickup or drop-off value is the exception: only the address helpers choose it (above).
 - In a product or catalog search, a result whose name has every word of the caller's value
   among words the value lacks is a looser match, which a read picks and a write asks about, as
   above: with no match, throw

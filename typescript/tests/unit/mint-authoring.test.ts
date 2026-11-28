@@ -223,7 +223,7 @@ const sharedGuidance: readonly (readonly [string, string])[] = [
   ["core", "- The code works for every value the schema accepts."],
   [
     "core",
-    "- Match the caller's proper nouns, such as places, venues and company names, with a fuzzy match that accepts the usual forms of the same name, such as a name with or without its accents (Abaca for Abacá), or a city alone or with its state and country after a comma. Never require an exact match. A name with words added or dropped is a looser match, which a read picks and a write asks about, as above. `sameText` from `pomerado/runtime` matches a name that differs only in case, accents, spacing, apostrophes, periods, commas or hyphens, or in a word the site writes short, such as St-Jean for Saint-Jean, but not one with a word added or dropped. Prefer it for confirming the pick, so the read-back agrees with the choice, but not for choosing from a list, where a short label can match a longer name it isn't, such as UK for Ukraine. When more than one option matches equally, a read may take the first in the site's order and return the one it used, as the site labels it; a write asks the caller to choose among them with a declared choice question, or refuses with `InvalidInput`, `field` that input and `available` listing each match, each selecting exactly one, before any commit mark. An address, pickup or drop-off value follows the rule above.",
+    "- Match the caller's proper nouns, such as places, venues and company names, with a fuzzy match that accepts the usual forms of the same name, such as a name with or without its accents (Abaca for Abacá), or a city alone or with its state and country after a comma. Never require an exact match. A name with words added or dropped is a looser match, which a read picks and a write asks about, as above. `sameText` from `pomerado/runtime` matches a name that differs only in case, accents, spacing, apostrophes, periods, commas or hyphens, or in a word the site writes short, such as St-Jean for Saint-Jean, but not one with a word added or dropped. Prefer it for confirming the pick, so the read-back agrees with the choice, but not for choosing from a list, where a short label can match a longer name it isn't, such as UK for Ukraine. When more than one option matches equally, a read may take the first in the site's order and return the one it used, as the site labels it; a write asks the caller to choose among them with a declared choice question, or refuses with `InvalidInput`, `field` that input and `available` listing each match, each selecting exactly one, before any commit mark. An address, pickup or drop-off value is the exception: only the address helpers choose it (above).",
   ],
   // A value the caller names goes through the site's own search, not only a menu the page shows.
   [
@@ -964,7 +964,7 @@ it("never takes the first or a looser match for an address, pickup or drop-off v
     "or a read's looser match, returning the option it used, but never for an address, pickup or drop-off value (core skill)",
   );
   expect(text("caller-input")).toContain(
-    "when the tool asks rather than refusing with them or, in a read, rather than taking the first in the site's order; a read never takes the first for an address, pickup or drop-off value (core skill).",
+    "when the tool asks rather than refusing with them or, in a read, rather than taking the first in the site's order; no tool takes the first for an address, pickup or drop-off value (core skill).",
   );
   expect(text("publication")).toContain(
     "a free-text place, name or venue, other than an address, pickup or drop-off value, that matches several of the site's options equally",
@@ -1248,7 +1248,7 @@ it("has a write check caller values against the site's own option lists before i
   const texts = await renderedTexts("typescript/authoring");
   const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
   expect(text("writes")).toContain(
-    "- Before the first commit mark, prefer looking up every existing entry the caller names, each item and option included, with read-only steps, in the session and on every run of the composed script. On a write saved across several pages, when the site's own option lists for a later page can be read before the first save and do not depend on what an earlier page saves, such as the form definitions or option data an earlier page loads, prefer reading them too and checking every caller value for those fields against them. Match each value by the site's option value as well as its label (forms skill), and count matching items by the site's own item id where the page shows one (core skill). Refuse with `InvalidInput` and `available` before anything is saved when a value matches nothing. A refusal after an earlier save leaves a half-made record and an outcome the caller can't know.",
+    "- Before the first commit mark, prefer looking up every existing entry the caller names, each item and option included, with read-only steps, in the session and on every run of the composed script. On a write saved across several pages, when the site's own option lists for a later page can be read before the first save and do not depend on what an earlier page saves, such as the form definitions or option data an earlier page loads, prefer reading them too and checking every caller value for those fields against them. Match each value by the site's option value as well as its label (forms skill), and count matching items by the site's own item ID where the page shows one (core skill). Refuse with `InvalidInput` and `available` before anything is saved when a value matches nothing. A refusal after an earlier save leaves a half-made record and an outcome the caller can't know.",
   );
   // A check that can only run after an earlier save keeps its honest possible change.
   expect(text("writes")).toContain(
@@ -1755,7 +1755,7 @@ it("has a write ask or refuse with equal matches, never take the first or throw 
   const texts = await renderedTexts("typescript/authoring");
   const text = (name: string) => (texts.get(name) ?? "").replace(/\s+/g, " ");
   expect(text("core")).toContain(
-    "Make sure the tool handles a lookup or filter that matches nothing or more than one. Count matches by the site's own item id where the page shows one: one item shown more than once, such as a sponsored copy beside the regular result, is one match. When the matches leave the tool unable to go on, that is the caller's to settle: ask the caller or refuse with `InvalidInput` (the input schema, below), not `OperationFailure`, which reads as a broken tool and starts a repair.",
+    "Make sure the tool handles a lookup or filter that matches nothing or more than one. Count matches by the site's own item ID where the page shows one: one item shown more than once, such as a sponsored copy beside the regular result, is one match. When the site's own results leave the tool unable to go on, that is the caller's to settle: ask the caller or refuse with `InvalidInput` (the input schema, below), not `OperationFailure`, which reads as a broken tool and starts a repair (a control the tool could not find or read stays `OperationFailure`, caller-input skill).",
   );
   expect(text("writes")).toContain(
     "When no entry matches, throw `InvalidInput` with `field` and `available`; when several match equally, ask the caller to choose one of them with a declared choice question, or refuse the same way, listing each match in `available` (core skill, the input schema).",
@@ -1764,10 +1764,10 @@ it("has a write ask or refuse with equal matches, never take the first or throw 
     "except a value that matches several site entries equally, where a read may take the first and return the one it used,",
   );
   expect(text("publication")).toContain(
-    "that matches several of the site's options equally lists them for the caller to choose one, or, in a read, takes the first in the site's order and returns the one it used, as the site labels it (core skill, the input schema); - a lookup counts matches by the site's own item id where the page shows one, so one item shown more than once is one match, not a failure or a refusal (core skill);",
+    "that matches several of the site's options equally lists them for the caller to choose one, or, in a read, takes the first in the site's order and returns the one it used, as the site labels it (core skill, the input schema); - a lookup counts matches by the site's own item ID where the page shows one, so one item shown more than once is one match, not a failure or a refusal (core skill);",
   );
   expect(text("cart")).toContain(
-    "and ask the caller or refuse when more than one entry still matches, never take the first.",
+    "and ask the caller or refuse when more than one entry still matches (a checkout asks, below), never take the first.",
   );
   expect(text("forms")).toContain(
     "`references/picker-first.ts`, a read, takes the first of several equal matches and returns it,",
@@ -1857,16 +1857,16 @@ it("renders the pinned standalone authoring", async () => {
       .filter(([path]) => path !== "reference/publication-review.md")
       .map(([path, text]) => [sha256(text), `workspace/${path}`]),
   ]).toStrictEqual([
-    ["1a2b1efc806d05ca9597da4f6ee7c5b0180895aed8732aaeac7758f019047299", "core"],
+    ["74a5cbf91bf516d1dfc41bf26ecef427728464cc7f044fbb6fed90281dfaf2b3", "core"],
     ["97e3b5ebdbe8d5fca43790729084de4eef4fbcf5fdf71ad645e679fd72f4e804", "search"],
     ["e6a78355e22e9989ffdccbc5a5f53eef0ec74217c3ae31b68c1ca0421f36ce44", "auth"],
     ["3355021c2daea519d533551d9b6f08f071c792328d39ec5020d6e8b0ca7def52", "testing"],
     ["ca80679c4488dec4ee85052fb39f1493b6d5f8ca4a5df9b56d10a2e96078e848", "pagination"],
-    ["4034ea6ababd8cea92f028384110c1930934a5fc9ad2cc7f5b127cd45d42130c", "forms"],
-    ["c6986102a0744fb503703ad4609adf682dffdb62a2e7badfa84a5438bfce4c84", "writes"],
-    ["f792e3fd078506d379df4305678bf552d09c964c7266e0dda9427adbf79d514e", "cart"],
-    ["63587da1613604414bd815d843f5fc02a26fa829df4447ecd867c08c8fd58dad", "caller-input"],
-    ["f9d113d25914957863f73ceb30f79f85c8218d63c82de4208091db2afab5e238", "publication"],
+    ["10dca2bd299747247e28de596d36225bb5bd1acfd56673457deaac10e4f6102b", "forms"],
+    ["684c2aa03cfb70f4882ac50aac8cf26c871d3e29a1805475e975b66ddf25b759", "writes"],
+    ["a1ab9d995a11205f3e866508f9b2540d36d6478bfe051ad199114d59787d30b4", "cart"],
+    ["b7873060dc68752d6512f28f61d909c93ea35ed1a32eb5d2b57883a11bd562c8", "caller-input"],
+    ["324900e9f56a1256dc4f6d8aa0182fca4b0038e67c669378747c4d4d1ac37a42", "publication"],
     ["68624ce51e88e97ab72ff393ac8ecc7b9fc87d5d5518fd4d67a34e45da8be1fc", "workspace/AGENTS.md"],
     ["9501ae9c273d5d4db8976a544879f7aee44212c8a616b00e74263dcd3c593035", "workspace/README.md"],
   ]);

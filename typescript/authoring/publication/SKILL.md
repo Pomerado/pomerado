@@ -160,7 +160,7 @@ Publication refuses a tool for any of these:
     matches several of the site's options equally lists them for the caller to choose one, or,
     in a read, takes the first in the site's order and returns the one it used, as the site
     labels it (core skill, the input schema);
-  - a lookup counts matches by the site's own item id where the page shows one, so one item
+  - a lookup counts matches by the site's own item ID where the page shows one, so one item
     shown more than once is one match, not a failure or a refusal (core skill);
   - a check that compares a date with today uses today in the site's time zone, or the place's,
     not in UTC (caller-input skill) ("Date in UTC");
